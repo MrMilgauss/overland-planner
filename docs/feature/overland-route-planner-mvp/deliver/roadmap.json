@@ -1,0 +1,904 @@
+{
+  "roadmap": {
+    "project_id": "overland-route-planner-mvp",
+    "created_at": "2026-11-02T19:53:04Z",
+    "total_steps": 26
+  },
+  "phases": [
+    {
+      "id": "01",
+      "name": "Slice 00a: CI pipeline and published multi-arch image",
+      "description": "Enabler, no story. Toolchain and architecture gates, minimal Svelte home page, minimal composition root (/healthz, /api/health, app.started, OR-Tools solver probe), multi-stage image, ci.yml jobs 1, 2, 4-9 and weekly.yml. Done when a main push publishes an attested amd64+arm64 manifest list whose arm64 smoke passes.",
+      "steps": [
+        {
+          "id": "01-01",
+          "name": "Toolchain, architecture gates and repository hygiene",
+          "description": "Pin dev tooling (ruff, mypy strict, import-linter, pytest-cov, pre-commit), encode the brief section 11 layer contracts, register Hypothesis profiles, add pre-commit/pre-push hooks, Makefile bootstrap/lint/test and the .gitignore GPX rules.",
+          "agent": "nw-software-crafter",
+          "deps": [],
+          "estimated_hours": 3,
+          "criteria": [
+            "make lint passes on the current tree: ruff, mypy strict on src and every brief section 11 import-linter contract report zero violations.",
+            "A GPX file outside test fixture folders is ignored by git; every file under tests/fixtures/ and the acceptance fixtures/gpx/ folder stays tracked.",
+            "make bootstrap on a clean Mac checkout installs locked Python dependencies and the pre-commit and pre-push hooks.",
+            "HYPOTHESIS_PROFILE selects dev (100 examples), ci (1,000, derandomized) or mutation (50, derandomized).",
+            "pre-push runs mypy, lint-imports and pytest excluding slow, solver_child and walking_skeleton markers in under five minutes."
+          ],
+          "test_file": "tests/ci/test_repo_hygiene.py",
+          "scenario_name": "test_gpx_outside_fixture_folders_is_ignored | test_fixture_gpx_files_stay_tracked | test_import_contracts_hold",
+          "files_to_modify": [
+            "pyproject.toml",
+            "uv.lock",
+            ".pre-commit-config.yaml",
+            "Makefile",
+            ".gitignore",
+            "tests/conftest.py",
+            "tests/ci/__init__.py",
+            "tests/ci/test_repo_hygiene.py"
+          ],
+          "implementation_notes": "Slice 00a, tooling only (no production behaviour). Dev deps pinned exactly in uv.lock (D85): ruff, mypy, import-linter 2.x, pytest-cov, pre-commit, types-PyYAML; runtime deps keep the DESIGN ranges but are locked exactly (ortools==9.15.6755 already exact). mypy --strict on src/ (tests type-checked, non-strict). import-linter: brief section 11 contracts 1-5 and 7 now; contract 6 (application facades) is added per module when its facade.py first appears (platform at 01-04, catalog at 02-02), because ignore_imports that match nothing are reported as errors. .gitignore additions: `*.gpx`, `!tests/fixtures/**/*.gpx`, `!tests/acceptance/overland_route_planner_mvp/fixtures/gpx/*.gpx` (D178 names only tests/fixtures; the DISTILL fixtures live elsewhere and must stay tracked), `web/dist/`, `mutants/`, `.coverage`; `.env` stays ignored, `.env.example` must not be. Hypothesis profiles: append to tests/conftest.py (do not touch the DISTILL tag hooks). pre-commit (<30 s): ruff format, ruff check, gitleaks, uv lock --check, end-of-file, trailing whitespace, check-added-large-files 5 MB with fixture folders excluded. pre-push (<5 min): mypy, lint-imports, pytest -m 'not slow and not solver_child and not walking_skeleton' (the walking skeleton is RED until 01a; re-added at 03-06). Makefile: bootstrap, lint, test (test-web arrives at 01-02, run-local and mutate at 01-04). Commit: 'build: toolchain, architecture gates and repo hygiene'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: tooling and repository configuration carry no invariant-bearing production code. Compensate with property-based test at unit level on adjacent slot (settings parsing at 01-03, HealthService aggregation at 01-04)."
+        },
+        {
+          "id": "01-02",
+          "name": "Svelte 5 web app with the Projects home page",
+          "description": "Create web/ (Svelte 5 + Vite, TypeScript, Node 22, package-lock.json) with a Projects home page that lists project names from the planner, an empty state and an error state; vitest, svelte-check, eslint and prettier wired into make and hooks.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-01"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "make test-web runs npm ci, vitest and vite build on a Mac without Docker and produces web/dist.",
+            "The home page shows the heading Projects and the project names returned by the planner, or an empty-state message when there are none.",
+            "When the project list cannot be loaded the page shows a readable error state, never a blank page.",
+            "Node 22 and every web dependency are pinned; npm ci reproduces the build exactly from package-lock.json."
+          ],
+          "test_file": "web/src/lib/ProjectsPage.test.ts",
+          "scenario_name": "shows the Projects heading and the listed project names | shows an error state when projects cannot be loaded",
+          "files_to_modify": [
+            "web/package.json",
+            "web/package-lock.json",
+            "web/.nvmrc",
+            "web/vite.config.ts",
+            "web/svelte.config.js",
+            "web/tsconfig.json",
+            "web/eslint.config.js",
+            "web/.prettierrc",
+            "web/index.html",
+            "web/src/main.ts",
+            "web/src/App.svelte",
+            "web/src/lib/api.ts",
+            "web/src/lib/ProjectsPage.svelte",
+            "web/src/lib/ProjectsPage.test.ts",
+            ".pre-commit-config.yaml",
+            "Makefile"
+          ],
+          "implementation_notes": "Slice 00a. Svelte 5 + Vite (>= 6), TypeScript, vitest + @testing-library/svelte; MapLibre is NOT added now (slice 09). The page calls GET /api/projects (same origin, relative URL). That endpoint arrives at 02-02, so until then the real page shows its error state - acceptable, D162 only forbids a placeholder or fallback shell. Browser Basic-auth prompts are native (02-03), no login form. pre-commit: prettier + eslint on staged web files; pre-push: svelte-check + vitest. Makefile: test-web. Commit: 'feat(web): Svelte home page listing projects'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: single-shot UI rendering in TypeScript (no Hypothesis in the web stack); vitest examples verify rendering states. Compensate with property-based test at unit level on adjacent slot (HealthService outcome aggregation, step 01-04)."
+        },
+        {
+          "id": "01-03",
+          "name": "Composition root: settings, event log, clock, start-up line",
+          "description": "Replace the create_app scaffold with a real composition root that validates settings from the environment, wires the structured event log and the system clock, and logs exactly one app.started line per start.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-01"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "create_app called without arguments reads the process environment; called with a mapping it reads only that mapping.",
+            "Each start logs exactly one app.started JSON line carrying app_version, routing provider and Python version.",
+            "An invalid setting, such as a routing provider other than mock before slice 06a, stops start-up with an error naming the setting.",
+            "Every event is one JSON object per stdout line with an event key and a UTC timestamp."
+          ],
+          "test_file": "tests/integration/bootstrap/test_composition_root.py",
+          "scenario_name": "test_create_app_reads_os_environ_when_given_no_mapping | test_each_start_logs_one_app_started_line | tests/unit/bootstrap/test_settings.py::test_invalid_routing_provider_is_refused | test_every_event_is_one_json_line_with_utc_timestamp",
+          "files_to_modify": [
+            "src/overland_planner/bootstrap/app_factory.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/application/ports/clock.py",
+            "src/overland_planner/application/ports/event_log.py",
+            "src/overland_planner/adapters/clock/system_clock.py",
+            "src/overland_planner/adapters/logging/structlog_event_log.py",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/integration/bootstrap/test_composition_root.py"
+          ],
+          "implementation_notes": "00a/00b LINE (decision): 00a delivers only what the arm64 smoke needs - settings, EventLog (app.started), SystemClock (this step), probe registry, HealthService, /healthz, /api/health, the built web page (01-04) and the solver probe (01-05). Persistence, projects and Basic auth are 00b (phase 02); DATA_DIR file/mount probes are 01a (03-02). Keep the DISTILL test contract exactly: create_app(environ=None, *, external=None), ExternalPorts(clock, mount_table, tour_solver) (D106); production is `uvicorn --factory overland_planner.bootstrap.app_factory:create_app` with no arguments. Remove the __SCAFFOLD__ markers from app_factory.py and clock.py. Settings (pydantic-settings, brief section 12 keys): DATA_DIR, LOG_LEVEL, ROUTING_PROVIDER (only mock accepted before slice 06a), SOLVER_BUDGET, PLANNER_GIT_SHA (app_version, default 'dev'), WEB_DIST_DIR (new key, not in brief section 12; default resolved from the package location to <repo>/web/dist, the image sets /app/web/dist). The one-line `health.startup.refused` format for refusals arrives with the refusal path at 02-01; here an invalid setting just fails create_app with a clear error. StructlogEventLog writes one JSON object per line to stdout (the acceptance driver parses stdout). Commit: 'feat(platform): composition root with settings and start-up line'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: settings parsing - any generated mapping of valid values parses to the same values; any value outside its domain is refused naming its key; unrelated keys are ignored. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "01-04",
+          "name": "Health service, probe registry, health endpoints and web page",
+          "description": "Typed probe registry, HealthService aggregation, GET /healthz and GET /api/health, the built web page served at / with no fallback, the platform facade, and mutmut configuration with make mutate and make run-local.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-03",
+            "01-02"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "A real uvicorn factory process on a workspace data folder answers /healthz with 200 and status ok after logging its start-up line.",
+            "GET /api/health lists every registered component with its probe outcome, plus an empty banner list when every probe passes.",
+            "GET / serves the built web page as text/html; without a web build it answers 404 and serves no fallback page.",
+            "No request is answered before every registered component has reported its probe outcome.",
+            "make mutate BASE=<ref> runs mutmut on changed domain and application files and fails below an 80% kill rate."
+          ],
+          "test_file": "tests/integration/bootstrap/test_server_start.py",
+          "scenario_name": "test_server_answers_healthz_after_start_up_line | test_home_page_is_the_built_web_page | test_api_health_lists_component_outcomes | tests/unit/application/platform/test_health_service.py",
+          "files_to_modify": [
+            "src/overland_planner/bootstrap/app_factory.py",
+            "src/overland_planner/bootstrap/registry.py",
+            "src/overland_planner/bootstrap/probes.py",
+            "src/overland_planner/application/ports/probe.py",
+            "src/overland_planner/application/platform/health_service.py",
+            "src/overland_planner/application/platform/facade.py",
+            "src/overland_planner/adapters/http/platform_routes.py",
+            "src/overland_planner/adapters/http/web_page.py",
+            "tests/unit/application/platform/test_health_service.py",
+            "tests/integration/bootstrap/test_server_start.py",
+            "pyproject.toml",
+            "uv.lock",
+            "Makefile"
+          ],
+          "implementation_notes": "Slice 00a; ADR-011 + Amendment 1, brief sections 5 and 7, D108, D162. Remove __SCAFFOLD__ from probe.py. Probe registry is typed so mypy strict rejects an unprobeable adapter. Composition order: wire, probe, then serve (app.started after all probes). HealthService: degraded-unhealthy -> /healthz 503 {status: unhealthy, reason}; degraded-healthy -> 200; /api/health {status, components: {name: {outcome, reason}}, banners: [...]}. Web page mounted after the API routes, no fallback shell (D162); `make test` builds web first. Add application/platform/facade.py and its import-linter contract 6 entry. Add mutmut 3.x pinned (D97): [tool.mutmut] paths_to_mutate domain + application, tests tests/unit tests/property tests/integration, marker solver_child excluded; Makefile mutate BASE= (git diff scoping per DEVOPS mutation strategy) and run-local (DATA_DIR=./.data/dev, ROUTING_PROVIDER=mock). The integration test may reuse the acceptance ServerPlanner driver. Commit: 'feat(platform): health endpoints and the built web page'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: HealthService aggregation - for any multiset of probe outcomes, any degraded-unhealthy -> 503; banners = exactly the degraded-unhealthy reasons; result independent of registration order. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "01-05",
+          "name": "OR-Tools solver probe in a child process",
+          "description": "Introduce the TourSolver port (probe contract only) and the OR-Tools adapter whose probe solves the fixed six-node instance twice in a short-lived child process; a failing probe makes the planner degraded-unhealthy with optimizer_unavailable.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-04"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "On a healthy host the solver probe solves the fixed six-node instance twice with identical, known-optimal orders, and /api/health reports it ok.",
+            "A crashing, hanging or wrong-answering solver child makes /healthz answer 503 with reason optimizer_unavailable while every other endpoint keeps working.",
+            "A tour_solver given through ExternalPorts replaces the OR-Tools adapter at the composition root.",
+            "OR-Tools is imported only inside adapters.solver, enforced by import-linter contract 7.",
+            "The probe adds at most 3 seconds to start-up on the Mac."
+          ],
+          "test_file": "tests/integration/adapters/solver/test_ortools_probe.py",
+          "scenario_name": "test_probe_solves_known_instance_twice_identically | test_child_crash_degrades_with_optimizer_unavailable | test_child_timeout_degrades_with_optimizer_unavailable",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/tour_solver.py",
+            "src/overland_planner/adapters/solver/ortools_tour_solver.py",
+            "src/overland_planner/adapters/solver/probe_instance.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/application/platform/test_health_service.py",
+            "tests/integration/adapters/solver/test_ortools_probe.py"
+          ],
+          "implementation_notes": "Slice 00a (the arm64 smoke must prove the aarch64 OR-Tools wheel, D84/D168). Port: TourSolver extends Probeable; in 00a it declares only the probe contract - solve() and incumbent streaming are added at slice 01b (ADR-015), so no stubbed solve. Probe per ADR-011 Amendment 1: fixed 6-node asymmetric instance with one track node and one forbidden arc, solved twice in a short-lived child process (spawn context, bounded timeout), expect the known optimum and identical orders; failure -> degraded, unhealthy, /healthz 503 reason 'optimizer_unavailable' (brief section 7). Keeping OR-Tools out of the main process also protects the idle-RAM guardrail (G1 < 300 MB). Gold fault catalogue (integration, marker solver_child, single-example): child crash, child hang, wrong order. Commit: 'feat(solver): OR-Tools probe in a child process'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: the mapping from probe observations (orders, objective, exit status) to ProbeResult - ok iff both orders are identical and equal the known optimum, for any generated pair of results."
+        },
+        {
+          "id": "01-06",
+          "name": "Multi-stage hardened planner image",
+          "description": "Write the multi-stage Dockerfile (node build stage, uv-locked Python builder, slim non-root runtime) with digest-pinned bases, OCI labels, healthcheck and a .dockerignore that keeps secrets, data and GPX files out of the build context.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-02",
+            "01-05"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "One Dockerfile builds linux/amd64 and linux/arm64: web built on the build platform, Python installed from uv.lock without dev dependencies, slim runtime.",
+            "The container runs as uid 10001, owns /data, declares no volume and has a healthcheck on /healthz.",
+            "Every base image and the uv binary are pinned by digest; labels revision, source, created, alembic-head and commit-ts are set.",
+            ".dockerignore excludes .git, .data, every .env file, node_modules, tests, docs and GPX files from the build context.",
+            "Bytecode is precompiled so the planner can run on a read-only root filesystem, writing only to /data and /tmp."
+          ],
+          "test_file": "tests/ci/test_dockerfile_contract.py",
+          "scenario_name": "test_node_stage_runs_on_buildplatform | test_python_installed_with_uv_sync_frozen_no_dev | test_bytecode_is_precompiled | test_base_images_and_uv_are_pinned_by_digest | test_runtime_user_is_10001 | test_no_volume_is_declared | test_oci_labels_are_set | test_dockerignore_excludes_secrets_data_and_gpx | test_healthcheck_targets_healthz",
+          "files_to_modify": [
+            "Dockerfile",
+            ".dockerignore",
+            "tests/ci/test_dockerfile_contract.py"
+          ],
+          "implementation_notes": "Slice 00a, D84/D170/D173/D176. Stage 1 node:22-bookworm-slim@sha256 on $BUILDPLATFORM (npm ci && vite build). Stage 2 python:3.12-slim-bookworm@sha256 builder with uv copied from ghcr.io/astral-sh/uv:<ver>@sha256, `uv sync --frozen --no-dev`, UV_COMPILE_BYTECODE=1; runtime on the same base. The Python digest in D84 is truncated ('e697c818...d337') and the node digest says '<pin at 01a>': resolve and pin both now (the Python base must be the one SPIKE-1R ran in). User 10001; /data created and owned by it; NO `VOLUME /data` (user decision: the 01a scenario 'packaged planner started without its data storage' needs DATA_DIR on the container's overlay root). ENV DATA_DIR=/data, WEB_DIST_DIR=/app/web/dist, ROUTING_PROVIDER=mock (until 06a). CMD uvicorn --factory ... --host 0.0.0.0 --port 8080 --workers 1 (container-internal; host exposure is decided by compose, D174). HEALTHCHECK = Python one-liner on /healthz (30 s interval, 3 retries, 30 s start period). Build args GIT_SHA, COMMIT_TS, ALEMBIC_HEAD (default 'none' until migrations exist at 02-01) -> labels org.opencontainers.image.{revision,source,created}, org.overland.alembic-head, org.overland.commit-ts and ENV PLANNER_GIT_SHA. .dockerignore (D170): .git, .data, .env*, node_modules, tests, docs, *.gpx, .venv, web/dist, mutants. The Mac has no Docker: the step's done-when is the static contract test (plus hadolint if installed); static tests cover the node stage on $BUILDPLATFORM, `uv sync --frozen --no-dev` and UV_COMPILE_BYTECODE=1, while the actual amd64/arm64 builds are checked by CI jobs 5 and 6 (step 01-08) and the read-only-root run by job 7 (step 02-04). The image-level @docker scenario 'Sharing the packaged planner never shares Marco's password' is mapped to 01-09 (CI job 7). Commit: 'build(image): multi-stage non-root planner image'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: a Dockerfile is declarative build configuration with no invariant-bearing code; its contract is checked statically. Compensate with property-based test at unit level on adjacent slot (solver probe result mapping, step 01-05)."
+        },
+        {
+          "id": "01-07",
+          "name": "CI commit stage: lint, test-python, test-web",
+          "description": "Create ci.yml triggers, permissions, caches and jobs 1 (lint), 2 (test-python, building the web page first) and 4 (test-web), the workflow-level PENDING_FLAGS list and a non-blocking walking-skeleton step; add dependabot.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-02",
+            "01-04",
+            "01-06"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Every push and pull request runs lint, test-python and test-web in parallel on ubuntu-24.04, with every action pinned by commit SHA.",
+            "test-python builds the web page before pytest, prints the filesystem type of its workspace data folder, and passes PENDING_FLAGS to pytest.",
+            "PENDING_FLAGS starts empty; the walking skeleton runs in its own reported but non-blocking test-python step until step 03-06.",
+            "lint blocks on uv lock check, ruff, mypy strict, lint-imports, gitleaks, hadolint, actionlint, svelte-check, eslint, prettier, pip-audit and npm audit.",
+            "Docs-only pushes run only markdown lint; the workflow default permission is contents read."
+          ],
+          "test_file": "tests/ci/test_ci_workflow.py",
+          "scenario_name": "test_commit_stage_jobs_run_on_every_push | test_test_python_builds_web_before_pytest_and_passes_pending_flags | test_walking_skeleton_step_is_non_blocking_until_slice_01a",
+          "files_to_modify": [
+            ".github/workflows/ci.yml",
+            ".github/dependabot.yml",
+            "tests/ci/test_ci_workflow.py"
+          ],
+          "implementation_notes": "Slice 00a, DEVOPS CI table jobs 1, 2, 4; D86, D161, D162, D168, D169, D170, D178. Triggers: push (all branches), pull_request to main, workflow_dispatch; concurrency ci-${{ github.ref }} (cancel-in-progress except main); docs-only path filter -> lint-docs only. Default permissions contents: read. Caches: setup-uv enable-cache (uv.lock), setup-node npm. Job 2: `npm ci && npx vite build`, PLANNER_TEST_WORKSPACE and DATA_DIR under $GITHUB_WORKSPACE, `df -T` before pytest, HYPOTHESIS_PROFILE=ci, pytest $PENDING_FLAGS -m 'not real_provider and not pi and not walking_skeleton' with coverage total >= 80% (the domain >= 90% gate is switched on at 02-02, when domain code first exists). USER DECISIONS (2026-11-02): PENDING_FLAGS starts empty (02-07 adds --run-pending=slice-00b, 03-10 adds --run-pending=slice-01a), overriding D170's 'today' value; the walking skeleton runs in a separate job-2 step with continue-on-error: true (visible in the summary) until 03-06 makes it blocking. Job 1 per DEVOPS table incl. pip-audit on `uv export --frozen --no-dev` and npm audit --omit=dev --audit-level=high. Job 4: npm ci, vitest, vite build, upload web-dist. dependabot weekly, grouped (actions, uv, npm, docker). The test parses ci.yml with PyYAML and asserts the contract (jobs, needs, triggers, permissions, PENDING_FLAGS use, SHA-pinned actions, runner pins). Commit: 'ci: commit stage with lint, python and web tests'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: a CI workflow is declarative configuration; its contract is a single structural check. Compensate with property-based test at unit level on adjacent slot (HealthService aggregation, step 01-04)."
+        },
+        {
+          "id": "01-08",
+          "name": "CI image jobs: amd64, arm64 under QEMU, smoke",
+          "description": "Add jobs 5 (image-amd64) and 6 (image-arm64, QEMU by default) with gha caches, push-by-digest and attestations on main only, Trivy vulnerability and secret scans, the amd64 image artifact for e2e and the arm64 functional smoke.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-06",
+            "01-07"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "On main pushes and manual runs, image-amd64 builds natively and image-arm64 under QEMU unless ARM64_RUNNER is set, each with its own gha cache.",
+            "image-amd64 always exports a compressed amd64 image artifact kept for one day for the e2e job.",
+            "Only main pushes push images by digest with SBOM and provenance; branch and manual builds never write to GHCR.",
+            "Trivy scans both images for vulnerabilities and secrets; a fixable CRITICAL finding fails the job, HIGH findings are reported.",
+            "The arm64 smoke runs the image with a named volume and 1 GB limit and sees /healthz ok and the solver probe ok within 180 seconds."
+          ],
+          "test_file": "tests/ci/test_ci_workflow.py",
+          "scenario_name": "test_image_jobs_push_by_digest_only_on_main | test_arm64_smoke_checks_healthz_and_solver_probe | test_image_jobs_have_job_level_package_permissions",
+          "files_to_modify": [
+            ".github/workflows/ci.yml",
+            ".github/scripts/image-smoke.sh",
+            "tests/ci/test_ci_workflow.py"
+          ],
+          "implementation_notes": "Slice 00a, DEVOPS jobs 5 and 6; D84, D161, D163, D168, D169, D170, D178. Jobs 5-9 run only on main pushes and workflow_dispatch. Job-level permissions contents read, packages/id-token/attestations write (D161); push-by-digest and attestation steps guarded by `github.event_name == 'push' && github.ref == 'refs/heads/main'`. Build args GIT_SHA, COMMIT_TS (`git log -1 --format=%cI`), ALEMBIC_HEAD. Job 6 runs-on `${{ vars.ARM64_RUNNER || 'ubuntu-24.04' }}`, setup-qemu + buildx linux/arm64, `--load` for the smoke. Smoke script: `docker run --platform linux/arm64 --init -m 1g -e ROUTING_PROVIDER=mock -v overland-smoke:/data`, poll /healthz (180 s QEMU, 60 s native), assert /api/health shows the solver component ok and `python -c 'import ortools'` works; the real /data persistence assertion is added at 03-02 when that probe exists. No timing or RSS figures under QEMU. Record the compressed image size per arch in the job summary (D169). Commit: 'ci: multi-arch image build, scan and arm64 smoke'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: declarative CI configuration and a single-shot smoke script. Compensate with property-based test at unit level on adjacent slot (solver probe result mapping, step 01-05)."
+        },
+        {
+          "id": "01-09",
+          "name": "CI e2e, mutation, publish and weekly; slice 00a ends",
+          "description": "Add job 7 (e2e on the loaded amd64 image: Playwright home-page check plus the compose-or-security pytest selection), job 8 (scoped mutation), job 9 (publish manifest list, attest, release.json, GHCR prune) and weekly.yml (rescan, audits, deep properties, storage report).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-08"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "e2e loads and then deletes the amd64 image artifact, starts the image on loopback, and passes the Playwright home-page check on chromium and webkit-iphone14.",
+            "publish runs only for main pushes after image-amd64, image-arm64 and e2e succeed and mutation succeeded or was skipped; never after a failure or cancellation.",
+            "A main push yields one attested manifest list tagged sha-<12> and main plus release.json; GHCR keeps only that release and its referenced per-arch manifests.",
+            "e2e runs the compose-or-security selection with --run-external, so the packaged-planner password check blocks publish once slice 00b is enabled.",
+            "weekly.yml re-scans the main digest, audits dependencies, runs the deep property profile and reports package storage, without blocking deploys."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_00b.py",
+          "scenario_name": "Sharing the packaged planner never shares Marco's password | tests/ci/test_ci_workflow.py::test_publish_gating_matches_d160 | tests/ci/test_ci_workflow.py::test_e2e_deletes_image_artifact_after_load | tests/ci/test_ci_workflow.py::test_mutation_job_runs_only_for_domain_or_application_changes | tests/e2e/home.spec.ts",
+          "gated_scenarios": [
+            {
+              "title": "Sharing the packaged planner never shares Marco's password",
+              "gate": "ci-job-7"
+            }
+          ],
+          "files_to_modify": [
+            ".github/workflows/ci.yml",
+            ".github/workflows/weekly.yml",
+            "tests/e2e/home.spec.ts",
+            "web/playwright.config.ts",
+            "web/package.json",
+            "web/package-lock.json",
+            "tests/ci/test_ci_workflow.py",
+            "Makefile",
+            "README.md"
+          ],
+          "implementation_notes": "Slice 00a, DEVOPS jobs 7, 8, 9 and weekly.yml; D160, D163, D169, D170, D171, D176. Job 7 (needs 5): download artifact, `docker load`, delete the artifact (D169); until compose exists (02-04) it starts the image with `docker run` on 127.0.0.1:8080 and a named volume; Playwright projects chromium + webkit-iphone14 run tests/e2e/home.spec.ts (heading Projects); then `pytest --run-external $PENDING_FLAGS -m 'compose or security'` with PLANNER_IMAGE=overland-planner:ci-<sha>. CI-GATED SCENARIO: 'Sharing the packaged planner never shares Marco's password' (@requires_external @docker @security) runs only in job 7 (no Docker on the Mac). It is wired here but stays skipped while slice-00b is @pending; it becomes blocking at 02-07 (@pending removed, slice-00b added to PENDING_FLAGS). The crafter's done-when here is the offline workflow contract test; the scenario's green run is verified at the 02-07 orchestrator gate. Job 8 is created now because application code exists since 01-04 (D102/D160): needs 2, main pushes touching src/overland_planner/{domain,application}/** only, mutmut on files changed in before..sha, kill rate >= 80%, 30 min timeout. Job 9: needs [image-amd64, image-arm64, e2e, mutation]; `if:` = the D160 expression including `contains(fromJSON('[\"success\",\"skipped\"]'), needs.mutation.result)` (golden-order term only at 03-ops); imagetools create, attest the list, release.json {git_sha, commit_ts, digest, alembic_head, created} + job summary, prune GHCR keeping referenced children. weekly.yml: Monday 05:00 UTC + dispatch; ZAP baseline and Playwright firefox/webkit-desktop are added at 02-04 when the compose stack exists. Makefile: e2e-local (Playwright against run-local). README: developer quick start and a CI budget section (placeholders for image size per arch and minutes per main push, filled by the orchestrator). Commit: 'ci: e2e, mutation gate, publish and weekly scans'. LAST STEP OF SLICE 00a: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push to origin main (user pre-requisites 1-4 of DEVOPS done: private repo MrMilgauss, Actions permissions, gh auth); verify CI green and publish: manifest list has amd64 + arm64, `gh attestation verify oci://ghcr.io/mrmilgauss/overland-planner@<digest> --repo MrMilgauss/<repo>` passes, arm64 smoke green, the non-blocking walking-skeleton step ran (RED expected); record image size and minutes in README. If a main push exceeds about 45 billed minutes or one release exceeds 400 MB, stop and report to the user (D169).\n\nEXEMPT FROM PARADIGM: declarative CI configuration plus a single-shot browser smoke. Compensate with property-based test at unit level on adjacent slot (HealthService aggregation, step 01-04)."
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "name": "Slice 00b: the planner on the Pi, home network only",
+      "description": "US-01a. Pulls SQLite/Alembic and project create/list forward (00b scenarios create projects); Basic auth; hardened compose; loopback-first deploy and rollback scripts tested offline; Pi operations targets. Ends with 00b scenarios blocking in CI; Pi scenarios and the drill are an orchestrator/user gate.",
+      "steps": [
+        {
+          "id": "02-01",
+          "name": "SQLite persistence, Alembic migrations and fatal start-up refusal",
+          "description": "Wire SQLAlchemy/SQLite (WAL, foreign keys, busy timeout) with a UnitOfWork, Alembic migrations/ with the first projects revision applied at start, the fatal database probe, and the generic refusal path: one health.startup.refused line and a non-zero exit.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-09"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "A fresh workspace data folder gets a database migrated to head, with WAL, foreign keys and a 5 s busy timeout, before the first request.",
+            "The database probe checks a write-read round trip, WAL, quick_check and head revision; any failure refuses start-up.",
+            "A refused start-up exits non-zero after exactly one health.startup.refused line naming component and reason, and answers no request.",
+            "Alembic upgrade, downgrade to base and upgrade again on a seeded database pass in CI job 2.",
+            "Alembic run from the repository honours an externally supplied database URL and extra version locations."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "A data folder the planner cannot write to stops it at start-up | tests/unit/bootstrap/test_startup_gate.py | tests/integration/adapters/persistence/test_sqlite_probe.py | tests/integration/migrations/test_alembic_round_trip.py",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/unit_of_work.py",
+            "src/overland_planner/adapters/persistence/database.py",
+            "src/overland_planner/adapters/persistence/unit_of_work.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/persistence/migrator.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "src/overland_planner/bootstrap/startup.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "migrations/env.py",
+            "migrations/script.py.mako",
+            "migrations/versions/0001_projects.py",
+            "alembic.ini",
+            "Dockerfile",
+            ".github/workflows/ci.yml",
+            "tests/unit/bootstrap/test_startup_gate.py",
+            "tests/integration/adapters/persistence/test_sqlite_probe.py",
+            "tests/integration/migrations/test_alembic_round_trip.py"
+          ],
+          "implementation_notes": "PULLED FORWARD from 01a (user decision 2026-11-02): the 00b scenarios 'Household members...', 'A wrong shared password...' and 'Each start of the planner...' need POST/GET /api/projects. ADR-006 / ADR-018, brief sections 6, 7, 9. Engine on DATA_DIR/db/planner.sqlite; per-connection PRAGMAs journal_mode=WAL, foreign_keys=ON, busy_timeout=5000; single process-wide write lock. Revision 0001 creates `projects` (id, name, objective, settings, revision, created_at); anchor columns arrive at 03-09 with their own revision; every revision has a CI-tested downgrade (DV-5). migrations/ lives at the repo root (the DISTILL W3 test uses REPO_ROOT/migrations): env.py must use `sqlalchemy.url` when already set on the Config and accept `version_locations` with path_separator=os, otherwise derive the URL from DATA_DIR. The app finds migrations through a new setting MIGRATIONS_DIR (default from the package location; image ENV /app/migrations); alembic.ini ships in the image for the D90 `docker compose run --rm planner alembic downgrade` path. Dockerfile: COPY migrations and alembic.ini; CI computes ALEMBIC_HEAD. Migration at start: fresh or at head only here; newer/older handling is 03-01. Refusal mechanism (D190): the first fatal component stops wiring, logs exactly one `health.startup.refused` {component, reason} line on stdout and exits non-zero - check how `uvicorn --factory` reports the factory failure so exactly one refusal line reaches stdout; invalid settings (01-03) now use the same path. With an unwritable DATA_DIR the persistence component fails first (cannot create db/), e.g. reason data_dir_not_writable. Gold catalogue (integration): WAL silently off, corrupted file (quick_check), unwritable folder. app.started gains alembic_head. Local check: `uv run pytest tests/acceptance --run-pending=slice-01a -k 'cannot write'` (the @pending tag is feature-level; it is removed at 03-10). Commit: 'feat(persistence): SQLite with Alembic and fatal start-up refusal'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: the start-up gate - for any sequence of probe outcomes, start-up refuses iff one is fatal, logs exactly one refusal naming the first fatal component, and probes nothing after it. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "02-02",
+          "name": "Create, list and open projects with the HTTP contract",
+          "description": "Project entity and name rule in the domain, ProjectService behind the catalog facade, POST/GET /api/projects and GET /api/projects/{id}, the {code, message} error envelope for every /api error, and the committed OpenAPI snapshot test.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-01"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "Creating a project with a name answers 201 with its id; the project is listed and opens as an empty workspace with that title.",
+            "An empty or spaces-only name answers 422 validation_error with message Give the project a name, and no project is created.",
+            "Every non-2xx answer under /api is the {code, message} envelope with the code enumerated for its status; unknown project ids answer 404 not_found.",
+            "The generated OpenAPI schema equals the committed snapshot; any API change fails the test until the snapshot is regenerated on purpose.",
+            "Each project change increments the project revision."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "Marco creates a trip project | A project without a name is not created | tests/unit/domain/catalog/test_project.py | tests/unit/application/catalog/test_project_service.py | tests/contract/http/test_openapi_snapshot.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/project.py",
+            "src/overland_planner/application/ports/repositories.py",
+            "src/overland_planner/application/catalog/project_service.py",
+            "src/overland_planner/application/catalog/facade.py",
+            "src/overland_planner/adapters/persistence/project_repository.py",
+            "src/overland_planner/adapters/http/errors.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "pyproject.toml",
+            ".github/workflows/ci.yml",
+            "Makefile",
+            "tests/unit/domain/catalog/test_project.py",
+            "tests/unit/application/catalog/test_project_service.py",
+            "tests/contract/http/__init__.py",
+            "tests/contract/http/test_openapi_snapshot.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Pulled forward from 01a (user decision, see 02-01). Brief section 5 HTTP contract (D130, D183): snake_case fields, 201 on create, envelope {code, message}; a RequestValidationError handler maps FastAPI's default body to validation_error; unknown /api paths and ids answer 404 not_found. Name rule lives in the domain (value object): surrounding whitespace trimmed, empty after trimming -> 'Give the project a name' (D151). Project resource: id (string), name, revision; GET /api/projects returns a JSON list; GET /api/projects/{id} returns the project. The DISTILL 'empty workspace' check reads GET .../items: implement GET /api/projects/{id}/items returning [] now; it is extended at 03-05. Add the catalog facade and its import-linter contract 6 entry. Switch on the coverage gate domain >= 90% in ci.yml job 2 now that domain code exists. OpenAPI snapshot: committed tests/contract/http/openapi.json (brief section 5); `make openapi-snapshot` regenerates it deliberately; every later API step regenerates it in the same commit. Local check: `--run-pending=slice-01a -k 'creates a trip project or without a name'`. Commit: 'feat(catalog): create, list and open projects'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: any whitespace-only string is refused and leaves the universe {projects.names, project.items} unchanged; any name with a visible character is accepted, listed once, and only projects.names changes. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "02-03",
+          "name": "Optional shared household password (HTTP Basic auth)",
+          "description": "Opt-in Basic auth from PLANNER_BASIC_AUTH_USER/PASSWORD covering the web page, the API and /api/health, with /healthz left open; constant-time comparison; 401 envelope; security.auth.disabled warning; password redaction in logs.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-02"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "With auth on, the home page, every /api path and /api/health answer 401 with WWW-Authenticate Basic unless the configured user and exact password are sent.",
+            "/api answers to unauthenticated requests use the envelope code unauthorized and reveal no project data.",
+            "/healthz answers without credentials and reveals no project data.",
+            "With auth off, every start logs one security.auth.disabled warning; the password never appears in any log line.",
+            "Setting only one of user or password refuses start-up as invalid configuration."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_00b.py",
+          "scenario_name": "Household members are asked for the shared password when it is switched on | A wrong shared password is refused | Each start of the planner reports healthy and records one start-up line | tests/unit/adapters/http/test_basic_auth_credentials.py | tests/integration/http/test_basic_auth.py",
+          "files_to_modify": [
+            "src/overland_planner/adapters/http/basic_auth.py",
+            "src/overland_planner/adapters/logging/structlog_event_log.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/adapters/http/test_basic_auth_credentials.py",
+            "tests/integration/http/test_basic_auth.py"
+          ],
+          "implementation_notes": "Slice 00b, US-01a app side; brief section 12, ADR-011 Amendment 1, D98. Cover everything except /healthz (web page and static assets included). Compare user and password with secrets.compare_digest on UTF-8 bytes. 401 on /api paths -> envelope {code: unauthorized, message}; on non-/api paths a plain 401; both with `WWW-Authenticate: Basic realm=...`. Structlog processor redacts the password value and any password/authorization keys. Only one of the two settings -> fatal start-up refusal through the 02-01 path (user decision 2026-11-02). 'Each start...' is mapped here because its 'When the planner is restarted' step reads the project list (needs 02-02). Local check: `--run-pending=slice-00b -k 'password or start-up line'`. Commit: 'feat(security): optional shared household password'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: for any generated (user, password) configuration and presented credentials, access is granted iff both match exactly (prefixes, case changes, unicode variants and empty values refused), and a refused request changes nothing in the universe {projects.names, project.items}. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "02-04",
+          "name": "Hardened compose set-up, home network only",
+          "description": "deploy/compose.yaml with the planner service only (mock routing), fail-closed PLANNER_BIND, CPU and memory caps, hardening, named volume, log rotation and healthcheck; .env.example; compose.ci.yaml; job 7 and the weekly ZAP scan move onto the compose stack.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "01-09",
+            "02-03"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "compose.yaml defines only the planner in project overland, publishing PLANNER_BIND:PLANNER_PORT(8080):8080 and no other port.",
+            "Compose refuses to start without PLANNER_BIND; .env.example sets 127.0.0.1 and documents every planner setting used so far, with no secret values.",
+            "The planner runs with cpus 1, 1g memory and swap, 256 pids, oom_score_adj 500, all capabilities dropped, no-new-privileges, read-only root and 64 MB /tmp.",
+            "Volume overland_planner-data is mounted at /data, logs rotate at 10m x 5, and the healthcheck uses /healthz.",
+            "CI e2e starts compose.yaml plus compose.ci.yaml with the loaded image and proves the container cannot write outside /data and /tmp."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_00b.py",
+          "scenario_name": "The planner stays on the home network by default | The same setup runs on Marco's PC | tests/deploy/test_compose_contract.py | tests/deploy/test_container_hardening.py",
+          "gated_scenarios": [
+            {
+              "title": "The planner stays on the home network by default",
+              "gate": null
+            },
+            {
+              "title": "The same setup runs on Marco's PC",
+              "gate": "orchestrator"
+            }
+          ],
+          "files_to_modify": [
+            "deploy/compose.yaml",
+            "deploy/compose.ci.yaml",
+            ".env.example",
+            ".github/workflows/ci.yml",
+            ".github/workflows/weekly.yml",
+            "pyproject.toml",
+            "tests/deploy/__init__.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_container_hardening.py"
+          ],
+          "implementation_notes": "Slice 00b; D81, D82, D83, D167, D173, D174. Ports: `${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER_PORT:-8080}:8080`. Image `${PLANNER_IMAGE:?}` (from release.env written by deploy.sh). Network `edge` only for now; `routing` (internal) arrives with valhalla at 06a-ops. Auth settings reach the container through `environment:` interpolation (`${PLANNER_BASIC_AUTH_USER:-}`), never baked into the image. `init: true`, `restart: unless-stopped`, json-file 10m x 5. compose.ci.yaml overrides the image to the loaded CI tag and PLANNER_BIND=127.0.0.1. Job 7 switches from `docker run` to `docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait`, then `down -v`. tests/deploy/test_container_hardening.py carries the `security` marker (D173: container cannot write /app; register the marker in pyproject), needs Docker and skips on the Mac. weekly.yml gains the ZAP baseline against the compose stack (non-blocking) and Playwright firefox/webkit-desktop. STEP DONE-WHEN (crafter, Mac): the static scenario 'The planner stays on the home network by default' (`--run-pending=slice-00b -k 'home network'`) and tests/deploy/test_compose_contract.py pass. ORCHESTRATOR/USER GATE: 'The same setup runs on Marco's PC' (@requires_external @pc_amd64) cannot be made green by the crafter; it is kept for traceability and run with `--run-external -k 'PC'` on an amd64 PC with Docker, at a time the user names, never in CI. Commit: 'feat(deploy): hardened compose set-up bound to the home network'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: compose files are declarative configuration verified by a static contract and single-shot container checks. Compensate with property-based test at unit level on adjacent slot (Basic-auth credential check, step 02-03)."
+        },
+        {
+          "id": "02-05",
+          "name": "Loopback-first deploy script and make deploy",
+          "description": "deploy/scripts/deploy.sh and lib.sh (lock, preflight, pull, predeploy snapshot, release pointer rotation, loopback start, smoke, publish, auto-rollback, releases.log writer) and make deploy on the Mac (CI-green gate, attestation verify, rsync, ssh), tested offline against fake docker, curl and flock shims.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-04"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "deploy.sh starts the new digest on 127.0.0.1, checks /healthz, /api/health and app_version, and only then publishes on PLANNER_BIND.",
+            "A deploy rotates release.env to prev and prev to prev2, rewriting only PLANNER_ keys and preserving every other line.",
+            "A failure before publishing restores the snapshot and previous release and republishes it; a failure after publishing rolls back the digest only; both exit non-zero.",
+            "Every deploy outcome, including unchanged digest and auto-rollback with its reason, appends one releases.log line; a concurrent deploy aborts on the lock.",
+            "make deploy refuses unless the SHA has a green ci.yml run with release.json and gh attestation verify passes for its digest."
+          ],
+          "test_file": "tests/deploy/test_deploy_script.py",
+          "scenario_name": "Marco brings the planner up on his Pi with one command | test_publishes_only_after_loopback_smoke | test_deploy_rotates_pointers_preserving_other_lines | test_failure_before_publish_restores_snapshot_and_previous_release | test_failure_after_publish_rolls_back_digest_only | test_every_deploy_outcome_appends_one_releases_log_line | test_concurrent_deploy_aborts_on_lock | test_same_digest_is_unchanged | test_make_deploy_refuses_without_green_run | test_make_deploy_refuses_on_failed_attestation",
+          "gated_scenarios": [
+            {
+              "title": "Marco brings the planner up on his Pi with one command",
+              "gate": "orchestrator"
+            }
+          ],
+          "files_to_modify": [
+            "deploy/scripts/deploy.sh",
+            "deploy/scripts/lib.sh",
+            "Makefile",
+            ".pre-commit-config.yaml",
+            ".github/workflows/ci.yml",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/docker",
+            "tests/deploy/shims/curl",
+            "tests/deploy/shims/flock",
+            "tests/deploy/shims/gh",
+            "tests/deploy/shims/ssh",
+            "tests/deploy/shims/rsync",
+            "tests/deploy/test_deploy_script.py"
+          ],
+          "implementation_notes": "Slice 00b; DEVOPS 'scripts/deploy.sh' steps 1-9, D89, D91, D165, D171, D176, D178. release.env holds only PLANNER_* keys (PLANNER_IMAGE=...@<digest>, PLANNER_GIT_SHA, PLANNER_COMMIT_TS, PLANNER_ALEMBIC_HEAD); other lines preserved. This step owns the shared lib.sh functions: pointer rotation (release.env -> release.env.prev -> release.env.prev2, PLANNER_* keys only) and the releases.log writer (D176 fields: ts, action, digest, git_sha, commit_ts, alembic_head, result, reason), used by deploy.sh now and by rollback.sh at 02-06. The auto-rollback inside deploy.sh restores release.env.prev; the release.env.failed handling and STEPS=2 belong to 02-06. Pi commands always `-p overland --env-file .env --env-file release.env` (routing.env from 06a-ops). Snapshots: alpine (pinned digest) tar of overland_planner-data, keep current + previous. make deploy: clean tree; SHA default = newest main SHA whose ci.yml run succeeded and has release.json (D176); `gh run download`; `gh attestation verify` (D171); rsync deploy/ (never .env); ssh deploy.sh; copy releases.log back to .data/ops/releases.log. Offline tests: pytest runs the script with PATH prefixed by tests/deploy/shims (scripted results, invocation log) and asserts observable effects (call order, files written, exit codes). macOS ships bash 3.2 and no flock: keep the scripts bash-3.2 compatible or skip when `bash --version` < 4 and say so; shim flock. shellcheck in pre-commit and job 1. STEP DONE-WHEN (crafter, Mac): tests/deploy/test_deploy_script.py passes (make deploy preflight tests run make against shimmed gh/ssh/rsync). ORCHESTRATOR/USER GATE (see gated_scenarios): 'Marco brings the planner up on his Pi with one command' (@requires_external @pi) cannot be made green by the crafter; it stays traced here and is run with `--run-external -k 'one command'` against pi-host by the orchestrator with the user, at a start time the user names, after the 02-07 push. Commit: 'feat(deploy): loopback-first deploy with automatic rollback'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: shell deploy flows are single-shot orchestrations of external commands, verified by example runs against shims. Compensate with property-based test at unit level on adjacent slot (releases.log metrics in deploy/scripts/dora.py, step 02-07)."
+        },
+        {
+          "id": "02-06",
+          "name": "Rollback script, release pointers and releases.log",
+          "description": "deploy/scripts/rollback.sh and make rollback [STEPS=2]: the kept failed release (release.env.failed, D176) and the schema-downgrade path (D90), reusing the 02-05 lib.sh pointer and releases.log functions; tested offline against the same shims.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-05"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "make rollback restores prev and STEPS=2 restores prev2; the failed release is kept as release.env.failed so repeated rollbacks never flip-flop.",
+            "A rollback across differing schema heads takes a fresh snapshot, then downgrades with the current image before switching digests.",
+            "A failed downgrade restores that deploy's predeploy snapshot after printing its timestamp.",
+            "Every rollback appends one releases.log line and never changes routing.env.",
+            "A rollback uses the same loopback start, smoke and publish as a deploy and skips attestation verification."
+          ],
+          "test_file": "tests/deploy/test_rollback_script.py",
+          "scenario_name": "test_rollback_steps_one_and_two | test_repeated_rollback_does_not_flip_flop | test_schema_downgrade_path_snapshots_first | test_failed_downgrade_restores_predeploy_snapshot | test_rollback_appends_one_releases_log_line | test_rollback_never_changes_routing_env | test_rollback_skips_attestation | test_rollback_publishes_only_after_loopback_smoke",
+          "files_to_modify": [
+            "deploy/scripts/rollback.sh",
+            "deploy/scripts/lib.sh",
+            "Makefile",
+            "tests/deploy/test_rollback_script.py"
+          ],
+          "implementation_notes": "Slice 00b; DEVOPS rollback contract table, D90, D165, D166, D171, D176. User decision 2026-11-02: rollback per D176 with STEPS=1|2 only; the Makefile outline's `TO=<digest>` is NOT implemented. Schema path (D90): differing org.overland.alembic-head labels -> snapshot with the planner stopped, then `docker compose run --rm planner alembic downgrade <prev head>` with the current image (02-01 ships alembic.ini), then switch digest; downgrade failure -> restore that deploy's predeploy snapshot after printing its timestamp. Never touches routing.env (D166). Pointer rotation and the releases.log writer already exist in lib.sh (02-05); this step adds only rollback-specific behaviour (STEPS selection, release.env.failed so a second rollback does not overwrite the pointers with the failed release, schema path, attestation skip). The rollback drill on the Pi (DEVOPS table: deploy A -> B -> C -> rollback -> B -> rollback STEPS=2 -> A) is an ORCHESTRATOR/USER GATE after the 02-07 push, not part of this step. Commit: 'feat(deploy): rollback with two release pointers'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: shell rollback flows are single-shot orchestrations verified by example runs against shims. Compensate with property-based test at unit level on adjacent slot (releases.log metrics in deploy/scripts/dora.py, step 02-07)."
+        },
+        {
+          "id": "02-07",
+          "name": "Pi operations targets and DORA metrics; slice 00b ends",
+          "description": "Makefile pi-preflight, status, logs, diag, image-gc, uninstall, purge and dora (deploy/scripts/dora.py over releases.log), README operations section with an idle-memory placeholder; remove @pending from slice 00b and add it to PENDING_FLAGS.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-03",
+            "02-06"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Every Pi target acts only on compose project overland and overland_ resources; purge needs a typed confirmation; nothing ever runs a global prune.",
+            "image-gc keeps the last three planner digests on the Pi; diag shows container stats and /healthz only.",
+            "make dora reports deployment frequency, lead time, change failure rate and time to restore computed from the copied releases.log.",
+            "Every CI-runnable slice-00b scenario is blocking in CI; the three gated scenarios are verified at the orchestrator gate.",
+            "README explains deploy, rollback and the accepted no-backup risk, with an idle-memory placeholder the orchestrator fills after the Pi run."
+          ],
+          "test_file": "tests/deploy/test_dora.py",
+          "scenario_name": "The idle planner leaves room on the Pi | test_change_failure_rate_is_a_fraction | test_lead_time_is_never_negative | test_metrics_ignore_line_order | tests/deploy/test_makefile_targets.py",
+          "gated_scenarios": [
+            {
+              "title": "The idle planner leaves room on the Pi",
+              "gate": "orchestrator"
+            }
+          ],
+          "files_to_modify": [
+            "Makefile",
+            "deploy/scripts/dora.py",
+            "deploy/scripts/pi-preflight.sh",
+            "README.md",
+            ".github/workflows/ci.yml",
+            "tests/acceptance/overland_route_planner_mvp/slice-00b-planner-on-the-pi.feature",
+            "tests/deploy/test_dora.py",
+            "tests/deploy/test_makefile_targets.py"
+          ],
+          "implementation_notes": "Slice 00b; D99, D101, D176, D178 and the DEVOPS Makefile outline. diag at 00b = `docker stats --no-stream` + /healthz only (/api/diagnostics is 03-ops). purge: typed confirmation, removes only overland_* volumes and ghcr.io/mrmilgauss/overland-planner images; image-gc filters by our repository and keeps 3 digests (rollback uses prev, prev2). dora.py reads releases.log lines (D176 fields) and computes the four metrics per kpi-contracts.yaml delivery_metrics. test_makefile_targets.py uses `make -n` dry runs to assert every docker command carries `-p overland` and no `prune -a`/`system prune`. README: operations, D91 accepted risk (stated to Marco at the demo), D178 checks (DHCP reservation for 192.168.1.10, GHCR token type), and an 'Idle memory on pi-host: <to be measured>' placeholder. Remove the feature-level @pending from slice-00b-planner-on-the-pi.feature (the only allowed feature-file edit) and add `--run-pending=slice-00b` to PENDING_FLAGS (D170), so every CI-runnable 00b scenario becomes blocking; the three gated ones ('Marco brings the planner up on his Pi with one command', 'The same setup runs on Marco's PC', 'The idle planner leaves room on the Pi') stay skipped in CI and are verified at the orchestrator gate; run the full local suite. STEP DONE-WHEN (crafter, Mac): tests/deploy/test_dora.py, test_makefile_targets.py and every 00b scenario runnable offline pass. ORCHESTRATOR/USER GATE: 'The idle planner leaves room on the Pi' (@requires_external @pi) cannot be made green by the crafter; it stays traced here. Commit: 'feat(ops): Pi operations targets and DORA metrics'. LAST STEP OF SLICE 00b: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push to origin main; verify CI green (jobs 2 and 7 now run the 00b scenarios as blocking, incl. 'Sharing the packaged planner never shares Marco's password') and publish. Then, with the user at a start time the user names: make deploy; `--run-external -k 'one command'` against the Pi; the rollback drill; Giulia's phone check; after 10 idle minutes `--run-external -k idle`; fill the README idle-memory placeholder (brief section 12 says 'measured in slice 01a'; the scenario is 00b); optionally the PC scenario.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target (dora.py): for any generated releases.log, change failure rate is in [0, 1], lead time is never negative, metrics are invariant to line order, and auto-rollback lines count as failures exactly once. Acceptance .feature files are the DISTILL SSOT; only @pending is removed."
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "name": "Slice 01a: trail and places kept on the Pi",
+      "description": "US-01b, US-02a, US-02c and the walking skeleton. Newer-database refusal and pre-migration copy, DATA_DIR persistence probes and banner, GPX import with hardening and caps, POIs, Start/End anchors and a minimal workspace UI. Ends with the walking skeleton and every 01a scenario blocking in CI.",
+      "steps": [
+        {
+          "id": "03-01",
+          "name": "Refuse newer databases; copy before migrating older ones",
+          "description": "Before any write, read the database revision read-only: a revision this planner does not know refuses start-up with db_newer_than_app and nothing copied or written; an older known revision is copied to db/backups (last three kept) and then upgraded.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-07"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Data saved by a newer planner version refuses start-up with reason db_newer_than_app, and the database file is left byte-identical with no copy made.",
+            "Going back to the newer planner finds every project and item exactly as before the refusal.",
+            "A database at an older known revision is copied to db/backups/planner-{rev}-{ts}.sqlite before upgrading; only the newest three copies are kept.",
+            "A fresh database or one already at head is migrated or left as it is without any copy."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "An older planner refuses data saved by a newer version instead of changing it | Data refused by an older planner is intact when Marco goes back to the newer one | tests/unit/application/platform/test_migration_policy.py | tests/integration/adapters/persistence/test_migrator.py",
+          "files_to_modify": [
+            "src/overland_planner/application/platform/migration_policy.py",
+            "src/overland_planner/adapters/persistence/migrator.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/application/platform/test_migration_policy.py",
+            "tests/integration/adapters/persistence/test_migrator.py"
+          ],
+          "implementation_notes": "Slice 01a, US-01b; D129, ADR-018 + DEVOPS amendment DV-5, D90. Order: open the database read-only (sqlite URI mode=ro), read alembic_version; not in the script directory -> fatal `db_newer_than_app` through the 02-01 refusal path; older known -> consistent copy with the sqlite backup API, prune to the newest 3, then `alembic upgrade head`; at head -> nothing. The decision table (relation of DB revision to script heads -> action) is a pure application/platform policy so mutation testing covers it; the adapter only executes. The DISTILL Given uses an Alembic no-op stub revision in an extra version location (waiver W3) - 02-01's env.py contract makes that work. Integration tests use a temporary extra versions folder to create an 'older' database for the copy path. Local check: `--run-pending=slice-01a -k 'newer'`. Commit: 'feat(persistence): refuse newer databases, copy before migrating'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: for any revision chain and DB revision, the policy returns refuse / copy-then-upgrade / upgrade / nothing per D129; for any sequence of pre-migration copies, retention keeps exactly the newest three. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-02",
+          "name": "Data folder probes: writable file store and persistent storage",
+          "description": "LocalFileStore with its write-fsync-rename-read probe (fatal), the MountTable port with ProcMountTable, the DATA_DIR persistence rule (D121) as degraded-unhealthy with the home-page banner, and the CI smoke and e2e checks of the real probe.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-07"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "A data folder on overlay, tmpfs or ramfs makes /healthz answer 503 and shows Data directory is not persistent - projects would be lost on restart.",
+            "Any other filesystem type is ok; a host without a mount table is not_applicable and healthy; an unreadable mount table on Linux is degraded.",
+            "While degraded, the home page and project functions keep working and /api/health lists the banner.",
+            "A data folder where a file cannot be written, synced, renamed and read back refuses start-up naming the file store.",
+            "In CI the packaged planner reports ok on a named volume and the same unhealthy reason without one."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "gated_scenarios": [
+            {
+              "title": "Missing persistent storage is reported instead of losing projects silently",
+              "gate": null
+            },
+            {
+              "title": "The packaged planner started without its data storage reports that projects would be lost",
+              "gate": "ci-job-7"
+            }
+          ],
+          "scenario_name": "Missing persistent storage is reported instead of losing projects silently | The packaged planner started without its data storage reports that projects would be lost | tests/unit/application/platform/test_data_dir_persistence.py | tests/integration/adapters/files/test_local_file_store_probe.py | tests/integration/adapters/files/test_proc_mount_table.py",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/host.py",
+            "src/overland_planner/application/ports/file_store.py",
+            "src/overland_planner/application/platform/data_dir_persistence.py",
+            "src/overland_planner/adapters/files/local_file_store.py",
+            "src/overland_planner/adapters/files/proc_mount_table.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            ".github/workflows/ci.yml",
+            ".github/scripts/image-smoke.sh",
+            "tests/unit/application/platform/test_data_dir_persistence.py",
+            "tests/integration/adapters/files/test_local_file_store_probe.py",
+            "tests/integration/adapters/files/test_proc_mount_table.py"
+          ],
+          "implementation_notes": "Slice 01a, US-01b; ADR-011 final-gate amendment D121, D168, D182, brief section 6. Remove __SCAFFOLD__ from host.py. Classification is a pure application/platform function: resolve symlinks, longest-prefix match on path components (/data2 is not under /data), overlay/tmpfs/ramfs -> degraded-unhealthy (log health.startup.degraded reason data_dir_not_persistent), other -> ok, entries() None -> not_applicable, parse failure on Linux -> degraded (data_dir_persistence_unknown). /healthz reason and banner text = 'Data directory is not persistent - projects would be lost on restart'. ProcMountTable parses /proc/self/mountinfo (mount point field 5 with octal escapes such as \\040 decoded; fstype after ' - '); its probe: readable, parsable, has '/'. It lives in adapters/files (brief section 4 has no host adapter package). LocalFileStore probe: write DATA_DIR/tmp/probe-<uuid>, fsync, rename, read back, delete; failure -> fatal (component file_store). In-process tests keep FakeMountTable via ExternalPorts; server-process tests use the real table (not_applicable on the Mac). CI: the arm64 smoke now asserts the data components ok on its named volume; job 7 runs the @compose scenario with PLANNER_IMAGE set. STEP DONE-WHEN (crafter, Mac): 'Missing persistent storage is reported instead of losing projects silently' (`--run-pending=slice-01a -k 'persistent storage'`) plus the unit and integration tests. CI-GATED: 'The packaged planner started without its data storage...' (@requires_external @compose) runs only in CI job 7 and becomes blocking at 03-10 (slice-01a in PENDING_FLAGS); its green run is verified at the 03-10 orchestrator gate. Gold catalogue (D121): overlay root, tmpfs, ramfs, ext4 under an overlay root, tmpfs bind mount, symlink onto tmpfs, unparsable mountinfo. Commit: 'feat(platform): data folder persistence and write probes'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: for any generated mount table and DATA_DIR, the classification equals that of the longest component-wise prefix entry and is independent of entry order; mountinfo escape decoding round-trips any path. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-03",
+          "name": "Track statistics in the catalog domain",
+          "description": "Pure domain TrackPoint and TrackStatsCalculator: length as the sum of great-circle segments, entry as the first and exit as the last recorded point, in recorded order.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "02-07"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Track length is the sum of great-circle segment lengths; it is unchanged by reversing the points and additive when a track is split at any point.",
+            "Entry is the first and exit the last recorded point; points are never reordered (HC-1).",
+            "A track point outside the valid latitude or longitude range is refused.",
+            "A track of fewer than two points has no statistics and is reported as unusable."
+          ],
+          "test_file": "tests/unit/domain/catalog/test_track_stats_calculator.py",
+          "scenario_name": "test_length_is_unchanged_by_reversal | test_length_is_additive_under_split | test_entry_and_exit_are_first_and_last_points | test_out_of_range_point_is_refused | test_fewer_than_two_points_is_unusable",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/track.py",
+            "src/overland_planner/domain/catalog/track_stats_calculator.py",
+            "tests/unit/domain/catalog/test_track_stats_calculator.py"
+          ],
+          "implementation_notes": "Slice 01a, US-02a. domain.catalog stays pure (no gpxpy/defusedxml; import-linter contract 2). TrackPoint value object with range-checked lat/lon and optional elevation. The acceptance length check is 34.2 km within 1%, so the Earth radius choice is not critical; document it. Commit: 'feat(catalog): track statistics'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: length reversal-invariance, split-additivity, non-negativity, entry/exit = first/last for any generated Alpine-box point sequence."
+        },
+        {
+          "id": "03-04",
+          "name": "Hardened GPX parser adapter with start-up probe",
+          "description": "TrackFileParser port and GpxpyParser: defusedxml pre-parse rejecting DTDs, entities and external references, then gpxpy; typed invalid-file and no-usable-track outcomes; first usable track only; fatal parser probe at start-up.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-03"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "Files with a DTD, entities or external references, empty files and non-XML files are reported as invalid track files before gpxpy parses anything.",
+            "A file whose tracks have fewer than two points in total is reported as having no usable track.",
+            "A valid file yields its first usable track with its name, or the file name when the track has none.",
+            "The parser probe accepts an embedded GPX and rejects an embedded billion-laughs sample; a failing probe refuses start-up."
+          ],
+          "test_file": "tests/integration/adapters/gpx/test_gpxpy_parser.py",
+          "scenario_name": "test_renamed_text_file_is_invalid | test_empty_file_is_invalid | test_external_entity_file_is_invalid | test_waypoints_only_file_has_no_usable_track | test_assietta_yields_first_usable_track | test_probe_rejects_billion_laughs",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/track_file_parser.py",
+            "src/overland_planner/adapters/gpx/gpxpy_parser.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/integration/adapters/gpx/test_gpxpy_parser.py"
+          ],
+          "implementation_notes": "Slice 01a, US-02a; brief sections 6 and 12, ADR-010. Parser: defusedxml pre-parse with DTDs, entities and external references forbidden, then gpxpy; track name from <trk><name>, else the file stem. User decision 2026-11-02: in 01a a file with several tracks imports its first usable track only (multi-track and multi-file rules belong to slice 07, D149). Parser probe component name e.g. gpx_parser; failure is fatal through the 02-01 refusal path. Integration tests use the DISTILL fixtures (notes.gpx, empty.gpx, waypoints-only.gpx, trap.gpx, synthetic assietta.gpx). Commit: 'feat(gpx): hardened GPX parser'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nThis step is an adapter: its tests are integration tests and stay single-example per the mandate. Optional PBT: for any generated GPX document with a DOCTYPE inserted, the parser reports an invalid file."
+        },
+        {
+          "id": "03-05",
+          "name": "Import a trail and list the project's items",
+          "description": "TrackImportService stores the original by sha256 and the canonical points (version 1) before committing the track item; POST /api/projects/{id}/tracks and GET /api/projects/{id}/items return the D107 item resource; Alembic revision for items and tracks.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-02",
+            "03-04"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "Importing assietta.gpx shows an included track Strada dell'Assietta from Pian dell'Alpe to Sestriere with a length within 1% of 34.2 km.",
+            "The original is kept byte-identical under files/originals/{sha256}.gpx and the canonical points as version 1, both written before the database commit.",
+            "After a restart on the same data folder the project and its track are listed exactly as before.",
+            "The item list returns id, type, name, included, anchor, entry, exit and length_m in snake_case; each import logs import.track.",
+            "Each import increments the project revision; the new migration has a tested downgrade."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "Marco imports his Assietta trail | A trip project survives a restart | tests/unit/application/catalog/test_track_import_service.py | tests/integration/adapters/files/test_local_file_store_writes.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/item.py",
+            "src/overland_planner/application/ports/repositories.py",
+            "src/overland_planner/application/ports/file_store.py",
+            "src/overland_planner/application/catalog/track_import_service.py",
+            "src/overland_planner/application/catalog/facade.py",
+            "src/overland_planner/adapters/persistence/item_repository.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/files/local_file_store.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "migrations/versions/0002_items_tracks.py",
+            "tests/unit/application/catalog/test_track_import_service.py",
+            "tests/integration/adapters/files/test_local_file_store_writes.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01a, US-02a + US-01b; brief sections 5 and 9, ADR-018 (files written before the DB commit, atomic tmp+rename on the same filesystem, deletion only by the later orphan sweep). Endpoint: multipart field 'files' (DISTILL driver). User decisions 2026-11-02: several files in one request are all-or-nothing (nothing added if any is refused) until slice 07 defines the mixed case (D149); canonical.v1.json is written at import and display.v{n} is deferred to slice 09. GET /api/projects/{id}/items[?type=] returns the D107 resource; anchor is null until 03-09. Regenerate the OpenAPI snapshot. Local check: `--run-pending=slice-01a -k 'Assietta or survives'`; the walking skeleton should now pass locally too (made blocking at 03-06). Tests keep the synthetic assietta.gpx (D112, user decision). Commit: 'feat(catalog): import a trail and list project items'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target (in-memory fakes for UnitOfWork and FileStore): for any generated valid track, an import gains exactly one track row in project.items and leaves projects.names unchanged; importing the same bytes twice stores one original. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-06",
+          "name": "Walking skeleton green and blocking in CI",
+          "description": "Prove the walking skeleton passes in a real server process on the Mac and in CI job 2 against the freshly built web page, then fold it into the blocking pytest run and re-add it to pre-push.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-05"
+          ],
+          "estimated_hours": 1,
+          "criteria": [
+            "The walking skeleton passes in a real server process on the Mac and in CI job 2 against the freshly built web page.",
+            "CI job 2 runs the walking skeleton inside its blocking pytest run; the non-blocking step is removed.",
+            "pre-push runs the walking skeleton again.",
+            "Job 2 logs the filesystem type of the walking skeleton's data folder before pytest."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_walking_skeleton.py",
+          "scenario_name": "Marco starts his planner, loads his Assietta trail and still finds it after a restart | tests/ci/test_ci_workflow.py::test_walking_skeleton_is_blocking_in_test_python",
+          "files_to_modify": [
+            ".github/workflows/ci.yml",
+            ".pre-commit-config.yaml",
+            "Makefile",
+            "tests/ci/test_ci_workflow.py"
+          ],
+          "implementation_notes": "Slice 01a; D162, D168, D180, D182. The walking skeleton has no @pending tag (DISTILL), so it ran RED in the non-blocking job-2 step since 01-07 (user decision 2026-11-02). Remove `and not walking_skeleton` from job 2's blocking selection and from pre-push, delete the non-blocking step, and update the workflow contract test. Keep DATA_DIR under $GITHUB_WORKSPACE (never the OS temp folder). Commit: 'ci: walking skeleton is blocking'. Crafter stops at the commit; no push.\n\nEXEMPT FROM PARADIGM: CI wiring plus a single-example end-to-end scenario (E2E tests remain single-example by mandate). Compensate with property-based test at unit level on adjacent slot (track import gains exactly one item, step 03-05)."
+        },
+        {
+          "id": "03-07",
+          "name": "Refuse invalid, trackless, hostile and oversized trail files",
+          "description": "Upload caps from settings enforced before parsing (file 25 MB, request 100 MB, 50 files) with 413 upload_too_large, and the D151 messages for invalid GPX and files without a usable track; nothing stored for a refused file.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-05"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "A renamed text file, an empty file or a file that includes other files answers 422 validation_error with <file> is not a valid GPX file.",
+            "A file without a usable track answers 422 validation_error with <file> has no usable track.",
+            "A file above 25 MB answers 413 upload_too_large with <file> is larger than the 25 MB limit, without being parsed or stored.",
+            "A request above 100 MB or with more than 50 files answers 413 upload_too_large before any spooling; non-positive caps refuse start-up.",
+            "A refused upload adds no item, leaves no file in the data folder and keeps the project revision."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "A file that is not GPX is rejected | A trail file without any usable track is rejected | A trail file that tries to read other files on the planner is rejected | A trail file above the upload limit is refused | tests/unit/application/catalog/test_track_import_service.py | tests/integration/http/test_upload_caps.py",
+          "files_to_modify": [
+            "src/overland_planner/application/catalog/track_import_service.py",
+            "src/overland_planner/adapters/http/upload_limits.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "tests/unit/application/catalog/test_track_import_service.py",
+            "tests/integration/http/test_upload_caps.py"
+          ],
+          "implementation_notes": "Slice 01a, US-02a; brief section 12 (MAX_UPLOAD_FILE_MB=25, MAX_UPLOAD_REQUEST_MB=100, MAX_UPLOAD_FILES=50), ADR-011 Amendment 1 (caps must be positive), D151 messages verbatim, D183 envelope codes. MB = MiB (the DISTILL huge file is 26 x 1024 x 1024 + 1 bytes). User decision 2026-11-02: the 100 MB request cap is enforced from Content-Length and a streaming byte counter BEFORE the multipart parser spools to disk (in the container /tmp is a 64 MB tmpfs, D173). The per-file cap is checked before parsing; hostile XML is refused by the 03-04 parser. Local check: `--run-pending=slice-01a -k 'not GPX or usable track or other files or upload limit'`. Commit: 'feat(catalog): refuse invalid and oversized trail files'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT target: for any generated refused upload (size above cap, invalid bytes, trackless GPX), the universe {projects.names, project.items} is unchanged and the file store holds no new file. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-08",
+          "name": "Add places by decimal coordinates with range checks",
+          "description": "Coordinate value object with inclusive ranges, POI items added by name and decimal degrees through POST /api/projects/{id}/pois, included by default, listed in the item list; Alembic revision for POIs.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-05"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "A POI with latitude in [-90, 90] and longitude in [-180, 180] appears in the item list as an included POI with the same coordinates to six decimals.",
+            "An out-of-range latitude answers 422 validation_error with Latitude must be between -90 and 90 and adds nothing.",
+            "An out-of-range longitude answers 422 validation_error with Longitude must be between -180 and 180 and adds nothing.",
+            "Each POI addition increments the project revision; the new migration has a tested downgrade."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "Marco adds Briancon by coordinates | Coordinates out of range are rejected with a reason | Coordinates on the edge of the valid range are accepted | tests/unit/domain/catalog/test_coordinate.py | tests/unit/application/catalog/test_poi_service.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/coordinate.py",
+            "src/overland_planner/domain/catalog/poi.py",
+            "src/overland_planner/application/catalog/poi_service.py",
+            "src/overland_planner/application/catalog/facade.py",
+            "src/overland_planner/adapters/persistence/item_repository.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "migrations/versions/0003_pois.py",
+            "tests/unit/domain/catalog/test_coordinate.py",
+            "tests/unit/application/catalog/test_poi_service.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01a, US-02c; OUT-3, OUT-4, D151 messages verbatim. Range validation lives in the domain value object, so the request schema must not pre-reject out-of-range numbers with a different message (only type errors go through the RequestValidationError handler). Latitude is checked before longitude when both are wrong. Regenerate the OpenAPI snapshot. Local check: `--run-pending=slice-01a -k 'Briancon or out of range or edge of the valid range'`. Commit: 'feat(catalog): add places by coordinates'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: a coordinate is accepted iff -90<=lat<=90 and -180<=lon<=180 (boundaries included, explicit @example for the edges); accepted POIs gain exactly one row in project.items; refused ones leave the universe unchanged. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-09",
+          "name": "Set where the trip starts and ends",
+          "description": "PUT /api/projects/{id}/anchors sets Start and End among the project's POIs; the item list shows anchor start_end for a round trip, start and end for a one-way trip, null for every other item; Alembic revision for the anchor columns.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-08"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "Setting the same POI as Start and End shows exactly one row for it with anchor start_end.",
+            "Different Start and End POIs show anchor start and end respectively; every other item shows anchor null.",
+            "New anchors replace the previous ones; only POIs of the same project can be anchors, otherwise 422 validation_error and nothing changes.",
+            "Unknown item ids answer 404 not_found; each anchor change increments the project revision."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01a.py",
+          "scenario_name": "Home is both Start and End of a round trip | A one-way trip has a different Start and End | tests/unit/domain/catalog/test_anchors.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/anchors.py",
+            "src/overland_planner/application/catalog/anchor_service.py",
+            "src/overland_planner/application/catalog/facade.py",
+            "src/overland_planner/adapters/persistence/project_repository.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "migrations/versions/0004_project_anchors.py",
+            "tests/unit/domain/catalog/test_anchors.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01a, US-02c; HC-2, OUT-5 (POIs only), brief section 5 anchor enum start | end | start_end | null (D183). Body {start_item_id, end_item_id}, both required in 01a; Start-only or End-only and the missing_anchor refusal belong to slice 02. Anchor columns on projects (start_item_id, end_item_id, FK to items, ON DELETE SET NULL). The message for a non-POI or foreign anchor is not in D151: propose one and flag it for the product owner. Regenerate the OpenAPI snapshot. Local check: `--run-pending=slice-01a -k 'Start and End'`. Commit: 'feat(catalog): set trip Start and End'. Crafter stops at the commit; no push.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nSTAGE CONTEXT (cascade): NEW code = Stage 0 (paradigm-from-day-zero, no debt accumulates). Bug-prone legacy code = Stage 1 first (state-delta migration captures hidden mutations, 33-75% yield), THEN Stage 2 PBT amplification (low yield by design — surface is debt-paid). Don't expect high hit rate on Stage-1-completed surfaces; that's healthy. See nw-tdd-methodology::Paradigm Mandate for the full debt-payoff framing.\n\nPBT targets: for any project with n POIs and any (start, end) choice, exactly the chosen rows carry anchors (one start_end row when equal), every other row is null, and only project.items changes. Acceptance .feature files are the DISTILL SSOT and are not rewritten."
+        },
+        {
+          "id": "03-10",
+          "name": "Workspace UI in the browser; slice 01a ends",
+          "description": "Svelte workspace: create a project, import a GPX file, add a POI by decimal degrees, set Start and End, item list with Included and S/E/Start/End badges, health banners on the home page; Playwright journey in CI; remove @pending from slice 01a and extend PENDING_FLAGS.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-01",
+            "03-06",
+            "03-07",
+            "03-09"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "In the browser Marco creates a project, imports a GPX file, adds a POI by decimal degrees and sets Start and End.",
+            "The item list shows type, name, Included and the S/E, Start or End badge; planner error messages are shown verbatim.",
+            "Every banner reported by /api/health is shown on the home page.",
+            "The browser journey passes on chromium and webkit-iphone14 against the compose stack in CI job 7.",
+            "Every slice-01a scenario is blocking in CI: @pending removed and --run-pending=slice-01a added to PENDING_FLAGS."
+          ],
+          "test_file": "tests/e2e/workspace.spec.ts",
+          "scenario_name": "Marco creates a project, imports a trail, adds a POI and sets Start and End in the browser | web/src/lib/WorkspacePage.test.ts | web/src/lib/ItemList.test.ts",
+          "ssot": false,
+          "gated_scenarios": [
+            {
+              "title": "Marco creates a project, imports a trail, adds a POI and sets Start and End in the browser",
+              "gate": "ci-job-7"
+            }
+          ],
+          "files_to_modify": [
+            "web/src/App.svelte",
+            "web/src/lib/api.ts",
+            "web/src/lib/ProjectsPage.svelte",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/ItemList.svelte",
+            "web/src/lib/HealthBanner.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "web/src/lib/ItemList.test.ts",
+            "tests/e2e/workspace.spec.ts",
+            ".github/workflows/ci.yml",
+            "tests/acceptance/overland_route_planner_mvp/slice-01a-skeleton-items-on-pi.feature",
+            "README.md"
+          ],
+          "implementation_notes": "Slice 01a (user decision 2026-11-02: proceed with this step). NON-SSOT: the browser journey in tests/e2e/workspace.spec.ts is NOT in any DISTILL feature file and does not count as SSOT acceptance coverage; it is a UI regression check added because every 01a scenario drives the HTTP API while the slice demo has Marco working in a browser. Banners per D108 from GET /api/health. Desktop and iPhone 390 x 844 layouts must both work (Giulia). No map (slice 09). Remove the feature-level @pending from slice-01a-skeleton-items-on-pi.feature (the only allowed feature-file edit) and add `--run-pending=slice-01a` to PENDING_FLAGS (D170); run the full local suite incl. `make mutate BASE=<slice-01a start>` (>= 80%). Commit: 'feat(web): workspace for projects, trails and places'. LAST STEP OF SLICE 01a: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push to origin main; verify CI green (incl. the CI-gated @compose scenario 'The packaged planner started without its data storage...' in job 7 and the workspace journey) and publish. Then, with the user at a start time the user names: make deploy to the Pi, the rollback drill with a real migration (DEVOPS rollback table 'slice 01a drill'), and the demo. Demo precondition (D158): Marco provides his real assietta.gpx for the demo; the tests keep the synthetic stand-in (D112, user decision).\n\nEXEMPT FROM PARADIGM: single-shot UI flows in TypeScript (no Hypothesis in the web stack) and a single-example browser journey. Compensate with property-based test at unit level on adjacent slot (Coordinate ranges and anchor assignment, steps 03-08 and 03-09)."
+        }
+      ]
+    }
+  ],
+  "implementation_scope": {
+    "source_directories": [
+      "src/overland_planner/",
+      "migrations/",
+      "web/src/",
+      "deploy/",
+      ".github/workflows/",
+      ".github/scripts/"
+    ],
+    "test_directories": [
+      "tests/unit/",
+      "tests/integration/",
+      "tests/contract/http/",
+      "tests/acceptance/overland_route_planner_mvp/",
+      "tests/ci/",
+      "tests/deploy/",
+      "tests/e2e/",
+      "web/src/lib/"
+    ],
+    "excluded_patterns": [
+      "__init__.py",
+      "__pycache__/**",
+      "web/dist/**",
+      "web/node_modules/**",
+      "tests/acceptance/overland_route_planner_mvp/fixtures/**"
+    ]
+  },
+  "validation": {
+    "status": "approved",
+    "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
+    "approved_at": "2026-11-02"
+  }
+}
