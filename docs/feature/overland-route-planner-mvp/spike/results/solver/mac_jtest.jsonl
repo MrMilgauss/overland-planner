@@ -1,0 +1,1 @@
+{"mode": "jtest", "pdeathsig": true, "child_gone": true, "gone_after_s": 0.015671083005145192, "host": {"machine": "arm64", "system": "Darwin", "py": "3.12.13", "ortools": "9.15.6755"}, "tag": "mac_watchdog", "ts": 1793553342.9041731}

@@ -1,0 +1,3 @@
+{"mode": "jtest", "pdeathsig": true, "child_gone": true, "gone_after_s": 0.0009035905823111534, "host": {"machine": "aarch64", "system": "Linux", "py": "3.12.16", "ortools": "9.15.6755"}, "tag": "pdeathsig", "ts": 1793555445.9643023}
+{"mode": "jtest", "pdeathsig": false, "child_gone": true, "gone_after_s": 0.03133805748075247, "host": {"machine": "aarch64", "system": "Linux", "py": "3.12.16", "ortools": "9.15.6755"}, "tag": "watchdog_only", "ts": 1793555448.9440444}
+{"mode": "jtest", "pdeathsig": true, "child_gone": true, "gone_after_s": 0.0009196270257234573, "host": {"machine": "aarch64", "system": "Linux", "py": "3.12.16", "ortools": "9.15.6755"}, "tag": "pdeathsig_rep2", "ts": 1793555451.972118}

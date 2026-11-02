@@ -1,0 +1,262 @@
+{
+ "country_crossing_cost=0": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.0747169042006135
+ ],
+ "country_crossing_cost=600": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6740.512,
+   "cost": 7149.012
+  },
+  0.05652245972305536
+ ],
+ "country_crossing_cost=3600": [
+  200,
+  {
+   "length": 123.816,
+   "time": 7398.589,
+   "cost": 7806.728
+  },
+  0.05073132272809744
+ ],
+ "country_crossing_penalty=0": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.04966130759567022
+ ],
+ "country_crossing_penalty=3600": [
+  200,
+  {
+   "length": 123.816,
+   "time": 7398.589,
+   "cost": 7806.728
+  },
+  0.04901771619915962
+ ],
+ "use_tracks 1 vs 0: pairs differing /40": [
+  29,
+  [
+   [
+    2,
+    {
+     "length": 59.794,
+     "time": 6360.855,
+     "cost": 6043.743
+    },
+    {
+     "length": 59.923,
+     "time": 6371.583,
+     "cost": 11322.965
+    }
+   ],
+   [
+    3,
+    {
+     "length": 12.801,
+     "time": 1823.898,
+     "cost": 1825.13
+    },
+    {
+     "length": 12.801,
+     "time": 1823.898,
+     "cost": 3271.14
+    }
+   ],
+   [
+    5,
+    {
+     "length": 6.917,
+     "time": 1959.853,
+     "cost": 1774.414
+    },
+    {
+     "length": 6.917,
+     "time": 1959.853,
+     "cost": 7379.094
+    }
+   ]
+  ]
+ ],
+ "exclude_unpaved F vs T: pairs differing /40": [
+  9,
+  [
+   [
+    2,
+    {
+     "length": 59.794,
+     "time": 6360.855,
+     "cost": 6043.743
+    },
+    {
+     "length": 62.339,
+     "time": 9426.057,
+     "cost": 8275.932
+    }
+   ],
+   [
+    10,
+    {
+     "length": 71.388,
+     "time": 7405.105,
+     "cost": 7621.37
+    },
+    {
+     "length": 86.186,
+     "time": 9370.91,
+     "cost": 9307.517
+    }
+   ],
+   [
+    11,
+    {
+     "length": 40.487,
+     "time": 4935.969,
+     "cost": 4240.977
+    },
+    {
+     "length": 40.689,
+     "time": 4978.215,
+     "cost": 4283.472
+    }
+   ]
+  ]
+ ],
+ "search_cutoff 250 legal (2:exit, 1221 m)": [
+  400,
+  {
+   "error_code": 171,
+   "error": "No suitable edges near location",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.008519019931554794
+ ],
+ "search_cutoff 1500 legal (2:exit)": [
+  200,
+  {
+   "length": 128.699,
+   "time": 9381.832,
+   "cost": 9664.839
+  },
+  0.049818288534879684
+ ],
+ "16:exit legal cutoff 250": [
+  400,
+  {
+   "error_code": 171,
+   "error": "No suitable edges near location",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.009639518335461617
+ ],
+ "16:exit permissive cutoff 250": [
+  400,
+  {
+   "error_code": 442,
+   "error": "No path could be found for input",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.02047727443277836
+ ],
+ "16:exit only ignore_access": [
+  400,
+  {
+   "error_code": 442,
+   "error": "No path could be found for input",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.021649363450706005
+ ],
+ "16:exit only ignore_closures": [
+  400,
+  {
+   "error_code": 171,
+   "error": "No suitable edges near location",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.007919372990727425
+ ],
+ "16:exit only ignore_restrictions": [
+  400,
+  {
+   "error_code": 171,
+   "error": "No suitable edges near location",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.00805070623755455
+ ],
+ "16:exit only ignore_non_vehicular_restrictions": [
+  400,
+  {
+   "error_code": 171,
+   "error": "No suitable edges near location",
+   "status_code": 400,
+   "status": "Bad Request"
+  },
+  0.00800098292529583
+ ],
+ "normal pair with ignore_closures": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.049488604068756104
+ ],
+ "normal pair with ignore_restrictions": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.048423271626234055
+ ],
+ "normal pair with ignore_non_vehicular_restrictions": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.04840406868606806
+ ],
+ "normal pair with bogus_option_xyz": [
+  200,
+  {
+   "length": 112.134,
+   "time": 6140.512,
+   "cost": 6549.012
+  },
+  0.04928580764681101
+ ],
+ "locate far+on cutoff 250": [
+  200,
+  "[{\"input_lat\": 45.37355, \"input_lon\": 6.96584, \"edges\": [], \"nodes\": []}, {\"input_lat\": 44.315, \"input_lon\": 7.296, \"edges\": [{\"way_id\": 160668143, \"correlated_lat\": 44.314909, \"correlated_lon\": 7.296014, \"side_of_street\": \"left\", \"percent_along\": 0.4984}, {\"way_id\": 160668143, \"correlated_lat\": 44.314909, \"correlated_lon\": 7.296014, \"side_of_street\": \"right\", \"percent_along\": 0.50159}], \"nodes\": "
+ ],
+ "matrix with 1 unsnappable": [
+  400,
+  "{\"error_code\": 170, \"error\": \"Locations are in unconnected regions. Go check/edit the map at osm.org\", \"status_code\": 400, \"status\": \"Bad Request\"}"
+ ],
+ "matrix legal to perm-only point": [
+  400,
+  "{\"error_code\": 170, \"error\": \"Locations are in unconnected regions. Go check/edit the map at osm.org\", \"status_code\": 400, \"status\": \"Bad Request\"}"
+ ]
+}

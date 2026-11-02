@@ -1,0 +1,409 @@
+schema_version: 1
+# SSOT journey. Bootstrapped by DISCUSS wave of overland-route-planner-mvp. Revision 6 (2026-11-01, post-DESIGN U41).
+# Routing: MockProvider offline; self-hosted Valhalla on the Pi (pi.example:8080 by default).
+# Evidence level: requirements-doc derived, unvalidated.
+# Medium: browser web UI (desktop primary, results readable on phone). Mockups are ASCII wireframes;
+# element names and vocabulary are binding, layout is not.
+# Endpoint paths are INDICATIVE driving-port names; DESIGN owns final naming.
+# "<pi-host>:<port>" is a placeholder; host and port are DESIGN decisions.
+# Reference project "Alpi Occidentali giugno 2027" = 12 items:
+#   Tracks (5): Strada dell'Assietta 34.2 km, Jafferau loop 18.9 km, Maira-Varaita ridge 69.5 km,
+#               Via del Sale 38.4 km, Colle del Sommeiller
+#   POIs (7):   Casa Marco Torino (Start and End = one item), Briancon, Parco Orsiera visitor centre,
+#               Camping Gran Bosco, Fuel Oulx, Forte di Fenestrelle, Sacra di San Michele
+# Plan run #4: Via del Sale + Colle del Sommeiller Excluded -> 10 Included items, 11 stops
+#   (Casa Marco at 1 and 11), 10 road legs, 3 tracks, 7 GPX waypoints (one per POI item, D10).
+# Cumulative km = road + off-road km driven up to the end of that stop (D11).
+# Plan run timeline (Revision 2; full table in feature-delta.md "[REF] Plan run timeline"):
+#   #1 3 items (Assietta, Casa Marco S/E, Briancon) ok | #2 all 12 items ok | #3 Sommeiller Excluded ok
+#   #4 + Via del Sale Excluded ok (REFERENCE run) | #5 + POI Lago del Moncenisio ok
+#   #6 + POI Isola del Giglio FAILED (unreachable at every confidence level) | #7 Isola Excluded ok
+#   #8 + track Colle della Lombarda (lombarda-glitch.gpx) + duplicate "Strada dell'Assietta (2)" ok WITH Warnings
+#   #9 duplicate removed ok. Lago, Isola, Lombarda and the duplicate are NOT among the 12 reference items.
+#   Run rules (Revision 5; full text in feature-delta.md "[REF] Plan run timeline"): first Optimize of a project with
+#   no runs = #1; only requests reaching the optimizer create runs (refused requests create none); main line = Alpi
+#   #5-#9 in order (US-09 S2 creates #5); any OTHER Optimize/Recalculate scenario is a branch fixture on its own copy
+#   (number not asserted); opening a run creates none; fixtures outside both projects use no run numbers.
+# Default project: unqualified "plan run #N" ALWAYS means "Alpi Occidentali giugno 2027".
+#   "Dolomiti 2028" (fixture: Cortina d'Ampezzo S/E, Lago di Braies, track Malga Ra Stua) runs are always named with the project.
+
+journey:
+  name: "Plan an overland trip"
+  goal: "Turn a pile of trail GPX files and places into one drivable, direction-safe itinerary and load it onto the navigation device."
+  persona: overland-planner   # docs/product/personas/overland-planner.yaml (Marco Ferri)
+  secondary_persona: household-viewer   # Giulia Ferri, steps 1 and 7 on phone only
+  jobs: [J-01, J-02, J-03, J-04, J-05, J-06]
+  emotional_arc:
+    pattern: "Confidence Building"
+    start: "Hopeful but sceptical (a pile of files; fear the computer will reverse or drop trails)"
+    middle: "Focused and in control (every item visible, every number explained)"
+    end: "Confident and relieved (the trip I trust is on the device)"
+  vocabulary:
+    # Binding UI vocabulary (single source = REQUIREMENTS.md glossary). Use exactly these words.
+    - Project
+    - Track
+    - POI
+    - Item
+    - Start
+    - End
+    - S/E (combined badge when Start and End are the same POI)
+    - Included / Excluded / Failed
+    - Optimize        # first run of a project
+    - Recalculate     # any later run ("Calculate" in FR-5.5 = Optimize or Recalculate, D71)
+    - Plan run
+    - Stale
+    - Consideration report
+    - Warnings
+    - Reverse track direction
+    - Export GPX
+    - Confirmed       # road leg on legal roads, forest tracks included (FR-5.8)
+    - Unconfirmed     # compromise leg with a reason; "check on the ground"
+    - Retrace         # exit -> entry return along a dead-end track (HC-1)
+    - Stop and use best so far
+    - not fully optimised   # label: "(time limit)" or "(stopped)"
+
+steps:
+  - id: 1
+    name: "Open planner and create a project"
+    action: "Browser <pi-host>:<port> -> 'New project' -> name 'Alpi Occidentali giugno 2027'"
+    endpoint: "POST /api/projects"
+    tui_mockup: |
+      +-- Overland Planner -------------------------------------------+
+      | Projects                                    [ + New project ] |
+      |  (none yet)                                                    |
+      | New project: [ Alpi Occidentali giugno 2027      ] [ Create ] |
+      +----------------------------------------------------------------+
+    output: "Empty project workspace titled ${project.name}; URL contains ${project_id}."
+    shared_artifacts: [project_id, project.name]
+    emotional_state: {entry: "Hopeful, sceptical", exit: "Oriented: it works on my Pi"}
+    integration_checkpoint: "Project survives container restart (FR-1.2)."
+    failure_modes:
+      - {mode: "Data volume not persistent", user_sees: "Data directory is not persistent - projects would be lost on restart", recovery: "Fix the volume in compose, restart", emotion: "Alarm -> relief that nothing was lost silently", story: US-01b}
+      - {mode: "Empty project name", user_sees: "Give the project a name", recovery: "Type a name", emotion: "Minor friction", story: US-01b}
+      - {mode: "Giulia without credentials (basic auth on)", user_sees: "Login prompt", recovery: "Enter shared credentials", emotion: "Expected, reassuring", story: US-01a}
+    gherkin: |
+      Scenario: A trip project survives a restart
+        Given the project "Alpi Occidentali giugno 2027" exists with track "Strada dell'Assietta"
+        When the planner stack is restarted
+        Then the project "Alpi Occidentali giugno 2027" is still listed
+
+  - id: 2
+    name: "Import tracks"
+    action: "Drag 'assietta.gpx', 'jafferau-loop.gpx', 'via-del-sale.gpx', 'lombarda-glitch.gpx' onto 'Import tracks'"
+    endpoint: "POST /api/projects/{project_id}/tracks (multipart, one or more files)"
+    tui_mockup: |
+      +-- Import tracks: 4 files, 5 tracks ---------------------------------------+
+      | Track                 Length  Entry -> Exit              Gain/Loss  Est.  |
+      | Strada dell'Assietta  34.2km  Pian dell'Alpe->Sestriere  +1210/-850 2h17  |
+      | Jafferau loop [LOOP]  18.9km  Bardonecchia->Bardonecchia +1350/-1350 1h16 |
+      | Via del Sale seg 1/2  22.0km  Limone P.->Colle d.Boaria   +980/-310 1h28  |
+      | Via del Sale seg 2/2  16.4km  Colle d.Boaria->Monesi      +220/-760 1h06  |
+      |  [ Merge segments 1/2 + 2/2 ]                                             |
+      | Colle della Lombarda  ...                                                 |
+      | ! lombarda-glitch.gpx: jump of 14.8 km between points 211 and 212 -       |
+      |   length includes this jump; fix the file and re-import                   |
+      +---------------------------------------------------------------------------+
+    output: "One row per track: ${track.name}, ${track.length_km}, ${track.entry} -> ${track.exit}, elevation, ${track.est_duration}; LOOP label; ${import_warnings}."
+    shared_artifacts: [track.id, track.name, track.entry, track.exit, track.length_km, track.est_duration, offroad_speed_kmh, loop_threshold_m, jump_threshold_km, import_warnings]
+    emotional_state: {entry: "Curious: will it read my messy files?", exit: "Reassured: the numbers match what I know about these trails"}
+    integration_checkpoint: "Original file stored byte-identical; ${track.entry}/${track.exit} equal first/last stored point."
+    failure_modes:
+      - {mode: "Huge jump between points", user_sees: "lombarda-glitch.gpx: jump of 14.8 km between points 211 and 212 - length includes this jump; fix the file and re-import", recovery: "Fix file and re-import, or remove the track", emotion: "Concern -> grateful it was caught", story: US-14}
+      - {mode: "Single-point track", user_sees: "sommeiller-stub.gpx contains only 1 point", recovery: "Replace file", emotion: "Mild annoyance", story: US-14}
+      - {mode: "Same file twice", user_sees: "Possible duplicate of 'Strada dell'Assietta'", recovery: "Remove duplicate", emotion: "Relief", story: US-14}
+      - {mode: "Not a GPX file", user_sees: "notes.gpx is not a valid GPX file", recovery: "Re-export from source", emotion: "Minor friction", story: US-02a}
+      - {mode: "File recorded backwards", user_sees: "Direction shown as entry -> exit in the row", recovery: "Step 2b", emotion: "Wary", story: US-13}
+    gherkin: |
+      Scenario: Two segments of one trail are merged
+        Given tracks "Via del Sale seg 1/2" and "Via del Sale seg 2/2" from "via-del-sale.gpx"
+        When Marco merges them
+        Then he sees one track "Via del Sale" of 38.4 km from Limone Piemonte to Monesi
+
+  - id: 2b
+    name: "Fix a track recorded backwards"
+    action: "Track row menu -> 'Reverse track direction' -> confirm dialog"
+    endpoint: "POST /api/projects/{project_id}/tracks/{track_id}/reverse"
+    tui_mockup: |
+      +-- Reverse track direction? --------------------------------------+
+      | "Colle del Jafferau descent" will be driven                      |
+      |   FROM Forte Jafferau  TO Salbertrand   (was the other way)      |
+      | This is recorded in project history. Current plan becomes Stale.|
+      |                                   [ Cancel ]  [ Reverse track ]  |
+      +------------------------------------------------------------------+
+    output: "Track entry/exit swapped; ${project_history} entry '<time> Reversed Colle del Jafferau descent'; ${plan_state} = Stale."
+    shared_artifacts: [track.entry, track.exit, track.direction_version, project_history, plan_state]
+    emotional_state: {entry: "Wary: I must not get this wrong", exit: "In control: the change was deliberate and recorded"}
+    integration_checkpoint: "Only this explicit action can change ${track.entry}/${track.exit}."
+    failure_modes:
+      - {mode: "User cancels", user_sees: "Track unchanged, no history entry", recovery: "None needed", emotion: "Safe", story: US-13}
+      - {mode: "Reverse a loop", user_sees: "Arrows flip, still Bardonecchia -> Bardonecchia", recovery: "Reverse again if wrong", emotion: "In control", story: US-13}
+    gherkin: |
+      Scenario: Marco fixes a descent recorded uphill
+        Given track "Colle del Jafferau descent" from "jafferau-descent.gpx" runs from Salbertrand to Forte Jafferau
+        When Marco chooses "Reverse track direction" and confirms
+        Then the track runs from Forte Jafferau to Salbertrand
+        And project history shows "Reversed Colle del Jafferau descent" with the time
+        And the current plan is marked Stale
+
+  - id: 3
+    name: "Add POIs"
+    action: "'Add POI' -> coordinates '44.8990, 6.6430' name 'Briancon'  |  or click the map"
+    endpoint: "POST /api/projects/{project_id}/pois"
+    tui_mockup: |
+      +-- Add POI --------------------------------------------------+
+      | ( ) Coordinates  [ 44.8990, 6.6430        ]                 |
+      | ( ) Click on map  (crosshair active)                        |
+      | Name     [ Briancon          ]  Category [ city       v ]  |
+      | Visit    [ 120 ] min                                        |
+      |                                         [ Cancel ] [ Add ]  |
+      +-------------------------------------------------------------+
+    output: "POI row in item list with ${poi.location}, category and ${poi.visit_duration_min}."
+    shared_artifacts: [poi.id, poi.location, poi.visit_duration_min, duplicate_radius_m]
+    emotional_state: {entry: "Purposeful", exit: "Productive"}
+    integration_checkpoint: "Decimal degrees validated (lat -90..90, lon -180..180)."
+    failure_modes:
+      - {mode: "Out-of-range coordinates", user_sees: "Latitude must be between -90 and 90", recovery: "Correct input", emotion: "Minor friction", story: US-02a}
+      - {mode: "POI within 50 m of another", user_sees: "Duplicate warning", recovery: "Keep or remove", emotion: "Informed", story: US-14}
+      - {mode: "Map click name prompt cancelled", user_sees: "No POI added", recovery: "Click again", emotion: "Neutral", story: US-16}
+    gherkin: |
+      Scenario: Marco adds Briancon by coordinates
+        When Marco adds POI "Briancon" at 44.8990, 6.6430
+        Then "Briancon" appears in the item list as an Included POI at 44.8990, 6.6430
+
+  - id: 4
+    name: "Set Start and End"
+    action: "POI row -> 'Set as Start' and 'Set as End' (same POI for a round trip)"
+    endpoint: "PUT /api/projects/{project_id}/anchors"
+    tui_mockup: |
+      +-- Anchors --------------------------------------------------------+
+      | Start: [ Casa Marco, Torino  v ]   End: [ Casa Marco, Torino v ]  |
+      |        (round trip - shown as one S/E item)                       |
+      +-------------------------------------------------------------------+
+    output: "S/E badge (or separate Start / End badges) on POI rows; anchors locked Included."
+    shared_artifacts: [anchor.start, anchor.end]
+    emotional_state: {entry: "Purposeful", exit: "Grounded: the trip has edges"}
+    integration_checkpoint: "Anchors are POIs only (D6); anchors cannot be toggled Excluded."
+    failure_modes:
+      - {mode: "Anchor missing", user_sees: "Set the End before optimizing / Set the Start before optimizing", recovery: "Set anchor", emotion: "Clear next step", story: US-04}
+      - {mode: "Track offered as anchor", user_sees: "Not offered (D6); add a POI at the trail entry instead", recovery: "Map-click POI at entry", emotion: "Understood", story: US-16}
+      - {mode: "Anchor POI removed", user_sees: "Anchor cleared, plan Stale", recovery: "Set new anchor", emotion: "Clear next step", story: US-04}
+    gherkin: |
+      Scenario Outline: Optimize is refused while an anchor is missing
+        Given project "Alpi Occidentali giugno 2027" has no <anchor>
+        When Marco presses Optimize
+        Then he sees "Set the <anchor> before optimizing"
+        And no plan run is created
+        Examples:
+          | anchor |
+          | Start  |
+          | End    |
+
+  - id: 5
+    name: "Review the consideration list"
+    action: "Item list: filter Tracks/POIs, toggle Included, bulk select, remove"
+    endpoint: "PATCH /api/projects/{project_id}/items/{item_id}"
+    tui_mockup: |
+      +-- Items (12)  Filter: [All v]    Plan: STALE  [ Recalculate ] --+
+      | [x] S/E  Casa Marco, Torino        POI  (always included)       |
+      | [x]      Strada dell'Assietta      Track 34.2 km  ->            |
+      | [x]      Jafferau loop             Track 18.9 km  LOOP          |
+      | [x]      Maira-Varaita ridge       Track 69.5 km  ->            |
+      | [ ]      Via del Sale              Track 38.4 km  ->            |
+      | [ ]      Colle del Sommeiller      Track                        |
+      | [x]      Briancon                  POI  city                    |
+      | [x]      ... 5 more POIs                                        |
+      +-----------------------------------------------------------------+
+    output: "Unified list of 12 items, one row per item (round-trip anchor = one S/E row), ${item.included} per item; badge ${plan_state}."
+    shared_artifacts: [item.included, plan_state, anchor.start, anchor.end]
+    emotional_state: {entry: "Deliberating", exit: "Decided for now"}
+    integration_checkpoint: "Changing the list never triggers optimization; it sets ${plan_state}=Stale (FR-4.4)."
+    failure_modes:
+      - {mode: "Try to exclude an anchor", user_sees: "No toggle; 'Start and End are always included - reassign them instead'", recovery: "Reassign anchor", emotion: "Understood", story: US-07a}
+      - {mode: "Accidental removal", user_sees: "Confirmation step", recovery: "Cancel", emotion: "Safe", story: US-07a}
+    gherkin: |
+      Scenario: Excluding a trail marks the plan stale without recalculating
+        Given plan run #3 of "Alpi Occidentali giugno 2027" is up to date
+        When Marco excludes "Via del Sale"
+        Then the plan is marked Stale and Recalculate is enabled
+        And no new plan run has been created
+
+  - id: 6
+    name: "Optimize / Recalculate"
+    action: "Press Optimize (first run) or Recalculate"
+    endpoint: "POST /api/projects/{project_id}/plan-runs"
+    tui_mockup: |
+      +-- Plan run #4 ------------------------------------------------------+
+      | Routing: ${routing_provider_id} (map data <date>) / ${routing_profile} |
+      | Locating points ............................. done                  |
+      | Computing 0 new legs / 90 cached ............ done                  |
+      | Optimising 10 items (best so far: 612.3 km road) ... 1.2 s          |
+      |                                  [ Stop and use best so far ]       |
+      +---------------------------------------------------------------------+
+    output: "Progress 'locating points / computing ${leg_counts.new} new legs / ${leg_counts.cached} cached / optimising (best so far: ...)'; new ${plan_run_id} with ${run_status}, ${run_flags} and ${run_duration_s}; each leg carries ${leg_confidence}."
+    shared_artifacts: [plan_run_id, run_status, run_flags, run_duration_s, feasibility_limit_s, optimisation_limit_s, leg_cache_key, leg_confidence, leg_counts, routing_provider_id, routing_profile, objective, detour_factor]
+    emotional_state: {entry: "Tense: will it work?", exit: "Relieved: fast, and I can see it reused my work"}
+    integration_checkpoint: "Only legs missing from the cache are requested (FR-7.2); identical solver inputs reuse the stored order (FR-5.6, D15 amended); Unconfirmed legs only when no Confirmed leg exists (FR-5.8)."
+    failure_modes:
+      - {mode: "Unreachable item", user_sees: "Plan run #6 failed: 'Isola del Giglio' cannot be connected to any other stop", recovery: "Exclude or replace the item, Recalculate", emotion: "Disappointment -> clear next step", story: US-08}
+      - {mode: "Routing engine unreachable", user_sees: "Routing engine unreachable - nothing was changed. Try again later.", recovery: "Retry later", emotion: "Frustration buffered by 'nothing was changed'", story: US-10a}
+      - {mode: "Routing engine not ready", user_sees: "Routing engine not ready - nothing was changed. Try again shortly.", recovery: "Retry shortly", emotion: "Mild impatience, buffered", story: US-10a}
+      - {mode: "Optimisation limit reached", user_sees: "not fully optimised (time limit)", recovery: "Accept or raise limit", emotion: "Informed", story: US-06a}
+      - {mode: "No valid route in time", user_sees: "No valid route found within the time limit", recovery: "Simplify the project or exclude items", emotion: "Disappointment -> clear next step", story: US-06b}
+      - {mode: "Marco presses Stop", user_sees: "not fully optimised (stopped) / stopped before a valid route was found / Stopped - nothing was changed", recovery: "Accept or retry", emotion: "In control", story: US-06b}
+      - {mode: "Compromise legs (informed state, not an error)", user_sees: "Unconfirmed leg with reason; retrace leg; Warnings 'check on the ground'", recovery: "Check on the ground, or replace the item", emotion: "Informed, not alarmed", story: "US-10b, US-19"}
+    gherkin: |
+      Scenario: Excluding an item makes zero new routing requests
+        Given plan run #3 of "Alpi Occidentali giugno 2027" has been computed
+        And Marco excludes "Via del Sale"
+        When he presses Recalculate
+        Then the progress shows "computing 0 new legs / 90 cached"
+        And the routing provider received no requests
+
+  - id: 7
+    name: "Review results"
+    action: "Results view: itinerary, totals, consideration report, warnings, diff, map"
+    endpoint: "GET /api/plan-runs/{plan_run_id}"
+    tui_mockup: |
+      +-- Plan run #4  (minimise road distance)  vs #3 --------------------------+
+      | #  Item                    Type   Leg km  Cum km  Track km  Track time   |
+      | 1  S/E Casa Marco, Torino  POI       -       0.0      -         -        |
+      | 2  Strada dell'Assietta    Track    86.1   120.3    34.2      2h17       |
+      |      Pian dell'Alpe -> Sestriere                                         |
+      | 3  Briancon                POI      41.7   162.0      -         -        |
+      | .. ...                                                                   |
+      | 11 S/E Casa Marco, Torino  POI     112.4   734.9      -         -        |
+      | Totals: road 612.3 km | off-road 122.6 km | total 734.9 km               |
+      |         road 9h40 | off-road 8h10 | total 17h50                          |
+      | Consideration report: 12 items | 10 Included (Casa Marco at 1 and 11)   |
+      |                       2 Excluded: Via del Sale, Colle del Sommeiller     |
+      | Warnings: (none unresolved)                                              |
+      | Diff vs #3: removed Via del Sale; Briancon 5 -> 3; road -138.2 km        |
+      | Map: [arrows on tracks] [numbered stops 1-11] [S/E marker]               |
+      +--------------------------------------------------------------------------+
+    output: "${itinerary} (cumulative = road + off-road), ${totals}, ${consideration_report}, ${run_warnings}, ${run_diff}, map."
+    shared_artifacts: [itinerary, totals, consideration_report, run_warnings, run_diff, plan_run_id, track.entry, track.exit]
+    emotional_state: {entry: "Evaluating", exit: "Confident: every item accounted for, direction visible"}
+    integration_checkpoint: "Report lists 100% of project items; first stop = Start, last = End; each track row shows entry -> exit."
+    failure_modes:
+      - {mode: "Unresolved import warning on an Included item (plan run #8, successful)", user_sees: "Warnings: Colle della Lombarda: jump of 14.8 km between points 211 and 212", recovery: "Fix file / exclude", emotion: "Informed before committing", story: US-14}
+      - {mode: "Viewed on a 390 px phone (Giulia)", user_sees: "Readable without horizontal scroll", recovery: "-", emotion: "Included in the plan", story: US-05}
+      - {mode: "Plan Stale", user_sees: "STALE badge, Recalculate enabled", recovery: "Recalculate", emotion: "Clear next step", story: US-07a}
+    gherkin: |
+      Scenario: Every project item is accounted for in the results
+        Given project "Alpi Occidentali giugno 2027" has 12 items
+        And "Via del Sale" and "Colle del Sommeiller" are Excluded
+        When Marco opens plan run #4
+        Then the consideration report lists all 12 items
+        And 10 are Included with their route position
+
+  - id: 8
+    name: "Export GPX and load on device"
+    action: "Results -> 'Export GPX' -> import file into OsmAnd"
+    endpoint: "GET /api/plan-runs/{plan_run_id}/export.gpx"
+    tui_mockup: |
+      +-- Export ---------------------------------------------------+
+      | [ Export GPX ]  alpi-occidentali-giugno-2027-run4.gpx       |
+      |  7 POI waypoints | 10 road legs | 3 tracks (full res.)      |
+      |  includes consideration report                              |
+      +-------------------------------------------------------------+
+    output: "File ${gpx_export} named from ${project.name} + ${plan_run_id}; GPX 1.1 valid; carries ${consideration_report}."
+    shared_artifacts: [gpx_export, plan_run_id, itinerary, consideration_report]
+    emotional_state: {entry: "Anticipating", exit: "Confident and relieved: the trip is on the device"}
+    integration_checkpoint: "Export order == ${itinerary} order of the same ${plan_run_id}; track points == original resolution; one waypoint per POI item (D10)."
+    failure_modes:
+      - {mode: "Stale run exported", user_sees: "File labelled 'Plan run #4 (stale: project changed since this run)'", recovery: "Recalculate and re-export", emotion: "Informed", story: US-18b}
+      - {mode: "Failed run (plan run #6)", user_sees: "Export GPX unavailable: This plan run failed", recovery: "Fix failure, Recalculate", emotion: "Clear next step", story: US-18b}
+      - {mode: "Road shapes unavailable", user_sees: "Road shapes could not be fetched from the routing engine - export not possible right now. Try again later.", recovery: "Retry later", emotion: "Frustration buffered", story: US-18b}
+      - {mode: "Unconfirmed / retrace legs in the file", user_sees: "Leg names end with '[UNCONFIRMED - <reason> - check on the ground]'; export not blocked", recovery: "Check on the ground", emotion: "Informed", story: US-18b}
+      - {mode: "Device rejects file", user_sees: "(prevented by schema validation)", recovery: "-", emotion: "-", story: US-18a}
+    gherkin: |
+      Scenario: The whole trip opens in OsmAnd in itinerary order
+        Given Marco exported plan run #4 as GPX
+        When he imports the file into OsmAnd
+        Then OsmAnd shows 7 waypoints, 10 road legs and 3 tracks in itinerary order
+
+deferred_error_paths:
+  - id: snap-distance
+    note: "Track entry/exit or POI > 500 m from nearest road (FR-8.1). Phase 2 (assumption A3, confirmed). Slot reserved in step 7 Warnings."
+    example: "Track 'Strada dei Cannoni' entry is 1.2 km from the nearest road - check access"
+    recovery: "Check access or move the POI"
+    emotion: "Concern -> informed"
+
+shared_artifacts_registry:
+  # One source of truth per artifact (S6).
+  project_id:            {source: "Project record", consumers: [URL, API paths, export filename], risk: LOW}
+  project.name:          {source: "Project record", consumers: [header, export filename], risk: LOW}
+  project_history:       {source: "Project history (append-only)", consumers: [history view, reverse dialog], risk: MEDIUM}
+  track.id:              {source: "Track record", consumers: [item list, plan run, map, export], risk: MEDIUM}
+  track.name:            {source: "Track record (default from GPX name)", consumers: [item list, itinerary, map, export, warnings], risk: LOW}
+  track.entry:           {source: "Track canonical point order (first point)", consumers: [import row, optimizer, itinerary, map, export], risk: "HIGH - HC-1"}
+  track.exit:            {source: "Track canonical point order (last point)", consumers: [import row, optimizer, itinerary, map, export], risk: "HIGH - HC-1"}
+  track.direction_version: {source: "Track record, incremented only by Reverse track direction", consumers: [history, plan-run snapshot], risk: HIGH}
+  track.length_km:       {source: "Track stats from stored points", consumers: [import row, itinerary, totals], risk: MEDIUM}
+  track.est_duration:    {source: "Duration override if set, else length / offroad_speed_kmh", consumers: [import row, itinerary, totals], risk: MEDIUM}
+  import_warnings:       {source: "Import validation result per item", consumers: [import dialog, run_warnings], risk: MEDIUM}
+  poi.id:                {source: "POI record", consumers: [item list, plan run, map, export], risk: LOW}
+  poi.location:          {source: "POI record", consumers: [item list, map, optimizer, export waypoint], risk: MEDIUM}
+  poi.visit_duration_min: {source: "POI record (default 0)", consumers: [totals], risk: LOW}
+  anchor.start:          {source: "Project anchors", consumers: [list badge, optimizer, itinerary, map, export], risk: "HIGH - HC-2"}
+  anchor.end:            {source: "Project anchors", consumers: [list badge, optimizer, itinerary, map, export], risk: "HIGH - HC-2"}
+  item.included:         {source: "Item record", consumers: [list toggle, plan-run snapshot, report], risk: "HIGH - HC-3"}
+  plan_state:            {source: "Derived: project changed since latest run", consumers: [list badge, Recalculate button, export label], risk: MEDIUM}
+  plan_run_id:           {source: "Plan run record (immutable snapshot)", consumers: [results, diff, history, export], risk: HIGH}
+  run_status:            {source: "Plan run record (succeeded/failed + reason)", consumers: [results, report, export availability], risk: HIGH}
+  run_duration_s:        {source: "Plan run record", consumers: [results header, logs], risk: LOW}
+  feasibility_limit_s:   {source: "Configuration (default 600 s = 10 min)", consumers: [optimizer, "No valid route found within the time limit"], risk: LOW}
+  optimisation_limit_s:  {source: "Configuration (default 1800 s = 30 min from pressing Optimize/Recalculate)", consumers: [optimizer, "'not fully optimised (time limit)' label"], risk: LOW}
+  leg_confidence:        {source: "Leg cache entry: Confirmed / Unconfirmed + reason / None (FR-5.8)", consumers: [optimizer, itinerary, Warnings, map style, GPX leg name], risk: "HIGH - FR-5.8"}
+  run_flags:             {source: "Plan run record: not fully optimised (time limit / stopped), not reproducible, reused plan of run #N", consumers: [results header, history, logs], risk: MEDIUM}
+  leg_cache_key:         {source: "Leg cache key definition (rounded from, rounded to, provider, profile)", consumers: [cache lookup, leg_counts], risk: "HIGH - HC-4"}
+  leg_counts:            {source: "Plan run record, counted at provider boundary", consumers: [progress UI, logs], risk: "HIGH - A-4"}
+  routing_provider_id:   {source: "Configuration (.env)", consumers: [results header, cache key], risk: MEDIUM}
+  routing_profile:       {source: "Configuration (.env)", consumers: [results header, cache key], risk: MEDIUM}
+  detour_factor:         {source: "MockProvider configuration (default 1.3)", consumers: [mock legs], risk: LOW}
+  objective:             {source: "Project setting (default distance, D7)", consumers: [optimizer, results header, history], risk: LOW}
+  offroad_speed_kmh:     {source: "Project setting (default 15)", consumers: [track.est_duration], risk: LOW}
+  loop_threshold_m:      {source: "Project setting (default 200)", consumers: [LOOP label], risk: LOW}
+  jump_threshold_km:     {source: "Configuration (default set by DESIGN, A8)", consumers: [import_warnings], risk: LOW}
+  duplicate_radius_m:    {source: "Configuration (default 50)", consumers: [import_warnings], risk: LOW}
+  consideration_report:  {source: "Plan run record", consumers: [results, export], risk: "HIGH - HC-3"}
+  run_warnings:          {source: "Derived: unresolved import_warnings of Included items at run time, stored on plan run", consumers: [results Warnings section], risk: MEDIUM}
+  itinerary:             {source: "Plan run record", consumers: [results table, map, export, diff], risk: HIGH}
+  totals:                {source: "Plan run record", consumers: [results, diff, history], risk: HIGH}
+  run_diff:              {source: "Derived from two plan-run records", consumers: [diff view], risk: MEDIUM}
+  gpx_export:            {source: "Generated from plan run record", consumers: [download], risk: "HIGH - A-5"}
+
+integration_validation:
+  shared_artifact_consistency:
+    - artifact: track.entry / track.exit
+      must_match_across: [2, 2b, 6, 7, 8]
+      failure_message: "Track shown or exported in a direction different from its stored canonical direction (HC-1 breach)."
+    - artifact: plan_run_id
+      must_match_across: [6, 7, 8]
+      failure_message: "Exported GPX does not belong to the plan run displayed."
+    - artifact: consideration_report
+      must_match_across: [5, 7, 8]
+      failure_message: "Report item count differs from project item count (HC-3 breach)."
+    - artifact: anchor.start / anchor.end
+      must_match_across: [4, 5, 6, 7, 8]
+      failure_message: "First/last stop differs from chosen anchors (HC-2 breach)."
+    - artifact: leg_counts
+      must_match_across: [6]
+      failure_message: "Progress counts disagree with distinct legs requested at the routing port (HC-4 breach)."
+    - artifact: leg_confidence
+      must_match_across: [6, 7, 8]
+      failure_message: "An Unconfirmed leg is missing from Warnings, the map style or the GPX leg name (FR-5.8 breach)."
+
+changelog:
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Bootstrap journey, 9 steps incl. 2b reverse-direction path."
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Revision 1: S/E single row, cumulative = road+off-road (row 2 = 120.3), 7 waypoints, host placeholder, failure modes with recovery+emotion, full artifact registry, Results Warnings, report in export."
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Revision 2: single plan-run timeline (#1-#9); failed run is #6, warnings run is #8."
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Revision 6 (U41): vocabulary + Confirmed/Unconfirmed/Retrace/Stop/not fully optimised; step 6 progress text and Stop; error paths (unreachable item, no valid route in time, engine not ready, compromise legs as informed state, road shapes unavailable); artifacts feasibility/optimisation limits, leg_confidence, run_flags; Valhalla."

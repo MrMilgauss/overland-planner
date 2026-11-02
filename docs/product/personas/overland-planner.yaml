@@ -1,0 +1,46 @@
+schema_version: 1
+# Evidence level: requirements-doc derived, unvalidated (REQUIREMENTS.md sections 1, 4, 6).
+# Names are illustrative personas, not real interviewees.
+
+personas:
+  - id: overland-planner
+    name: Marco Ferri
+    role: primary
+    summary: "Defender 90 owner who plans 1-3 week overlanding holidays in Italy and the Alps and self-hosts tools on a home Raspberry Pi."
+    characteristics:
+      vehicle: "Land Rover Defender 90 (short wheelbase; steep loose descents are a real limit)"
+      home_base: "Torino, Italy (45.0703, 7.6869)"
+      trip_shape: "5-40 GPX tracks + 5-30 POIs per trip, one or more countries (IT, FR, CH), 1-several weeks"
+      track_sources: "GPX files from forums, Wikiloc, friends, own OsmAnd recordings (some recorded backwards, some with GPS glitches)"
+      navigation_devices: ["OsmAnd on Android tablet", "Locus Map", "Garmin handheld"]
+      hosting: "Raspberry Pi 5 16 GB (pi.example) on home LAN, docker compose, with self-hosted Valhalla routing (OD#5 and OD#1 resolved 2026-11-01)"
+      tech_comfort: "Comfortable with docker compose and .env files; does not want to code to plan a trip"
+      primary_device: "Desktop browser"
+    goals:
+      - "Visit every chosen trail and place between a fixed start and end with minimal road driving"
+      - "Never drive a trail against its recorded direction"
+      - "Try trip variants quickly and see what changed"
+      - "Load the final trip onto the navigation device in one go"
+    frustrations:
+      - "Consumer route planners reverse or clip trails"
+      - "Manual ordering takes days and still backtracks"
+      - "No way to know what a black-box planner left out"
+    success_signal: "Full-trip GPX loaded into OsmAnd the evening before departure, no manual fix-ups."
+    jobs: [J-01, J-02, J-03, J-04, J-05, J-06]
+
+  - id: household-viewer
+    name: Giulia Ferri
+    role: secondary
+    summary: "Marco's partner; reads the itinerary and totals on her phone over the home LAN. Never edits."
+    characteristics:
+      device: "iPhone, ~390 px wide viewport, home Wi-Fi"
+      needs: ["Which places are included", "How many days/hours of driving", "Where the trip starts and ends"]
+    jobs: [J-01, J-05]
+
+changelog:
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Bootstrap primary + secondary persona."
+  - date: 2026-11-01
+    feature: overland-route-planner-mvp
+    change: "Revision 6: hosting updated to Raspberry Pi 5 16 GB + self-hosted Valhalla (DESIGN D38, D40)."

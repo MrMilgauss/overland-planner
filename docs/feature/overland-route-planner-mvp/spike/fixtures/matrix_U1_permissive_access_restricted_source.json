@@ -1,0 +1,202 @@
+{
+ "endpoint": "/sources_to_targets",
+ "request": {
+  "sources": [
+   {
+    "lat": 44.819367,
+    "lon": 6.7604,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.294299,
+    "lon": 6.687024,
+    "search_cutoff": 250
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.314909,
+    "lon": 7.296014,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.097939,
+    "lon": 6.928046,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.278034,
+    "lon": 7.39618,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.975988,
+    "lon": 6.508043,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false,
+    "ignore_access": true,
+    "ignore_closures": true,
+    "ignore_restrictions": true,
+    "ignore_non_vehicular_restrictions": true
+   }
+  }
+ },
+ "status": 200,
+ "response": {
+  "sources_to_targets": [
+   [
+    {
+     "from_index": 0,
+     "to_index": 0,
+     "time": 10176,
+     "distance": 125.26,
+     "cost": 9178.074,
+     "begin_heading": 300.7,
+     "end_heading": 263.5,
+     "begin_lat": 44.819367,
+     "begin_lon": 6.7604,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 0,
+     "to_index": 1,
+     "time": 5584,
+     "distance": 65.662,
+     "cost": 5457.392,
+     "begin_heading": 300.7,
+     "end_heading": 61.7,
+     "begin_lat": 44.819367,
+     "begin_lon": 6.7604,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 0,
+     "to_index": 2,
+     "time": 12449,
+     "distance": 153.313,
+     "cost": 11439.145,
+     "begin_heading": 300.7,
+     "end_heading": 344.9,
+     "begin_lat": 44.819367,
+     "begin_lon": 6.7604,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 0,
+     "to_index": 3,
+     "time": 3515,
+     "distance": 36.605,
+     "cost": 3654.296,
+     "begin_heading": 300.7,
+     "end_heading": 290.9,
+     "begin_lat": 44.819367,
+     "begin_lon": 6.7604,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    }
+   ],
+   [
+    {
+     "from_index": 1,
+     "to_index": 0,
+     "time": 8250,
+     "distance": 93.447,
+     "cost": 7546.843,
+     "begin_heading": 338.4,
+     "end_heading": 263.5,
+     "begin_lat": 44.294299,
+     "begin_lon": 6.687024,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 1,
+     "to_index": 1,
+     "time": 12556,
+     "distance": 146.416,
+     "cost": 11753.852,
+     "begin_heading": 338.4,
+     "end_heading": 61.7,
+     "begin_lat": 44.294299,
+     "begin_lon": 6.687024,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 1,
+     "to_index": 2,
+     "time": 10522,
+     "distance": 121.5,
+     "cost": 9807.913,
+     "begin_heading": 338.4,
+     "end_heading": 344.9,
+     "begin_lat": 44.294299,
+     "begin_lon": 6.687024,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 1,
+     "to_index": 3,
+     "time": 10422,
+     "distance": 116.87,
+     "cost": 9830.482,
+     "begin_heading": 338.4,
+     "end_heading": 290.9,
+     "begin_lat": 44.294299,
+     "begin_lon": 6.687024,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    }
+   ]
+  ],
+  "sources": [
+   {
+    "lat": 44.819367,
+    "lon": 6.7604
+   },
+   {
+    "lat": 44.294299,
+    "lon": 6.687024
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.314909,
+    "lon": 7.296013
+   },
+   {
+    "lat": 45.097939,
+    "lon": 6.928045
+   },
+   {
+    "lat": 44.278065,
+    "lon": 7.396168
+   },
+   {
+    "lat": 44.975988,
+    "lon": 6.508043
+   }
+  ],
+  "units": "kilometers",
+  "algorithm": "costmatrix"
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

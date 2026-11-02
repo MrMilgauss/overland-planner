@@ -1,0 +1,173 @@
+# KPI contracts -- Overland Route Planner
+# Created 2026-11-02 by the DEVOPS wave (Apex) for feature overland-route-planner-mvp.
+# Source KPIs: feature-delta.md "Wave: DISCUSS / [REF] Outcome KPIs" (K1-K7 + guardrails).
+# Instruments: structlog JSON events on stdout (Docker json-file, rotated), the persisted job log
+# (plan_job_log, upstream-changes DV-2), plan_runs, and GET /api/diagnostics (DV-3). DV-1..DV-5 accepted by the user 2026-11-02.
+# No Prometheus/Grafana and no new services (DEVOPS D93). Thresholds are versioned here, not in code:
+# the diagnostics service reads the same numbers from config (DIAG_* keys) whose defaults equal this file.
+
+schema_version: 1
+owner: Marco (product), the owner (operator)
+review_cadence: weekly during the planning season (make diag), and at every slice demo
+timezone_for_day_buckets: Europe/Rome   # PLANNER_TZ; the Pi runs Europe/Zurich (same offset)
+exclusions:
+  - "jobs and runs from the planner-perf service never reach production data (separate volume)"
+  - "projects whose name starts with '__' are excluded from K1/K7 (fixtures loaded by hand)"
+
+common_event_fields:   # present on every event line
+  ts: ISO-8601 UTC with ms
+  level: info|warning|error
+  event: dotted name
+  app_version: PLANNER_GIT_SHA (12 chars)
+  image_digest: PLANNER_IMAGE digest (sha256:...)
+  request_id: per HTTP request (absent for background work)
+  job_id: when inside a plan job
+  project_id: when applicable
+
+events:
+  app.started: [app_version, image_digest, alembic_revision, routing_provider, provider_id, solver_budget, auth_enabled, degraded_reasons]
+  health.startup.refused: [component, reason]
+  health.startup.degraded: [reason]
+  plan.job.refused: [project_id, http_status, reason]          # synchronous refusals (422/409/503): no job row
+  plan.job.finished: [job_id, project_id, terminal_state, plan_run_id, items_included, legs_total, legs_new,
+                      legs_cached, points_located, points_new, second_pass_pairs, retried, memo_hit, ignore_memo,
+                      stage_ms, solver_solutions, incumbents, reproducible, not_fully_optimised_reason,
+                      unconfirmed_legs, retraces, provider_id, elapsed_ms]   # NEW (DV-6); one line per job, mirrors plan_job_log
+  plan.run.completed: [plan_run_id, number, status, failure_reason, report_items, project_items, invariants]   # brief s12
+  plan.run.geometry_served: [plan_run_id, legs, geometry_ms, e2e_server_ms]   # NEW (DV-6); first geometry fetch per run
+  invariant.violation: [plan_run_id, check, detail]
+  routing.engine.error: [kind, error_code, endpoint, attempt]
+  export.gpx: [plan_run_id, project_id, items_included, bytes, stale]
+  import.track: [project_id, track_id, points, warnings]
+
+kpis:
+  - id: K1
+    name: North Star -- device-loaded full-trip GPX for a 20+ item real trip in <= 2 h planning time
+    type: outcome
+    target: "<= 2 h active planning time"
+    baseline: ~2 days by hand (unvalidated estimate)
+    instruments:
+      primary: dogfood session timing (manual stopwatch, recorded in docs/demo/ at the slice-11 demo)
+      secondary:
+        diagnostics_field: k1.planning_span
+        definition: >
+          per project, active time from the first item created_at to the first export.gpx of a run with
+          items_included >= 20, summing gaps between consecutive project activity timestamps
+          (items.created_at, project_history.at, plan_job_log.started_at, plan_runs.first_exported_at)
+          and capping each gap at 30 min (idle cut-off)
+        needs: [items.created_at, plan_runs.first_exported_at, plan_runs.export_count]   # DV-4
+    thresholds: {green: "<= 2 h", amber: "2-4 h", red: "> 4 h"}
+    alert: none (outcome KPI, reviewed at the demo)
+
+  - id: K2
+    name: Plan runs violating HC-1/HC-2/HC-5
+    type: guardrail
+    target: 0
+    instruments:
+      ci: property tests (A-1, A-2, HC-5, A-7 over 1,000 generated projects incl. sparse/retrace), blocking
+      runtime_event: invariant.violation
+      diagnostics_field: k2.invariant_violations
+      definition: count of plan_runs with status=failed AND failure_reason='internal invariant violation' (all time and last 30 days)
+    thresholds: {green: 0, red: ">= 1"}
+    alert: red badge on /diagnostics and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate)
+
+  - id: K3
+    name: Plan runs omitting an item from the consideration report
+    type: guardrail
+    target: 0
+    instruments:
+      ci: A-3 property test (blocking)
+      runtime_event: plan.run.completed (report_items vs project_items)
+      diagnostics_field: k3.report_omissions
+      definition: count of plan_runs where report_items != project_items (the guard should make this impossible; this is the independent check)
+    thresholds: {green: 0, red: ">= 1"}
+    alert: same as K2
+
+  - id: K4
+    name: Toggle-only Recalculates that needed routing requests
+    type: leading
+    target: 0%
+    instruments:
+      ci: A-4 acceptance tests with the CountingRoutingProvider (blocking)
+      runtime_event: plan.job.finished (legs_new, points_new, provider_id)
+      diagnostics_field: k4.toggle_only_with_requests_pct
+      definition: >
+        among done jobs whose points_new = 0 AND provider_id equals the previous job of the project
+        (toggle/remove-only changes), the share with legs_new > 0
+    thresholds: {green: 0%, red: "> 0%"}
+    alert: red badge; investigate leg-key quantisation (DESIGN open question 5) before anything else
+
+  - id: K5
+    name: 60-item plan time on the Pi
+    type: leading
+    target: "e2e p95 <= 180 s (cold legs); solve stage p95 <= 55 s"
+    baseline: "measured 2026-11-01 (SPIKE-1R/2R): sum of stage p95s 63.7 s, 73.7 s with UI + reserve; solve 47.56 s (dense)"
+    instruments:
+      gate: make perf-pi (planner-perf on the Pi, client-observed from the Mac; N=10 -> gate on max, N=30 -> p95)
+      runtime_event: plan.job.finished (stage_ms, elapsed_ms) + plan.run.geometry_served (e2e_server_ms)
+      diagnostics_fields:
+        k5.e2e_p95_s: "p95 of e2e_server_ms over the claim population, last 30 days (report max when N < 20)"
+        k5.solve_p95_s: p95 of stage_ms.solve over done jobs with items_included >= 50 and memo_hit = false
+        k5.stage_p95_s: per stage (snapshot, snap, matrix, second_pass, reach_model, spawn, solve, guard_persist, geometry)
+        k5.out_of_claim: counts of jobs with retried=true, second_pass_pairs > 700, or memo_hit (reported, not in the p95)
+      claim_population: "done jobs, items_included >= 50, memo_hit=false, retried=false, second_pass_pairs <= 700"
+    thresholds:
+      e2e: {green: "<= 120 s", amber: "120-180 s", red: "> 180 s"}
+      solve: {green: "<= 50 s", amber: "50-55 s", red: "> 55 s"}
+    alert: amber/red badge; red -> re-run make perf-pi, then recalibrate SOLVER_BUDGET (ADR-014 s1)
+
+  - id: K6
+    name: Exports that open in OsmAnd / Locus / Garmin
+    type: outcome
+    target: 100%
+    instruments:
+      ci: GPX 1.1 XSD validation of exports (blocking, leading proxy)
+      manual: dogfood checklist per device (docs/demo/), at the slice 01b and 11 demos and the first real trip
+      runtime_event: export.gpx (volume only)
+    thresholds: {green: 100%, red: "< 100%"}
+    alert: none (manual)
+
+  - id: K7
+    name: Variants tried per planning evening
+    type: leading
+    target: ">= 5"
+    baseline: ~1
+    instruments:
+      diagnostics_field: k7.runs_per_project_day
+      definition: count of plan_job_log rows with terminal_state=done per (project, local day), shown as median and max over the last 30 days with at least 1 run
+    thresholds: {green: ">= 5", amber: "2-4", red: "<= 1"}
+    alert: none (reviewed weekly)
+
+guardrails:
+  - id: G1
+    name: Idle app RAM
+    target: "< 300 MB (NFR-5), excluding Valhalla"
+    instruments:
+      diagnostics_fields: {g1.process_rss_mb: /proc/self/status VmRSS, g1.cgroup_memory_mb: /sys/fs/cgroup/memory.current}
+      gate: "slice 01a and DoD item 5: docker stats after 10 min idle on the Pi (make diag records it); CI arm64 smoke records an advisory sample"
+    thresholds: {green: "< 250 MB", amber: "250-300 MB", red: ">= 300 MB"}
+  - id: G2
+    name: Project data corruption on provider failure
+    target: 0
+    instruments:
+      ci: gold fault catalogue + crash-consistency tests (blocking)
+      diagnostics_fields: {g2.last_quick_check: result and time of the startup PRAGMA quick_check}
+    thresholds: {green: quick_check ok, red: quick_check failed}
+    accepted_risk: "No backups (user 2026-11-02, DEVOPS D91): device or NVMe loss = data loss, not measured by any KPI"
+  - id: G3
+    name: Offline test suite green
+    target: 100% on main
+    instruments: {ci: ci.yml on every push; make deploy refuses a SHA without a green run}
+  - id: G4
+    name: Routing engine availability while planning
+    target: no refused jobs for engine not ready outside tile refresh windows
+    instruments: {runtime_event: plan.job.refused (reason engine_not_ready), diagnostics_field: g4.engine_refusals_30d, healthcheck: valhalla /status}
+    thresholds: {green: 0, amber: ">= 1"}
+
+diagnostics_endpoint:
+  path: GET /api/diagnostics       # JSON, behind Basic auth when enabled; page /diagnostics in the SPA
+  query: {days: "default 30", project_id: optional}
+  sources: [plan_job_log, plan_runs, items, project_history, /proc, /sys/fs/cgroup]
+  cost: read-only SQL aggregates over at most a few thousand rows; must answer in < 200 ms on the Pi; never takes the write lock
+  payload_keys: [version, k1, k2, k3, k4, k5, k7, g1, g2, g4, cache_hit_rate_30d, jobs_by_terminal_state_30d, retried_jobs_30d, second_pass_jobs_30d]
+  cache_hit_rate: sum(legs_cached) / sum(legs_total) over done jobs

@@ -1,0 +1,437 @@
+{
+ "endpoint": "/sources_to_targets",
+ "request": {
+  "sources": [
+   {
+    "lat": 45.070322,
+    "lon": 7.686863,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.023996,
+    "lon": 7.202379,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.828314,
+    "lon": 6.677251,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.202812,
+    "lon": 7.435711,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.048711,
+    "lon": 6.027184,
+    "search_cutoff": 250
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.314909,
+    "lon": 7.296014,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.097939,
+    "lon": 6.928046,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.278034,
+    "lon": 7.39618,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.975988,
+    "lon": 6.508043,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.048919,
+    "lon": 7.02802,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  }
+ },
+ "status": 200,
+ "response": {
+  "sources_to_targets": [
+   [
+    {
+     "from_index": 0,
+     "to_index": 0,
+     "time": 6896,
+     "distance": 124.374,
+     "cost": 7421.434,
+     "begin_heading": 31.0,
+     "end_heading": 263.5,
+     "begin_lat": 45.070289,
+     "begin_lon": 7.686834,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 0,
+     "to_index": 1,
+     "time": 4059,
+     "distance": 68.617,
+     "cost": 4590.707,
+     "begin_heading": 31.0,
+     "end_heading": 241.7,
+     "begin_lat": 45.070289,
+     "begin_lon": 7.686834,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 0,
+     "to_index": 2,
+     "time": 6441,
+     "distance": 116.612,
+     "cost": 7121.997,
+     "begin_heading": 31.0,
+     "end_heading": 344.9,
+     "begin_lat": 45.070289,
+     "begin_lon": 7.686834,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 0,
+     "to_index": 3,
+     "time": 7083,
+     "distance": 125.63,
+     "cost": 7442.921,
+     "begin_heading": 31.0,
+     "end_heading": 290.9,
+     "begin_lat": 45.070289,
+     "begin_lon": 7.686834,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    },
+    {
+     "from_index": 0,
+     "to_index": 4,
+     "time": 5689,
+     "distance": 90.148,
+     "cost": 6186.796,
+     "begin_heading": 31.0,
+     "end_heading": 351.1,
+     "begin_lat": 45.070289,
+     "begin_lon": 7.686834,
+     "end_lat": 45.048917,
+     "end_lon": 7.028008
+    }
+   ],
+   [
+    {
+     "from_index": 1,
+     "to_index": 0,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 1,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 2,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 3,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 4,
+     "time": null,
+     "distance": null,
+     "cost": null
+    }
+   ],
+   [
+    {
+     "from_index": 2,
+     "to_index": 0,
+     "time": 12148,
+     "distance": 136.62,
+     "cost": 11083.412,
+     "begin_heading": 336.4,
+     "end_heading": 263.5,
+     "begin_lat": 44.828314,
+     "begin_lon": 6.677251,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 2,
+     "to_index": 1,
+     "time": 6365,
+     "distance": 59.83,
+     "cost": 6041.033,
+     "begin_heading": 336.4,
+     "end_heading": 61.7,
+     "begin_lat": 44.828314,
+     "begin_lon": 6.677251,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 2,
+     "to_index": 2,
+     "time": 13584,
+     "distance": 237.796,
+     "cost": 13144.367,
+     "begin_heading": 336.4,
+     "end_heading": 344.9,
+     "begin_lat": 44.828314,
+     "begin_lon": 6.677251,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 2,
+     "to_index": 3,
+     "time": 4168,
+     "distance": 29.139,
+     "cost": 4088.185,
+     "begin_heading": 336.4,
+     "end_heading": 290.9,
+     "begin_lat": 44.828314,
+     "begin_lon": 6.677251,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    },
+    {
+     "from_index": 2,
+     "to_index": 4,
+     "time": 7048,
+     "distance": 67.895,
+     "cost": 6646.581,
+     "begin_heading": 336.4,
+     "end_heading": 351.1,
+     "begin_lat": 44.828314,
+     "begin_lon": 6.677251,
+     "end_lat": 45.048917,
+     "end_lon": 7.028008
+    }
+   ],
+   [
+    {
+     "from_index": 3,
+     "to_index": 0,
+     "time": 3972,
+     "distance": 40.641,
+     "cost": 3752.958,
+     "begin_heading": 88.7,
+     "end_heading": 263.5,
+     "begin_lat": 44.202812,
+     "begin_lon": 7.435711,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 3,
+     "to_index": 1,
+     "time": 9991,
+     "distance": 191.921,
+     "cost": 9567.877,
+     "begin_heading": 88.7,
+     "end_heading": 241.7,
+     "begin_lat": 44.202812,
+     "begin_lon": 7.435711,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 3,
+     "to_index": 2,
+     "time": 1828,
+     "distance": 12.852,
+     "cost": 1804.794,
+     "begin_heading": 88.7,
+     "end_heading": 344.9,
+     "begin_lat": 44.202812,
+     "begin_lon": 7.435711,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 3,
+     "to_index": 3,
+     "time": 13015,
+     "distance": 248.934,
+     "cost": 12420.093,
+     "begin_heading": 88.7,
+     "end_heading": 290.9,
+     "begin_lat": 44.202812,
+     "begin_lon": 7.435711,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    },
+    {
+     "from_index": 3,
+     "to_index": 4,
+     "time": 11001,
+     "distance": 196.356,
+     "cost": 10533.159,
+     "begin_heading": 88.7,
+     "end_heading": 351.1,
+     "begin_lat": 44.202812,
+     "begin_lon": 7.435711,
+     "end_lat": 45.048917,
+     "end_lon": 7.028008
+    }
+   ],
+   [
+    {
+     "from_index": 4,
+     "to_index": 0,
+     "time": 14596,
+     "distance": 193.925,
+     "cost": 13838.339,
+     "begin_heading": 342.1,
+     "end_heading": 263.5,
+     "begin_lat": 45.048711,
+     "begin_lon": 6.027185,
+     "end_lat": 44.314909,
+     "end_lon": 7.296013
+    },
+    {
+     "from_index": 4,
+     "to_index": 1,
+     "time": 8189,
+     "distance": 110.717,
+     "cost": 8120.823,
+     "begin_heading": 342.1,
+     "end_heading": 61.7,
+     "begin_lat": 45.048711,
+     "begin_lon": 6.027185,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 4,
+     "to_index": 2,
+     "time": 15803,
+     "distance": 311.022,
+     "cost": 14901.602,
+     "begin_heading": 342.1,
+     "end_heading": 344.9,
+     "begin_lat": 45.048711,
+     "begin_lon": 6.027185,
+     "end_lat": 44.278065,
+     "end_lon": 7.396168
+    },
+    {
+     "from_index": 4,
+     "to_index": 3,
+     "time": 4106,
+     "distance": 53.862,
+     "cost": 4324.861,
+     "begin_heading": 342.1,
+     "end_heading": 116.4,
+     "begin_lat": 45.048711,
+     "begin_lon": 6.027185,
+     "end_lat": 44.975988,
+     "end_lon": 6.508043
+    },
+    {
+     "from_index": 4,
+     "to_index": 4,
+     "time": 8934,
+     "distance": 119.914,
+     "cost": 8752.128,
+     "begin_heading": 342.1,
+     "end_heading": 351.1,
+     "begin_lat": 45.048711,
+     "begin_lon": 6.027185,
+     "end_lat": 45.048917,
+     "end_lon": 7.028008
+    }
+   ]
+  ],
+  "sources": [
+   {
+    "lat": 45.070289,
+    "lon": 7.686834
+   },
+   {
+    "lat": 44.023996,
+    "lon": 7.202379
+   },
+   {
+    "lat": 44.828314,
+    "lon": 6.677251
+   },
+   {
+    "lat": 44.202812,
+    "lon": 7.435711
+   },
+   {
+    "lat": 45.048711,
+    "lon": 6.027185
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.314909,
+    "lon": 7.296013
+   },
+   {
+    "lat": 45.097939,
+    "lon": 6.928045
+   },
+   {
+    "lat": 44.278065,
+    "lon": 7.396168
+   },
+   {
+    "lat": 44.975988,
+    "lon": 6.508043
+   },
+   {
+    "lat": 45.048917,
+    "lon": 7.028008
+   }
+  ],
+  "units": "kilometers",
+  "algorithm": "costmatrix",
+  "warnings": [
+   {
+    "code": 400,
+    "text": "CostMatrix turned off destination-only on a second pass for connections: 5,6,7,8,9"
+   }
+  ]
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

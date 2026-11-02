@@ -1,0 +1,190 @@
+# Target environments -- overland-route-planner-mvp (DEVOPS wave, 2026-11-02, Apex)
+# Decisions referenced: D80-D102 (feature-delta.md "## Wave: DEVOPS"). Measured facts come from
+# spike/findings.md and from read-only probes of pi-host on 2026-11-02 (see coexistence.probed).
+
+schema_version: 1
+feature: overland-route-planner-mvp
+
+environments:
+  - id: dev-mac
+    purpose: Inner loop. TDD, mutation testing, local e2e against uvicorn
+    host: the owner's Mac, Apple M1 (arm64), macOS
+    runtime: Python 3.12 via uv (uv sync --frozen), Node 22 LTS (npm ci), no Docker
+    routing: ROUTING_PROVIDER=mock (MockRoutingProvider, haversine x 1.3, MOCK_PLAN fixtures)
+    data: DATA_DIR=./.data (git-ignored)
+    runs: [pre-commit, pre-push, pytest unit/property/integration/gold/contract-fixtures, vitest,
+           playwright e2e against `make run-local` (uvicorn + built SPA), mutmut (per feature)]
+    notes:
+      - "/proc/self/mountinfo does not exist on macOS: the /data persistence probe (ADR-011) must report
+         'not_applicable' on non-Linux platforms, never degraded (upstream-changes DV-7)"
+      - "PR_SET_PDEATHSIG is Linux-only; the pipe-EOF watchdog covers macOS (ADR-015, already designed)"
+      - Solver orders are bit-identical Mac vs Pi (SPIKE-1R c); solve seconds are ~2.3x faster on the M1
+    ops_client: the Mac is the only machine that talks to the Pi (ssh deploy@pi.example); make targets live here
+
+  - id: ci-github-amd64
+    purpose: Commit and acceptance stages, amd64 image, e2e on compose with mock routing
+    host: GitHub-hosted ubuntu-24.04 (x86_64), private repository
+    runs: [lint, typecheck, import-linter, gitleaks, unit+property+integration+gold, routing-port contract
+           suite (recorded Valhalla 3.9.1 fixtures via respx), alembic round-trip, vitest, vite build,
+           amd64 image build, trivy, compose e2e (Playwright chromium + webkit iPhone), golden-order determinism]
+    routing: mock only. No live Valhalla in CI
+    secrets: none (GITHUB_TOKEN with packages:write only, to push to GHCR)
+
+  - id: ci-github-arm64
+    purpose: linux/arm64 image build and smoke (the image that runs on the Pi)
+    plan: personal free GitHub plan, private repository (OQ-1 answered 2026-11-02)
+    host_default: GitHub-hosted ubuntu-latest (x86_64) with QEMU binfmt (docker/setup-qemu-action) + buildx --platform linux/arm64
+    host_opt_in: ubuntu-24.04-arm (native), selected by the repo variable ARM64_RUNNER, only if it proves available to the private repo
+    emulation_scope: >
+      Only the RUN steps of the Python stages run emulated: uv sync installs prebuilt aarch64 wheels
+      (ortools==9.15.6755 and the rest); nothing is compiled. The node stage runs natively on $BUILDPLATFORM.
+    ci_time_effect: "arm64 job about 2x native (< 15 min vs < 8 min); main pipeline to a deployable digest < 25 min; about 40 runner-minutes per main push"
+    runs: [arm64 image build, push by digest (main only), "functional smoke under the same arch: /healthz 200 + solver probe green + import ortools on aarch64",
+           "idle RSS sample only on a native runner (under QEMU timings and RSS are meaningless and skipped)"]
+
+  - id: pi-prod
+    purpose: Production. The only environment Marco and Giulia use
+    host: deploy@pi.example (LAN IP 192.168.1.10), Raspberry Pi 5 Model B 16 GB, 4 cores, aarch64
+    os: Debian 13 (trixie), kernel 6.18 rpt, cgroup v2, timezone Europe/Zurich
+    container_runtime: Docker 29.5.3, Compose v5.1.4, buildx v0.34.1, default log driver json-file (no daemon.json)
+    github_owner: "MrMilgauss"   # user, 2026-11-02; image path lowercase: ghcr.io/mrmilgauss/overland-planner
+    capacity_2026_11_02: {mem_total_mb: 16218, mem_available_mb: 12331, swap_mb: 2047, disk_free_gb: 221}
+    compose_project: overland
+    install_dir: /home/deploy/apps/overland-planner      # same convention as ~/apps/fate-ledger
+    files_on_host:
+      - compose.yaml              # from git (deploy/compose.yaml), rsynced by make deploy
+      - .env                      # Pi-local, mode 600, hand-edited, never in git (from .env.example)
+      - release.env               # written only by deploy.sh: PLANNER_IMAGE=...@sha256, PLANNER_GIT_SHA, PLANNER_ALEMBIC_HEAD
+      - release.env.prev          # previous release, used by rollback
+      - releases.log              # append-only: ts, action (deploy|rollback|auto-rollback), digest, git_sha, alembic_head, result
+      - scripts/                  # deploy.sh, rollback.sh, tiles-*.sh, spike-cleanup.sh, preflight.sh (from git)
+      - valhalla/valhalla.overrides.json   # config deltas (allow_second_pass etc.), from git
+      - snapshots/                # predeploy-<ts>.tgz for D89/D90 rollback only; current + previous deploy kept (not a backup, same NVMe)
+    services:
+      planner:
+        image: ghcr.io/mrmilgauss/overland-planner@sha256:<from release.env>
+        profile: default
+        init: true
+        ports: ["${PLANNER_BIND}:${PLANNER_PORT:-8080}:8080"]   # PLANNER_BIND=192.168.1.10 on the Pi
+        networks: [edge, routing]
+        volumes: ["planner-data:/data"]
+        mem_limit: 1g
+        memswap_limit: 1g
+        cpus: 2.0
+        pids_limit: 256
+        oom_score_adj: 500
+        restart: unless-stopped
+        healthcheck: {test: python -c urllib /healthz, interval: 30s, timeout: 5s, retries: 3, start_period: 30s}
+        logging: {driver: json-file, max-size: 10m, max-file: "5"}
+        depends_on: {valhalla: service_started}     # from slice 06a; never waits for healthy (ADR-013 s8)
+      valhalla:
+        image: ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6
+        profile: default (added in slice 06a)
+        networks: [routing]                          # internal: true. Never published
+        volumes: ["valhalla-data:/custom_files (subpath tilesets/${VALHALLA_TILESET})"]
+        env: {serve_tiles: "True", use_tiles_ignore_pbf: "True", force_rebuild: "False", server_threads: "2",
+              update_existing_config: "False", build_admins: "False", build_time_zones: "False",
+              build_elevation: "False", build_transit: "False"}
+        mem_limit: 4g
+        memswap_limit: 4g
+        cpus: 3.0
+        oom_score_adj: 500
+        restart: unless-stopped
+        healthcheck: {test: "curl -fsS http://localhost:8002/status (verify curl is in the image at 06a)", interval: 30s, start_period: 120s}
+        logging: {driver: json-file, max-size: 10m, max-file: "3"}
+      valhalla-build:
+        profile: valhalla-build (one-shot, manual)
+        image: same Valhalla digest; osmium merge step uses debian:bookworm-slim@<pinned> + osmium-tool (as in SPIKE-2R merge.sh)
+        networks: [egress]                           # needs Geofabrik over HTTPS
+        volumes: ["valhalla-data:/work (subpath build)"]
+        mem_limit: ${VALHALLA_BUILD_MEM:-9g}         # measured at the cap (9 GiB peak, 0 OOM); max 10g on this host
+        memswap_limit: ${VALHALLA_BUILD_MEM:-9g}
+        cpus: 3.0
+        restart: "no"
+        precondition: valhalla serve stopped; MemAvailable >= VALHALLA_BUILD_MEM + 1 GiB; disk free >= 25 GB
+      planner-perf:
+        profile: perf (ephemeral; perf and @real_provider acceptance runs only)
+        image: same digest as planner
+        ports: ["127.0.0.1:18080:8080"]              # reached from the Mac via ssh -L
+        networks: [routing]
+        volumes: ["perf-data:/data"]                 # overland_perf-data, removed after the run
+        mem_limit: 1g
+      valhalla-tunnel:
+        profile: ops (ephemeral; make contract-live only)
+        image: alpine/socat@<pinned digest>
+        command: TCP-LISTEN:8002,fork TCP:valhalla:8002
+        ports: ["127.0.0.1:18002:8002"]
+        networks: [routing]
+    networks:
+      edge: {driver: bridge}
+      routing: {driver: bridge, internal: true}
+      egress: {driver: bridge}
+    volumes:
+      planner-data: {name: overland_planner-data}
+      valhalla-data: {name: overland_valhalla-data}
+      perf-data: {name: overland_perf-data}
+    steady_state_budget: {planner_cap_gb: 1, valhalla_cap_gb: 4, valhalla_measured_steady_gb: 1.3, headroom_after_caps_gb: 7.3}
+
+  - id: pc-amd64
+    optional: true
+    purpose: NFR-1 amd64 development check and SPIKE-2R K2 fallback host for tile builds
+    notes: Uses the same compose.yaml with VALHALLA_IMAGE overridden to the amd64 tag of 3.9.1 (pin at use). Not part of CI.
+
+spike_leftovers:
+  path: /home/deploy/valhalla-spike
+  size_gb: 18.3
+  fate: seed source for the first tileset at slice 06a, then deleted (D92)
+
+platform_coverage:
+  server_arch: [linux/arm64 (production, native), linux/amd64 (CI, PC dev)]
+  browsers:
+    - {client: desktop Chrome (latest 2), viewport: ">= 1280 px", role: primary (Marco), ci: chromium every push}
+    - {client: desktop Safari (latest 2), viewport: ">= 1280 px", role: primary alt, ci: webkit desktop on main}
+    - {client: desktop Firefox (latest 2), viewport: ">= 1280 px", role: supported, ci: firefox weekly}
+    - {client: iPhone Safari (current iOS), viewport: 390x844, role: results reader (Giulia), ci: "webkit 'iPhone 14' device every push"}
+  name_resolution: pi.example via mDNS (avahi active on the Pi; macOS and iOS resolve .local natively)
+  gpx_consumers_manual: [OsmAnd, Locus Map, Garmin]   # KPI K6 dogfood checklist; XSD validation is automated in CI
+
+coexistence:
+  probed: "2026-11-02, read-only ssh: docker compose ls, docker ps, ss -ltn, docker network/volume ls, df, free, docker info"
+  existing_compose_projects: [vlc-pi-prod (17 running), fate-ledger (1 running), vlc-devmock (exited)]
+  ports_in_use_host: [22, 53 (pihole, all ifaces), 80 (192.168.1.10, vlc-gateway caddy), 111, 445 (192.168.1.10 nas),
+                      8096 (192.168.1.10 jellyfin), 8123 (home assistant), 127.0.0.1: 2019 5335 8086 8090 8091 8093 8094
+                      10200 10300 10400 10700]
+  ports_claimed_by_this_stack:
+    - {port: 8080, bind: 192.168.1.10, service: planner, status: verified free}
+    - {port: 18080, bind: 127.0.0.1, service: planner-perf, status: verified free, lifetime: ephemeral}
+    - {port: 18002, bind: 127.0.0.1, service: valhalla-tunnel, status: verified free, lifetime: ephemeral}
+    - {port: 8002, bind: none, service: valhalla, note: internal network only, never published}
+  name_collisions_checked:
+    compose_project: "overland: free"
+    networks: "overland_edge, overland_routing, overland_egress: free"
+    volumes: "overland_planner-data, overland_valhalla-data, overland_perf-data: free"
+    container_names: "compose defaults (overland-planner-1, ...); no container_name pinning"
+  dns_pihole:
+    - pihole is the LAN DNS (host network, port 53). The stack adds no DNS records and does not change pihole
+    - "Optional user action: a pihole Local DNS record such as planner.lan -> 192.168.1.10 for clients without mDNS"
+    - "If map tiles stay blank, check the pihole query log for tile.opentopomap.org / tile.openstreetmap.org blocks"
+  reverse_proxy: vlc-gateway (caddy on :80) is NOT modified. A planner.lan route is optional, later, and a user decision
+  memory: >
+    Household stack uses ~3.9 GB. Our caps add at most 5 GB (planner 1 + valhalla 4). oom_score_adj 500 on our
+    services makes the kernel pick them before household containers under pressure. The tile build (9 GiB) runs
+    only with valhalla serving stopped and after a MemAvailable preflight.
+  cpu: planner capped at 2 cores, valhalla at 3, build at 3; at least 1 core always left to the household stack
+  logs: per-service json-file rotation in compose; /etc/docker/daemon.json is never created or edited
+  forbidden_commands: [docker system prune, docker volume prune, docker image prune -a, docker network prune,
+                       "docker compose down without -p overland", "any edit under ~/MissionControl, ~/voice-light-control, ~/apps/fate-ledger"]
+
+deployment_assumptions:
+  - "Deploy is pull-based and manual: `make deploy` on the Mac -> ssh -> scripts/deploy.sh on the Pi. The Pi has no runner and no inbound access from GitHub"
+  - "Idempotent. Running deploy twice with the same digest changes nothing (compose up -d is a no-op, releases.log records \"unchanged\"). A flock on ~/apps/overland-planner/.deploy.lock prevents concurrent deploys"
+  - "Only CI-green main SHAs are deployable (preflight queries `gh run list --commit <sha>`)"
+  - "Images are referenced by digest only. Tags (sha-<12>, main) are for humans"
+  - "Strategy Recreate. Planner downtime about 10-30 s per deploy (stop, migrate, probes). Valhalla is only recreated when its compose definition changes"
+  - "The first deploy creates the install dir, volumes and networks. No step touches resources outside the `overland` compose project"
+  - "Safe uninstall: `make uninstall` = docker compose -p overland down (volumes kept). `make purge` = typed confirmation (no backup is taken; the data is gone afterwards), then remove only overland_* volumes and ghcr.io/mrmilgauss/overland-planner images"
+  - "No backups (user 2026-11-02, D91). Only rollback safety on the Pi: the ADR-018 pre-migration copy and the predeploy snapshot (current + previous). ACCEPTED RISK: if the Pi, its NVMe or the volume is lost, all project data is lost; RPO for device loss is undefined. RPO for a failed deploy or migration = 0"
+  - "Only CI-green main SHAs reach the Pi; no branch protection is assumed on the private repo (personal free plan), so the deploy preflight is the gate (D88)"
+  - "Valhalla tiles are rebuildable. The previous tileset is kept for rollback"
+  - "Slice 06a seeds the first tileset (tilesets/20261101/) from ~/valhalla-spike/custom_files (user-approved, OQ-5). Once production valhalla serves it and make contract-live is green, ~/valhalla-spike (18.3 GB) is deleted by make spike-cleanup at a start time the user names"
+  - "Heavy operations on the Pi (tiles-refresh, perf-pi, acceptance-pi) require the user to name a start time first (memory rule; D62)"

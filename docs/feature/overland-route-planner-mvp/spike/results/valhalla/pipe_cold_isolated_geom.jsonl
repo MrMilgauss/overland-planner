@@ -1,0 +1,10 @@
+{"first_s": 9.989, "geom_s": 0.757, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.092}, "mode": "coldrestart", "rep": 0, "stages": ["geom"], "t": 1793563777.7388344}
+{"first_s": 10.004, "geom_s": 0.758, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.095}, "mode": "coldrestart", "rep": 1, "stages": ["geom"], "t": 1793563796.5610962}
+{"first_s": 9.976, "geom_s": 0.769, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.129}, "mode": "coldrestart", "rep": 2, "stages": ["geom"], "t": 1793563815.3769174}
+{"first_s": 10.16, "geom_s": 0.767, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.095}, "mode": "coldrestart", "rep": 3, "stages": ["geom"], "t": 1793563834.594992}
+{"first_s": 10.37, "geom_s": 0.769, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.097}, "mode": "coldrestart", "rep": 4, "stages": ["geom"], "t": 1793563853.826487}
+{"first_s": 10.043, "geom_s": 0.764, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.094}, "mode": "coldrestart", "rep": 5, "stages": ["geom"], "t": 1793563872.6731167}
+{"first_s": 10.362, "geom_s": 0.749, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.093}, "mode": "coldrestart", "rep": 6, "stages": ["geom"], "t": 1793563891.832965}
+{"first_s": 10.012, "geom_s": 0.773, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.096}, "mode": "coldrestart", "rep": 7, "stages": ["geom"], "t": 1793563910.6774604}
+{"first_s": 9.98, "geom_s": 0.749, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.098}, "mode": "coldrestart", "rep": 8, "stages": ["geom"], "t": 1793563929.655533}
+{"first_s": 9.973, "geom_s": 0.738, "geom": {"legs": 61, "ok": 59, "errs": [442, 442], "shape_chars": 386217, "max_leg_s": 0.095}, "mode": "coldrestart", "rep": 9, "stages": ["geom"], "t": 1793563948.4165711}
