@@ -1,9 +1,9 @@
 <!-- markdownlint-disable MD024 -->
 # Feature Delta: overland-route-planner-mvp
 
-Wave: DISCUSS (2 of 6) | Date: 2026-11-01 | Author: nw-product-owner (Luna) | Density: FULL | Revision: 6.2 (post-DESIGN back-propagation, U1-U45; iteration-6 fixes)
+Wave: DISCUSS (2 of 6) | Date: 2026-11-01 | Author: nw-product-owner (Luna) | Density: FULL | Revision: 7 (final review gate 2026-11-02, D140-D159; earlier: 6.2 post-DESIGN back-propagation, U1-U46)
 
-Source of truth: `REQUIREMENTS.md` (as updated 2026-11-01). SSOT bootstrapped: `docs/product/jobs.yaml`, `docs/product/personas/overland-planner.yaml`, `docs/product/journeys/plan-overland-trip.yaml`. Gherkin: `discuss/journey-plan-overland-trip.feature` (contains every story scenario below, tagged `@US-xx`). Slice briefs: `slices/slice-01a`, `slice-01b`, `slice-02`, `slice-03`, `slice-03b`, `slice-04`, `slice-05`, `slice-06a`, `slice-06b`, `slice-07` .. `slice-11`.
+Source of truth: `REQUIREMENTS.md` (as updated 2026-11-01). SSOT bootstrapped: `docs/product/jobs.yaml`, `docs/product/personas/overland-planner.yaml`, `docs/product/journeys/plan-overland-trip.yaml`. Gherkin: `discuss/journey-plan-overland-trip.feature` (Revision 6.1 snapshot, SUPERSEDED by `tests/acceptance/overland_route_planner_mvp/*.feature`, D140). Slice briefs: `slices/slice-00a`, `slice-00b`, `slice-01a`, `slice-01b`, `slice-02`, `slice-03`, `slice-03b`, `slice-04`, `slice-05`, `slice-06a`, `slice-06b`, `slice-07` .. `slice-11`.
 
 ## Wave: DISCUSS / [REF] Read-confirmation checklist
 
@@ -52,12 +52,32 @@ Evidence level: requirements-doc derived, unvalidated (no interviews, no DISCOVE
 | D71 | UI vocabulary keeps "Optimize" (first run) and "Recalculate" (later runs); "Calculate" in FR-5.5 means either | Luna (rev 6, U41 option) |
 | D72 | Slice 06 is split into 06a (Valhalla adapter + Confirmed legs + US-06a S1b) and 06b (confidence ladder, US-10b) | User decision (U26), recorded by Luna (rev 6) |
 | D73 | Q-U8 confirmed: after a stopped or time-limited run, Optimize/Recalculate with unchanged inputs returns the same "not fully optimised" plan instantly, and a separate "Re-optimise (ignore previous result)" action starts a fresh search (US-06b S5, S6) | User (Q-U8), recorded by Luna (rev 6.1, U45; DESIGN D74, ADR-014 §5) |
+| D140 | Scenario SSOT: `discuss/journey-plan-overland-trip.feature` is a superseded Revision 6.1 snapshot (header note); the executable SSOT is `tests/acceptance/overland_route_planner_mvp/*.feature` (SSOT-1) | Luna (final gate, 2026-11-02) |
+| D141 | DoR story-size rule (UD-2): DISTILL scenarios derived from DESIGN/DEVOPS decisions (contract checks, caps/limits and threshold calibration, start-up refusals, crash consistency, concurrency guards, diagnostics/KPI instruments, golden order) carry `@technical` and do not count toward the 3-7 UAT band. A scenario tagged with several stories counts for its first-listed (primary) story only. 39 of 193 scenarios are `@technical` (list in "Definition of Ready validation") | User UD-2; rule by Luna |
+| D142 | US-02a (8 user-facing) split into US-02a "Load my first trail file" and US-02c "Add my places and set where the trip starts and ends" (US-02b was taken). Both J-01, slice 01a | Luna (UD-2) |
+| D143 | US-09 (10 user-facing) split into US-09a "Recalculate without re-fetching what is already known" and US-09b "Make the planner forget known roads when I no longer trust them". Both J-03, slice 05 | Luna (UD-2) |
+| D144 | Verified, no split: US-10a has exactly 7 user-facing scenarios (10 `@technical`: contract suite, partial-failure leg keeping); US-14 7 (jump-threshold calibration is `@technical`); US-02b, US-05, US-15 also at 7 | Luna (UD-2) |
+| D145 | Slice split (OD-1, SLICE-1). New enabler slices: `00a ci-and-image` (no story; enables US-01a, the WS in CI), `03-ops perf-tooling` (golden-order fixtures + check, `make perf-pi`; enables US-06a S1a/S3), `06a-ops valhalla-service` (Valhalla service, tileset seeding, contract-live, acceptance-pi; enables US-10a, US-06a S1b). New user slice `00b planner-on-the-pi` = US-01a + compose/deploy/rollback. 01a keeps US-01b, US-02a, US-02c. An enabler slice has no release value of its own: it precedes its paired user slice and is demoed with it (exception to the slice-level @infrastructure check, accepted as orchestrator default OD-1). Every slice re-estimated <= 1 d (D13 kept) | Orchestrator OD-1; names/estimates by Luna **Enabler exception ratified by the user (2026-11-02):** a slice without a user story is allowed when it is demoed together with the user slice it unblocks (00a with 00b, 03-ops with 03, 06a-ops with 06a). |
+| D146 | Item ceiling (OD-2, SCOPE-1): the 180 s claim covers up to 60 non-anchor items + Start/End (62 stops, as measured). 61-70 items allowed (REQUIREMENTS §4) with the notice "Large project - calculation may take longer than 3 minutes"; no refusal. Slice 03 re-calibrates at 70 before the claim is extended | Orchestrator OD-2 |
+| D147 | K5 population (UD-3, KPI-1): p95 <= 180 s counts every cold 60-item plan, retried jobs and second-pass P2 > 700 included; those counts are reported separately, never excluded. K5 baseline wording (KPI-2): "sum of stage p95s (estimate); K5 unverified until perf-pi" | User UD-3 |
+| D148 | Optimizer ordering (UD-4, OBJ-1): (1) fewest Unconfirmed legs, (2) fewest retraces, (3) objective (road km or road time, FR-5.1). Any retrace penalty is a tie-break only; reported km/time = real road + retrace. Recorded as a clarification of FR-5.8/FR-5.1 | User UD-4 |
+| D149 | Multi-file import with a bad file (OD-3): valid files imported, each refused file named with its reason, nothing partial from a bad file | Orchestrator OD-3 |
+| D150 | A plan with only Start and End Included is valid: a Start -> End road route with totals (OD-4) | Orchestrator OD-4 |
+| D151 | Messages (OD-5, DISTILL-1/MSG-1): solver-side limit "No valid route found within the time limit - plan run #N failed"; look-up-side limit "No valid route found within the time limit - nothing was changed"; valid GPX without a usable track "X has no usable track" (an empty or non-GPX file keeps "X is not a valid GPX file"). The other UI-9 messages are accepted verbatim. Caps 25 MB/file, 100 MB/request, 50 files are configurable. Separator " - " (hyphen) as in all other messages | Orchestrator OD-5; style by Luna |
+| D152 | Entry/exit labels (OD-6, PO-1/UI-4): direction text uses the GPX track name/description when present, else "entry"/"exit" with coordinates; no reverse geocoding in the MVP | Orchestrator OD-6 |
+| D153 | No backups (OD-8, REQ-1): recorded in REQUIREMENTS as an accepted-risk note against NFR-3 and J-06 (device/NVMe loss loses all data; rollback snapshots only, DEVOPS D91) | Orchestrator OD-8 / User OQ-4 |
+| D154 | PO decisions on UI-9/UI-10: difficulty is a whole number 1-5 (or empty); only segments of the same file can be merged | Luna |
+| D155 | UI-11 confirmed: "one structured line" = exactly one `app.started` line per start; other lines (warnings) are allowed (D110) | Luna |
+| D156 | Action vocabulary (L-04): the plan action is "Calculate" (first run) and "Recalculate" (later runs), matching FR-5.5. Supersedes D71's "Optimize". DISCUSS story text keeps "Optimize" as a historical synonym; DISTILL applies the labels in the executable files | Luna (L-04) |
+| D157 | Run-numbering (UI-5, D116): the feasibility limit reached while solving creates a numbered Failed run; reached during the road look-up it creates no run, keeps the legs found and changes nothing | Luna (adopts D116) |
+| D158 | Demo precondition (DEMO-1, UI-14): Marco's real `assietta.gpx` replaces the synthetic stand-in before the slice-01a demo; slices 07/08 need the full 10-file corpus | Luna |
+| D159 | Statistic wording (STAT-1): "p95 of 10 runs" is stated as "the slowest of the 10 runs" in US-06a S1a/S1b | Luna (NB7) |
 
 Resolved (rev 6, U14): #1 self-hosted Valhalla on the Pi, with no key and a hosted adapter possible later (DESIGN D40); #4 Svelte 5 + MapLibre GL JS (D19); #5 Raspberry Pi 5 16 GB, `pi.example` (D38); #6 Nominatim (port only, Phase 2) (D31). No open decisions remain (REQUIREMENTS §10).
 
 ## Wave: DISCUSS / [REF] Scope Assessment
 
-Scope Assessment: OVERSIZED as a monolith -> SPLIT APPROVED (D5). 26 stories (Revision 6), 5 domain areas (import, items/selection, optimization, routing + cache, export). The walking skeleton touches 6 integration points; the estimate is 14 days. Resolution: one feature, 14 elephant-carpaccio slices (01a, 01b, 02, 03, 03b, 04, 05, 06a, 06b, 07-11), each <= 1 day (D13) and each verifiable end to end by the user. Phase 2/3 are deferred to Out-of-scope.
+Scope Assessment: OVERSIZED as a monolith -> SPLIT APPROVED (D5). 28 stories (final gate: + US-02c, US-09a/b replace US-09), 5 domain areas (import, items/selection, optimization, routing + cache, export). The walking skeleton touches 6 integration points. Resolution: one feature, 15 user slices (00b, 01a, 01b, 02, 03, 03b, 04, 05, 06a, 06b, 07-11) plus 3 enabler slices (00a, 03-ops, 06a-ops, D145), each <= 1 day (D13); every user slice is verifiable end to end by the user. Estimate: about 18 days. Phase 2/3 are deferred to Out-of-scope.
 
 ## Wave: DISCUSS / [REF] System Constraints
 
@@ -104,13 +124,13 @@ User: Marco Ferri. Goal: a direction-safe full-trip itinerary on his navigation 
 
 | Set up | Collect items | Define trip edges | Choose what counts | Plan | Review | Iterate | Take it along |
 |--------|---------------|-------------------|--------------------|------|--------|---------|---------------|
-| Stack on Pi (US-01a); project persists (US-01b) | One GPX + POI by coords (US-02a) | Start/End, S/E row (US-02a) | - | Mock Optimize (US-02b) | Ordered stops, entry->exit text (US-02b) | - | Minimal GPX (US-02b) |
+| Stack on Pi (US-01a); project persists (US-01b) | One GPX (US-02a) + POI by coords (US-02c) | Start/End, S/E row (US-02c) | - | Mock Optimize (US-02b) | Ordered stops, entry->exit text (US-02b) | - | Minimal GPX (US-02b) |
 | ......... | ......... | ......... | ......... | ......... | ......... | ......... | ......... |
 | | | Refusal without anchors, POI-only (US-04) | | No reverse/cut (US-03); fixed anchors (US-04); deterministic (US-05) | Itinerary + totals (US-05) | | |
 | | | | | 60 items within 3 min (US-06a); Stop and limits (US-06b) | | | |
 | | | | | Dead-end trail retraced, never reversed (US-19) | Retrace leg in itinerary + totals (US-19) | | |
 | | | | List, toggles, Stale, remove (US-07a) | Unreachable item named; missing pairs routed around (US-08) | Consideration report (US-07b) | | |
-| | | | | | | Reuse legs (US-09) | |
+| | | | | | | Reuse legs (US-09a); forget legs (US-09b) | |
 | | | | | Valhalla + objective + Confirmed legs (US-10a) | | | |
 | | | | | Unconfirmed compromise legs (US-10b) | | | |
 | | Multi-file import + stats (US-11a); merge + loops (US-11b); details (US-12) | | | | | | |
@@ -119,13 +139,13 @@ User: Marco Ferri. Goal: a direction-safe full-trip itinerary on his navigation 
 | | | | | | | Diff + history (US-17) | |
 | | | | | | | | Device-ready GPX + report (US-18a); stale/failed/Unconfirmed marks (US-18b) |
 
-Walking skeleton (above the dotted line) = slices 01a + 01b. "Choose what counts" and "Iterate" only mean something once a first plan exists, so they arrive in slices 04-05.
+Walking skeleton (above the dotted line) = slices 00b + 01a + 01b, on the pipeline of enabler slice 00a (D145). "Choose what counts" and "Iterate" only mean something once a first plan exists, so they arrive in slices 04-05.
 
 Releases by outcome:
 
-- R0 "It works on my Pi": slices 01a, 01b.
-- R1 "I can trust the plan": slices 02, 03, 03b, 04. R1 is internal-only (Marco dogfoods it); direction is shown in the itinerary text row ("Pian dell'Alpe -> Sestriere") until the map arrives in slice 09 (S5).
-- R2 "I can iterate cheaply on real roads": slices 05, 06a, 06b, 10.
+- R0 "It works on my Pi": slices (00a), 00b, 01a, 01b.
+- R1 "I can trust the plan": slices 02, (03-ops), 03, 03b, 04. R1 is internal-only (Marco dogfoods it); direction is shown in the itinerary text row ("Pian dell'Alpe -> Sestriere") until the map arrives in slice 09 (S5).
+- R2 "I can iterate cheaply on real roads": slices 05, (06a-ops), 06a, 06b, 10. Slices in parentheses are enablers (D145).
 - R3 "My real data goes in clean and comes out on the device": slices 07, 08, 09, 11.
 
 ## Wave: DISCUSS / [REF] Plan run timeline
@@ -157,7 +177,7 @@ Project "Dolomiti 2028" is a test fixture project, independent of slice order. U
 
 Default-project rule (iteration 3, item 2): a plan run number with no project named ("plan run #N") ALWAYS means project "Alpi Occidentali giugno 2027". Dolomiti 2028 runs are ALWAYS written with the project name ("plan run #N of \"Dolomiti 2028\"").
 
-Run-numbering rules (iterations 3-4). In the product, every Optimize or Recalculate that reaches the optimizer creates a new plan run with the next number of its project (HC-4). That includes runs that fail because an item is unreachable (e.g. #6), runs stopped before a valid route (US-06b S2) and runs that hit the feasibility limit (US-06b S4). A request refused before optimizing creates NO run and changes nothing: a missing anchor (US-04 S2), the routing engine unreachable or not ready (US-10a S4-S5), the optimizer unavailable (US-01b Technical Notes), or Stop pressed while legs are still being fetched (US-06b S3). A no-change Recalculate creates a new run that reuses the identical stored order (D15 amended). The rules below say only which numbers the SCENARIOS assert.
+Run-numbering rules (iterations 3-4). In the product, every Optimize or Recalculate that reaches the optimizer creates a new plan run with the next number of its project (HC-4). That includes runs that fail because an item is unreachable (e.g. #6), runs stopped before a valid route (US-06b S2) and runs that hit the feasibility limit while solving (US-06b S4). A request refused or ended before optimizing creates NO run and changes nothing: a missing anchor (US-04 S2), the routing engine unreachable or not ready (US-10a S4-S5), the optimizer unavailable (US-01b Technical Notes), Stop pressed while legs are still being fetched (US-06b S3), or the feasibility limit reached while legs are still being looked up (look-up-side limit, D116/D157: "No valid route found within the time limit - nothing was changed"). A no-change Recalculate creates a new run that reuses the identical stored order (D15 amended). The rules below say only which numbers the SCENARIOS assert.
 1. First run: the first Optimize of a project with no runs creates that project's #1 (Alpi: US-02b S1; Dolomiti: US-17 S3).
 2. Main line: Alpi runs #5-#9 are created in table order. US-09 S2 creates #5. US-08 S1 creates #6 and US-08 S2 creates #7 (S3 only inspects). US-14 creates #8 and #9.
 3. Branch fixtures: any OTHER scenario that Optimizes or Recalculates is a branch fixture. Examples: starting from Alpi plan run #4, from #3 (US-09 S1), or from no named run (US-02b S2, US-05 S4, US-10a S1, US-15 S3), or the Revision 6 fixtures US-08 S4-S5, US-10a S7, US-10b S1-S3, US-14 S7, US-15 S6, US-18b S4, US-19 S4. It may or may not change items (e.g. US-09 S3-S6, including the no-change Recalculates in S5-S6). It runs on its own copy of the project as of its starting state. Its new run takes the next number in that copy, and the scenario does not assert that number. A branch never affects the main-line #5-#9.
@@ -170,14 +190,18 @@ Score = Value x Urgency / Effort (1-5). Tie-break order: walking skeleton > risk
 
 | Prio | Slice | Stories | Outcome | V | U | E | Score | Rationale |
 |------|-------|---------|---------|---|---|---|-------|-----------|
-| 1 | 01a skeleton-items-on-pi | US-01a, US-01b, US-02a | Data lives on the Pi | 5 | 5 | 3 | 8.3 | WS; ARM64 + persistence risk |
+| 0a | 00a ci-and-image (enabler) | - (enables US-01a, WS) | A CI-green, published planner image | - | - | - | - | Enabler (D145); 1.0 d |
+| 0b | 00b planner-on-the-pi | US-01a | Planner on the Pi, home only | 5 | 5 | 3 | 8.3 | ARM64 + deploy/rollback risk; 1.0 d |
+| 1 | 01a skeleton-items-on-pi | US-01b, US-02a, US-02c | Data lives on the Pi | 5 | 5 | 3 | 8.3 | WS; persistence risk; 0.85 d |
 | 2 | 01b skeleton-plan-and-gpx | US-02b | Browser -> GPX flow works | 5 | 5 | 3 | 8.3 | WS; HC-1 guard from day 1 |
 | 3 | 02 directional-optimizer | US-03, US-04, US-05 | Plans honour HC-1/2/5 | 5 | 5 | 3 | 8.3 | Core uncertain model; HC tests first |
-| 4 | 03 pi-performance | US-06a, US-06b | 60 items within budget; Stop | 4 | 5 | 3 | 6.7 | Could kill Pi viability; mandatory SPIKE-1R |
+| 4a | 03-ops perf-tooling (enabler) | - (enables US-06a S1a, S3) | Golden order + `make perf-pi` | - | - | - | - | Enabler (D145, OD-7); 0.9 d |
+| 4 | 03 pi-performance | US-06a, US-06b | 60 items within budget; Stop | 4 | 5 | 3 | 6.7 | Could kill Pi viability; SPIKE-1R done; 1.0 d at risk |
 | 5 | 03b out-and-back-retrace | US-19 | Dead-end trails planned, never reversed | 5 | 5 | 3 | 8.3 | HC-1 / A-7 is the highest-stakes new rule; optimizer slice (D69) |
 | 6 | 04 consideration-list | US-07a, US-07b, US-08 | Nothing dropped | 5 | 4 | 3 | 6.7 | HC-3; FR-8.2 revised |
-| 7 | 05 incremental-recalc | US-09 | Cheap iteration | 5 | 4 | 3 | 6.7 | HC-4/A-4; protects Pi routing time |
-| 8 | 06a valhalla-on-the-pi | US-10a (+ US-06a S1b) | Real road km, Confirmed legs | 4 | 4 | 3 | 5.3 | Phase 1 item 4; mandatory SPIKE-2R |
+| 7 | 05 incremental-recalc | US-09a, US-09b | Cheap iteration | 5 | 4 | 3 | 6.7 | HC-4/A-4; protects Pi routing time |
+| 8a | 06a-ops valhalla-service (enabler) | - (enables US-10a, US-06a S1b) | Valhalla serving on the Pi | - | - | - | - | Enabler (D145); 1.0 d |
+| 8 | 06a valhalla-on-the-pi | US-10a (+ US-06a S1b) | Real road km, Confirmed legs | 4 | 4 | 3 | 5.3 | Phase 1 item 4; SPIKE-2R done; 1.0 d at risk |
 | 9 | 06b compromise-legs | US-10b | Unconfirmed legs, explained | 4 | 4 | 3 | 5.3 | FR-5.8 ladder |
 | 10 | 07 real-gpx-import | US-11a, US-11b, US-12 | Real files import clean | 4 | 3 | 3 | 4.0 | Needed for real trips |
 | 11 | 08 input-data-hygiene | US-13, US-14 | Bad data fixed/flagged | 4 | 3 | 3 | 4.0 | HC-1 explicit reverse; FR-6.7 |
@@ -193,7 +217,7 @@ Notation: each AC is tagged with the scenario it is derived from (S1, S2, ...). 
 
 ### US-01a: Planner running on my home Pi, reachable from home only
 
-- job_id: J-06 | Slice: 01a | MoSCoW: Must | NFR-1, 2, 4, 5, 7 | Size: 0.4 d
+- job_id: J-06 | Slice: 00b (moved from 01a at the final review gate, D145) | MoSCoW: Must | NFR-1, 2, 4, 5, 7 | Size: 0.4 d
 
 #### Problem
 
@@ -354,33 +378,35 @@ Scenario: S4 Missing persistent storage is reported instead of losing projects s
 
 - US-01a.
 
-### US-02a: Load my first trail and places
+### US-02a: Load my first trail file
 
-- job_id: J-01 | Slice: 01a | MoSCoW: Must | FR-2.1 (one GPX), FR-2.3, FR-3.1 (coords), FR-3.3 | Size: 0.3 d
+- job_id: J-01 | Slice: 01a | MoSCoW: Must | FR-2.1 (one GPX), FR-2.3, FR-2.4 | Size: 0.25 d
+
+Final review gate (D142): the Revision 6 US-02a "Load my first trail and places" had 8 user-facing scenarios in DISTILL, so it is split into US-02a (the trail file) and US-02c (places and trip edges). Old S1 and S4 stay here; old S2, S3, S5 and S6 move to US-02c.
 
 #### Problem
 
-Marco has a real GPX of the Strada dell'Assietta and a few places. Today he opens each file in a desktop viewer just to learn where the trail starts and ends.
+Marco has a real GPX of the Strada dell'Assietta. Today he opens each file in a desktop viewer just to learn where the trail starts and ends and how long it is.
 
 #### Who
 
-- Marco | first use, one trail + a few POIs
+- Marco | first use, one real trail file
 
 #### Solution
 
-Import one single-track GPX (original kept), add POIs by decimal degrees with validation, and set Start/End. A round trip shows as one S/E row.
+Import one single-track GPX (original kept) and show its length, entry and exit. Files that are not GPX, or GPX files with no usable track, are refused with a reason and change nothing.
 
 #### Elevator Pitch
 
 - Before: Marco checks trail ends in a separate GPX viewer.
-- After: Marco uploads `assietta.gpx` (`POST /api/projects/{project_id}/tracks`) and adds "Briancon" at 44.8990, 6.6430 (`POST /api/projects/{project_id}/pois`) -> sees the rows "Strada dell'Assietta 34.2 km Pian dell'Alpe -> Sestriere", "Briancon POI", and "S/E Casa Marco, Torino" after setting anchors (`PUT /api/projects/{project_id}/anchors`).
-- Decision enabled: Marco decides which places anchor his trip and whether his file was read correctly.
+- After: Marco uploads `assietta.gpx` (`POST /api/projects/{project_id}/tracks`) -> sees the row "Strada dell'Assietta 34.2 km Pian dell'Alpe -> Sestriere" in the item list.
+- Decision enabled: Marco decides whether his file was read correctly or must be re-exported.
 
 #### Domain Examples
 
 1. Happy: `assietta.gpx` -> 34.2 km, Pian dell'Alpe -> Sestriere.
-2. Edge: one-way trip Casa Marco, Torino (45.0703, 7.6869) -> Aosta (45.7370, 7.3200) shows separate Start and End badges.
-3. Error: 144.8990, 6.6430 -> "Latitude must be between -90 and 90"; `notes.gpx` (renamed text file) -> "not a valid GPX file".
+2. Edge: `waypoints-only.gpx` (valid GPX with places but no track) -> "waypoints-only.gpx has no usable track".
+3. Error: `notes.gpx` (renamed text file) -> "notes.gpx is not a valid GPX file".
 
 #### UAT Scenarios (BDD)
 
@@ -391,49 +417,109 @@ Scenario: S1 Marco imports his Assietta trail
   Then he sees track "Strada dell'Assietta" from Pian dell'Alpe to Sestriere
   And its length matches the 34.2 km reported by Marco's GPX viewer within 1%
 
-Scenario: S2 Marco adds Briancon by coordinates
-  Given project "Alpi Occidentali giugno 2027" exists
-  When Marco adds POI "Briancon" at 44.8990, 6.6430
-  Then "Briancon" appears in the item list as an Included POI at 44.8990, 6.6430
-
-Scenario: S3 Coordinates out of range are rejected with a reason
-  Given project "Alpi Occidentali giugno 2027" exists
-  When Marco adds POI "Briancon" at 144.8990, 6.6430
-  Then he sees "Latitude must be between -90 and 90"
-  And no POI is added
-
-Scenario: S4 A file that is not GPX is rejected
+Scenario: S2 A file that is not GPX is rejected
   Given project "Alpi Occidentali giugno 2027" exists
   When Marco imports "notes.gpx" which is a renamed text file
   Then he sees "notes.gpx is not a valid GPX file"
   And no track is added
 
-Scenario: S5 Home is both Start and End of a round trip
+Scenario: S3 A GPX file without a usable track is rejected
+  Given project "Alpi Occidentali giugno 2027" exists
+  When Marco imports "waypoints-only.gpx" which contains places but no track
+  Then he sees "waypoints-only.gpx has no usable track"
+  And no track is added
+```
+
+#### Acceptance Criteria
+
+- [ ] Track imported with entry -> exit and a length within 1% of the file's own (S1)
+- [ ] Non-GPX files rejected; the project is unchanged (S2)
+- [ ] A valid GPX with no usable track is rejected with "X has no usable track"; the project is unchanged (S3, D151)
+
+#### Outcome KPIs
+
+- Who: Marco | Does what: loads his first real trail and checks it | By how much: <= 2 min | Measured by: dogfood timing | Baseline: ~10 min with a separate viewer (estimate).
+
+#### Technical Notes
+
+- Original stored unmodified (FR-2.3). Multi-track files arrive in slice 07.
+- Entry/exit labels (D152, OD-6): the direction text uses place names from the GPX track name or description when present (the Assietta fixture describes "Pian dell'Alpe - Sestriere"); otherwise it reads "entry <lat, lon> -> exit <lat, lon>". No reverse geocoding in the MVP. Tests check "from A to B" by coordinates (D109).
+- Technical scenarios in DISTILL (not counted in the UAT band, D141): XXE-style file read attempt refused; upload size cap (25 MB default, configurable, D151).
+
+#### Dependencies
+
+- US-01b.
+
+### US-02c: Add my places and set where the trip starts and ends
+
+- job_id: J-01 | Slice: 01a | MoSCoW: Must | FR-3.1 (coords), FR-3.3, HC-2 | Size: 0.2 d
+
+Split from US-02a at the final review gate (D142). US-02b already existed, so the new story is US-02c.
+
+#### Problem
+
+Marco knows his home in Torino and a few places by their coordinates. Without a way to enter them and to say where the trip begins and ends, no plan can be made.
+
+#### Who
+
+- Marco | first use, a few POIs from his notes, home as the usual Start and End
+
+#### Solution
+
+Add POIs by decimal degrees with range validation, and set Start/End. A round trip shows as one S/E row; a one-way trip shows separate Start and End badges.
+
+#### Elevator Pitch
+
+- Before: Marco keeps his places in a notes file with no link to the trails.
+- After: Marco adds "Briancon" at 44.8990, 6.6430 (`POST /api/projects/{project_id}/pois`) and sets "Casa Marco, Torino" as Start and End (`PUT /api/projects/{project_id}/anchors`) -> sees the rows "Briancon POI" and "S/E Casa Marco, Torino".
+- Decision enabled: Marco decides which places anchor his trip (round trip from home or one-way).
+
+#### Domain Examples
+
+1. Happy: Briancon at 44.8990, 6.6430 is added as an Included POI.
+2. Edge: one-way trip Casa Marco, Torino (45.0703, 7.6869) -> Aosta (45.7370, 7.3200) shows separate Start and End badges.
+3. Error: 144.8990, 6.6430 -> "Latitude must be between -90 and 90", nothing added.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 Marco adds Briancon by coordinates
+  Given project "Alpi Occidentali giugno 2027" exists
+  When Marco adds POI "Briancon" at 44.8990, 6.6430
+  Then "Briancon" appears in the item list as an Included POI at 44.8990, 6.6430
+
+Scenario: S2 Coordinates out of range are rejected with a reason
+  Given project "Alpi Occidentali giugno 2027" exists
+  When Marco adds POI "Briancon" at 144.8990, 6.6430
+  Then he sees "Latitude must be between -90 and 90"
+  And no POI is added
+
+Scenario: S3 Home is both Start and End of a round trip
   Given POI "Casa Marco, Torino" at 45.0703, 7.6869 exists
   When Marco sets "Casa Marco, Torino" as Start and as End
   Then the item list shows one row "Casa Marco, Torino" with an S/E badge
 
-Scenario: S6 A one-way trip has a different Start and End
+Scenario: S4 A one-way trip has a different Start and End
   Given POIs "Casa Marco, Torino" at 45.0703, 7.6869 and "Aosta" at 45.7370, 7.3200 exist
   When Marco sets "Casa Marco, Torino" as Start and "Aosta" as End
   Then "Casa Marco, Torino" shows a Start badge
   And "Aosta" shows an End badge
 ```
 
+DISTILL also has "Coordinates on the edge of the valid range are accepted" (user-facing boundary of S2).
+
 #### Acceptance Criteria
 
-- [ ] Track imported with entry -> exit and a length within 1% of the file's own (S1)
-- [ ] POI added by decimal degrees (S2); out-of-range values rejected with a reason (S3)
-- [ ] Non-GPX files rejected; the project is unchanged (S4)
-- [ ] Round trip shown as one S/E row (S5); one-way trip shows separate Start and End badges (S6)
+- [ ] POI added by decimal degrees (S1); out-of-range values rejected with a reason, boundary values accepted (S2)
+- [ ] Round trip shown as one S/E row (S3); one-way trip shows separate Start and End badges (S4)
 
 #### Outcome KPIs
 
-- Who: Marco | Does what: loads 1 trail + 2 POIs and sets the anchors | By how much: <= 5 min | Measured by: dogfood timing | Baseline: ~20 min with a separate viewer (estimate).
+- Who: Marco | Does what: adds 2 POIs and sets the anchors | By how much: <= 3 min | Measured by: dogfood timing | Baseline: ~10 min copying from notes (estimate).
 
 #### Technical Notes
 
-- Original stored unmodified (FR-2.3). Multi-track files arrive in slice 07.
+- Anchors are POIs only (D6); the refusal for tracks is in US-04.
 
 #### Dependencies
 
@@ -672,6 +758,7 @@ Scenario: S4 Removing the Start POI clears the Start
 #### Technical Notes
 
 - Explicit start/end nodes in the solver (section 7). Anchors are always Included.
+- A plan with only Start and End Included is valid (D150, OD-4): the result is the Start -> End road route with its totals (a round trip from one S/E POI gives a 0 km plan).
 
 #### Dependencies
 
@@ -784,28 +871,28 @@ The planner finds a good order for 60 items and shows the route within 3 minutes
 
 #### Domain Examples
 
-1. Happy: 60 nodes = 40 tracks + 20 POIs, of which 2 POIs are the anchors (Start Casa Marco, End Briancon). With the road connections already known, the solve stage takes at most 55 s (p95).
-2. Edge: no road connections known yet, Valhalla on the Pi -> route on screen within 180 s (p95), end to end.
-3. Boundary: optimisation limit set to 20 s -> a complete plan within 25 s, labelled "not fully optimised (time limit)"; the default-budget plan is within 10% road km of a 30-minute PC search.
+1. Happy: 60 items + 2 anchors = 62 stops: 40 tracks + 20 POIs, plus Start "Casa Marco, Torino" and End "Briancon" (D146). With the road connections already known, the solve stage takes at most 55 s (the slowest of 10 runs).
+2. Edge: no road connections known yet, Valhalla on the Pi -> route on screen within 180 s (the slowest of 10 runs), end to end. A 65-item project still plans, with the notice "Large project - calculation may take longer than 3 minutes" (D146).
+3. Boundary: limits set to 10 s to find a route and 20 s to improve it -> a complete plan within 25 s, labelled "not fully optimised (time limit)"; the default-budget plan is within 10% road km of a 30-minute PC search.
 
 #### UAT Scenarios (BDD)
 
 ```gherkin
 Scenario: S1a The solve stage for 60 items fits the budget on the Pi
-  Given a project of 60 items: 40 tracks and 20 POIs, of which "Casa Marco, Torino" is Start and "Briancon" is End
+  Given a project of 60 items: 40 tracks and 20 POIs, plus the Start "Casa Marco, Torino" and the End "Briancon"
   And its road matrix is supplied precomputed in memory
   And reuse of identical earlier plans is disabled for the measurement
   When Marco presses Optimize 10 times on his Raspberry Pi
-  Then the 95th percentile of the solve stage is at most 55 seconds
+  Then the slowest of the 10 solve stages (the 95th percentile of 10 runs) is at most 55 seconds
 
 Scenario: S1b A 60-item trip with no known roads is on screen within 3 minutes
   Given the 60-item project with no road legs known yet and Valhalla running on the Pi, overriding the Background
   And reuse of identical earlier plans is disabled for the measurement
   When Marco presses Recalculate 10 times, the known legs being forgotten before each run
-  Then the 95th percentile time from pressing Recalculate to the route on screen is at most 180 seconds
+  Then the slowest of the 10 times from pressing Recalculate to the route on screen (the 95th percentile of 10 runs) is at most 180 seconds
 
 Scenario: S2 The best plan found is returned when the optimisation limit is reached
-  Given the optimisation limit is set to 20 seconds and the search budget would need longer
+  Given the limits are set to 10 seconds to find a route and 20 seconds to improve it, and the search budget would need longer
   When Marco optimizes the 60-item project
   Then a complete plan is shown within 25 seconds
   And it is labelled "not fully optimised (time limit)"
@@ -823,21 +910,23 @@ Scenario: S4 Marco sees how long planning took
 
 #### Acceptance Criteria
 
-- [ ] Solve stage p95 <= 55 s over 10 runs on the Pi with a precomputed matrix (S1a)
-- [ ] End to end, with no legs known and Valhalla on the Pi, p95 <= 180 s from pressing Recalculate to the route on screen (S1b, FR-5.5)
+- [ ] Solve stage: the slowest of 10 runs on the Pi with a precomputed matrix is <= 55 s (p95 of 10 = max) (S1a)
+- [ ] End to end, with no legs known and Valhalla on the Pi, the slowest of 10 runs from pressing Recalculate to the route on screen is <= 180 s (S1b, FR-5.5)
 - [ ] When the optimisation limit is hit, a complete plan is returned, labelled "not fully optimised (time limit)" (S2)
 - [ ] The default-budget plan is within 10% road km of a 30-minute PC reference (S3)
 - [ ] Run time shown (S4)
 
 #### Outcome KPIs
 
-- Who: Marco | Does what: gets a 60-item plan on the Pi | By how much: p95 <= 180 s end to end (cold legs); solve stage p95 <= 55 s | Measured by: stage timings recorded with each plan run | Baseline: unknown (SPIKE-1R / SPIKE-2R measure it) (U11).
+- Who: Marco | Does what: gets a 60-item plan (60 items + Start + End = 62 stops) on the Pi | By how much: p95 <= 180 s end to end (cold legs); solve stage p95 <= 55 s | Measured by: stage timings recorded with each plan run; `make perf-pi` is authoritative | Population (D147, UD-3): EVERY cold 60-item plan counts, including retried jobs and plans whose matrix needed a second pass with more than 700 pairs; those two counts are reported separately for visibility, never excluded | Baseline: about 74 s end to end = sum of stage p95s (estimate, SPIKE-1R/2R, U46); K5 unverified until perf-pi (U11).
 
 #### Technical Notes
 
 - S1a uses an in-memory precomputed matrix, so there is no dependency on slice 05 (B7). The mandatory gate SPIKE-1R comes first.
 - S1b depends on slice 06a (Valhalla) and on SPIKE-2R. When the solver inputs equal a stored run, the results say "Reused the identical plan of run #N"; S1a/S1b must vary the input or disable reuse so they measure real solves (U10; DESIGN D41, D42).
-- Limits (FR-5.5): feasibility 10 min, optimisation 30 min counted from pressing Optimize/Recalculate (DESIGN D58), all configurable. "Calculate" in FR-5.5 means Optimize or Recalculate in the UI (D71).
+- Limits (FR-5.5): feasibility 10 min, optimisation 30 min counted from pressing Calculate/Recalculate (DESIGN D58), all configurable. The feasibility limit may not exceed the optimisation limit, so S2 sets both (D116, UI-6). UI vocabulary: "Calculate" (first run) and "Recalculate" (D156, supersedes D71's "Optimize"; "Optimize" in DISCUSS story text reads as "Calculate").
+- Item ceiling (D146, OD-2): the 180 s claim covers up to 60 non-anchor items + Start/End (62 stops, measured by the spike). 61-70 items are allowed (REQUIREMENTS §4) and plan normally, with the notice "Large project - calculation may take longer than 3 minutes"; no refusal. Slice 03 re-calibrates at 70 items before the claim is extended.
+- Technical scenarios in DISTILL (D141): "The 60-item plan is the same on every machine" (golden order, slice 03-ops) and "Marco's diagnostics show how planning went".
 
 #### Dependencies
 
@@ -869,7 +958,7 @@ While a plan is being worked out, a "Stop and use best so far" button is always 
 
 1. Happy: the 60-item project has a valid route after 40 s; Marco stops at 70 s and sees it labelled "not fully optimised (stopped)".
 2. Error: Marco stops before any valid route exists -> the run fails with "stopped before a valid route was found"; stopping while legs are being fetched creates no run and changes nothing.
-3. Boundary: with the feasibility limit set to 30 s and a delayed MockProvider search -> "No valid route found within the time limit".
+3. Boundary: with the feasibility limit set to 30 s and an optimizer that finds nothing in time -> "No valid route found within the time limit - plan run #N failed"; if the limit is reached while roads are still being looked up -> "No valid route found within the time limit - nothing was changed" and no run (D151, D157).
 
 #### UAT Scenarios (BDD)
 
@@ -892,9 +981,9 @@ Scenario: S3 Stopping while roads are still being looked up changes nothing
   And he sees "Stopped - nothing was changed"
 
 Scenario: S4 No valid route within the feasibility limit
-  Given the feasibility limit is set to 30 seconds and the MockProvider delays the search
+  Given the feasibility limit is set to 30 seconds and the optimizer finds no valid route within it
   When Marco optimizes the 60-item project
-  Then the run fails with "No valid route found within the time limit"
+  Then the run fails with "No valid route found within the time limit - plan run #N failed"
 
 Scenario: S5 A later no-change Recalculate returns the same plan as a stopped run
   Given a plan run was stopped and labelled "not fully optimised (stopped)"
@@ -915,7 +1004,7 @@ Scenario: S6 Re-optimise starts a fresh search
 - [ ] Stop with a valid route shows the best so far, labelled "not fully optimised (stopped)" (S1)
 - [ ] Stop before a valid route fails the run with the reason (S2)
 - [ ] Stop during leg fetching creates no run and changes nothing (S3)
-- [ ] The feasibility limit fails the run with "No valid route found within the time limit" (S4)
+- [ ] The feasibility limit reached while solving fails the numbered run with "No valid route found within the time limit - plan run #N failed" (S4, D151)
 - [ ] Runs ended by Stop or a limit are marked not reproducible, but a no-change Recalculate returns the identical "not fully optimised" plan at once and offers "Re-optimise (ignore previous result)" (S5, A9 amended, D73)
 - [ ] "Re-optimise (ignore previous result)" starts a fresh search instead of reusing the stored plan (S6, D73)
 
@@ -925,7 +1014,8 @@ Scenario: S6 Re-optimise starts a fresh search
 
 #### Technical Notes
 
-- Stop is `POST /api/plan-jobs/{job_id}/stop` (DESIGN D43, ADR-015). The feasibility default is 10 min; it is configured short in S4. Runs ended by Stop or a limit are recorded as not reproducible (D15 amended). Run-numbering: S2 and S4 create failed runs; S3 creates no run (rule added to the plan-run timeline).
+- Stop is `POST /api/plan-jobs/{job_id}/stop` (DESIGN D43, ADR-015). The feasibility default is 10 min; it is configured short in S4, and S4 makes the optimizer slow (not the road look-up), D116. Runs ended by Stop or a limit are recorded as not reproducible (D15 amended). Run-numbering (D157): S2 and S4 create failed runs; S3 creates no run; the feasibility limit reached during the road look-up creates no run, keeps the legs found and says "No valid route found within the time limit - nothing was changed" (DISTILL `@technical` scenario, D141).
+- Technical scenarios in DISTILL (D141): limit during the look-up; closing the planner during a long optimisation; one plan per project at a time ("A plan is already being calculated for this project").
 
 #### Dependencies
 
@@ -1170,7 +1260,7 @@ Scenario: S5 Confirmed connections are preferred over a shorter compromise
   Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
   And a Confirmed order exists that is 20 km longer than an order using one Unconfirmed leg
   When Marco recalculates
-  Then the plan uses the Confirmed order
+  Then the best order found has no more Unconfirmed legs than the Confirmed order, so it has none
 ```
 
 #### Acceptance Criteria
@@ -1179,7 +1269,7 @@ Scenario: S5 Confirmed connections are preferred over a shorter compromise
 - [ ] Excluding the item makes the run succeed (S2)
 - [ ] A failed run shows no partial plan; the previous successful run stays current (S3, A4)
 - [ ] A missing pair is routed around (S4)
-- [ ] Fewer Unconfirmed legs always win over a shorter distance (S5, FR-5.8)
+- [ ] Fewer Unconfirmed legs always win over a shorter distance; then fewer retraces; then the objective (S5, FR-5.8 as clarified, D148)
 
 #### Outcome KPIs
 
@@ -1196,9 +1286,11 @@ Scenario: S5 Confirmed connections are preferred over a shorter compromise
 
 - US-07b.
 
-### US-09: Recalculate without re-fetching what is already known
+### US-09a: Recalculate without re-fetching what is already known
 
-- job_id: J-03 | Slice: 05 | MoSCoW: Must | HC-4, A-4, FR-7.1, 7.2, 7.4, 7.5 | Size: 1 d
+- job_id: J-03 | Slice: 05 | MoSCoW: Must | HC-4, A-4, FR-7.1, 7.2, 7.5 | Size: 0.7 d
+
+Final review gate (D143): the Revision 6 US-09 had 10 user-facing scenarios in DISTILL, so it is split into US-09a (reuse, S1-S5) and US-09b (forget known legs, old S6-S7). Scenario titles are unchanged.
 
 #### Problem
 
@@ -1210,7 +1302,7 @@ Marco toggles trails many times per evening. Recomputing every road leg each tim
 
 #### Solution
 
-Road connections the planner has already worked out are reused on every Recalculate, even after a restart; only connections it has never seen are looked up. Marco sees how many were new and how many were reused, and he can make the planner forget the known connections of one trip or of all trips.
+Road connections the planner has already worked out are reused on every Recalculate, even after a restart; only connections it has never seen are looked up. Marco sees how many were new and how many were reused.
 
 #### Elevator Pitch
 
@@ -1258,17 +1350,9 @@ Scenario: S5 Known legs survive a restart
   Given plan run #4 has been computed
   When the planner stack is restarted and Marco recalculates without changes
   Then the progress shows "computing 0 new legs / 90 cached"
-
-Scenario: S6 Clearing the leg cache of one project recomputes its legs
-  Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
-  When Marco chooses "Clear leg cache for this project" and recalculates
-  Then the progress shows "computing 90 new legs / 0 cached"
-
-Scenario: S7 Clearing the leg cache of all projects recomputes every project
-  Given projects "Alpi Occidentali giugno 2027" and "Dolomiti 2028" both have computed plans
-  When Marco chooses "Clear leg cache for all projects"
-  Then the next Recalculate of each project shows 0 cached legs
 ```
+
+DISTILL adds two user-facing edges to this story ("Including an item again needs no new legs", "Re-importing a removed trail reuses its legs") and two `@technical` ones (rounding-step boundary, K4 diagnostics), D141.
 
 #### Acceptance Criteria
 
@@ -1277,7 +1361,6 @@ Scenario: S7 Clearing the leg cache of all projects recomputes every project
 - [ ] A sub-metre coordinate correction reuses the known legs (S3)
 - [ ] A different routing provider never reuses another provider's legs (S4)
 - [ ] Known legs survive restarts (S5)
-- [ ] Clearing for one project or for all projects forces recomputation (S6, S7)
 
 #### Outcome KPIs
 
@@ -1292,6 +1375,73 @@ Scenario: S7 Clearing the leg cache of all projects recomputes every project
 #### Dependencies
 
 - US-07a.
+
+### US-09b: Make the planner forget known roads when I no longer trust them
+
+- job_id: J-03 | Slice: 05 | MoSCoW: Must | FR-7.4, HC-4 | Size: 0.3 d
+
+Split from US-09 at the final review gate (D143): old S6 and S7, plus the DISTILL edge "Clearing one project's leg cache keeps the other project's legs".
+
+#### Problem
+
+After a pass reopens or Marco hears of a new road closure, he no longer trusts the road connections the planner remembers for a trip. Today the only way to get fresh roads would be to delete and rebuild the project.
+
+#### Who
+
+- Marco | before a final plan, or after news of changed roads in one region
+
+#### Solution
+
+Marco can make the planner forget the known road connections of one trip or of all trips. The next Recalculate looks them up again; other trips keep theirs when only one trip is cleared.
+
+#### Elevator Pitch
+
+- Before: stale road connections stay in every later plan, with no way to refresh them.
+- After: Marco chooses "Clear leg cache for this project" (`DELETE /api/projects/{project_id}/leg-cache`) and presses Recalculate -> sees "computing 90 new legs / 0 cached".
+- Decision enabled: Marco decides whether to refresh one trip's roads (cheap) or every trip's roads (slow, all regions).
+
+#### Domain Examples
+
+1. Happy: clearing "Alpi Occidentali giugno 2027" -> its next Recalculate shows "computing 90 new legs / 0 cached".
+2. Edge: clearing "Alpi Occidentali giugno 2027" leaves "Dolomiti 2028" with 0 new legs on its next Recalculate.
+3. Boundary: "Clear leg cache for all projects" -> the next Recalculate of every project shows 0 cached legs.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 Clearing the leg cache of one project recomputes its legs
+  Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
+  When Marco chooses "Clear leg cache for this project" and recalculates
+  Then the progress shows "computing 90 new legs / 0 cached"
+
+Scenario: S2 Clearing the leg cache of all projects recomputes every project
+  Given projects "Alpi Occidentali giugno 2027" and "Dolomiti 2028" both have computed plans
+  When Marco chooses "Clear leg cache for all projects"
+  Then the next Recalculate of each project shows 0 cached legs
+
+Scenario: S3 Clearing one project's leg cache keeps the other project's legs
+  Given projects "Alpi Occidentali giugno 2027" and "Dolomiti 2028" both have computed plans
+  When Marco chooses "Clear leg cache for this project" on "Alpi Occidentali giugno 2027"
+  Then the next Recalculate of "Dolomiti 2028" shows 0 new legs
+```
+
+#### Acceptance Criteria
+
+- [ ] Clearing one project forces recomputation of its legs (S1)
+- [ ] Clearing all projects forces recomputation everywhere (S2)
+- [ ] Clearing one project never touches another project's legs (S3)
+
+#### Outcome KPIs
+
+- Who: Marco | Does what: refreshes the roads of one trip without losing the others | By how much: 100% of single-project clears leave other projects at 0 new legs | Measured by: progress counts on the next Recalculate | Baseline: no refresh possible.
+
+#### Technical Notes
+
+- Endpoints `DELETE /api/projects/{project_id}/leg-cache` and `DELETE /api/leg-cache` (DESIGN D25); how the per-project clear is scoped inside the shared leg store is DESIGN's choice, S3 states the observable rule. S1 is the old US-09 S6, S2 the old S7 (tests keep the titles).
+
+#### Dependencies
+
+- US-09a.
 
 ### US-10a: Plan on the real road network (Valhalla on my Pi) with my chosen objective
 
@@ -1524,6 +1674,7 @@ Scenario: S5 Entry and exit are the first and last recorded points
 #### Technical Notes
 
 - KML/KMZ/GeoJSON are Phase 2.
+- Multi-file import with a bad file (D149, OD-3): the valid files are imported; each refused file is listed by name with its reason; nothing partial is kept from a bad file. Caps (D151): 50 files per upload, 25 MB per file, 100 MB per request, all configurable; the file-count cap is a DISTILL `@technical` scenario (D141).
 
 #### Dependencies
 
@@ -1597,6 +1748,7 @@ Scenario: S4 A stricter loop distance changes the label
 #### Technical Notes
 
 - Merge: entry = first point of the first segment, exit = last point of the last segment (A6).
+- Only segments of the same file can be merged (PO decision D154, UI-10): "Only segments of the same file can be merged".
 
 #### Dependencies
 
@@ -1676,6 +1828,7 @@ Scenario: S5 Marco categorises a POI
 #### Technical Notes
 
 - Edits never change entry/exit (HC-1).
+- Difficulty is a whole number 1-5 or empty (PO decision D154, UI-10, FR-2.8 "1-5" option); other values: "Difficulty must be between 1 and 5". Free text belongs in notes.
 
 #### Dependencies
 
@@ -1855,7 +2008,7 @@ Scenario: S7 The results list Unconfirmed legs under Warnings
 
 #### Technical Notes
 
-- The jump threshold default is 5 km (configurable), checked for 0 false positives on the 10-file corpus in this slice (A8 amended, U40; DESIGN D37). FR-8.4 is backlog. The snap-distance slot in Warnings is reserved for Phase 2. S7 is a branch fixture; "Leg 4" is illustrative of the run's leg numbering.
+- The jump threshold default is 5 km (configurable), checked for 0 false positives on the 10-file corpus in this slice (A8 amended, U40; DESIGN D37); that calibration check ("Sparse forum tracks are not flagged as jumps") is `@technical` (D141). FR-8.4 is backlog. The snap-distance slot in Warnings is reserved for Phase 2. S7 is a branch fixture; "Leg 4" is illustrative of the run's leg numbering.
 
 #### Dependencies
 
@@ -2346,6 +2499,7 @@ Scenario: S5 No track item is ever driven backwards, retraces included
 
 - ADR-017 / DESIGN D46: retrace pairs are resolved on demand, entry(t) -> entry(j). Retraces are presented under Warnings (US-14 S7), on the map (US-15 S6) and in the GPX (US-18b S4) (U31 S4 split across those stories, D69). Colle del Sommeiller is a real dead-end pass; the "no road onward" condition and "Valle Stretta" are MockProvider fixtures. S4 is a branch fixture.
 - In S2, the run fails because the item is unreachable at every level (FR-8.2); the Failed report row is shown once slice 04 lands. Until then the failure message names the track.
+- Ordering (D148, UD-4; FR-5.8/FR-5.1 clarified): (1) fewest Unconfirmed legs (a retrace is one), (2) fewest retraces, (3) the objective. Any retrace penalty is a tie-break inside the search only and never appears in reported figures: the itinerary and totals show real road km/time plus the retrace km/time (counted as off-road, FR-5.3).
 
 #### Dependencies
 
@@ -2358,12 +2512,12 @@ Scenario: S5 No track item is ever driven backwards, retraces included
 | HC-1 directional (incl. exit-side retrace) | US-02b, US-03, US-11a, US-13, US-15, US-18a, US-18b, US-19 | US-02b S2 (skeleton guard); US-03 S1-S2, S4; US-11a S5; US-13 S1-S4; US-15 S1, S3, S6; US-18a S3; US-18b S5; US-19 S1-S5 |
 | HC-2 fixed Start/End | US-02b, US-04 | US-02b S1, S4; US-04 S1-S4 |
 | HC-3 consideration list | US-07b, US-08, US-18a | US-07b S1-S4; US-08 S1, S3; US-18a S5 |
-| HC-4 incremental | US-07a, US-09, US-12, US-17 | US-07a S1; US-09 S1-S7; US-12 S3; US-17 S1 |
+| HC-4 incremental | US-07a, US-09a, US-09b, US-12, US-17 | US-07a S1; US-09a S1-S5; US-09b S1-S3; US-12 S3; US-17 S1 |
 | HC-5 driven in full | US-03, US-19 | US-03 S3; US-19 S1 |
 | A-1 | US-03 | S1 |
 | A-2 | US-04 | S1 (Outline + 1,000 random cases) |
 | A-3 | US-07b | S1, S2 |
-| A-4 | US-09 | S1, S2. Requests = distinct legs requested at the routing port during Recalculate (U24; DESIGN D24) |
+| A-4 | US-09a | S1, S2. Requests = distinct legs requested at the routing port during Recalculate (U24; DESIGN D24) |
 | A-5 | US-18a | S1, S2 |
 | A-6 | US-05, US-06b | US-05 S1; US-06b S5 (deterministic search budget; identical solver inputs reuse the stored order, D15 amended) |
 | A-7 retrace | US-19 | S1 (example), S5 (property) |
@@ -2383,7 +2537,7 @@ Objective: by the first real trip planned with the tool, Marco plans, iterates a
 | K2 | All plan runs | Violate HC-1/HC-2/HC-5 | 0 | N/A | Property tests + per-run invariant | Guardrail |
 | K3 | All plan runs | Omit an item from the report | 0 | N/A | A-3 property + per-run count | Guardrail |
 | K4 | Marco | Toggle-only Recalculates that need routing requests | 0% | N/A | Provider request counter | Leading |
-| K5 | Marco | 60-item plan time on the Pi | p95 <= 180 s end to end (cold legs); solve stage p95 <= 55 s | unknown (SPIKE-1R / SPIKE-2R) | Stage timings per plan run | Leading |
+| K5 | Marco | 60-item plan time on the Pi (60 items + Start + End) | p95 <= 180 s end to end (cold legs); solve stage p95 <= 55 s. Population = every cold 60-item plan, retried jobs and second-pass > 700 pairs included (counted separately, never excluded; D147) | ~74 s = sum of stage p95s (estimate, U46); K5 unverified until perf-pi | Stage timings per plan run; `make perf-pi` authoritative | Leading |
 | K6 | Marco | Exports that open in OsmAnd/Locus/Garmin | 100% | assembled by hand | Dogfood checklist | Outcome |
 | K7 | Marco | Variants tried per planning evening | >= 5 | ~1 | Plan runs per project per day | Leading |
 
@@ -2438,6 +2592,91 @@ Evidence: every story has inline Given/When/Then scenarios, each opening with a 
 
 DoR status: self-assessed, pending re-review (Revision 6, post-DESIGN back-propagation). Earlier history: iteration 1 REJECTED; iteration 2 NEEDS_REVISION; iterations 3-5 handled by the orchestrator (see the Review section). Not approved until the reviewer confirms Revision 6.
 
+### Fresh DoR validation — final review gate (2026-11-02, Revision 7, UD-2 / D141)
+
+Counted from `tests/acceptance/overland_route_planner_mvp/*.feature` (Scenario Outlines count once; a multi-story scenario counts for its first-listed story). Technical = derived from DESIGN/DEVOPS decisions, to be tagged `@technical` by DISTILL. The UAT band (3-7) applies to the user-facing column.
+
+| Story | Slice | Total | Technical | User-facing | UAT band |
+|---|---|---|---|---|---|
+| US-01a | 00b | 7 (incl. WS) | 0 | 7 | P |
+| US-01b | 01a | 7 | 3 | 4 | P |
+| US-02a | 01a | 5 | 2 | 3 | P (split, D142) |
+| US-02c | 01a | 5 | 0 | 5 | P (split, D142) |
+| US-02b | 01b | 10 | 3 | 7 | P |
+| US-03 | 02 | 5 | 1 | 4 | P |
+| US-04 | 02 | 5 | 1 | 4 | P |
+| US-05 | 02 | 7 | 0 | 7 | P |
+| US-06a | 03 (+06a) | 7 | 2 | 5 | P |
+| US-06b | 03 | 9 | 3 | 6 | P |
+| US-07a | 04 | 7 | 1 | 6 | P |
+| US-07b | 04 | 6 | 0 | 6 | P |
+| US-08 | 04 | 6 | 0 | 6 | P |
+| US-09a | 05 | 9 | 2 | 7 | P (split, D143) |
+| US-09b | 05 | 3 | 0 | 3 | P (split, D143) |
+| US-10a | 06a | 17 | 10 | 7 | P (no split, D144) |
+| US-10b | 06b | 8 | 3 | 5 | P |
+| US-11a | 07 | 6 | 1 | 5 | P |
+| US-11b | 07 | 5 | 0 | 5 | P |
+| US-12 | 07 | 6 | 0 | 6 | P |
+| US-13 | 08 | 6 | 2 | 4 | P |
+| US-14 | 08 | 8 | 1 | 7 | P (no split, D144) |
+| US-15 | 09 | 9 | 2 | 7 | P |
+| US-16 | 09 | 5 | 0 | 5 | P |
+| US-17 | 10 | 6 | 0 | 6 | P |
+| US-18a | 11 | 7 | 1 | 6 | P |
+| US-18b | 11 | 6 | 1 | 5 | P |
+| US-19 | 03b | 6 | 0 | 6 | P |
+| **Total** | | **193** | **39** | **154** | |
+
+Scenarios to tag `@technical` (39; DISTILL applies, PO does not edit test files). Paths under `tests/acceptance/overland_route_planner_mvp/`:
+- `slice-01a-skeleton-items-on-pi.feature`: 95 packaged planner without its data storage; 101 data folder not writable stops start-up; 108 older planner refuses newer data; 175 trail file that tries to read other files; 182 trail file above the upload limit
+- `slice-01b-skeleton-plan-and-gpx.feature`: 58 plan still being worked out cannot be exported; 64 plans refused while the optimizer cannot start; 72 second Optimize while a plan is being worked out
+- `slice-02-directional-optimizer.feature`: 41 a plan that would break a hard rule is never shown; 84 a track cannot be made the Start even when asked directly
+- `slice-03-pi-performance.feature`: 43 the 60-item plan is the same on every machine; 78 feasibility limit reached during the look-up; 101 closing the planner during a long optimisation; 108 only one plan per project at a time; 117 Marco's diagnostics show how planning went
+- `slice-04-consideration-list.feature`: 28 excluding Start or End refused even when asked directly
+- `slice-05-incremental-recalculation.feature`: 36 correction across a rounding step; 86 diagnostics count toggle-only recalculations
+- `slice-06a-valhalla-on-the-pi.feature`: 62 road legs found before the engine failed are kept; 86 Torino to Susa read as a Confirmed leg; 92 missing matrix answer confirmed by a route check; 100 one unsnappable place never removes other legs; 108 large trip asked in batches; 114 checks stop on a different engine version; 120 engine failures reported as failures (Outline); 133 passing server hiccup retried; 140 offline road map reports the same way; 146 the routing engine on the Pi still answers like its recordings
+- `slice-06b-compromise-legs.feature`: 49 restricted road classified from legal and permissive look-up; 56 permissive retry never snaps onto a footpath; 63 summit far from any road (live-engine check of S3)
+- `slice-07-real-gpx-import.feature`: 44 more files than the upload limit
+- `slice-08-input-data-hygiene.feature`: 41 reverse interrupted by a crash; 50 trail reversed while a plan is being calculated; 116 sparse forum tracks not flagged as jumps (threshold calibration)
+- `slice-09-directional-map.feature`: 55 chosen map tiles and attribution (configuration); 62 map tile address carrying a private key stops start-up
+- `slice-11-device-ready-gpx.feature`: 50 first export of a big trip records how long planning took (K1 instrument); 94 track data that no longer matches the run refuses the export
+
+Retags for DISTILL from the splits and the slice move: `slice-01a...feature` 125, 131, 145, 189, 196 -> `@US-02c`; `slice-05...feature` 68, 74, 80 -> `@US-09b`, the other slice-05 scenarios -> `@US-09a`; 01a lines 17, 25, 31, 40, 48, 54 (US-01a) -> `@slice-00b`. Wording: 01a:163 Outline row `waypoints-only.gpx` -> "has no usable track" (D151); 03:72 S4 message "... - plan run #N failed", 03:78 "... - nothing was changed" (D151); 04:140 Then per OPT-2; 03:15 and 06a:24 Givens "60 items plus Start and End" and "the slowest of the 10" (D146, D159); "Optimize" -> "Calculate" (D156).
+
+| Story | 1 Problem | 2 Persona | 3 Examples | 4 UAT (3-7 user-facing) | 5 AC<-UAT | 6 Size | 7 Tech notes | 8 Deps | 9 KPI | Result |
+|-------|---|---|---|---|---|---|---|---|---|--------|
+| US-01a | P | P | P 3 | P 7 | P | P 0.4 d | P | P (slice 00a) | P | PASS |
+| US-01b | P | P | P 3 | P 4 | P | P 0.4 d | P | P | P | PASS |
+| US-02a | P | P | P 3 | P 3 | P | P 0.25 d | P | P | P | PASS |
+| US-02c | P | P | P 3 | P 5 | P | P 0.2 d | P | P | P | PASS |
+| US-02b | P | P | P 3 | P 7 | P | P 0.6 d | P | P | P | PASS |
+| US-03 | P | P | P 3 | P 4 | P | P 0.4 d | P | P | P | PASS |
+| US-04 | P | P | P 3 | P 4 | P | P 0.3 d | P | P | P | PASS |
+| US-05 | P | P | P 3 | P 7 | P | P 0.3 d | P | P | P | PASS |
+| US-06a | P | P | P 3 | P 5 | P | P 0.3 d (+S1b in 06a) | P | P (03-ops, 06a-ops; SPIKE-1R/2R done) | P | PASS |
+| US-06b | P | P | P 3 | P 6 | P | P 0.55 d | P | P | P | PASS |
+| US-07a | P | P | P 3 | P 6 | P | P 0.35 d | P | P | P | PASS |
+| US-07b | P | P | P 3 | P 6 | P | P 0.3 d | P | P | P | PASS |
+| US-08 | P | P | P 3 | P 6 | P | P 0.4 d | P | P | P | PASS |
+| US-09a | P | P | P 3 | P 7 | P | P 0.7 d | P | P | P | PASS |
+| US-09b | P | P | P 3 | P 3 | P | P 0.3 d | P | P | P | PASS |
+| US-10a | P | P | P 3 | P 7 | P | P 0.9 d | P | P (06a-ops) | P | PASS |
+| US-10b | P | P | P 3 | P 5 | P | P 0.6 d | P | P | P | PASS |
+| US-11a | P | P | P 3 | P 5 | P | P 0.4 d | P | P | P | PASS |
+| US-11b | P | P | P 3 | P 5 | P | P 0.3 d | P | P | P | PASS |
+| US-12 | P | P | P 3 | P 6 | P | P 0.3 d | P | P | P | PASS |
+| US-13 | P | P | P 3 | P 4 | P | P 0.5 d | P | P | P | PASS |
+| US-14 | P | P | P 3 | P 7 | P | P 0.5 d | P | P | P | PASS |
+| US-15 | P | P | P 3 | P 7 | P | P 0.7 d | P | P | P | PASS |
+| US-16 | P | P | P 3 | P 5 | P | P 0.3 d | P | P | P | PASS |
+| US-17 | P | P | P 3 | P 6 | P | P 1 d | P | P | P | PASS |
+| US-18a | P | P | P 3 | P 6 | P | P 0.6 d | P | P | P | PASS |
+| US-18b | P | P | P 3 | P 5 | P | P 0.4 d | P | P | P | PASS |
+| US-19 | P | P | P 3 | P 6 | P | P 0.8 d | P | P | P | PASS |
+
+Evidence: user-facing counts from the table above (D141); the new stories US-02a, US-02c, US-09a, US-09b have Problem, persona, 3 domain examples, Given/When/Then UAT, ACs citing their scenarios, Elevator Pitch with a real entry point, `job_id` (J-01, J-01, J-03, J-03) and an outcome KPI. Every user slice <= 1 d (D13, D145); enabler slices 00a, 03-ops, 06a-ops carry no story and are paired with the user slice they precede. DoR: **PASS on all 9 items for all 28 stories (self-assessed, final gate)**.
+
 ## Wave: DISCUSS / [REF] Out-of-scope
 
 Phase 2 (backlog): geocoding search + cache (OD#6); multi-day splitting, overnight POIs, per-day GPX; pinning; restoring a past run's selection; CLI; KML/KMZ/GeoJSON; snap-distance warnings (A3); DMS coordinates.
@@ -2452,11 +2691,11 @@ Never in v1 (section 9): routing on off-road tracks, legality checks, live navig
 
 ### Key Decisions
 
-D1-D16 and D69-D72 above (D17-D68 belong to DESIGN). WS-B, split into 01a/01b. Slices are numbered in priority order by learning leverage.
+D1-D16, D69-D73 and D140-D159 (final review gate) above (D17-D68 belong to DESIGN). WS-B, split into 01a/01b (00b carries US-01a since D145). Slices are numbered in priority order by learning leverage; enabler slices 00a, 03-ops and 06a-ops precede their paired user slices.
 
 ### Requirements Summary
 
-26 stories, 14 slices (01a, 01b, 02, 03, 03b, 04, 05, 06a, 06b, 07-11), 6 jobs, a 9-step journey with a reverse-direction branch, 133 Gherkin scenarios (3 Scenario Outlines; rev 6.1). HC-1..5 (with the HC-1 exit-side retrace), A-1..7, FR-5.5 (revised), FR-5.8, FR-8.2 (revised), FR-6.3 and FR-6.7 are all mapped.
+28 stories (final gate: US-02a -> US-02a + US-02c, US-09 -> US-09a + US-09b), 15 user slices (00b, 01a, 01b, 02, 03, 03b, 04, 05, 06a, 06b, 07-11) + 3 enabler slices (00a, 03-ops, 06a-ops), 6 jobs, a 9-step journey with a reverse-direction branch, 133 Gherkin scenarios (3 Scenario Outlines; rev 6.1). HC-1..5 (with the HC-1 exit-side retrace), A-1..7, FR-5.5 (revised), FR-5.8, FR-8.2 (revised), FR-6.3 and FR-6.7 are all mapped.
 
 ### Constraints Established
 
@@ -2806,6 +3045,34 @@ Not applied: none. Adaptations, recorded for the reviewer:
 - ADR-010 / ADR-016 wording conflict marked resolved.
 - Scenario count: 130 -> 133 (3 Scenario Outlines). Every new or changed scenario opens with a Given. DoR: self-assessed, pending re-review.
 
+| U | Applied where |
+|---|---------------|
+| U46 | (post-spike, 2026-11-02; added at the final gate, PROC-1) No AC change. K5 baseline in Outcome KPIs and US-06a KPI now reads "about 74 s = sum of stage p95s (estimate); K5 unverified until perf-pi" (KPI-2, D147). Slice 06a/06a-ops carry the second-pass matrix and permissive-locate notes from ADR-013/016 |
+
+### Revision 7 (final review gate, 2026-11-02)
+
+Source: `distill/review-gate-fixlist.md` (UD-1..UD-4, OD-1..OD-9). Decisions D140-D159. Only DISCUSS sections were edited.
+
+| Finding | Change |
+|---|---|
+| DOR-1 (UD-2) | D141 rule; fresh DoR table with total/technical/user-facing per story; 39 scenarios listed for `@technical`; splits US-02a -> US-02a/US-02c (D142), US-09 -> US-09a/US-09b (D143); US-10a and US-14 verified at 7 (D144) |
+| SLICE-1 (OD-1) | D145: new slices 00a (enabler), 00b (US-01a + deploy), 03-ops, 06a-ops; 01a, 03, 06a re-scoped and re-estimated; Prioritization, story map, releases, scope assessment updated; slice briefs written |
+| DISTILL-1/MSG-1 (OD-5) | D151; US-06b S4 and examples; US-02a S3; run-numbering rule |
+| UI10-1 (OD-3/OD-4) | D149 (US-11a notes), D150 (US-04 notes) |
+| PO-1 (OD-6) | D152 (US-02a notes) |
+| REQ-1 (OD-8) | D153; REQUIREMENTS NFR-3 note |
+| SCOPE-1 (OD-2) | D146; US-06a examples, S1a Given, notes, KPI |
+| KPI-1 (UD-3) | D147; K5 row, US-06a KPI |
+| KPI-2 | U46 line above; K5 baseline wording |
+| OBJ-1 (UD-4) | D148; REQUIREMENTS FR-5.8/FR-5.1 clarification; US-08 AC; US-19 notes |
+| SSOT-1 | D140; DISCUSS .feature header; D116 back-propagated (US-06a S2 both limits, US-06b S4 slow optimizer + notes, run-numbering rule, D157) |
+| DEMO-1 | D158; slice-01a brief demo DoD |
+| PROC-1 | U46 line above |
+| STAT-1 | D159; US-06a S1a/S1b and ACs |
+| OPT-2 | US-08 S5 Then |
+| UI-9 / UI-10 / UI-11 | D151, D154 (US-11b, US-12 notes), D155 |
+| L-04 | D156 (supersedes D71) |
+
 ---
 
 
@@ -2864,13 +3131,13 @@ DISCUSS decisions D1-D16 stand. DESIGN continues the numbering.
 | D31 | OD#6 resolved: Nominatim public behind a `Geocoder` port; port only, adapter in Phase 2 (explicit Search button, 1 req/s, cached) | User (accepted recommendation) | brief §6 |
 | D32 | **SUPERSEDED by D51** (enforcement part). Composition root "wire -> probe -> use" stands | Morgan (Earned Trust) | ADR-011 |
 | D33 | Layer and module rules enforced by import-linter (domain pure; `ortools` only in `adapters.solver`; adapter packages independent) | Morgan | brief §11 |
-| D34 | Matrix model: ordered pairs exit(i) -> entry(j). A round trip needs n(n-1) (run #4: 10 x 9 = 90). One-way with k non-anchors needs k^2 + k + 1 (60 items: 3,423). Retrace pairs entry(t) -> entry(j) are added only on demand (D46). Leg cache key = (from, to quantised to 1e-5 deg as integers, provider_id, profile); per-project clearing via a usage link table | Morgan (FR-7.1) | brief §8-9 |
+| D34 | Matrix model: ordered pairs exit(i) -> entry(j). A round trip needs n(n-1) (run #4: 10 x 9 = 90). One-way with k non-anchors needs k^2 + k + 1 (60 items: 3,423) **[superseded by D131: k² + k; 60 items = 62 nodes = 3,660 pairs; k = 0 -> 1 pair]**. Retrace pairs entry(t) -> entry(j) are added only on demand (D46). Leg cache key = (from, to quantised to 1e-5 deg as integers, provider_id, profile); per-project clearing via a usage link table | Morgan (FR-7.1) | brief §8-9 |
 | D35 | Security: LAN port `8080` by default (`PLANNER_PORT`), no tunnel; in-app opt-in HTTP Basic; secrets only from the environment, redacted in logs, never sent to the browser. **Amended by D52** | Morgan (NFR-4) | brief §12 |
 | D36 | Observability: structlog JSON lines to stdout with a named event catalogue; `/healthz` (minimal) + `/api/health` (detail) | Morgan (NFR-7) | brief §12 |
 | D37 | A8: jump-warning threshold default 5 km (configurable) | Morgan (A8 delegated to DESIGN) | brief §4 |
 | D38 | OD#5 resolved: Raspberry Pi 5 Model B 16 GB (about 11 GB available), 4 cores, aarch64, Debian 13, Docker 29.5.3 / Compose v5.1.4, `deploy@pi.example` | User | - |
 | D39 | **SUPERSEDED by D45** (FR-8.2 revised). Old proposal: any unroutable pair fails the run | Morgan | - |
-| D40 | OD#1 (final): **self-hosted Valhalla on the Pi is the only MVP routing provider**, in the same compose stack (`valhalla` + one-shot `valhalla-build`). No API key. `provider_id` = `valhalla:<tileset_last_modified>`; profile `4x4.v1`. ORS remains a possible later adapter and the last-resort fallback. Supersedes D18 | User (N1) | ADR-013 |
+| D40 | OD#1 (final): **self-hosted Valhalla on the Pi is the only MVP routing provider**, in the same compose stack (`valhalla` + one-shot `valhalla-build`). No API key. `provider_id` = `valhalla:<tileset_last_modified>` **[amended by D128: `valhalla:<version>:<tileset_last_modified>`]**; profile `4x4.v1`. ORS remains a possible later adapter and the last-resort fallback. Supersedes D18 | User (N1) | ADR-013 |
 | D41 | FR-5.5 (revised): p95 <= 180 s **end to end** for 60 items, including the cold leg fetch, with a stage budget; `FEASIBILITY_LIMIT_S=600` (timeout failure), `OPTIMISATION_LIMIT_S=1800` ("not fully optimised"), both from job start; "Stop and use best so far" always available | User (N2) | ADR-014 |
 | D42 | Determinism re-derived: the deterministic search budget is the normal stop, calibrated so solve p95 <= 55 s on the Pi; limit or Stop -> `reproducible=false`, labelled; canonical model + fingerprint memo kept. Supersedes D21 | User (N2, FR-5.6) | ADR-014 |
 | D43 | Plan job lifecycle: state machine with Stop (`POST /api/plan-jobs/{id}/stop`); the solver child streams incumbents and the parent keeps the last valid one; zero valid incumbents at the feasibility limit -> Failed "timeout"; Stop with none -> Failed "stopped before a valid route was found"; Stop/limit/engine failure during leg fetch -> no run, legs kept; child dies with its parent (PDEATHSIG + pipe EOF). Supersedes D22, amends D25 | Morgan (review B3) | ADR-015 |
@@ -2896,10 +3163,26 @@ DISCUSS decisions D1-D16 stand. DESIGN continues the numbering.
 | D63 | Slices: US-19 (retrace) joins the optimizer slices; slice 06 splits into 06a/06b. Probe enforcement without the AST hook/meta-test is accepted, replaced by a code-review checklist item | User | ADR-011 |
 | D64 | Arc cost `c` = full arc cost (retrace: track length + penalty + onward leg); `max_c` taken over all arcs; the objective minimises road + retrace distance (or time) | Morgan (review M-1) | ADR-016 §4, ADR-017 |
 | D65 | Track version files are deleted only by the orphan sweep: unreferenced by the DB, unpinned by any live job (`FilePinRegistry`), older than 1 h, decided under the write lock; Reverse never deletes | Morgan (review H-2) | ADR-018 Revision 2 |
-| D66 | Stage budget: matrix row validated by K4, other rows pending SPIKE-2R/SPIKE-1R stage timings; second pass P2 = N_none + N_retrace budgeted at <= 700 pairs / 15 s; P2 > 700 is outside the p95 claim | Morgan (review H-1) | ADR-014 §1 |
-| D67 | Valhalla per-call deadline = min(read timeout, time left to the feasibility limit); stage budgets are targets; retried jobs are outside the p95 claim | Morgan (review M-3) | ADR-013 §6 |
+| D66 | Stage budget: matrix row validated by K4, other rows pending SPIKE-2R/SPIKE-1R stage timings; second pass P2 = N_none + N_retrace budgeted at <= 700 pairs / 15 s; ~~P2 > 700 is outside the p95 claim~~ **[amended by D127 (UD-3): P2 > 700 counts toward the claim, reported separately]** | Morgan (review H-1) | ADR-014 §1 |
+| D67 | Valhalla per-call deadline = min(read timeout, time left to the feasibility limit); stage budgets are targets; ~~retried jobs are outside the p95 claim~~ **[amended by D127 (UD-3): retried jobs count, reported separately]** | Morgan (review M-3) | ADR-013 §6 |
 | D68 | Itinerary snapshot holds `canonical_sha256` per track stop and `retrace_sha256` per retrace leg; guard, map and export verify full-sequence hashes | Morgan (review M-2) | ADR-009 Amendment 2 |
 | D74 | Q-U8: memo reuse of stopped or time-limited runs kept (same "not fully optimised" plan for identical inputs); a "Re-optimise (ignore previous result)" action (`plan-runs?ignore_memo=true`) solves afresh and creates a new run. (D69-D73 belong to DISCUSS) | User | ADR-014 §5, ADR-015 |
+| D121 | `DATA_DIR` persistence = fstype of the longest-prefix mount entry of the resolved path: overlay/tmpfs/ramfs -> degraded; other -> ok; non-Linux -> not_applicable; root fs never checked alone; "not a mount point" dropped; new driven port `MountTable` (D105); WS never uses the OS temp dir as `DATA_DIR` (R-01, UI-1, UI-12) | Morgan (final gate) | ADR-011 amendment, brief §6-7 |
+| D122 | Solver finishes with no incumbent -> Failed `no_valid_route_found` at once; child exits abnormally -> Failed `optimizer_failed`, or with an incumbent -> finalised "not fully optimised (optimizer_failed)" (R-02, UI-7) | Morgan (final gate) | ADR-015 amendment, ADR-016 §3 |
+| D123 | Snapshot read + pin registration in one critical section under the write lock; named test "snapshot and pin are atomic with the orphan sweep" (R-03, F-2) | Morgan (final gate) | ADR-018 amendment |
+| D124 | Fingerprint also covers weighting mode, phase-1/phase-2 limits, retrace penalties; memo-miss test per field (R-04) | Morgan (final gate) | ADR-014 §5 |
+| D125 | Optimisation order (UD-4): fewest Unconfirmed legs, fewest retraces, objective (D75 road km or time + retrace km/time). `RETRACE_PENALTY` is a solver-internal tie-break, never in reported km/time/objective; Totals = real road km + off-road km incl. retraces (R-05/R-06) | User (UD-4) | ADR-016/017 amendments, brief §2 |
+| D126 | Size (OD-2): claim supported up to 60 items + Start/End (62 nodes); 61-70 allowed with a "may take longer than 3 minutes" notice, no refusal; slice 03 re-calibrates at 70 (R-07) | Orchestrator default OD-2 | ADR-014 amendment, brief §2 |
+| D127 | K5 population (UD-3): every cold 60-item plan counts, incl. retried, P2 > 700 and solver-wait jobs; counts reported separately. Amends D66, D67 | User (UD-3) | ADR-014, ADR-013 §6 |
+| D128 | `provider_id` = `valhalla:<version>:<tileset_last_modified>`; `VALHALLA_EXPECTED_VERSION` (3.9.1); `/status` version mismatch -> probe fails (`routing_engine_version_mismatch`), plan jobs refused 503 `routing_engine_not_ready` (R-08, UI-17). Amends D40 | Morgan (final gate) | ADR-013 amendment |
+| D129 | Start-up DB order: read revision read-only; newer -> refuse `db_newer_than_app`, nothing copied/written; older -> copy, then upgrade (R-09, UI-8) | Morgan (final gate) | ADR-018 amendment |
+| D130 | HTTP contract ratifies D107: snake_case; error envelope `{code, message}` with codes 422 `validation_error`/`missing_anchor`, 409 `job_active`, 503 `routing_engine_not_ready`/`optimizer_unavailable`, 413 `upload_too_large`, 401 `unauthorized`, plus 404 `not_found`; `RequestValidationError` handler; anchor enum `start|end|start_end|null`; one field-name table for poll payload and `plan_job_log` (`legs_new`/`legs_cached`/`points_new`); `ignore_memo` with the same codes; OpenAPI snapshot in CI (R-10, R-21, UI-3) | Morgan (final gate) | brief §5, ADR-015 amendment |
+| D131 | One definition: items = Included non-anchor items; 60 items = 62 nodes = k² + k = 3,660 pairs (measured); k = 0 -> 1 pair. Supersedes the 3,423 reading in D34 (R-13) | Morgan (final gate) | ADR-014/013 amendments, brief §8 |
+| D132 | Spike labels: permissive `/locate` cost is an estimate (measured in 06a); P2 = 720 is a bounding case (realistic ~600); 700 is a budget assumption, not an exclusion (R-14) | Morgan (final gate) | ADR-014 amendment |
+| D133 | Valhalla concurrency = one process-wide semaphore of 2 (jobs, geometry, probes); one solver child at a time, a second job waits in `waiting_for_optimizer` (stoppable, no run if stopped/timed out there) (R-15, F-6) | Morgan (final gate) | ADR-013/015 amendments |
+| D134 | Guard check 5: the leg after a retrace is checked against entry(t) -> entry(next) (R-16, F-7) | Morgan (final gate) | ADR-009 Amendment 3, ADR-017 |
+| D135 | Slice 03 re-measures guard + assemble + persist with 40 × 20,000-point tracks; if > 3 s, a documented max points per track is introduced, the guard is never weakened (R-17, F-5) | Morgan (final gate) | ADR-014 amendment, ADR-009 Amendment 3 |
+| D136 | Stop is idempotent: in `finalising` 200 with the incumbent being written; on `done` 200 with the final payload; unknown job 404 (R-18) | Morgan (final gate) | ADR-015 amendment |
 
 ## Wave: DESIGN / [REF] Component decomposition
 
@@ -2940,7 +3223,9 @@ All change types are CREATE NEW (empty codebase). Paths are relative to the repo
 1. Browser UI (Svelte SPA) at `http://pi.example:8080/` (`PLANNER_PORT`, default 8080), desktop primary, results and map usable at 390 px.
 2. HTTP JSON API under `/api`: the DISCUSS paths are adopted as final, with these additions:
    - `POST /api/projects/{project_id}/plan-runs` returns **202** `{job_id}`; refusals before work return 422 (missing anchor) / 409 (job active) / 503 (routing engine not ready or optimizer unavailable) with the message and create no job and no run;
-   - `GET /api/plan-jobs/{job_id}` (500 ms polling: state, new/cached legs, points located, elapsed, best incumbent, stoppable, plan_run_id, message);
+   - `GET /api/plan-jobs/{job_id}` (500 ms polling: state, new/cached legs, points located, elapsed, best incumbent, stoppable, plan_run_id, message; field names per D130: `legs_new`, `legs_cached`, `points_new`, ...);
+   - `POST /api/projects/{project_id}/plan-runs?ignore_memo=true` (Re-optimise, D74; same codes as plan-runs);
+   - error envelope, codes, snake_case and the OpenAPI snapshot: D130 / brief §5;
    - `POST /api/plan-jobs/{job_id}/stop` ("Stop and use best so far", FR-5.5);
    - `GET /api/plan-runs/{plan_run_id}/geometry` (lazy leg geometry; `geometry_unavailable` per leg);
    - `GET|PATCH /api/projects/{project_id}` (objective, off-road speed, loop distance);
@@ -2958,7 +3243,8 @@ All change types are CREATE NEW (empty codebase). Paths are relative to the repo
 | `RoutingProvider` (locate, matrix legal/permissive, route_many, probe, provider_id, profile, display_name) | `ValhallaRoutingProvider` (4x4.v1, batches <= 2,500 pairs, 2 concurrent, retry on 5xx/timeouts only), `MockRoutingProvider` (haversine x 1.3; scripted levels, snap classes, unreachable points, fault plan), `CountingRoutingProvider` (distinct pairs per job) | hosted adapter (e.g. OpenRouteService) | `/status` + 2x2 Torino <-> Susa; degraded (healthy) while the engine is not ready; re-probed every 60 s and before each job; probes not counted |
 | `TourSolver` | `OrToolsTourSolver` (child process, streams incumbents), `ScriptedTourSolver` (tests) | `HeuristicTourSolver` if SPIKE-1R kills OR-Tools | 6-node asymmetric instance with a track node and a forbidden arc, solved twice; failure -> degraded, unhealthy |
 | `ProjectRepository`, `PlanRunRepository`, `LegCacheRepository`, `PointCacheRepository`, `HistoryRepository`, `ProjectSnapshotReader`, `UnitOfWork` | SQLAlchemy 2 on SQLite (WAL, busy_timeout, single writer) | - | round-trip row, WAL active, quick_check, Alembic head; fatal |
-| `FileStore` | `LocalFileStore` (`/data/files`, versioned track files) | - | write-fsync-rename-read round trip (fatal); `/data` mount not overlay/tmpfs (degraded, unhealthy) |
+| `FileStore` | `LocalFileStore` (`/data/files`, versioned track files) | - | write-fsync-rename-read round trip (fatal); `DATA_DIR` fstype (longest-prefix mount entry) overlay/tmpfs/ramfs -> degraded, unhealthy; other -> ok; non-Linux -> not_applicable (D121) |
+| `MountTable` (external, D105) | `ProcMountTable` (`/proc/self/mountinfo`); `FakeMountTable` in tests via `ExternalPorts` (D106) | - | readable + parsable, entry for `/`; parse failure on Linux -> degraded |
 | `TrackFileParser` | `GpxpyParser` (defusedxml pre-parse) | KML/KMZ/GeoJSON (Phase 2) | embedded GPX parse + XXE sample rejected; fatal |
 | `GpxWriter` | `GpxpyWriter` | - | write + re-parse; fatal |
 | `EventLog` | `StructlogEventLog` | - | - |
@@ -3364,6 +3650,38 @@ N/A - greenfield, FULL density requested by the orchestrator.
 - The user closed DESIGN after the iteration-3 review: F-1 is fixed in the text, and F-2..F-20 carry into DISTILL/DELIVER (see brief.md).
 - D75 (user, F-9): the road-leg distance is the km of Valhalla's normal (fastest) route. The distance objective minimises the sum of those km; no shortest-distance routing mode is used.
 
+### DESIGN final review gate (2026-11-02)
+
+Applied from `distill/review-gate-fixlist.md` (Architect section, R-01..R-21) under UD-1..UD-4 and OD-1..OD-9. New decisions D121-D136 (DDD list above). R-12 does not appear in the fix list.
+
+| Finding | Resolution | Where |
+|---|---|---|
+| R-01 / UI-1 / UI-12 | `DATA_DIR` classified by longest-prefix mount fstype; `MountTable` port listed | D121; ADR-011; brief §6-7; driven-ports table |
+| R-02 / UI-7 | `no_valid_route_found` at once; `optimizer_failed` with/without incumbent | D122; ADR-015, ADR-016 §3 |
+| R-03 / F-2 | Snapshot + pin atomic under the write lock; named test | D123; ADR-018 |
+| R-04 | Fingerprint fields added; memo-miss test | D124; ADR-014 §5 |
+| R-05 / R-06 (UD-4) | Order clarified; penalty never reported; Totals defined | D125; ADR-016/017; brief §2 |
+| R-07 (OD-2) | 60 + Start/End supported; 61-70 allowed with notice | D126; ADR-014; brief §2, §8 |
+| UD-3 | No K5 exclusions; separate counts | D127; ADR-014 §1, ADR-013 §6; D66/D67 amended |
+| R-08 / UI-17 | Version in `provider_id`; mismatch refuses plan jobs | D128; ADR-013; brief §6-7, §12 |
+| R-09 / UI-8 | Check, then copy, then upgrade | D129; ADR-018; brief §7 |
+| R-10 / R-21 / UI-3 | HTTP contract ratified (D107) | D130; brief §5; ADR-015, ADR-007 |
+| R-11 | Brief pass: §4 FilePinRegistry/OrphanSweep/solver slot, §5 ignore_memo, §6 MountTable, §12 child 55-59 MB + events, §13/§14 and ADR-013..018 status lines | brief; ADRs |
+| R-13 | One items/pairs definition | D131; ADR-013/014; brief §8; D34 marked |
+| R-14 | Estimate / bounding-case labels | D132; ADR-014 |
+| R-15 / F-6 | Valhalla semaphore 2 process-wide; one solver slot | D133; ADR-013/015 |
+| R-16 / F-7 | Check 5 after a retrace | D134; ADR-009 Amendment 3, ADR-017 |
+| R-17 / F-5 | Re-measure with 20,000-point tracks at slice 03 | D135; ADR-014, ADR-009 |
+| R-18 | Stop idempotent | D136; ADR-015 |
+| R-19 | Backup section = rollback snapshot only (D91); volume `overland_planner-data` | ADR-018; brief §9 |
+| R-20 / UI-15 | "arm64 via QEMU by default; native when `ARM64_RUNNER` is set" | brief §15 (one line) |
+
+**Iteration-3 carry-overs F-2..F-20, itemised and closed:**
+- F-2 -> R-03 (D123). F-3 ("validated" = to be validated) -> obsolete: the rows are now measured (D77), the remaining estimates are labelled (D132). F-4 (K4 vs ADR-014 on matrix overrun) -> closed by measurement (K4 p95 10.5 s vs 75 s) and the per-call deadline (D67); an overrun ends only at the feasibility limit. F-5 -> R-17 (D135). F-6 -> R-15 (D133). F-7 -> R-16 (D134). F-8 -> R-10/R-11 (D130, brief §5). F-9 -> D75. F-10 -> R-11 (brief §4).
+- F-11..F-20 (low/nit): the iteration-3 record did not itemise their text, and it cannot be recovered from the repository. F-14 was closed by SPIKE-2R (D76) and F-16 applied in REQUIREMENTS FR-5.6/A-6. The rest are **closed as superseded** by this final gate: four reviewers re-read the whole DESIGN and the itemised R-01..R-21 list replaces the earlier low/nit backlog. Anything left will show up again in DELIVER reviews.
+
+No peer-review iteration was run on these amendments in this pass (the orchestrator's gate covers it).
+
 ## Wave: SPIKE
 
 ### [REF] Outcome (2026-11-02)
@@ -3394,57 +3712,78 @@ Wave: DEVOPS (platform design for DELIVER) | Date: 2026-11-02 | Author: nw-platf
 - ⊘ existing CI/CD, IaC, Dockerfile, compose: none in the repo (greenfield; `git init` only, no commits, no remote)
 - ✓ Pi read-only probes (2026-11-02): compose projects, containers and ports, listening sockets, networks, volumes, disk, memory, Docker/Compose/buildx versions, log driver, GHCR auth (none), `~/valhalla-spike` contents. Nothing was changed on the Pi
 
-## Wave: DEVOPS / [REF] Decisions (D80-D102)
+## Wave: DEVOPS / [REF] Decisions (D80-D102, D160-D179)
 
-D1-D79 are taken. User decisions of 2026-11-02 are tagged "User (2026-11-02 #n)".
+D1-D79 are taken. D160-D179 were added by the final review gate (2026-11-02, `distill/review-gate-fixlist.md`; Forge F-01..F-31, UD-1, UD-3, OD-1, OD-9). User decisions of 2026-11-02 are tagged "User (2026-11-02 #n)".
 
 | ID | Decision | Source |
 |----|----------|--------|
 | D80 | Environments: `dev-mac` (no Docker, mock routing), `ci-github-amd64`, `ci-github-arm64`, `pi-prod` (+ ephemeral `planner-perf` on the Pi; optional `pc-amd64`). Details in `devops/environments.yaml` | User #1, #3; Apex |
 | D81 | One compose project `overland` in `~/apps/overland-planner/` on the Pi. Services `planner` (FastAPI + SPA, solver child inside, `init: true`), `valhalla` (from slice 06a), `valhalla-build` (profile `valhalla-build`), `planner-perf` (profile `perf`), `valhalla-tunnel` (profile `ops`). Networks `edge` (planner only), `routing` (`internal: true`: planner, valhalla, planner-perf, tunnel), `egress` (build only). Volumes with explicit names `overland_planner-data`, `overland_valhalla-data`, `overland_perf-data`. DESIGN names kept (`planner`, `planner-data`) | User #2; DESIGN D40, D53 |
-| D82 | Ports: planner publishes `${PLANNER_BIND}:${PLANNER_PORT:-8080}:8080`, with `PLANNER_BIND=192.168.1.10` on the Pi (8080 verified free; same per-IP binding convention as the household stack; `.env.example` defaults to `0.0.0.0` for PCs). Valhalla is never published (D52 kept). Ephemeral ops ports `127.0.0.1:18080` (perf) and `127.0.0.1:18002` (tunnel), both verified free | User #2; probe |
-| D83 | Caps and coexistence: planner `mem_limit 1g`, `memswap_limit 1g`, `cpus 2`, `pids_limit 256`; valhalla `4g`/`4g`, `cpus 3`; build `${VALHALLA_BUILD_MEM:-9g}` (at the measured cap; 10g is the maximum on this host), `cpus 3`, only with serving stopped and after a MemAvailable >= cap + 1 GiB preflight. `oom_score_adj: 500` on our services, so household services survive memory pressure. Per-service json-file rotation (planner 10m x 5, valhalla 10m x 3, build 10m x 2); `/etc/docker/daemon.json` never touched | User #2; SPIKE-2R K2/K3; DESIGN D53 |
-| D84 | Image and supply chain. Multi-stage Dockerfile: `node:22-bookworm-slim@sha256:<pin at 01a>` on `$BUILDPLATFORM` builds `web/`; `python:3.12-slim-bookworm@sha256:e697c818...d337` builder with a pinned `uv` (`uv sync --frozen --no-dev`); the same base as runtime. Non-root uid 10001, `/data` owned by it. OCI labels `org.opencontainers.image.{revision,source,created}` + `org.overland.alembic-head`. Builds: amd64 natively on `ubuntu-latest`. **arm64 by default under QEMU emulation via buildx on `ubuntu-latest`** (personal free plan: native arm64 hosted runners may not be available to private repos). Only the `RUN` steps of the Python stages run emulated: `uv sync` installs the prebuilt aarch64 wheels (ortools and others) and nothing is compiled; the node stage runs natively on `$BUILDPLATFORM`. Native `ubuntu-24.04-arm` is opt-in through the repo variable `ARM64_RUNNER` if it proves available. Both are merged into one manifest list in GHCR `ghcr.io/mrmilgauss/overland-planner` (owner name **required before slice 01a CI**), tags `sha-<12>` and `main`. SBOM + provenance attestations (buildx). Deploys reference the manifest-list digest only | User #3; User 2026-11-02 (OQ-1/OQ-6); SPIKE-1R base image; DESIGN D78 |
+| D82 | Ports: planner publishes `${PLANNER_BIND}:${PLANNER_PORT:-8080}:8080`, with `PLANNER_BIND=192.168.1.10` on the Pi (8080 verified free; same per-IP binding convention as the household stack; `.env.example` defaults to `127.0.0.1`; compose uses `${PLANNER_BIND:?}` so a missing value refuses to start, D174). Valhalla is never published (D52 kept). Ephemeral ops ports `127.0.0.1:18080` (perf) and `127.0.0.1:18002` (tunnel), both verified free; their containers also join the non-internal `edge` network so the loopback publish works (D164) | User #2; probe; D164, D174 |
+| D83 | Caps and coexistence: planner `mem_limit 1g`, `memswap_limit 1g`, `cpus 1` (D167), `pids_limit 256`; valhalla `4g`/`4g`, `cpus 2` with `server_threads 2` (D167); build `${VALHALLA_BUILD_MEM:-9g}` (at the measured cap; 10g is the maximum on this host), `cpus 3`, only with serving stopped and after a MemAvailable >= cap + 1 GiB preflight. `oom_score_adj: 500` on our services, so household services survive memory pressure. Per-service json-file rotation (planner 10m x 5, valhalla 10m x 3, build 10m x 2); `/etc/docker/daemon.json` never touched | User #2; SPIKE-2R K2/K3; DESIGN D53 |
+| D84 | Image and supply chain. Multi-stage Dockerfile: `node:22-bookworm-slim@sha256:<pin at 01a>` on `$BUILDPLATFORM` builds `web/`; `python:3.12-slim-bookworm@sha256:e697c818...d337` builder with a pinned `uv` (`uv sync --frozen --no-dev`); the same base as runtime. Non-root uid 10001, `/data` owned by it. OCI labels `org.opencontainers.image.{revision,source,created}` + `org.overland.alembic-head` + `org.overland.commit-ts` (D176). Builds: amd64 natively on `ubuntu-24.04` (pinned, D178). **arm64 by default under QEMU emulation via buildx on `ubuntu-24.04`** (personal free plan: native arm64 hosted runners may not be available to private repos). Only the `RUN` steps of the Python stages run emulated: `uv sync` installs the prebuilt aarch64 wheels (ortools and others) and nothing is compiled; the node stage runs natively on `$BUILDPLATFORM`. Native `ubuntu-24.04-arm` is opt-in through the repo variable `ARM64_RUNNER` if it proves available. Both are merged into one manifest list in GHCR `ghcr.io/mrmilgauss/overland-planner` (owner name **required before slice 01a CI**), tags `sha-<12>` and `main`. SBOM + provenance attestations (buildx). Deploys reference the manifest-list digest only | User #3; User 2026-11-02 (OQ-1/OQ-6); SPIKE-1R base image; DESIGN D78 |
 | D85 | Locking: `uv.lock` (CI runs `uv lock --check`), `ortools==9.15.6755` exact in `pyproject.toml`, `package-lock.json` + `npm ci`, every image by digest (Python base, node, uv, Valhalla `3.9.1-arm64@sha256:f182f45e...`, alpine, socat, debian for osmium). GitHub Actions pinned by commit SHA. Dependabot weekly, grouped (actions, uv, npm, docker). Bumping `ortools`, the Python base or Valhalla is a deliberate change that triggers `make perf-pi` (re-calibration) and, for Valhalla, re-recording the contract fixtures | Apex; ADR-013/014 |
 | D86 | CI on GitHub Actions: `ci.yml` (every push, PR to main, manual) and `weekly.yml` (Monday cron). Stages and gates in "CI/CD pipeline outline" below | User #3 |
 | D87 | Local gates with the `pre-commit` framework: pre-commit (< 30 s) and pre-push (< 5 min), mirroring the CI commit stage | Apex (principle 10) |
 | D88 | Trunk-based on `main`: branches live under a day, linear history, CI on every push. Personal free plan: **no branch protection on private repos is assumed**. **Deployable = CI-green main SHA**, enforced by the `make deploy` preflight (`gh run list --commit`), which is the only gate | User #8; User 2026-11-02 (OQ-2) |
-| D89 | Deployment: **Recreate**, manual, pull-based. `make deploy` (Mac) -> rsync `deploy/` -> ssh `scripts/deploy.sh <digest>` on the Pi: lock, preflight, pull by digest, stop, snapshot volume, write `release.env`, `up -d --wait`, smoke, record. Auto-rollback when the health or smoke check fails | User #3, #6 |
+| D89 | Deployment: **Recreate**, manual, pull-based. `make deploy` (Mac) -> attestation verify (D171) -> rsync `deploy/` -> ssh `scripts/deploy.sh <digest>` on the Pi: lock, preflight, pull by digest, stop, snapshot volume, write `release.env`, `up -d --wait` **on 127.0.0.1 only**, smoke, then publish on `PLANNER_BIND` (D165), record. Auto-rollback when the health or smoke check fails | User #3, #6; D165 |
 | D90 | Rollback contract: redeploy the previous digest (`release.env.prev`). Schema rules (DV-5, accepted): every Alembic revision has a CI-tested `downgrade()`; the app refuses to start on a DB revision it does not know (`db_newer_than_app`, fatal). Order: same schema -> switch digest; newer schema -> `alembic downgrade <prev head>` with the current image, then switch; downgrade fails -> restore the predeploy snapshot of that deploy (data written since the deploy is lost; stated to the user first) | User #6 |
-| D91 | **Rollback-only data safety, no backups** (user 2026-11-02, OQ-4: "I don't need backups"). Kept on the Pi only, solely for D89/D90 rollback: (1) the ADR-018 pre-migration copy made by the app (`/data/db/backups/`, retention per ADR-018, unchanged); (2) the predeploy snapshot taken by `deploy.sh` while the planner is stopped (`~/apps/overland-planner/snapshots/predeploy-<ts>.tgz`, a consistent tar of `overland_planner-data` made with a pinned alpine image), retention **current + previous** deploy. Removed: `make backup`, the per-deploy copy streamed to the Mac, weekly backups, `make restore`, the quarterly restore drill. **Accepted risk:** both copies live on the same NVMe as the data. If the Pi, its NVMe or the volume is lost, all project data is lost; the RPO for device loss is **undefined**. RPO for a failed deploy or migration = 0 (auto-rollback restores the snapshot taken with the planner stopped). Original GPX files remain wherever Marco keeps them | User 2026-11-02 (OQ-4); ADR-018 |
-| D92 | Valhalla tilesets: volume layout `tilesets/<YYYYMMDD>/` (served) + `build/` (scratch). `valhalla` mounts the subpath `tilesets/${VALHALLA_TILESET}` at `/custom_files` (Compose volume `subpath`; fallback: bind mount `/home/deploy/apps/overland-planner/tiles/<date>` if subpath misbehaves on Compose v5.1.4). The current and previous tilesets are kept (about 4.6 GB each: tar + admins + timezones + `valhalla.json`). **Slice 06a seeds the first tileset from `~/valhalla-spike/custom_files`** (approved by the user, OQ-5; no 34-min build): copy `valhalla_tiles.tar`, `admins.sqlite`, `timezones.sqlite`, `valhalla.json` into `tilesets/20261101/`. Once production `valhalla` serves that tileset (healthy, `/status` `tileset_last_modified` 1793560782, `make contract-live` green), `~/valhalla-spike` is deleted (18.3 GB), at a start time the user names. Quarterly refresh below | User #2; User 2026-11-02 (OQ-5); SPIKE-2R |
+| D91 | **Rollback-only data safety, no backups** (user 2026-11-02, OQ-4: "I don't need backups"). Kept on the Pi only, solely for D89/D90 rollback: (1) the ADR-018 pre-migration copy made by the app (`/data/db/backups/`, retention per ADR-018, unchanged); (2) the predeploy snapshot taken by `deploy.sh` while the planner is stopped (`~/apps/overland-planner/snapshots/predeploy-<ts>.tgz`, a consistent tar of `overland_planner-data` made with a pinned alpine image), retention **current + previous** deploy. RPO = 0 applies only to a deploy or migration that fails **before the LAN publish** (D165): until then the new version is reachable only on 127.0.0.1 and nobody can write. Removed: `make backup`, the per-deploy copy streamed to the Mac, weekly backups, `make restore`, the quarterly restore drill. **Accepted risk:** both copies live on the same NVMe as the data. If the Pi, its NVMe or the volume is lost, all project data is lost; the RPO for device loss is **undefined**. RPO for a deploy or migration that fails before the LAN publish = 0 (auto-rollback restores the snapshot taken with the planner stopped). After the publish, writes made on the new version are kept by a digest-only rollback, but a schema downgrade can lose data that only the newer schema holds (stated to the user before the downgrade). Original GPX files remain wherever Marco keeps them | User 2026-11-02 (OQ-4); ADR-018 |
+| D92 | Valhalla tilesets: volume layout `tilesets/<YYYYMMDD>/` (served) + `build/` (scratch). `valhalla` mounts the subpath `tilesets/${VALHALLA_TILESET}` at `/custom_files` (Compose volume `subpath`; fallback: bind mount `/home/deploy/apps/overland-planner/tiles/<date>` if subpath misbehaves on Compose v5.1.4). The served tileset is selected by `VALHALLA_TILESET` in `routing.env`, written only by `tiles-refresh`/`tiles-seed` (D166). The current and previous tilesets are kept (about 4.6 GB each: tar + admins + timezones + `valhalla.json`). **Slice 06a seeds the first tileset from `~/valhalla-spike/custom_files`** (approved by the user, OQ-5; no 34-min build): copy `valhalla_tiles.tar`, `admins.sqlite`, `timezones.sqlite`, `valhalla.json` into `tilesets/20261101/`. Once production `valhalla` serves that tileset (healthy, `/status` `tileset_last_modified` 1793560782, `make contract-live` green) and `make spike-cleanup` has compared the sha256 of the four seeded files with the originals (D178), `~/valhalla-spike` is deleted (18.3 GB), at a start time the user names. Quarterly refresh below | User #2; User 2026-11-02 (OQ-5); SPIKE-2R |
 | D93 | Observability: structlog JSON to stdout -> Docker json-file (rotated); Docker healthchecks (planner `/healthz`, valhalla `/status`); ADR-011 probes and `/api/health`; **`GET /api/diagnostics` + `/diagnostics` page** computed from `plan_job_log` + `plan_runs` (upstream DV-2..DV-4, DV-6). No Prometheus, Grafana or any new service on the Pi. Notifications: none by default; optional Home Assistant REST sensor on `/healthz` is a user action | User #5, #7 |
 | D94 | Monitoring contracts: one instrument per KPI in `docs/product/kpi-contracts.yaml`; thresholds are versioned there and mirrored by `DIAG_*` config defaults | User #5 |
 | D95 | Routing-port contract suite: fixtures copied once from `spike/fixtures/` into `tests/contract/fixtures/valhalla-3.9.1/` (sha256 manifest), replayed with respx in CI (blocking), asserting `/status` version 3.9.1. Live mode is the same suite with `--valhalla-url`: `make contract-live` starts the `valhalla-tunnel` forwarder (127.0.0.1:18002 on the Pi), opens `ssh -L 18002:127.0.0.1:18002`, runs pytest on the Mac, then tears everything down. Triggers: slices 06a/06b, any Valhalla image or config change, every tile refresh. Upstream DV-1 | User #3; ADR-013 |
-| D96 | Performance verification: `make perf-pi` (Mac) starts `planner-perf` (same digest, separate volume, shared live Valhalla), seeds the 60-item fixture through the API, clears its leg cache, runs Calculate with `ignore_memo=true` N times, measures press -> geometry received client-side over an ssh tunnel, and reads stage timings from `/api/diagnostics`. Gate: N=10, **max <= 180 s e2e and solve max <= 55 s** (NB7: p95 of 10 = max); N=30 for re-calibration. Needs the user's start time. Triggers: slice 03 close (solve stage, mock matrix), slice 06a close (e2e), solver/routing/budget changes, ortools/base/Valhalla bumps, tile refresh. CI keeps only a **golden-order determinism check** (blocking) and an advisory solve time on amd64 | User #9 brief; ADR-014 |
+| D96 | Performance verification: `make perf-pi` (Mac) starts `planner-perf` (same digest, separate volume, shared live Valhalla), seeds the 60-item fixture through the API, clears its leg cache, runs Calculate with `ignore_memo=true` N times, measures press -> geometry received client-side over an ssh tunnel, and reads stage timings from `/api/diagnostics`. Gate: N=10, **max <= 180 s e2e and solve max <= 55 s** (NB7: p95 of 10 = max); N=30 for re-calibration. Every cold run counts, retried jobs and P2 > 700 included (UD-3, D177). Each perf-pi run also solves the golden fixtures I1/I2 on the Pi and compares the order hash (D175). Needs the user's start time. Triggers: slice 03 close (solve stage, mock matrix), slice 06a close (e2e), solver/routing/budget changes, ortools/base/Valhalla bumps, tile refresh. CI keeps only a **golden-order determinism check** (blocking) and an advisory solve time on amd64 | User #9 brief; ADR-014; UD-3 |
 | D97 | Mutation testing: **mutmut 3.x** (pinned) on `src/overland_planner/domain/**` and `application/**`, scoped to the Python files changed since `BASE` and mapped to mutant-name globs; Hypothesis `mutation` profile (derandomized, 50 examples); OR-Tools child tests excluded from the mutation run (marker `solver_child`). Gate **kill rate >= 80%** (CLAUDE.md), with timeouts counted as killed. Runs in DELIVER on the Mac after each refactor (`make mutate BASE=<slice start>`), and in CI on main pushes that change those paths (scoped to the push range; failure blocks deploy). cosmic-ray is the fallback if mutmut 3 trampolines clash with the child-process tests. **Stryker not adopted** for the MVP (UI logic is thin; revisit if `web/src/lib` pure TS passes about 500 LOC) | User #9; CLAUDE.md |
-| D98 | Secrets: none in CI (GHCR push with `GITHUB_TOKEN`, `packages: write`). The Pi `.env` (mode 600, git-ignored) holds the optional Basic-auth password. GHCR pull credential = classic PAT with only `read:packages`, stored by `docker login ghcr.io` on the Pi. A future ORS key would go in the Pi `.env` only, never in GitHub (CI keeps using fixtures). gitleaks in pre-commit and CI | NFR-4; DESIGN D52 |
+| D98 | Secrets: none in CI (GHCR push with `GITHUB_TOKEN`; `packages: write` only at job level on jobs 5, 6, 9, D161). The Pi `.env` (mode 600, git-ignored) holds the optional Basic-auth password. GHCR pull credential = classic PAT with only `read:packages`, stored by `docker login ghcr.io` on the Pi. A future ORS key would go in the Pi `.env` only, never in GitHub (CI keeps using fixtures). gitleaks in pre-commit and CI | NFR-4; DESIGN D52 |
 | D99 | Coexistence and safe uninstall: every command is scoped with `-p overland`. Never `docker system/volume/image -a/network prune`, never `daemon.json`, never anything under the other stacks' directories. `make uninstall` = `down` (volumes kept); `make purge` = typed confirmation (no backup is taken; data is gone afterwards), then removes only `overland_*` volumes and `ghcr.io/mrmilgauss/overland-planner` images; `make image-gc` keeps the last 3 digests | User #4 |
 | D100 | `@real_provider` / `@pi` acceptance scenarios (US-06a S1b, US-10a S1/S7, US-08 Monte Bianco) run through `make acceptance-pi` (planner-perf against live Valhalla), never in GitHub CI | ADR-013; DISTILL tags |
-| D101 | Release tracking and DORA: `releases.log` on the Pi (copied to the Mac on each deploy). Targets: deploy at least once per slice (about daily in DELIVER), lead time commit -> Pi < 1 h, change failure rate < 15%, time to restore < 15 min (`make rollback`) | Apex (principle 8) |
-| D102 | Rollout by slice: slice 01a delivers CI (all `ci.yml` stages except contract/perf/mutation-of-nothing), the Dockerfile, compose with `planner` only (`ROUTING_PROVIDER=mock`), `make deploy/rollback/status/logs/diag(G1 only)/uninstall`, `.env.example`, pre-commit. Slice 03: `plan_job_log`, stage timings, golden-order check, `make perf-pi` (mock matrix). Slice 05: K4 fields. Slice 06a: `valhalla` service, tileset seeding from `~/valhalla-spike` and its later deletion, `valhalla-build` profile, `make contract-live`, `make acceptance-pi`, e2e `make perf-pi`. Slice 11: K1 export fields, K6 checklist | Slice order (01a first) |
+| D101 | Release tracking and DORA: `releases.log` on the Pi (copied to the Mac on each deploy), one line per action with `commit_ts` (D176). Metric definitions in `docs/product/kpi-contracts.yaml` `delivery_metrics`. Targets: deploy at least once per slice (about daily in DELIVER), lead time commit -> Pi < 1 h, change failure rate < 15%, time to restore < 15 min (`make rollback`) | Apex (principle 8) |
+| D102 | Rollout by slice, **revised by D179** (final review gate, OD-1; slice split D145). **00a ci-and-image**: `ci.yml` jobs 1, 2, 4, 5, 6, 7, 9 (+ job 8 once `domain/application` code exists), publish gating (D160), job-level permissions (D161), image artifact to e2e (D163), caches and runner-minute/storage check incl. measured image size (D169), audits/Trivy/`.dockerignore`/job 7 security marker (D170), `weekly.yml` (Trivy re-scan, audits, ZAP baseline, package storage report), GHCR prune-to-latest in job 9, `PENDING_FLAGS` list (D170), Dockerfile with `commit-ts` label, `ubuntu-24.04` pins, `.gitignore` `*.gpx` rule (D178), pre-commit. **00b planner-on-the-pi** (US-01a + compose/deploy/rollback): compose with `planner` only (`ROUTING_PROVIDER=mock`, hardening D173, `${PLANNER_BIND:?}` D174, CPU cap D167), `deploy.sh`/`rollback.sh` with the loopback-first publish (D165), `PLANNER_*`-only `release.env` (D166), two rollback pointers + `commit_ts` + `make dora` (D176), attestation verify (D171), `make deploy/rollback/status/logs/diag/uninstall/purge/image-gc`, `make diag` = `docker stats --no-stream` + `/healthz` only (D178), `.env.example`, DHCP reservation and GHCR token checks (D178). **01a skeleton-items-on-pi** consumes 00a/00b. **03-ops perf-tooling**: `plan_job_log` + stage timings + `/api/diagnostics` (K2/K3/K5/K7), job 3 `golden-order` added to `publish.needs` (D160), `make perf-pi` (mock matrix) incl. golden order on the Pi (D175) and the CPU-cap re-verification (D167), `planner-perf` network test (D164), fixtures I1/I2 + golden hash per OD-7. **03**: solver performance. **05**: K4 fields. **06a-ops valhalla-service**: `valhalla` service, `routing.env` + `tiles-seed`/`tiles-rollback` (D166), tileset seeding + sha256-checked spike cleanup (D178), `valhalla-build` profile, `valhalla-tunnel` network test (D164), `make contract-live`, `make acceptance-pi`, e2e `make perf-pi`. **06a**: the Valhalla adapter. **11**: K1 export fields, K6 checklist | Slice order 00a -> 00b -> 01a; OD-1; D145; D179 |
+| D160 | **Publish gating (F-01).** Job 9 `publish`: `if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success'`. The slice that creates job 8 adds `mutation` to `needs` **and** the term `&& contains(fromJSON('["success","skipped"]'), needs.mutation.result)` (skipped = the push touched no mutated path); 03-ops adds `golden-order` to `needs` and `&& needs.golden-order.result == 'success'`. Until then neither term is in the expression. `always()` is needed only so a skipped optional job does not skip publish; every needed job is checked explicitly, so a failed or cancelled job never publishes. Optional jobs are added to `needs` only by the slice that creates them (job 3 in 03-ops; job 8 when mutable code exists) | Forge F-01 |
+| D161 | **Job-level permissions (F-02).** Workflow default `permissions: contents: read`. Jobs 5, 6 and 9 declare `contents: read, packages: write, id-token: write, attestations: write`. In jobs 5 and 6 the push-by-digest and attestation steps carry `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`; when they run on a branch (`workflow_dispatch` only, D169) they build only (amd64 `--output type=docker`, arm64 `--load` for the smoke) | Forge F-02 |
+| D162 | **Job 2 builds the web app itself (F-03, UD-1).** `test-python` runs `npm ci && npx vite build` (npm cache) before pytest, with no `needs`, so it stays parallel with job 4. The walking skeleton and US-01a check the real built home page; there is no placeholder or fallback shell. Job 4 keeps its own build for vitest and the `web-dist` artifact. Closes UI-2 | User UD-1 |
+| D163 | **Image to e2e (F-04).** Job 5 exports the amd64 image on every run with `--output type=docker,dest=/tmp/planner-amd64.tar`, zstd-compressed, uploaded as artifact `planner-image-amd64` (`retention-days: 1`); job 7 downloads it, `docker load`s it and runs compose with `PLANNER_IMAGE=overland-planner:ci-<sha>`. Job 7 deletes the artifact after `docker load` (D169). Branch pushes never write to GHCR. Rejected: pushing a ci-only digest to GHCR (needs `packages: write` on branches and leaves untagged versions in the 500 MB storage quota) | Forge F-04 |
+| D164 | **Ops containers networks (F-05).** Docker does not publish ports of a container attached only to an `internal: true` network. `planner-perf` and `valhalla-tunnel` join `[edge, routing]`; their ports stay `127.0.0.1:18080` / `127.0.0.1:18002`. Verified before use by a compose config test (`docker compose -p overland --profile perf --profile ops config` lists both networks and the loopback binds) plus a one-shot reachability check from the Mac at 03-ops (perf) and 06a-ops (tunnel); Valhalla itself stays on `routing` only | Forge F-05 |
+| D165 | **Publish = write gate (F-06).** `deploy.sh` starts the new planner with `PLANNER_BIND=127.0.0.1` (shell env overrides `.env`), waits healthy, smokes on `127.0.0.1:${PLANNER_PORT}`, and only then runs `up -d --wait planner` with the `.env` value (port re-publish = container recreate, about 5 s; the migration already ran). Before the publish nobody on the LAN can write, so an auto-rollback restoring the predeploy snapshot is lossless (RPO 0 for a failed deploy holds). A failure **after** the publish (second health wait or the `${PLANNER_BIND}` smoke) rolls back the digest only (D90 schema order) and does not restore the snapshot unless the user confirms | Forge F-06 |
+| D166 | **Tileset pointer apart from the release (F-07).** `VALHALLA_TILESET` lives in `routing.env` (+ `routing.env.prev`), written only by `tiles-seed`/`tiles-refresh`. `release.env` holds only `PLANNER_*` keys; `deploy.sh`/`rollback.sh` replace those keys and preserve any other line. An application rollback never changes the tileset; a routing rollback never changes the planner digest. Every Pi target uses `--env-file .env --env-file routing.env --env-file release.env` | Forge F-07 |
+| D167 | **CPU caps (F-08, OD-9).** planner `cpus: 1` (one solver child, single-threaded OR-Tools), valhalla `cpus: 2` with `server_threads 2`, `valhalla-build` `cpus: 3` only with serving stopped. At least 1 core stays with the household stack while serving. Re-verify solve <= 55 s and e2e <= 180 s under these caps at the 03-ops / 06a-ops `make perf-pi`; if solve misses, raise planner to `cpus: 1.5` first (recorded, not silent) | Orchestrator OD-9 |
+| D168 | **`/data` probe in CI (F-09).** The rule is the architect's ADR-011 amendment (UI-1): longest-prefix match of `DATA_DIR` in `/proc/self/mountinfo`; fstype overlay/tmpfs/ramfs -> degraded, any other -> ok, non-Linux -> `not_applicable`; the root fs is never checked. Real probe: job 6 (arm64 smoke) and job 7 (compose e2e), both on named volumes (ext4 -> ok), and job 7's no-volume check (overlay -> degraded, US-01b S4). `FakeMountTable`: job 2 in-process suites. The walking skeleton's `DATA_DIR` is under `$GITHUB_WORKSPACE` (ext4), never the OS temp dir (tmpfs on some hosts); job 2 prints `df -T "$DATA_DIR"` to the log before pytest | Forge F-09; architect R-01 |
+| D169 | **Caching and budgets (F-10; re-review N-02, N-05).** `astral-sh/setup-uv` with `enable-cache: true` (key `uv.lock`), `actions/setup-node` `cache: npm`, buildx `cache-from/cache-to: type=gha,mode=max,scope=amd64|arm64` (the Actions cache has its own 10 GB limit and is not billed storage). **Minutes** with warm caches: main push about 45 billed minutes (jobs 1-7 + 9; mutation adds up to 30 when it runs), branch push about 20. Branch pushes and PRs run jobs 1-4 only; images, e2e and publish run on `main` pushes and `workflow_dispatch`. **Branch pushes therefore get no browser (Playwright) check**; a branch that needs one is run with `workflow_dispatch`. 2,000 min/month -> target <= 1,500: about 30 main pushes a month, so DELIVER pushes to `main` at green slice steps. **Storage (GitHub Free private, 500 MB treated as shared by Packages + Actions artifacts, worst case).** Estimated compressed planner image per arch: base `python:3.12-slim-bookworm` ~45 MB + ortools wheel and its deps (numpy, pandas, protobuf) ~60 MB + app deps (FastAPI, pydantic-core, SQLAlchemy, Alembic, httpx, structlog) ~20 MB + SPA and code ~5 MB = **~130 MB, budget 150 MB**; one release (amd64 + arm64, no layer sharing across arches) ~260-300 MB. Keeping 3 releases (~900 MB) does not fit. Decision (orchestrator default; the user may override): **GHCR keeps only the latest release**: job 9 deletes older manifest lists after the push, and deletes untagged per-arch manifests only if the latest list does not reference them (deleting a referenced child breaks the list); the **Pi keeps its own last 3 images locally** (`make image-gc`), which is what rollback (prev, prev2) uses. The e2e image artifact (~130 MB) has `retention-days: 1` and is deleted by job 7 right after `docker load`, so it lives minutes. Peak ~300 MB + one artifact ~430 MB < 500 MB; steady ~300 MB. `weekly.yml` reports the package version count and storage use (billing usage API, else the billing page by hand) to the job summary. **00a measures** the real compressed size per arch and the first month's minutes; if one release exceeds 400 MB or minutes cross 75%, the user chooses (public repo, spending limit, slimmer image, fewer main pushes) | Forge F-10; re-review N-02, N-05 |
+| D170 | **Security scanning additions (F-11, F-12, F-14, F-15).** Job 1: `pip-audit` on `uv export --frozen --no-dev` (blocking on any vulnerability with a fixed version; pip-audit has no severity filter; ignore list with expiry comments) and `npm audit --omit=dev --audit-level=high` (blocking). Jobs 5 and 6: Trivy with `scanners: vuln,secret` on both arch images (CRITICAL with fix -> fail, HIGH -> report). `.dockerignore` excludes `.git`, `.data`, `.env*`, `node_modules`, `tests`, `docs`, `*.gpx`. Job 7 also runs `pytest --run-external -m "compose or security"` against the compose stack. **Pending-scenario gate (N-01):** jobs 2 and 7 pass a DEVOPS-owned `PENDING_FLAGS` list (workflow-level `env`, today `--run-pending=slice-00b --run-pending=slice-01a`) to pytest; the list is extended in the same commit that turns a slice's scenarios GREEN (DISTILL D113), so a slice's `@pending` scenarios are blocking from then on and never silently skipped. Recorded in `slices/slice-00a-ci-and-image.md`. `weekly.yml` runs an OWASP ZAP baseline scan against the compose stack (mock) on CI, **non-blocking** (report artifact + summary; reviewed weekly) | Forge F-11, F-12, F-14, F-15 |
+| D171 | **Provenance check on deploy (F-13).** `make deploy` runs `gh attestation verify oci://ghcr.io/mrmilgauss/overland-planner@<digest> --repo MrMilgauss/<repo>` before any ssh; a missing or failing attestation aborts the deploy (fail closed). `make rollback` to a digest already on the Pi skips it (it was verified when deployed) | Forge F-13 |
+| D172 | **Availability SLO dropped (F-16).** Nothing on a single Pi can measure its own downtime reliably (a down Pi logs nothing; logs rotate). The ">= 99% /healthz" SLO is removed. Kept: K5 as the latency SLO; `/api/diagnostics` shows `process_started_at` and `app_version`; unexpected restarts are visible as `app.started` lines without a matching `releases.log` entry when investigating | Forge F-16 |
+| D173 | **Planner hardening (F-17).** `planner` and `planner-perf`: `cap_drop: [ALL]`, `security_opt: ["no-new-privileges:true"]`, `read_only: true`, `tmpfs: ["/tmp:size=64m,mode=1777"]`; writes only to `/data` and `/tmp` (bytecode compiled at build, `UV_COMPILE_BYTECODE=1`). Verified by the job 7 `security` marker (container cannot write `/app`) | Forge F-17 |
+| D174 | **Fail-closed bind (F-18, NET-1).** Compose `ports: ["${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER_PORT:-8080}:8080"]`. `.env.example` sets `PLANNER_BIND=127.0.0.1`; the Pi `.env` sets `192.168.1.10`. No `0.0.0.0` default anywhere | Forge F-18 |
+| D175 | **Golden order on the Pi (F-19).** `make perf-pi` first solves the committed I1/I2 fixtures in `planner-perf` and asserts the order sha256 equals the committed golden (same check as CI job 3, now on the production arch and image). A mismatch stops the perf run and blocks the slice close | Forge F-19 |
+| D176 | **Deploy pointers and DORA (F-22, F-23, F-24).** `make deploy` without `SHA=` picks the newest `main` SHA whose `ci.yml` run succeeded **and** has a `release.json` artifact (not `origin/main` HEAD). Pointers: `release.env.prev` and `release.env.prev2`; `make rollback` -> prev, `make rollback STEPS=2` -> prev2; a rollback does not overwrite the pointers with the failed release (saved as `release.env.failed`), so a second rollback does not flip-flop. `releases.log` line: `ts, action, digest, git_sha, commit_ts (OCI label org.overland.commit-ts), alembic_head, result, reason`. `make dora` on the Mac computes the four metrics from the copied log (definitions in `kpi-contracts.yaml` `delivery_metrics`) | Forge F-22..F-24 |
+| D177 | **K5 population (UD-3, F-25; re-review N-04).** **Claim gate:** cold plans with **exactly 60 items** (+ Start/End), measured by `make perf-pi` (cleared leg cache, client-observed) - this is the **authoritative** K5 figure; every perf-pi run counts, retried jobs and second-pass P2 > 700 included (also reported as counts). **Diagnostics** (server-side proxy over production jobs, cache usually warm; informs, never opens or closes the claim) report e2e p95 **per size band** `<=30`, `31-59`, `60`, `61-70`, so small plans cannot flatter the number; the 60 band is the one compared with 180 s, 61-70 is outside the claim (OD-2). **No silent exclusions:** done, failed (all reasons) and cancelled jobs are all counted; failed and cancelled jobs use `elapsed_ms` as a lower bound and are shown separately per band (`k5.failed_jobs`, `k5.cancelled_jobs`, `k5.retried_jobs`, `k5.second_pass_gt_700_jobs`). ADR-014 needs the same wording (upstream DV-12, architect) | User UD-3; Forge F-25; OD-2; re-review N-04 |
+| D178 | **Low items (F-20, F-21, F-27..F-31).** Smoke after publish uses `http://${PLANNER_BIND}:${PLANNER_PORT}` (F-20). Pre-requisite: `192.168.1.10` is a DHCP reservation on the router (or static), checked at 00b (F-21). `make diag` at 00b = `docker stats --no-stream` + `/healthz` only; `/api/diagnostics` arrives with 03-ops (F-27; closes UI-16). All jobs pin `ubuntu-24.04`, job 6 default `${{ vars.ARM64_RUNNER \|\| 'ubuntu-24.04' }}` (F-28). GHCR credential: at 00b check whether a fine-grained token can read GHCR; if not, keep the classic `read:packages` PAT; `~/.docker/config.json` mode 600, no credential helper on the headless Pi (accepted) (F-29). `.gitignore`: `*.gpx` with `!tests/fixtures/**/*.gpx` (synthetic only) (F-30). `make spike-cleanup` compares sha256 of the four seeded files against `~/valhalla-spike/custom_files` and refuses on any mismatch (F-31). Recommended: Basic auth **on** in the Pi `.env` (user's choice, NFR-4) (F-31) | Forge F-20..F-31 |
+| D179 | **D102 revised for ops slices (OD-1).** See D102. Mapped to the product owner's split (D145): `00a` ci-and-image, `00b` planner-on-the-pi, `01a`, `03-ops` perf-tooling, `03`, `06a-ops` valhalla-service, `06a`. The product owner owns names and estimates | Orchestrator OD-1; PO D145 |
 
 ## Wave: DEVOPS / [REF] Environment matrix
 
 | Env | Host / arch | Runs | Routing | Data | Who triggers |
 |---|---|---|---|---|---|
 | dev-mac | M1, macOS arm64, Python 3.12 (uv), Node 22, **no Docker** | pre-commit/pre-push, pytest (all offline suites), vitest, Playwright against `make run-local`, mutmut | Mock | `./.data` | Crafter |
-| ci-github-amd64 | `ubuntu-24.04` | lint, types, import-linter, tests, contract (fixtures), alembic round trip, web build, amd64 image, Trivy, compose e2e (mock), golden order | Mock | ephemeral | every push / PR / manual |
-| ci-github-arm64 | default: `ubuntu-latest` + QEMU (buildx `linux/arm64`); opt-in native `ubuntu-24.04-arm` via repo variable `ARM64_RUNNER` | arm64 image build + functional smoke (`/healthz`, solver probe, `import ortools`); under QEMU no timing or RSS figures are recorded | Mock | ephemeral | every push (push to GHCR on main only) |
+| ci-github-amd64 | `ubuntu-24.04` | lint, types, import-linter, audits, tests (incl. web build in job 2, D162), contract (fixtures), alembic round trip, web build, amd64 image, Trivy, compose e2e (mock), golden order (from 03-ops) | Mock | ephemeral | jobs 1-4 every push / PR; images, e2e, publish on `main` and manual (D169) |
+| ci-github-arm64 | default: `ubuntu-24.04` + QEMU (buildx `linux/arm64`); opt-in native `ubuntu-24.04-arm` via repo variable `ARM64_RUNNER` | arm64 image build + Trivy + functional smoke (`/healthz`, solver probe, `import ortools`, real `/data` probe on a named volume); under QEMU no timing or RSS figures are recorded | Mock | ephemeral | `main` pushes and manual (push to GHCR on `main` only) |
 | pi-prod | Pi 5 16 GB, aarch64, Debian 13, Docker 29.5.3 / Compose v5.1.4 | `planner` (+ `valhalla` from 06a) | Valhalla 3.9.1 (from 06a), Mock before | `overland_planner-data`, `overland_valhalla-data` | `make deploy` from the Mac |
-| pi-perf (ephemeral) | same Pi, profile `perf` | `planner-perf` for perf and `@real_provider` runs | live Valhalla | `overland_perf-data` (deleted after) | `make perf-pi`, `make acceptance-pi` (user names the start time) |
+| pi-perf (ephemeral) | same Pi, profile `perf`, networks `edge` + `routing` (D164) | `planner-perf` for perf, golden order on the Pi (D175) and `@real_provider` runs | live Valhalla (mock matrix at 03-ops) | `overland_perf-data` (deleted after) | `make perf-pi`, `make acceptance-pi` (user names the start time) |
 | pc-amd64 (optional) | any amd64 PC with Docker | NFR-1 amd64 check; tile-build fallback (SPIKE-2R K2) | Valhalla amd64 tag (pin at use) or Mock | local | by hand |
 
-Clients: desktop Chrome/Safari/Firefox (latest 2, >= 1280 px) for Marco; iPhone Safari at 390 x 844 for Giulia. Playwright projects: `chromium` and `webkit-iphone14` on every push, `webkit-desktop` on main, `firefox` weekly. GPX consumers OsmAnd, Locus Map and Garmin are checked by hand (K6).
+Clients: desktop Chrome/Safari/Firefox (latest 2, >= 1280 px) for Marco; iPhone Safari at 390 x 844 for Giulia. Playwright projects: `chromium` and `webkit-iphone14` on `main` pushes and `workflow_dispatch` (job 7), `webkit-desktop` on main, `firefox` weekly. Branch pushes get no browser check (D169). GPX consumers OsmAnd, Locus Map and Garmin are checked by hand (K6).
 
 ## Wave: DEVOPS / [REF] Pre-requisites
 
 One-time, done by the user (DEVOPS creates nothing remotely):
+0. Make sure `192.168.1.10` is a DHCP reservation on the router (or a static address) for pi-host; `PLANNER_BIND` depends on it (D178).
 1. Create a **private** GitHub repo on the personal free plan (owner `MrMilgauss`; image `ghcr.io/mrmilgauss/overland-planner` — GHCR names are lowercase), add it as `origin`, push `main`. No branch protection is assumed (D88). Optional: if `ubuntu-24.04-arm` turns out to be available to the private repo, set the repo variable `ARM64_RUNNER=ubuntu-24.04-arm` (D84).
-2. Repo settings -> Actions: allow GitHub Actions; workflow permissions "read" by default (jobs request `packages: write` explicitly). After the first push to GHCR, check that package `overland-planner` is linked to the repo and stays **private**.
-3. Create a **classic PAT** with only `read:packages` (1-year expiry, calendar reminder), then on the Pi: `echo <PAT> | docker login ghcr.io -u MrMilgauss --password-stdin`. This is the only credential on the Pi (stored in `~/.docker/config.json`).
+2. Repo settings -> Actions: allow GitHub Actions; workflow permissions "read" by default (jobs 5, 6, 9 request `packages: write`, `id-token: write`, `attestations: write` at job level, D161). Check the Actions + Packages storage quota (500 MB on Free) after the first month (D169). After the first push to GHCR, check that package `overland-planner` is linked to the repo and stays **private**.
+3. Check whether a fine-grained token can read GHCR (D178); otherwise create a **classic PAT** with only `read:packages` (1-year expiry, calendar reminder), then on the Pi: `echo <PAT> | docker login ghcr.io -u MrMilgauss --password-stdin`. This is the only credential on the Pi (stored in `~/.docker/config.json`).
 4. On the Mac: `gh auth login` (deploy preflight), confirm passwordless ssh to `deploy@pi.example` (already works), `uv` and Node 22 present (verified), `sqlite3` present (verified).
-5. On the Pi: `mkdir -p ~/apps/overland-planner` and create `.env` from `.env.example` (mode 600): `PLANNER_BIND=192.168.1.10`, optional `PLANNER_BASIC_AUTH_USER/PASSWORD`, `ROUTING_PROVIDER=mock` until slice 06a.
+5. On the Pi: `mkdir -p ~/apps/overland-planner` and create `.env` from `.env.example` (mode 600): `PLANNER_BIND=192.168.1.10` (required: compose refuses to start without it, D174), `PLANNER_BASIC_AUTH_USER/PASSWORD` (recommended on, D178), `ROUTING_PROVIDER=mock` until slice 06a. `routing.env` is created by `make tiles-seed` at 06a-ops (D166).
 6. Slice 06a (approved, OQ-5): seed the first tileset from `~/valhalla-spike/custom_files`; once production serves it and `make contract-live` passes, name a start time for deleting `~/valhalla-spike` (18.3 GB).
 7. Optional: pihole Local DNS record `planner.lan -> 192.168.1.10` for clients without mDNS; optional Home Assistant REST binary sensor on `http://192.168.1.10:8080/healthz` for a phone notification.
 8. Name a start time before any heavy Pi run (`perf-pi`, `acceptance-pi`, `tiles-refresh`).
@@ -3454,28 +3793,28 @@ One-time, done by the user (DEVOPS creates nothing remotely):
 ### Rejected simpler alternatives
 - **Build on the Pi** (`docker compose build` over ssh): no CI-gated artefact, builds compete with household services for CPU/RAM, and nothing is reproducible by digest. Rejected.
 - **Self-hosted runner on the Pi**: needs outbound long-polling to GitHub and runs untrusted workflow code next to Home Assistant and pihole. It also contradicts "the Pi gets no runner" (user #3). Rejected.
-- **Native arm64 runner as the default**: preferred technically (real smoke timings), but not assumed available to private repos on the personal free plan. It is the opt-in (`ARM64_RUNNER`); QEMU on `ubuntu-latest` is the default (D84).
+- **Native arm64 runner as the default**: preferred technically (real smoke timings), but not assumed available to private repos on the personal free plan. It is the opt-in (`ARM64_RUNNER`); QEMU on `ubuntu-24.04` is the default (D84, D178).
 
 ### Triggers
-- `ci.yml`: `push` (all branches), `pull_request` -> `main`, `workflow_dispatch`. `concurrency: ci-${{ github.ref }}`, cancel-in-progress except on `main`. Path filter: docs-only pushes (`docs/**`, `*.md`) run only `lint-docs` (markdownlint) and skip the rest. Default `permissions: contents: read`; `packages: write` + `id-token: write` + `attestations: write` only in the publish jobs.
-- `weekly.yml`: `schedule` Monday 05:00 UTC + `workflow_dispatch`: Trivy re-scan of the current `main` digest, `pip-audit` / `npm audit --omit=dev`, deep property run (random seeds, 10x examples), Playwright `firefox` + `webkit-desktop`.
+- `ci.yml`: `push` (all branches), `pull_request` -> `main`, `workflow_dispatch`. `concurrency: ci-${{ github.ref }}`, cancel-in-progress except on `main`. Path filter: docs-only pushes (`docs/**`, `*.md`) run only `lint-docs` (markdownlint) and skip the rest. Default `permissions: contents: read`; `packages: write` + `id-token: write` + `attestations: write` only at job level on jobs 5, 6 and 9 (D161). Branch pushes and PRs run jobs 1-4; jobs 5-9 run on `main` pushes and `workflow_dispatch` (D169). All runners pinned to `ubuntu-24.04` (D178). Caches: setup-uv, npm, buildx `type=gha` per arch (D169).
+- `weekly.yml`: `schedule` Monday 05:00 UTC + `workflow_dispatch`: Trivy re-scan of the current `main` digest, `pip-audit` / `npm audit --omit=dev`, OWASP ZAP baseline against the compose stack (mock, non-blocking, D170), package storage report (GHCR itself is pruned to the latest release by job 9, D169), deep property run (random seeds, 10x examples), Playwright `firefox` + `webkit-desktop`.
 - No deploy workflow: deployment is `make deploy` from the Mac (user #3).
 
 ### Jobs of `ci.yml` (blocking unless marked)
 
 | # | Job | Runner | Needs | Steps and gate | Budget |
 |---|---|---|---|---|---|
-| 1 | `lint` | ubuntu-24.04 | - | `uv sync --frozen`; `uv lock --check`; `ruff format --check`; `ruff check` (incl. `S` bandit rules); `mypy --strict`; `lint-imports` (brief §11 contracts); gitleaks; hadolint (Dockerfile); actionlint; `npm ci`; `svelte-check`; eslint + prettier --check | < 4 min |
-| 2 | `test-python` | ubuntu-24.04 | - | pytest unit + property (Hypothesis profile `ci`: derandomized, A-2 at 1,000 cases) + integration (Mock) + gold fault catalogue + crash-consistency + **routing-port contract suite on recorded fixtures** + acceptance (`-m "not real_provider and not pi"`) + **alembic round trip** (upgrade -> downgrade -> upgrade on a seeded fixture DB, DV-5) + GPX XSD validation; coverage total >= 80% and `domain` >= 90% (fail under) | < 10 min |
-| 3 | `golden-order` | ubuntu-24.04 | - | Solve the committed 60-item fixtures I1 and I2 (`SOLVER_BUDGET=10000`, two-phase) in the solver child; assert order sha256 equals the committed golden (Pi = Mac = amd64, SPIKE-1R c). Records solve seconds to the job summary (advisory). From slice 03 | < 3 min |
+| 1 | `lint` | ubuntu-24.04 | - | `uv sync --frozen`; `uv lock --check`; `ruff format --check`; `ruff check` (incl. `S` bandit rules); `mypy --strict`; `lint-imports` (brief §11 contracts); gitleaks; hadolint (Dockerfile); actionlint; `npm ci`; `svelte-check`; eslint + prettier --check; `pip-audit` (blocking on fixable vulns) + `npm audit --omit=dev --audit-level=high` (blocking) (D170) | < 5 min |
+| 2 | `test-python` | ubuntu-24.04 | - | pytest with `$PENDING_FLAGS` (D170); `npm ci && npx vite build` first (UD-1, D162: the walking skeleton checks the real built page; no fallback shell); `df -T "$DATA_DIR"` with `DATA_DIR` under `$GITHUB_WORKSPACE` (D168); pytest unit + property (Hypothesis profile `ci`: derandomized, A-2 at 1,000 cases) + integration (Mock) + gold fault catalogue + crash-consistency + **routing-port contract suite on recorded fixtures** + acceptance (`-m "not real_provider and not pi"`) + **alembic round trip** (upgrade -> downgrade -> upgrade on a seeded fixture DB, DV-5) + GPX XSD validation; coverage total >= 80% and `domain` >= 90% (fail under). In-process suites use `FakeMountTable` (D168) | < 11 min |
+| 3 | `golden-order` | ubuntu-24.04 | - | Solve the committed 60-item fixtures I1 and I2 (`SOLVER_BUDGET=10000`, two-phase) in the solver child; assert order sha256 equals the committed golden (Pi = Mac = amd64, SPIKE-1R c). Records solve seconds to the job summary (advisory). From 03-ops, when it is also added to `publish.needs` (D160) | < 3 min |
 | 4 | `test-web` | ubuntu-24.04 | - | `npm ci`; vitest; `vite build`; upload `web-dist` artifact | < 3 min |
-| 5 | `image-amd64` | ubuntu-24.04 | 1, 2, 4 | buildx `linux/amd64`, `--load` on branches; on main `push-by-digest`, SBOM + provenance; Trivy: CRITICAL with a fix -> fail, HIGH -> report | < 6 min |
-| 6 | `image-arm64` | `${{ vars.ARM64_RUNNER \|\| 'ubuntu-latest' }}` | 1, 2, 4 | default: `docker/setup-qemu-action` + buildx `linux/arm64` on `ubuntu-latest` (native when `ARM64_RUNNER` is set); then **smoke** in the same arch: `docker run --platform linux/arm64 --init -m 1g` with `ROUTING_PROVIDER=mock` and a named volume -> `/healthz` 200 within 180 s (QEMU) / 60 s (native), `/api/health` shows solver probe ok (proves the aarch64 OR-Tools wheel). Idle RSS recorded only on a native runner (advisory vs 300 MB); under QEMU timing and RSS are meaningless and skipped | < 15 min QEMU (< 8 native) |
-| 7 | `e2e` | ubuntu-24.04 | 5 | `docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait` (planner only, mock, port 8080); Playwright `chromium` + `webkit-iphone14` on the DISTILL e2e suite; US-01b S4 check (no volume -> `/healthz` 503); compose down -v | < 8 min |
+| 5 | `image-amd64` | ubuntu-24.04 | 1, 2, 4 | job-level `packages/id-token/attestations: write` (D161); buildx `linux/amd64` with gha cache; always exports `--output type=docker` -> zstd artifact `planner-image-amd64` (1 day) for job 7 (D163); on `main` push only: `push-by-digest`, SBOM + provenance; Trivy `scanners: vuln,secret`: CRITICAL with a fix -> fail, HIGH -> report (D170) | < 6 min |
+| 6 | `image-arm64` | `${{ vars.ARM64_RUNNER \|\| 'ubuntu-24.04' }}` | 1, 2, 4 | job-level `packages/id-token/attestations: write` (D161); default: `docker/setup-qemu-action` + buildx `linux/arm64` on `ubuntu-24.04` with gha cache (native when `ARM64_RUNNER` is set); push-by-digest + attestations on `main` push only; Trivy as job 5 (D170); then **smoke** in the same arch: `docker run --platform linux/arm64 --init -m 1g` with `ROUTING_PROVIDER=mock` and a named volume -> `/healthz` 200 within 180 s (QEMU) / 60 s (native), `/api/health` shows solver probe ok (proves the aarch64 OR-Tools wheel) and the real `/data` probe ok on the named volume (D168). Idle RSS recorded only on a native runner (advisory vs 300 MB); under QEMU timing and RSS are meaningless and skipped | < 15 min QEMU (< 8 native) |
+| 7 | `e2e` | ubuntu-24.04 | 5 | download + `docker load` the `planner-image-amd64` artifact (D163); `docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait` (planner only, mock, port 8080, `PLANNER_BIND=127.0.0.1`, hardening D173, real `/data` probe on a named volume D168); Playwright `chromium` + `webkit-iphone14` on the DISTILL e2e suite; `pytest --run-external $PENDING_FLAGS -m "compose or security"` (D170); US-01b S4 check (no volume -> overlay -> `/healthz` 503); compose down -v | < 9 min |
 | 8 | `mutation` | ubuntu-24.04 | 2 | Only on `main` pushes touching `src/overland_planner/{domain,application}/**`: mutmut on files changed in `before..sha`; kill rate >= 80% or fail; report in the summary; 30 min timeout | <= 30 min |
-| 9 | `publish` | ubuntu-24.04 | 5, 6, 7 (and 3, 8 when they ran) | main only: `docker buildx imagetools create` -> manifest list tagged `sha-<12>` and `main`; attest; write `release.json` artifact + job summary `{git_sha, digest, alembic_head, created}` | < 2 min |
+| 9 | `publish` | ubuntu-24.04 | 5, 6, 7 (+ 8 when mutable code exists; + 3 from 03-ops) | job-level `packages/id-token/attestations: write`; `if: always() && !cancelled() && push to main && needs.{image-amd64,image-arm64,e2e}.result == 'success'` (+ `needs.mutation.result in (success, skipped)` only from the slice that creates job 8; + `golden-order == 'success'` from 03-ops) (D160); after the push, prune GHCR to this release (D169); `docker buildx imagetools create` -> manifest list tagged `sha-<12>` and `main`; attest; write `release.json` artifact + job summary `{git_sha, commit_ts, digest, alembic_head, created}` | < 2 min |
 
-Pipeline target: commit-stage feedback (jobs 1-4) < 10 min; full main pipeline to a deployable digest < 25 min with QEMU arm64 (< 20 min native). QEMU effect: the arm64 job takes roughly 2x the native time, because only the emulated wheel install/unpack and the smoke run under emulation (no compilation). The arm64 job runs in parallel with e2e, so the critical path grows by about 5 min. Runner-minute guardrail: on GitHub Free private (2,000 min/month), a main push costs about 40 runner-minutes and a branch push about 30. Docs-only pushes are near zero.
+Pipeline target: commit-stage feedback (jobs 1-4) < 11 min (job 2 includes the web build, D162); full main pipeline to a deployable digest < 25 min with QEMU arm64 (< 20 min native). QEMU effect: the arm64 job takes roughly 2x the native time, because only the emulated wheel install/unpack and the smoke run under emulation (no compilation). The arm64 job runs in parallel with e2e, so the critical path grows by about 5 min. Runner-minute guardrail (re-estimated, D169): on GitHub Free private (2,000 min/month, target <= 1,500), a main push costs about 45 billed minutes with warm caches (+ up to 30 when mutation runs) and a branch push about 20 (jobs 1-4 only). That is about 30 main pushes a month, so DELIVER pushes to `main` at green slice steps. Docs-only pushes are near zero. Storage (500 MB Packages + Actions artifacts, D169): ~130 MB per arch image (estimate), GHCR keeps only the latest release, the Pi keeps the last 3 locally for rollback, the e2e artifact is deleted after use; 00a measures the real image size and the first month's minutes.
 
 ### Local quality gates (`.pre-commit-config.yaml`, D87)
 - **pre-commit** (< 30 s): ruff format, ruff check (staged), gitleaks, `uv lock --check`, prettier + eslint on staged `web/` files, end-of-file/trailing-whitespace, check-added-large-files (blocks GPX corpus > 5 MB outside `tests/fixtures/`).
@@ -3483,7 +3822,7 @@ Pipeline target: commit-stage feedback (jobs 1-4) < 10 min; full main pipeline t
 - Mirrors CI jobs 1, 2 and 4. Image build, e2e on compose, golden order and mutation run only in CI or by explicit `make` targets. `--no-verify` is allowed; CI stays authoritative.
 
 ### Makefile targets (outline for slice 01a; scripts live in `deploy/scripts/`)
-`bootstrap` (uv sync, npm ci, pre-commit install) | `lint` | `test` | `test-web` | `run-local` | `e2e-local` | `mutate BASE=` | `pi-preflight` (read-only: ports, disk, MemAvailable, compose project names) | `deploy [SHA=]` | `rollback [TO=<digest>]` | `status` (compose ps, current digest, `/healthz`, `/api/health`) | `logs [SVC=planner]` (ssh + `docker compose logs -f` piped to `jq`) | `diag` (`/api/diagnostics` + `docker stats --no-stream`) | `contract-live` | `perf-pi [N=10]` | `acceptance-pi` | `tiles-seed` (06a, once) | `tiles-refresh` | `spike-cleanup` (06a, deletes `~/valhalla-spike` after the seed is verified) | `image-gc` | `uninstall` | `purge`. No backup or restore targets (D91). Every Pi target runs `ssh deploy@pi.example 'cd ~/apps/overland-planner && docker compose -p overland --env-file .env --env-file release.env ...'`.
+`bootstrap` (uv sync, npm ci, pre-commit install) | `lint` | `test` | `test-web` | `run-local` | `e2e-local` | `mutate BASE=` | `pi-preflight` (read-only: ports, disk, MemAvailable, compose project names) | `deploy [SHA=]` | `rollback [TO=<digest>]` | `status` (compose ps, current digest, `/healthz`, `/api/health`) | `logs [SVC=planner]` (ssh + `docker compose logs -f` piped to `jq`) | `diag` (`/api/diagnostics` + `docker stats --no-stream`) | `contract-live` | `perf-pi [N=10]` | `acceptance-pi` | `tiles-seed` (06a, once) | `tiles-refresh` | `spike-cleanup` (06a, deletes `~/valhalla-spike` after the seed is verified) | `tiles-rollback` | `image-gc` | `uninstall` | `purge` | `dora` (Mac, from the copied `releases.log`, D176). No backup or restore targets (D91). `diag` at 00b = `docker stats --no-stream` + `/healthz` only; `/api/diagnostics` is added at 03-ops (D178). Every Pi target runs `ssh deploy@pi.example 'cd ~/apps/overland-planner && docker compose -p overland --env-file .env --env-file routing.env --env-file release.env ...'` (`routing.env` from 06a-ops; D166).
 
 ## Wave: DEVOPS / [REF] Deployment strategy and rollback contract
 
@@ -3492,11 +3831,11 @@ Pipeline target: commit-stage feedback (jobs 1-4) < 10 min; full main pipeline t
 ### Rollback first (contract)
 | Layer | Mechanism | Tested by |
 |---|---|---|
-| Application | `release.env.prev` holds the previous digest; `make rollback` swaps it in and runs `up -d --wait planner` | slice 01a: deploy A -> deploy B -> rollback -> A serving (`app.started.app_version`) |
+| Application | `release.env.prev` / `release.env.prev2` hold the two previous digests; `make rollback [STEPS=2]` swaps one in (only `PLANNER_*` keys; the failed release is kept as `release.env.failed`, D176) and runs the same loopback-first `up` + smoke + publish as deploy (D165). Never touches `routing.env` (D166) | 00b: deploy A -> B -> C -> rollback -> B -> rollback STEPS=2 -> A serving (`app.started.app_version`) |
 | Database schema | Same `org.overland.alembic-head` label on both images -> nothing to do. Newer schema -> `docker compose run --rm planner alembic downgrade <prev head>` **with the current image** (it holds the downgrade code); `rollback.sh` first takes a fresh on-Pi snapshot (planner stopped) so a failed downgrade is recoverable. An image refuses a DB revision it does not know (`db_newer_than_app`, DV-5) | CI alembic round trip (job 2); slice 01a/03 drill with a real migration |
 | Database data | Downgrade fails -> restore the predeploy snapshot of the deploy being rolled back (`snapshots/predeploy-<ts>.tgz` on the Pi; current + previous are kept). Data written since that deploy is lost; the script prints the timestamp first. Device/NVMe loss is not covered (D91 accepted risk) | slice 01a rollback drill |
 | Configuration | `.env` is hand-edited and never rewritten by scripts; `compose.yaml` comes from git, so the previous version is `git checkout <prev sha> -- deploy/` + `make deploy SHA=<prev>` | review |
-| Routing data | The previous tileset stays on the volume; `VALHALLA_TILESET=<prev>` + `up -d valhalla`. `provider_id` changes back automatically, so the leg cache stays correct (ADR-013 §4) | tile refresh procedure step 9 |
+| Routing data | The previous tileset stays on the volume; `make tiles-rollback` swaps `routing.env.prev` in (`VALHALLA_TILESET=<prev>`, D166) + `up -d valhalla`; the planner digest is untouched. `provider_id` changes back automatically, so the leg cache stays correct (ADR-013 §4) | tile refresh procedure step 9 |
 | Traffic | Single host: nothing to switch | - |
 
 ### `scripts/deploy.sh <digest>` (runs on the Pi; idempotent)
@@ -3504,12 +3843,13 @@ Pipeline target: commit-stage feedback (jobs 1-4) < 10 min; full main pipeline t
 2. Preflight: `docker compose config -q`; disk free >= 5 GB; the digest's manifest list contains `linux/arm64`; the target equals the current digest -> log "unchanged" and exit 0.
 3. `docker pull ghcr.io/mrmilgauss/overland-planner@<digest>`; read the labels `revision` and `alembic-head`.
 4. `docker compose stop planner`; `predeploy-<ts>.tgz` snapshot of `overland_planner-data` (alpine tar, on the Pi only); keep the snapshots of the current and the previous deploy, delete older ones after a successful deploy.
-5. `cp release.env release.env.prev`; write the new `release.env` (`PLANNER_IMAGE=...@<digest>`, `PLANNER_GIT_SHA`, `PLANNER_ALEMBIC_HEAD`).
-6. `docker compose up -d --wait --wait-timeout 180` (the planner migrates with the ADR-018 pre-migration copy, probes, then reports healthy). Valhalla is recreated only if its definition changed.
-7. Smoke: `curl -fsS http://192.168.1.10:8080/healthz` == `{"status":"ok"}`; `/api/health` has no fatal component; the last `app.started` line has `app_version == PLANNER_GIT_SHA`. From 06a on: routing probe ready, or degraded-healthy with an explicit "engine not ready" warning.
-8. Success -> append to `releases.log`. Failure at 6 or 7 -> **auto-rollback**: stop planner, restore `predeploy-<ts>.tgz` (lossless, because nobody could write while the new version was unhealthy), restore `release.env.prev`, `up -d --wait`, append `auto-rollback` with the reason, exit non-zero.
+5. Rotate pointers (`release.env.prev` -> `.prev2`, `release.env` -> `.prev`); rewrite only the `PLANNER_*` keys of `release.env` (`PLANNER_IMAGE=...@<digest>`, `PLANNER_GIT_SHA`, `PLANNER_COMMIT_TS`, `PLANNER_ALEMBIC_HEAD`), preserving any other line (D166, D176).
+6. **Loopback start (D165):** `PLANNER_BIND=127.0.0.1 docker compose up -d --wait --wait-timeout 180 planner` (the planner migrates with the ADR-018 pre-migration copy, probes, then reports healthy). Nobody on the LAN can reach it yet. Valhalla is recreated only if its definition changed.
+7. Loopback smoke: `curl -fsS http://127.0.0.1:${PLANNER_PORT:-8080}/healthz` == `{"status":"ok"}`; `/api/health` has no fatal component; the last `app.started` line has `app_version == PLANNER_GIT_SHA`. From 06a on: routing probe ready, or degraded-healthy with an explicit "engine not ready" warning.
+8. **Publish (write gate):** `docker compose up -d --wait planner` with the `.env` `PLANNER_BIND` (recreate with the LAN port, about 5 s); smoke again on `http://${PLANNER_BIND}:${PLANNER_PORT:-8080}/healthz` (F-20).
+9. Success -> append to `releases.log` (`ts, action, digest, git_sha, commit_ts, alembic_head, result`). Failure at 6 or 7 -> **auto-rollback**: stop planner, restore `predeploy-<ts>.tgz` (lossless: the new version was never reachable from the LAN), restore `release.env.prev`, loopback start + smoke + publish, append `auto-rollback` with the reason, exit non-zero. Failure at 8 (after publish) -> digest-only rollback per D90 (no snapshot restore without the user's confirmation, because writes may have happened), append `auto-rollback`, exit non-zero. Writes made after the publish are kept on the volume; if the rollback needs a schema downgrade, data that only the newer schema holds can be lost (RPO 0 does not cover this case, D91).
 
-`make deploy [SHA=<git sha>]` (Mac): working tree clean; SHA (default `origin/main`) is on `main`; `gh run list --commit <sha> --workflow ci.yml` shows a successful run (this is the only gate, D88); read the digest from that run's `release.json` (`gh run download`); rsync `deploy/` (compose.yaml, scripts, valhalla overrides; never `.env`); ssh `scripts/deploy.sh <digest>`; print the URL and the `releases.log` tail.
+`make deploy [SHA=<git sha>]` (Mac): working tree clean; SHA (default: the newest `main` SHA with a successful `ci.yml` run that has a `release.json` artifact, D176) is on `main`; `gh run list --commit <sha> --workflow ci.yml` shows a successful run (this is the only gate, D88); read the digest from that run's `release.json` (`gh run download`); `gh attestation verify oci://ghcr.io/mrmilgauss/overland-planner@<digest> --repo MrMilgauss/<repo>`, abort on failure (D171); rsync `deploy/` (compose.yaml, scripts, valhalla overrides; never `.env`); ssh `scripts/deploy.sh <digest>`; print the URL and the `releases.log` tail.
 
 ### Valhalla quarterly tile refresh (`make tiles-refresh`; user names the start time)
 Measured basis: SPIKE-2R build 2,068 s (about 34 min) at `--memory 9g`, peak = the cap, 0 OOM; merge 285 s; downloads 4.3 GB.
@@ -3519,7 +3859,7 @@ Measured basis: SPIKE-2R build 2,068 s (about 34 min) at `--memory 9g`, peak = t
 4. `valhalla-build` step `tiles` (`--memory ${VALHALLA_BUILD_MEM:-9g}`, `cpus 3`, admins + time zones, no elevation/transit) into `build/out`; then `jq` applies `deploy/valhalla/valhalla.overrides.json` (`thor.costmatrix.allow_second_pass=true`, `service_limits.auto.max_matrix_distance=2000000`, pairs 2,500, `server_threads 2`).
 5. On a build failure or OOM: `up -d valhalla` on the old tileset (nothing changed), then report. Next options: `VALHALLA_BUILD_MEM=10g` with household headroom checked, or the PC build (SPIKE-2R K2 fallback).
 6. Promote: move `build/out/{valhalla_tiles.tar,admins.sqlite,timezones.sqlite,valhalla.json}` to `tilesets/<YYYYMMDD>/`; delete `build/` (tile dir, PBF, extracts).
-7. Set `VALHALLA_TILESET=<YYYYMMDD>` in `release.env` (keep the previous value in `release.env.prev`); `up -d --wait valhalla`.
+7. Set `VALHALLA_TILESET=<YYYYMMDD>` in `routing.env` (keep the previous value in `routing.env.prev`; `release.env` is not touched, D166); `up -d --wait valhalla`.
 8. `make contract-live` + one `make acceptance-pi` smoke (Torino -> Susa within 15%). The new `tileset_last_modified` changes `provider_id`, so cached legs are re-requested on the next plan (expected).
 9. Keep the previous tileset for rollback; delete the one before it. Routing downtime is about 35-40 min.
 
@@ -3533,7 +3873,7 @@ Full field lists, event names and thresholds: `docs/product/kpi-contracts.yaml`.
 | K2 HC violations | 0 | `invariant.violation`; Failed runs "internal invariant violation" | property tests A-1/A-2/HC-5/A-7 (blocking) | `k2.invariant_violations` | >= 1 |
 | K3 omissions | 0 | `plan.run.completed` `report_items` vs `project_items` | A-3 property (blocking) | `k3.report_omissions` | >= 1 |
 | K4 toggle-only requests | 0% | `plan.job.finished` `legs_new`, `points_new`, `provider_id` | A-4 with CountingRoutingProvider (blocking) | `k4.toggle_only_with_requests_pct` | > 0% |
-| K5 plan time | e2e p95 <= 180 s; solve p95 <= 55 s | `plan.job.finished.stage_ms`, `plan.run.geometry_served.e2e_server_ms` | `make perf-pi` gate (D96); golden order in CI | `k5.e2e_p95_s`, `k5.solve_p95_s`, `k5.stage_p95_s`, `k5.out_of_claim` | e2e > 180 s or solve > 55 s |
+| K5 plan time | e2e p95 <= 180 s over cold **exactly-60-item** plans at perf-pi (every run counts, retried and P2 > 700 included, UD-3, D177); diagnostics per size band; solve p95 <= 55 s | `plan.job.finished.stage_ms`, `plan.run.geometry_served.e2e_server_ms` (server-side proxy) | `make perf-pi` gate (D96; **authoritative**, D177); golden order in CI and on the Pi (D175) | `k5.e2e_p95_s`, `k5.solve_p95_s`, `k5.stage_p95_s`, `k5.e2e_p95_by_band_s`, `k5.failed_jobs`, `k5.cancelled_jobs`, `k5.retried_jobs`, `k5.second_pass_gt_700_jobs` (reported, not excluded) | e2e > 180 s or solve > 55 s |
 | K6 device imports | 100% | `export.gpx` (volume) | XSD validation (blocking); device checklist (manual) | - | any device fails |
 | K7 variants per evening | >= 5 | `plan_job_log` done jobs per project per local day | - | `k7.runs_per_project_day` | <= 1 |
 | G1 idle RAM | < 300 MB | VmRSS + cgroup `memory.current` | arm64 smoke (advisory); `make diag` on the Pi (DoD 5) | `g1.*` | >= 300 MB |
@@ -3544,7 +3884,7 @@ Full field lists, event names and thresholds: `docs/product/kpi-contracts.yaml`.
 - **Logs**: structlog JSON lines on stdout (brief §12 catalogue + DV-6 additions); Docker json-file with per-service rotation (D83), which keeps about 50 MB of planner history. Read with `make logs` (`docker compose logs -f planner | jq`). Secrets redacted by the existing structlog processor.
 - **Health**: planner `HEALTHCHECK` on `/healthz` (30 s, 3 retries, 30 s start period); Valhalla on `/status` (120 s start period). Docker does not restart unhealthy containers, on purpose: degraded modes are meaningful (ADR-011). `restart: unless-stopped` covers crashes.
 - **Stats**: `/api/diagnostics` + `/diagnostics` page (D93): KPIs and guardrails with green/amber/red, cache hit rate, jobs by terminal state, retried and second-pass counts, stage p95s, current `app_version`/digest/tileset, last startup `quick_check`.
-- **SLOs** (single user, home LAN; informational, no error-budget alerting): availability of `/healthz` while the Pi is up >= 99% per month outside deploy and tile-refresh windows; K5 as the latency SLO.
+- **SLOs** (single user, home LAN; informational, no error-budget alerting): K5 as the latency SLO (perf-pi authoritative, D177). The availability SLO was dropped (D172): a single Pi cannot measure its own downtime; diagnostics show `process_started_at` + `app_version` instead.
 - **Alerting**: no paging. Red diagnostics items show a home-page banner (K2/K3/G2). An optional Home Assistant REST sensor is left to the user (it touches the household stack).
 - **Rejected**: Prometheus + Grafana, Loki, uptime-kuma. Each adds a service and RAM on the Pi for one user (user #5).
 
@@ -3572,14 +3912,14 @@ Full field lists, event names and thresholds: `docs/product/kpi-contracts.yaml`.
 |---|---|---|---|---|
 | Compose projects | `vlc-pi-prod` (17 running), `fate-ledger`, `vlc-devmock` (exited) | `overland` | none | every command uses `-p overland` |
 | Dirs | `~/MissionControl`, `~/voice-light-control`, `~/apps/fate-ledger` | `~/apps/overland-planner` | none | scripts never `cd` elsewhere |
-| TCP 8080 | free | planner on 192.168.1.10 | none | `PLANNER_PORT` configurable |
+| TCP 8080 | free (also on 127.0.0.1, probe 2026-11-02) | planner on 192.168.1.10; on 127.0.0.1 only during the deploy smoke (D165) | none | `PLANNER_PORT` configurable |
 | TCP 80 / 53 / 445 / 8096 / 8123 | caddy, pihole, nas, jellyfin, HA | not used | none | never bind 0.0.0.0 on these |
 | 127.0.0.1 ports 2019, 5335, 8086, 8090, 8091, 8093, 8094, 102x0/10700 | household | 18002, 18080 (ephemeral) | none | ops ports only while a target runs |
 | Valhalla 8002 | free | internal network only | none | never published (D52) |
 | Networks | `vlc-pi-prod_*`, `fate-ledger_default`, `fate-metrics`, ... | `overland_edge`, `overland_routing` (internal), `overland_egress` | none | no external networks joined |
 | Volumes | `vlc-pi-prod_*`, `spike-hfcache`, anonymous | `overland_planner-data`, `overland_valhalla-data`, `overland_perf-data` | none | explicit names; purge removes only `overland_*` |
 | RAM (16 GB; ~3.9 GB used) | ~3.9 GB | caps 1g + 4g (steady ~1.6 GB measured) | none | `oom_score_adj 500`; build only with serving stopped + MemAvailable preflight |
-| CPU (4 cores) | load 0.2-1.5 | planner 2, valhalla 3, build 3 (caps) | managed | >= 1 core always left |
+| CPU (4 cores) | load 0.2-1.5 | planner 1, valhalla 2, build 3 only with serving stopped (caps, D167) | managed | >= 1 core always left |
 | Disk (221 GB free) | ~220 GB used | ~10 GB tilesets + ~18 GB transient during refresh + images ~1.5 GB + data < 1 GB | none | refresh preflight >= 25 GB free |
 | DNS (pihole, host net) | LAN resolver | adds nothing; `pi.example` via mDNS (avahi active) | none | optional `planner.lan` record is a user action |
 | Reverse proxy (caddy :80) | vlc-gateway | not used | none | not modified |
@@ -3589,7 +3929,7 @@ Full field lists, event names and thresholds: `docs/product/kpi-contracts.yaml`.
 
 ## Wave: DEVOPS / [REF] Open questions for the user (answered 2026-11-02)
 
-- **OQ-1** arm64 runners -> personal free plan; native arm64 hosted runners are not assumed for the private repo. Default: QEMU on `ubuntu-latest`; native `ubuntu-24.04-arm` opt-in via `ARM64_RUNNER` (D84, CI job 6).
+- **OQ-1** arm64 runners -> personal free plan; native arm64 hosted runners are not assumed for the private repo. Default: QEMU on `ubuntu-24.04` (D178); native `ubuntu-24.04-arm` opt-in via `ARM64_RUNNER` (D84, CI job 6).
 - **OQ-2** branch protection -> none assumed on the private repo; the deploy preflight is the gate (D88).
 - **OQ-3** DV-1..DV-5 -> **accepted**. Recorded in `devops/upstream-changes.md` and as DEVOPS amendment notes in ADR-006, 011, 013, 015, 018 and brief §15.
 - **OQ-4** backups -> "I don't need backups". D91 rewritten: only the rollback snapshots on the Pi remain; device/NVMe loss = data loss, RPO undefined (accepted risk).
@@ -3598,4 +3938,601 @@ Full field lists, event names and thresholds: `docs/product/kpi-contracts.yaml`.
 
 ## Wave: DEVOPS / [REF] Wave Decisions summary
 
-See `devops/wave-decisions.md`. Key decisions D80-D102. Upstream changes DV-1..DV-8 are in `devops/upstream-changes.md`; DV-1..DV-5 were accepted by the user on 2026-11-02 and recorded as short DEVOPS amendment notes in ADR-006, 011, 013, 015, 018 and brief §15 (decisions not rewritten). The brief gains §15 Deployment topology (ops-profile containers and network split).
+See `devops/wave-decisions.md`. Key decisions D80-D102, plus D160-D179 from the final review gate (2026-11-02: Forge F-01..F-31, UD-1, UD-3, OD-1, OD-9; D102 revised by D179 for ops slices). Upstream changes DV-1..DV-8 are in `devops/upstream-changes.md`; DV-1..DV-5 were accepted by the user on 2026-11-02 and recorded as short DEVOPS amendment notes in ADR-006, 011, 013, 015, 018 and brief §15 (decisions not rewritten). The brief gains §15 Deployment topology (ops-profile containers and network split).
+
+## Wave: DISTILL / [REF] Read-confirmation checklist
+
+Wave: DISTILL (acceptance test design for DELIVER) | Date: 2026-11-02 | Author: nw-acceptance-designer (Quinn) | Density: FULL | Paradigm: OOP | `[lang-mode] python` | `[policy-mode] inherit` (bootstrapped by this wave) | `[port-mode] bootstrap` (`tests/common/state_delta.py`) | Revision 2 (final-gate fix round, D180-D192).
+
+- + `REQUIREMENTS.md` (incl. the 2026-11-02 clarifications: FR-5.8/FR-5.1 ordering, NFR-3 no-backup note, §4 item ceiling)
+- + `CLAUDE.md`
+- + `feature-delta.md` DISCUSS (D1-D16, D69-D73, D140-D159; stories Revision 7 incl. US-02c, US-09a/09b, DoR table), DESIGN (D17-D68, D74-D75, D121-D136), SPIKE (D76-D79), DEVOPS (D80-D102, D160-D179)
+- + `distill/review-gate-fixlist.md` (UD-1..UD-4, OD-1..OD-9, DISTILL fixes, hand-offs)
+- + `discuss/journey-plan-overland-trip.feature` (superseded snapshot, D140)
+- + `design/upstream-changes.md`, `devops/upstream-changes.md`, `devops/wave-decisions.md`, `devops/environments.yaml`
+- + `slices/*.md` (18, incl. new 00a, 00b, 03-ops, 06a-ops)
+- + `spike/findings.md`, `spike/wave-decisions.md`, `spike/fixtures/`
+- + `docs/product/`: jobs, persona, journey (failure_modes), `kpi-contracts.yaml`, `architecture/brief.md` §1-§15 incl. §5 "HTTP contract", ADR-009/011/013/014/015/016/017/018 with their final-gate amendments (others index only)
+- - separate `discuss/` and `design/` wave-decisions.md (decisions live in this file)
+- - Marco's real GPX corpus (synthetic stand-ins, D112; real `assietta.gpx` is a demo precondition, D158)
+
+## Wave: DISTILL / [REF] Wave-decision reconciliation (hard gate)
+
+**Reconciliation passed — 0 contradictions** (first pass and re-check after the fix round). The fix round settled every gap DISTILL had raised (UI-1..UI-18, see `distill/upstream-issues.md`); the scenarios now follow D121-D136 (architect), D140-D159 (product owner) and D160-D179 (DEVOPS).
+
+## Wave: DISTILL / [REF] Inherited commitments
+
+| Origin | Commitment | DDD | Impact |
+|--------|------------|-----|--------|
+| DISCUSS#D2, D8; DISCUSS#D145 | WS-B skeleton; US-01a moved to slice 00b, CI/image to enabler 00a | D104, D180 | One `@walking_skeleton` scenario, in slice 01a (it needs projects and trails), running on the planner 00a/00b deliver; US-01a scenarios moved to `slice-00b-planner-on-the-pi.feature` |
+| DISCUSS#D9; DESIGN#Driving ports; DESIGN#D130 | HTTP API + browser UI; ratified HTTP contract (snake_case, `{code, message}` envelope, anchor enum) | D106, D107, D183 | Steps assert the enumerated error code per status and the `start / end / start_end` anchor values |
+| DISCUSS#D141 (UD-2) | Design-derived scenarios are `@technical`, outside the 3-7 UAT band | D184 | 43 `@technical` scenarios; every story has 3-7 user-facing scenarios |
+| DISCUSS#D142, D143 | US-02a split (+US-02c), US-09 split (US-09a/US-09b) | D184 | Retagged in slices 01a and 05 |
+| DISCUSS#D146; DESIGN#D126, D131 | "60 items" = 60 non-anchor items + Start and End; 61-70 allowed with a notice | D189 | Wording "60 items plus Start and End"; new 65-item notice scenario; contract batching at 3,660 pairs |
+| DISCUSS#D147; DESIGN#D127 (UD-3) | Every cold 60-item run counts toward K5; retried counted separately | D189 | 06a S1b and the diagnostics / retry scenarios say so; no exclusions |
+| DISCUSS#D148; DESIGN#D125 (UD-4) | Fewest Unconfirmed, then fewest retraces, then objective; penalty never reported | D189 | US-08 S5 wording; new 03b "fewer retraces win"; retrace totals hold only distance driven |
+| DISCUSS#D149-D152, D154 | Multi-file import with a bad file; Start+End-only plan; messages; labels; difficulty 1-5; same-file merge | D189 | New 07 and 02 scenarios; OD-5 messages applied verbatim |
+| DISCUSS#D156 | Action vocabulary Calculate / Recalculate | D188 | "Optimize" replaced in every executable step; message "Set the Start before calculating" (PO to confirm, UI-19) |
+| DISCUSS#D157; DESIGN#D122 | Feasibility limit: numbered Failed run when solving, no run during the look-up; `no_valid_route_found`, `optimizer_failed` | D189 | Slice 03 scenarios for each outcome |
+| DESIGN#D121; DEVOPS#D162 | `DATA_DIR` classified by longest-prefix mount fstype; never the OS temp folder; job 2 builds the web app | D182 | Data folders under the workspace; `MountTable.entries()`; `FakeMountTable` in-process, real probe in server-process scenarios |
+| DESIGN#D129 | Newer database refused with nothing copied or written | D185 | Scenario creates the data with the real planner and an Alembic stub revision (waiver W3); outcome checked through the project list |
+| DESIGN#D128 | `/status` version mismatch refuses plan jobs (503 `routing_engine_not_ready`) | D189 | New 06a `@technical` scenario; the contract suite keeps its own version stop |
+| DESIGN#D133, D136 | One solver child at a time (`waiting_for_optimizer`); Stop idempotent | D189 | New 03 `@technical` waiting-and-stop scenario |
+| DESIGN#brief §6; DEVOPS#D95 | Routing-port contract suite in `tests/contract/routing_port/` | D181 | 11 contract scenarios moved out of the acceptance features |
+| DEVOPS#D170 | CI job 7 runs `--run-external -m "compose or security"` | D190 | Container and image scenarios carry `@compose` / `@security` |
+| DEVOPS#D100 | `@real_provider`/`@pi` only via `make acceptance-pi` | D113 | Unchanged |
+| SPIKE#D76, D78 | Valhalla 3.9.1; `SOLVER_BUDGET` 10,000; golden order | n/a | Unchanged; golden-order fixtures come from slice 03-ops (OD-7) |
+
+## Wave: DISTILL / [REF] Decisions (D103-D120, D180-D194)
+
+D103-D120 (first pass) stand except where amended below.
+
+| ID | Decision |
+|----|----------|
+| D103 | Test placement: `tests/acceptance/overland_route_planner_mvp/` (`*.feature` per slice = executable scenario SSOT, D140; `steps/`; `test_*.py` bindings; `fixtures/gpx/`); contract suite `tests/contract/routing_port/` (D181); `tests/unit`, `tests/property`, `tests/integration`, `tests/e2e/` (Playwright) per DESIGN; shared code `tests/common/` |
+| D104 | One walking skeleton for the feature; DISCUSS `@walking_skeleton` tags dropped elsewhere. Placement amended by D180 |
+| D105 | Infrastructure policy bootstrapped; `MountTable` external port (contract amended by D182); waivers W1, W2 (W3 added by D185) |
+| D106 | Composition-root test contract `create_app(environ=None, *, external=ExternalPorts(clock, mount_table, tour_solver))` |
+| D107 | HTTP contract for slice 01a; ratified and extended by DESIGN D130 (brief §5); steps follow D183 |
+| D108 | Home-page banner text from `GET /api/health` `banners` |
+| D109 | "Track X from A to B" checked by coordinates within 50 m (labels per D152 are not asserted) |
+| D110 | Exactly one `app.started` line per start (confirmed by D155) |
+| D111 | DISTILL messages; accepted by OD-5/D151 with the two time-limit messages and "X has no usable track" |
+| D112 | Synthetic GPX stand-ins (real `assietta.gpx` before the 01a demo, D158) |
+| D113 | Tags become markers (`-` -> `_`); gates `--run-pending=<slice>`, `--run-external`; `@manual` always skipped |
+| D114 | Tier B: not for 01a; declared for the plan-iteration journey (slices 04/05) |
+| D115 | Layers: in-process = layer 3, example-only, state-delta on `projects.names`, `project.items`; `@property` = layer 1-2; WS/`@wiring_e2e` traditional assertions. Universe entry `saved_data.database` removed (D185) |
+| D116 | Scenario fixes against DESIGN (both limits in US-06a S2; solver-side US-06b S4; look-up-side limit scenario); adopted by the PO as D157 |
+| D117 | US-01a "stays on the home network" checked statically against `deploy/compose.yaml` (now in slice 00b) |
+| D118 | Business-language rewording (extended by D187) |
+| D119 | State-delta port re-exports `nwave_ai.state_delta`; domain predicates in `tests/common/predicates.py` |
+| D120 | Python project bootstrap (pyproject, uv.lock, pytest config) |
+| D180 | WS placement: the single `@walking_skeleton` stays in `walking-skeleton.feature`, tagged `@slice-01a` and `@US-01b @US-02a`: its value (project and trail survive a restart) is built in 01a, and it runs on the planner that 00a (CI job 2 with the built web page) and 00b (compose) deliver. Its Thens are user observations only (home page opens, project listed, trail still there); health and the start-up line moved to the 00b `@technical @wiring_e2e` scenario "Each start of the planner reports healthy and records one start-up line" (review H-01). Steps and RED scaffolds now cover slices 00b and 01a together |
+| D181 | The 11 routing-engine contract scenarios (9 from 06a, 2 from 06b) moved to `tests/contract/routing_port/routing-engine-contract.feature` (`@technical @contract`, slice tags kept), bound by `test_routing_engine_contract.py` (review B-01) |
+| D182 | `MountTable.entries() -> [(mount_point, fstype)] | None` (brief §6, D121). Every test data folder lives under the workspace (`$PLANNER_TEST_WORKSPACE` or `<repo>/.data/acceptance/<id>/data`; CI under `$GITHUB_WORKSPACE`), never the OS temp folder, and is removed after the test. In-process scenarios pass `FakeMountTable` (default `/` on ext4; `with_mount(DATA_DIR, "overlay")` for the non-persistent case). Server-process scenarios have no fake channel: the process uses the real `ProcMountTable` (`not_applicable` on macOS, the workspace fstype on Linux CI); the only scenario that needs a non-persistent mount runs in-process, and its real-Linux twin is the container scenario in CI job 7 (review H-02) |
+| D183 | Error responses: every `he sees "..."` after a non-2xx answer also checks the envelope `{code, message}` and that `code` is the one enumerated for the status in brief §5 (401 `unauthorized`, 413 `upload_too_large`, 422 `validation_error`/`missing_anchor`, ...). Item `anchor` is `start` / `end` / `start_end` / null |
+| D184 | `@technical` applied to the PO's 39 scenarios (D141) and to 4 new DISTILL scenarios (00b start-up line; 03 optimizer crash with incumbent, second project waiting for the optimizer; 06a version mismatch). Retags: US-02c (5 scenarios in 01a), US-09a/US-09b (slice 05), US-01a -> slice 00b. A multi-story scenario counts for its first-listed story |
+| D185 | Newer-database scenario (review H-07): the Given creates "Dolomiti 2028" with the real planner, then marks the data newer with an Alembic no-op stub revision on top of the planner's own head (`alembic stamp`, waiver W3), no hand-written schema; the Then checks the refusal (`db_newer_than_app`) and that, back on the newer version, the project list and items are unchanged (state-delta through the HTTP API). The database-file fingerprint is gone |
+| D186 | "Then asserts outcomes, not engine calls or storage" (review H-06), recorded exceptions: (a) A-4 / US-09a scenarios count requests to the routing engine, because A-4 promises exactly that; (b) the contract suite may assert call shapes (it is the contract); (c) FR-2.3 "original kept unmodified" (US-11a, US-13) checks the kept original. No other Then inspects storage |
+| D187 | Business language (review B-02, L-13): "basic auth" -> "the shared household password"; "planner image" -> "the packaged planner"; "port 8080" -> "at its usual address"; "?apikey=" URL -> "a map tile address that carries a private access key"; "planner stack" -> "planner set-up" / "the planner"; "stack restart" -> "planner restart". CM-B grep list extended (basic auth, image, port N, stack, apikey, url, volume, alembic, probe, payload, container, subprocess, schema, fixture) |
+| D188 | One When per scenario (review H-04): earlier actions moved into Givens ("Marco has excluded ...", "has pressed Calculate"); dialogs as single actions ("confirms / cancels the removal", "confirms Reverse track direction"); the password check became an outline over three places. Slice 11 exports in a When (H-05). Calculate / Recalculate vocabulary (D156, L-04). US-04 S1 is a pure property; readable seeds are Hypothesis `@example`s in the step code (L-02) |
+| D189 | Fix-round scenario impacts: OD-2 65-item notice (03); OD-3 one bad file among several (07); OD-4 Start+End-only direct route (02); OD-5 messages (01a no usable track; 03 both time-limit messages); UD-3 every cold run counts, retried shown separately (06a S1b, diagnostics, contract hiccup); UD-4 fewer-retraces scenario (03b), US-08 S5 wording, retrace totals; D122 `no_valid_route_found` and `optimizer_failed` (03); D128 version mismatch refusal (06a); D133 waiting for the optimizer (03); 00b wrong-password scenario |
+| D190 | Refusal semantics (review L-07): "the planner refuses to start" = no answer, non-zero exit code and exactly one `health.startup.refused` line; a follow-up Then checks component and reason. The server driver joins its log-reading threads before any assertion (L-08) and starts uvicorn from the repository root. CI job 7 selects `-m "compose or security"` with `--run-external` (D170); it must also pass `--run-pending=slice-00b --run-pending=slice-01a` until those scenarios lose `@pending` |
+| D191 | Check B (environment -> scenario) recorded in "[REF] Environment coverage" below (review H-03) |
+| D193 | Re-review fixes: N-02 the return to the newer planner is its own scenario "Data refused by an older planner is intact when Marco goes back to the newer one" (When "Marco goes back to the newer planner", Then "... is exactly as he left it"); L-01 "A trip project survives a restart" tagged `@FR-1.2 @NFR-3` (was `@HC-4`); N-01 the Pi address in Gherkin is "pi.example", the port is step code (`PLANNER_PORT`, default 8080); L-10 slice 11 S1 Given "a separate copy of the project as it was at plan run #4, recalculated on the offline road map"; L-11 guard scenario Then "the plan is not shown and the plan run is marked Failed", reason kept in the report; H-05 residual: the two manual device scenarios export in their single When |
+| D194 | N-03: `tests/contract/routing_port/` has only its binding (`test_routing_engine_contract.py`) now; its steps module (`steps_routing_contract.py`, respx replay of `tests/contract/fixtures/valhalla-3.9.1/`) is written when DELIVER reaches slice 06a. Until then `@pending` keeps the suite collected and inert |
+| D192 | UI-18 closed: property scenarios run at layer 1-2 through an in-memory composition and the same `TourSolver` port; whether the solver runs in-process for property speed is the crafter's call at slice 02, with Hypothesis `dev` (100) on pre-push and `ci` (1,000) in CI |
+
+## Wave: DISTILL / [REF] Final-gate fix trace (acceptance reviewer findings)
+
+| Finding | What changed | Decision |
+|---|---|---|
+| B-01 | Contract scenarios moved to `tests/contract/routing_port/` | D181 |
+| B-02 | Technical words removed from Gherkin; grep list extended | D187 |
+| H-01 | WS Thens are user observations; health/log in a separate 00b `@wiring_e2e` scenario; Given "with his trip collection saved there" | D180 |
+| H-02 | Workspace data folders; MountTable `entries()`; no fake channel into the server process | D182 |
+| H-03 | Environment coverage table | D191 |
+| H-04 | One When per scenario across all slices | D188 |
+| H-05 | Slice 11 exports in the When | D188 |
+| H-06 | Call-shape Thens confined to the contract suite; A-4 and FR-2.3 exceptions recorded | D186 |
+| H-07 | No file fingerprint, no hand-written schema; Alembic stub revision (W3) | D185 |
+| L-01 | Retags (US-02c, US-09a/b, slice 00b) | D184 |
+| L-02 | US-04 S1 pure property, seeds as `@example` | D188 |
+| L-04 | Calculate / Recalculate | D188 |
+| L-05 | "Valhalla" accepted as user vocabulary (policy note) | policy |
+| L-06 | Deployment commands as driving adapters (policy row) | policy |
+| L-07 | Refusal = non-zero exit + one refusal line | D190 |
+| L-08 | Log-reading threads joined | D190 |
+| L-10, L-11 | Wording pass applied with D187/D188 (the fix list gives no further detail) | D187, D188 |
+| L-12 | Feature-file headers point to the executable SSOT and feature-delta, not the superseded DISCUSS file | D140 |
+| L-13 | CM-B term list extended | D187 |
+| L-03, L-09, L-14 | Not itemised in the fix list; no change made | - |
+
+## Wave: DISTILL / [REF] Walking-skeleton strategy
+
+Driving port: HTTP API through a real `uvicorn --factory` process (production composition root) started from the repository root. Driven internal: real SQLite + Alembic and real track files in a data folder under the workspace. Driven external: the offline road map (mock routing, by configuration), the real clock and the real mount table. The single WS answers "can Marco keep his trip on his own planner?" (project + Assietta survive a restart, home page opens). It is RED (the scaffold composition root makes the server exit) and turns GREEN when slice 01a lands on top of 00a/00b. The start-up line and health check are proven by the 00b companion scenario; the Pi/PC/compose variants are `@requires_external`.
+
+## Wave: DISTILL / [REF] Environment coverage (Check B)
+
+| Environment (`devops/environments.yaml`) | Scenarios that run there | Given that names its precondition |
+|---|---|---|
+| dev-mac (no Docker, mock) | Whole offline suite incl. WS and `@wiring_e2e` (mount table `not_applicable`) | "Marco's planner is running on his home server with his trip collection saved there" |
+| ci-github-amd64 job 2 | Same as dev-mac, with the web app built first (D162) and a Linux workspace fstype | same Given; data folder under `$GITHUB_WORKSPACE` |
+| ci-github-amd64 job 7 (compose, mock) | `@compose`/`@security` with `--run-external` | "the packaged planner was started without its data storage"; "Marco's settings file contains the shared household password" |
+| ci-github-arm64 | Image smoke only (DEVOPS job 6); no acceptance scenario | - |
+| pi-prod | 00b "brings the planner up on his Pi", "idle planner leaves room" | "Marco has copied the planner set-up ... to his Raspberry Pi"; "idle for 10 minutes on the Pi" |
+| pi-perf | `@pi @real_provider` (03 solve stage, 06a live, 06b summit, contract live) | "the planner routes on Valhalla on Marco's Pi" |
+| pc-amd64 (optional) | 00b "The same setup runs on Marco's PC" | "Marco uses the same planner set-up and settings file on his amd64 PC" |
+
+## Wave: DISTILL / [REF] Scenario summary per slice
+
+Scenario Outlines count once; "cases" = examples expanded; error/edge = `@error`, `@edge` or `@infrastructure-failure`; user-facing = not `@technical`. Slices 00a, 03-ops and 06a-ops are enablers without scenarios (D145). Contract-suite scenarios are counted in their slices (06a: 9, 06b: 2).
+
+| Slice | Scenarios | Cases | @technical | User-facing | Error/edge | % | @kpi | @property | @real-io | @requires_external | @ui | @manual | of which contract suite |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 00b | 8 | 8 | 1 | 7 | 2 | 25% | 1 | 0 | 2 | 4 | 0 | 0 | 0 |
+| 01a | 19 | 25 | 6 | 13 | 12 | 63% | 0 | 0 | 10 | 1 | 0 | 0 | 0 |
+| 01b | 10 | 10 | 3 | 7 | 4 | 40% | 2 | 0 | 2 | 0 | 1 | 1 | 0 |
+| 02 | 18 | 20 | 2 | 16 | 8 | 44% | 4 | 4 | 1 | 0 | 1 | 0 | 0 |
+| 03 | 19 | 19 | 7 | 12 | 12 | 63% | 2 | 0 | 2 | 2 | 0 | 0 | 0 |
+| 03b | 7 | 7 | 0 | 7 | 5 | 71% | 1 | 1 | 0 | 0 | 0 | 0 | 0 |
+| 04 | 19 | 19 | 1 | 18 | 12 | 63% | 2 | 1 | 0 | 0 | 0 | 0 | 0 |
+| 05 | 12 | 12 | 2 | 10 | 5 | 42% | 3 | 0 | 2 | 0 | 0 | 0 | 0 |
+| 06a | 19 | 23 | 11 | 8 | 10 | 53% | 3 | 0 | 9 | 4 | 0 | 0 | 9 |
+| 06b | 8 | 9 | 3 | 5 | 8 | 100% | 0 | 0 | 2 | 1 | 0 | 0 | 2 |
+| 07 | 18 | 19 | 1 | 17 | 9 | 50% | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
+| 08 | 14 | 15 | 3 | 11 | 11 | 79% | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
+| 09 | 14 | 14 | 2 | 12 | 6 | 43% | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| 10 | 6 | 6 | 0 | 6 | 4 | 67% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 11 | 13 | 13 | 2 | 11 | 6 | 46% | 3 | 0 | 3 | 0 | 0 | 2 | 0 |
+| **Total** | **204** | **219** | **44** | **160** | **114** | **56%** | 21 | 6 | 38 | 12 | 7 | 3 | 11 |
+
+Per story (first-listed story counts; D141 band 3-7 user-facing):
+
+| Story | Total | @technical | User-facing |
+|---|---|---|---|
+| US-01a | 8 | 1 | 7 |
+| US-01b | 9 | 4 | 5 |
+| US-02a | 5 | 2 | 3 |
+| US-02b | 10 | 3 | 7 |
+| US-02c | 5 | 0 | 5 |
+| US-03 | 5 | 1 | 4 |
+| US-04 | 6 | 1 | 5 |
+| US-05 | 7 | 0 | 7 |
+| US-06a | 8 | 2 | 6 |
+| US-06b | 12 | 5 | 7 |
+| US-07a | 7 | 1 | 6 |
+| US-07b | 6 | 0 | 6 |
+| US-08 | 6 | 0 | 6 |
+| US-09a | 8 | 2 | 6 |
+| US-09b | 4 | 0 | 4 |
+| US-10a | 18 | 11 | 7 |
+| US-10b | 8 | 3 | 5 |
+| US-11a | 7 | 1 | 6 |
+| US-11b | 5 | 0 | 5 |
+| US-12 | 6 | 0 | 6 |
+| US-13 | 6 | 2 | 4 |
+| US-14 | 8 | 1 | 7 |
+| US-15 | 9 | 2 | 7 |
+| US-16 | 5 | 0 | 5 |
+| US-17 | 6 | 0 | 6 |
+| US-18a | 7 | 1 | 6 |
+| US-18b | 6 | 1 | 5 |
+| US-19 | 7 | 0 | 7 |
+
+## Wave: DISTILL / [REF] Scenario list with tags
+
+Selected tags shown (all scenarios also carry `@US-xx`, `@J-xx` and their slice tag).
+
+**`walking-skeleton.feature`** (@slice-01a)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco starts his planner, loads his Assietta trail and still finds it after a restart | US-01b US-02a | @walking_skeleton @driving_adapter @wiring_e2e @real-io |
+
+**`slice-00b-planner-on-the-pi.feature`** (@slice-00b @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco brings the planner up on his Pi with one command | US-01a | @requires_external @pi |
+| The same setup runs on Marco's PC | US-01a | @requires_external |
+| Household members are asked for the shared password when it is switched on | US-01a | @error @security |
+| A wrong shared password is refused | US-01a | @error @security |
+| The planner stays on the home network by default | US-01a | @real-io |
+| Sharing the packaged planner never shares Marco's password | US-01a | @requires_external @security |
+| The idle planner leaves room on the Pi | US-01a | @requires_external @pi @kpi @G1 |
+| Each start of the planner reports healthy and records one start-up line | US-01a | @technical @wiring_e2e @driving_adapter @real-io |
+
+**`slice-01a-skeleton-items-on-pi.feature`** (@slice-01a @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco creates a trip project | US-01b |  |
+| A project without a name is not created (2 examples) | US-01b | @error |
+| A trip project survives a restart | US-01b | @real-io @adapter-integration |
+| Missing persistent storage is reported instead of losing projects silently | US-01b | @error @infrastructure-failure |
+| The packaged planner started without its data storage reports that projects would be lost | US-01b | @technical @error @infrastructure-failure @requires_external @real-io @adapter-integration |
+| A data folder the planner cannot write to stops it at start-up | US-01b | @technical @error @infrastructure-failure @wiring_e2e @driving_adapter @real-io @adapter-integration |
+| An older planner refuses data saved by a newer version instead of changing it | US-01b | @technical @error @infrastructure-failure @wiring_e2e @driving_adapter @real-io @adapter-integration |
+| Marco imports his Assietta trail | US-02a | @real-io @adapter-integration |
+| A file that is not GPX is rejected (2 examples) | US-02a | @error @real-io @adapter-integration |
+| A trail file without any usable track is rejected | US-02a | @error @edge @real-io @adapter-integration |
+| A trail file that tries to read other files on the planner is rejected | US-02a | @technical @error @security @real-io @adapter-integration |
+| A trail file above the upload limit is refused | US-02a | @technical @error @edge @security |
+| Marco adds Briancon by coordinates | US-02c |  |
+| Coordinates out of range are rejected with a reason (4 examples) | US-02c | @error @edge |
+| Coordinates on the edge of the valid range are accepted (2 examples) | US-02c | @edge |
+| Home is both Start and End of a round trip | US-02c |  |
+| A one-way trip has a different Start and End | US-02c |  |
+
+**`slice-01b-skeleton-plan-and-gpx.feature`** (@slice-01b @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco gets a first ordered itinerary | US-02b | @real-io @adapter-integration |
+| Even the first plan drives the trail the way it was recorded | US-02b |  |
+| Marco downloads the first plan as a standard GPX file | US-02b | @kpi @real-io @adapter-integration @K6 |
+| The first plan opens in OsmAnd | US-02b | @kpi @manual @K6 |
+| A one-way trip ends at its End | US-02b |  |
+| A trail that starts at the Start place is reached by a zero-length leg | US-02b | @edge |
+| A plan still being worked out cannot be exported yet | US-02b | @technical @edge |
+| Plans are refused while the optimizer cannot start | US-02b | @technical @error @infrastructure-failure |
+| A second Calculate while a plan is being worked out is refused | US-02b | @technical @error |
+| Marco plans the Assietta day trip in his browser | US-02b | @ui @driving_adapter |
+
+**`slice-02-directional-optimizer.feature`** (@slice-02 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| The Assietta is driven from Pian dell'Alpe to Sestriere even when reversing would be shorter | US-03 | @edge |
+| No generated plan ever drives a track in reverse | US-03 | @kpi @property @K2 |
+| Tracks are always driven in full | US-03 | @kpi @property @K2 |
+| A loop trail is driven in its recorded order | US-03 | @edge |
+| A plan that would break a hard rule is never shown | US-03 | @kpi @technical @error @K2 |
+| The trip always starts at Start and ends at End | US-04 | @kpi @property @K2 |
+| Calculate is refused while an anchor is missing (2 examples) | US-04 | @error |
+| Only POIs can be chosen as Start or End | US-04 |  |
+| A track cannot be made the Start even when asked directly | US-04 | @technical @error |
+| Removing the Start POI clears the Start | US-04 | @error |
+| A trip with only a Start and an End is a direct road route | US-04 | @edge |
+| Identical inputs produce identical plans | US-05 | @real-io @adapter-integration |
+| Any project planned twice from scratch gets the same plan | US-05 | @property |
+| Totals separate road and off-road driving | US-05 |  |
+| The itinerary shows each stop with legs and cumulative distance | US-05 |  |
+| The off-road speed setting changes track durations | US-05 |  |
+| An off-road speed that cannot be driven is refused (2 examples) | US-05 | @error @edge |
+| Giulia reads the itinerary on her phone | US-05 | @ui |
+
+**`slice-03-pi-performance.feature`** (@slice-03 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| The solve stage for 60 items fits the budget on the Pi | US-06a | @kpi @requires_external @pi @K5 |
+| The best plan found is returned when the optimisation limit is reached | US-06a | @edge |
+| A plan found on the Pi is nearly as good as a long search | US-06a | @requires_external @pi |
+| Marco sees how long planning took | US-06a |  |
+| A project above 60 items is planned with a notice that it may take longer | US-06a | @edge |
+| The 60-item plan is the same on every machine | US-06a | @technical @real-io |
+| Marco stops a long optimisation and keeps the best route so far | US-06b | @edge |
+| Stopping before any valid route fails the run with a reason | US-06b | @error |
+| Stopping while roads are still being looked up changes nothing | US-06b | @error |
+| No valid route within the feasibility limit | US-06b | @error |
+| The optimizer ends without any route | US-06b | @error |
+| An optimizer that crashes after finding a route still gives the best route so far | US-06b | @technical @error @infrastructure-failure |
+| The feasibility limit reached while roads are still being looked up changes nothing | US-06b | @technical @error |
+| A later no-change Recalculate returns the same plan as a stopped run | US-06b |  |
+| Re-optimise starts a fresh search | US-06b |  |
+| Closing the planner during a long optimisation leaves nothing running | US-06b | @technical @error @infrastructure-failure @real-io @adapter-integration |
+| Only one plan is calculated per project at a time | US-06b | @technical @error |
+| A plan for a second project waits for the optimizer and can be stopped while waiting | US-06b | @technical @edge |
+| Marco's diagnostics show how planning went | US-06a | @kpi @technical @K5 @K7 @K2 @K3 |
+
+**`slice-03b-out-and-back-retrace.feature`** (@slice-03b @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| A dead-end trail is driven in full and then retraced | US-19 | @edge |
+| A trail is never entered from its exit | US-19 | @error |
+| No retrace when a road leaves the exit | US-19 | @edge |
+| A retrace is its own leg and counts as off-road driving | US-19 |  |
+| A dead-end trail just before the End is retraced to reach the End | US-19 | @edge |
+| An order with fewer retraces wins over a shorter order | US-19 | @edge |
+| No track item is ever driven backwards, retraces included | US-19 | @kpi @property @K2 |
+
+**`slice-04-consideration-list.feature`** (@slice-04 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Excluding a trail marks the plan stale without recalculating | US-07a |  |
+| Start and End cannot be excluded | US-07a | @error |
+| Excluding Start or End is refused even when asked directly | US-07a | @technical @error |
+| Marco excludes three tracks at once | US-07a |  |
+| Marco filters the list to tracks only | US-07a |  |
+| Cancelling a removal keeps the item | US-07a | @error |
+| Confirming a removal deletes the item and marks the plan stale | US-07a |  |
+| Every project item is accounted for in the results | US-07b | @kpi @K3 |
+| The report is complete for any project | US-07b | @kpi @property @K3 |
+| A past report keeps the selection it was computed with | US-07b | @edge |
+| Home in a round trip is listed once | US-07b | @edge |
+| The report states how far a plan was optimised and how many legs are Unconfirmed | US-07b | @edge |
+| The report states why a run failed | US-07b | @error |
+| An unreachable island fails the run and is named | US-08 | @error |
+| Excluding the unreachable item lets the run succeed | US-08 |  |
+| A failed run never presents a partial plan | US-08 | @error |
+| One missing connection does not fail the plan | US-08 | @edge |
+| Confirmed connections are preferred over a shorter compromise | US-08 | @edge |
+| Every unreachable item is named, not only the first | US-08 | @error |
+
+**`slice-05-incremental-recalculation.feature`** (@slice-05 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Excluding an item makes zero new routing requests | US-09a | @kpi @real-io @adapter-integration @K4 |
+| Adding one POI requests only the legs involving that POI | US-09a | @kpi @K4 |
+| A tiny coordinate correction reuses known legs | US-09a | @edge |
+| A correction across a rounding step requests only that place's legs again | US-09a | @technical @edge |
+| Including an item again needs no new legs | US-09a | @edge |
+| Re-importing a removed trail reuses its legs | US-09a | @edge |
+| Known legs survive a restart | US-09a | @real-io @adapter-integration |
+| Diagnostics count toggle-only recalculations that needed the routing engine | US-09a | @kpi @technical @K4 |
+| Switching routing provider recomputes legs from the new provider | US-09b |  |
+| Clearing the leg cache of one project recomputes its legs | US-09b |  |
+| Clearing the leg cache of all projects recomputes every project | US-09b |  |
+| Clearing one project's leg cache keeps the other project's legs | US-09b | @edge |
+
+**`slice-06a-valhalla-on-the-pi.feature`** (@slice-06a @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco plans with Valhalla on his Pi | US-10a | @requires_external @real_provider @pi |
+| A 60-item trip with no known roads is on screen within 3 minutes | US-06a | @kpi @requires_external @real_provider @pi @K5 |
+| Marco switches the objective to road time | US-10a |  |
+| New projects minimise road distance by default | US-10a |  |
+| Routing engine unreachable leaves the project intact | US-10a | @kpi @error @infrastructure-failure @G2 |
+| The routing engine is still loading its map data | US-10a | @kpi @error @infrastructure-failure @G4 |
+| Plans are refused while the routing engine is not the version the planner was checked with | US-10a | @technical @error @infrastructure-failure |
+| Road legs found before the routing engine failed are kept for next time | US-10a | @technical @error @infrastructure-failure |
+| Marco's password is never shown (3 examples) | US-10a | @security |
+| A trail entry reached by a forest track is Confirmed | US-10a | @requires_external @real_provider @pi |
+
+**`slice-06b-compromise-legs.feature`** (@slice-06b @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| A leg that needs a compromise is Unconfirmed and explained | US-10b | @edge |
+| A trail entry near the road gets a short off-network link | US-10b | @edge |
+| A place too far from any road gets no link | US-10b | @error |
+| The off-network link stops at 1.5 km (2 examples) | US-10b | @edge |
+| A Confirmed leg is never replaced by a compromise | US-10b | @edge |
+| A summit far from any road cannot be connected | US-10b | @technical @requires_external @real_provider @pi @error |
+
+**`slice-07-real-gpx-import.feature`** (@slice-07 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Several files are imported at once with their stats | US-11a | @real-io @adapter-integration |
+| One bad file among several does not stop the others | US-11a | @error @edge |
+| A file with two segments becomes two tracks | US-11a | @edge |
+| The original file is kept unmodified | US-11a | @real-io @adapter-integration |
+| A file without elevation still imports | US-11a | @edge |
+| Entry and exit are the first and last recorded points | US-11a |  |
+| More files than the upload limit at once are refused | US-11a | @technical @error @edge @security |
+| Two segments of one trail are merged | US-11b |  |
+| Merged segments follow the order of the file | US-11b | @edge |
+| Tracks from different files cannot be merged | US-11b | @error |
+| A loop trail is labelled and keeps its direction | US-11b | @edge |
+| A stricter loop distance changes the label | US-11b | @edge |
+| A duration override replaces the estimate in the totals | US-12 |  |
+| A POI visit duration counts in the trip time | US-12 |  |
+| Editing details needs no new road legs | US-12 |  |
+| Marco records difficulty and notes for a trail | US-12 |  |
+| A difficulty outside 1 to 5 is refused (2 examples) | US-12 | @error @edge |
+| Marco categorises a POI | US-12 |  |
+
+**`slice-08-input-data-hygiene.feature`** (@slice-08 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco fixes a descent recorded uphill | US-13 | @real-io @adapter-integration |
+| Cancelling the reverse dialog changes nothing | US-13 | @error |
+| Reversing a loop flips its driving direction | US-13 | @edge |
+| Nothing but the explicit action changes a track's direction | US-13 |  |
+| A reverse interrupted by a crash leaves the trail as it was | US-13 | @technical @error @infrastructure-failure @real-io @adapter-integration |
+| A trail reversed while a plan is being calculated keeps that plan on the old direction | US-13 | @technical @edge @real-io @adapter-integration |
+| A huge jump between points is flagged on import | US-14 | @error |
+| A track with a single point is flagged | US-14 | @error @edge |
+| The same file imported twice is flagged as a duplicate | US-14 | @error |
+| POIs close to an existing POI are flagged (2 examples) | US-14 | @edge |
+| The results list unresolved import warnings for the run | US-14 | @error |
+| A resolved warning disappears from the next run | US-14 |  |
+| The results list Unconfirmed legs under Warnings | US-14 | @edge |
+| Sparse forum tracks are not flagged as jumps | US-14 | @technical @edge |
+
+**`slice-09-directional-map.feature`** (@slice-09 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| The map shows which way each trail is driven | US-15 |  |
+| A round trip shows one combined Start and End marker | US-15 | @edge |
+| The map follows a reversed track | US-15 |  |
+| Giulia uses the map on her phone | US-15 | @ui |
+| The map still shows the plan when road shapes are unavailable | US-15 | @error @infrastructure-failure |
+| Compromise legs stand out on the map | US-15 | @edge |
+| The map uses Marco's chosen map tiles and always credits them | US-15 | @technical |
+| A map tile address carrying a private access key stops the planner at start-up | US-15 | @technical @error @security @wiring_e2e @driving_adapter |
+| Marco reviews the route with its warnings on the map and exports it | US-15 US-14 US-18b | @ui @driving_adapter |
+| Marco adds a trailhead POI by clicking the map | US-16 | @ui |
+| A POI at a trail entry can become the Start | US-16 | @ui |
+| Cancelling the name prompt adds nothing | US-16 | @error @ui |
+| A POI clicked next to an existing POI is flagged as a possible duplicate | US-16 US-14 | @edge |
+| A POI added on the map marks the plan stale | US-16 |  |
+
+**`slice-10-run-diff-history.feature`** (@slice-10 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| Marco sees what changed after dropping a trail | US-17 |  |
+| Recalculating without changes shows no changes | US-17 | @edge |
+| The first run has nothing to compare with | US-17 | @edge |
+| A past run keeps its original itinerary | US-17 | @edge |
+| Marco browses the run history | US-17 |  |
+| The history shows a failed run with its reason | US-17 | @error |
+
+**`slice-11-device-ready-gpx.feature`** (@slice-11 @pending)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| The exported trip is standard GPX with real road shapes | US-18a | @kpi @real-io @adapter-integration @K6 |
+| The whole trip opens in OsmAnd in itinerary order | US-18a | @kpi @manual @K6 |
+| The exported file holds the trip in itinerary order | US-18a |  |
+| Tracks keep their original detail and direction | US-18a |  |
+| Locus Map and Garmin accept the file | US-18a | @manual |
+| The exported file carries the consideration report | US-18a |  |
+| The first export of a big trip records how long planning took | US-18a | @kpi @technical @K1 |
+| A stale plan is exported with a clear label | US-18b | @edge |
+| A failed plan cannot be exported | US-18b | @error |
+| Export waits for road shapes | US-18b | @error @infrastructure-failure |
+| Unconfirmed legs and retraces are marked in the file | US-18b | @edge |
+| Exporting an older run after a reverse keeps its original direction | US-18b | @edge @real-io @adapter-integration |
+| Track data that no longer matches the run refuses the export | US-18b | @technical @error @infrastructure-failure @real-io @adapter-integration |
+
+**`routing-engine-contract.feature`** (@pending @technical @contract @real-io @adapter-integration)
+
+| Scenario | Stories | Tags |
+|---|---|---|
+| A Torino to Susa connection is read as one Confirmed leg | US-10a |  |
+| A missing matrix answer confirmed by a route check means no connection at that level | US-10a | @edge |
+| One place the routing engine cannot snap never removes the other places' legs | US-10a | @error |
+| A large trip is asked in batches the routing engine accepts | US-10a | @edge |
+| The contract checks stop when the engine is not the version they were recorded against | US-10a | @error |
+| Routing engine failures are reported as failures, never as missing roads (3 examples) | US-10a | @error @infrastructure-failure |
+| A passing server hiccup is retried and the plan still counts toward the 3-minute promise | US-10a | @edge @K5 |
+| The offline road map reports connections and failures the same way as the routing engine | US-10a |  |
+| The routing engine on the Pi still answers like its recordings | US-10a | @requires_external @real_provider @pi |
+| A place next to a restricted road is classified from both the legal and the permissive look-up | US-10b | @edge |
+| A permissive retry never snaps a place onto a footpath | US-10b | @error |
+
+## Wave: DISTILL / [REF] Adapter coverage table (adapter scenario coverage per nw-distill: every driven adapter has a `@real-io @adapter-integration` scenario)
+
+| Driven adapter | `@real-io` scenario | Covered by |
+|---|---|---|
+| SQLAlchemy repositories + UnitOfWork (SQLite WAL) | YES | WS (restart of the real server process); 01a "A trip project survives a restart"; 01a newer-version refusal |
+| Alembic migrations + newer-revision check (D129) | YES | WS (fresh database migrated at start); 01a "An older planner refuses data saved by a newer version" |
+| `LocalFileStore` (originals, versioned files, write probe) | YES | WS + 01a imports; 01a "A data folder the planner cannot write to"; 07 "The original file is kept unmodified"; 08 crash consistency; 11 damaged track data |
+| `ProcMountTable` (`/proc/self/mountinfo`) | YES | WS and 00b start-up scenario (real probe in the server process); 01a container scenario (`@requires_external @compose`, CI job 7); in-process: `FakeMountTable` |
+| `GpxpyParser` (+ defusedxml) | YES | 01a "Marco imports his Assietta trail", "not GPX" outline, "no usable track", "tries to read other files" |
+| `GpxpyWriter` | YES | 01b "Marco downloads the first plan as a standard GPX file"; 11 "The exported trip is standard GPX with real road shapes" |
+| `StructlogEventLog` | YES | 00b "Each start of the planner ... records one start-up line"; 01a start-up refusals |
+| `SystemClock` | YES | WS (real server process) |
+| `OrToolsTourSolver` (child) | YES | 01b first itinerary; 02 identical inputs; 03 golden order, closing the planner mid-solve |
+| `CountingRoutingProvider` | YES | 05 "Excluding an item makes zero new routing requests", "Known legs survive a restart" |
+| Leg / point cache | YES | 05 restart; 06a legs kept after an engine failure |
+| `ValhallaRoutingProvider` | YES (recorded 3.9.1 answers) + live | `tests/contract/routing_port/`: 10 recorded-answer scenarios + 1 live (`@requires_external`) |
+| `MockRoutingProvider` | YES (contract parity) | contract "The offline road map reports connections and failures the same way" |
+| `ScriptedTourSolver`, `FakeClock`, `FakeMountTable` | n/a | test doubles (waivers W1-W2, external fakes) |
+| `HeuristicTourSolver`, `NominatimGeocoder` | n/a | not built / Phase 2 |
+
+Zero MISSING rows.
+
+## Wave: DISTILL / [REF] Driving adapter coverage
+
+| Entry point (DESIGN) | Protocol in the test | Scenario(s) |
+|---|---|---|
+| `uvicorn --factory overland_planner.bootstrap.app_factory:create_app` | real process: exit code, stdout JSON lines, HTTP | WS; 00b start-up line; 01a unwritable folder, newer data; 09 private tile key |
+| `GET /healthz` | HTTP (200 `{"status":"ok"}` / 503 with reason) | 00b start-up line, shared password; 01a non-persistent data; 01b optimizer unavailable |
+| `GET /api/health` | HTTP | 01a non-persistent data (banners); 06a version mismatch |
+| `GET /` (SPA, built by CI job 2) + HTTP Basic | HTTP (200 HTML / 401 `unauthorized`) | WS; 00b shared and wrong password; `@ui` journeys |
+| Projects, items, tracks, merge, reverse, POIs, anchors, bulk | HTTP | 01a, 02, 04, 07, 08 |
+| `POST .../plan-runs` (+ `ignore_memo`), `GET/POST /api/plan-jobs/{id}[/stop]` | HTTP 202 / 422 / 409 / 503; polling; idempotent Stop | 01b, 02, 03, 05, 06a |
+| Runs, diff, geometry, `export.gpx`, leg-cache deletes, `config/map` | HTTP | 04, 05, 09, 10, 11 |
+| `GET /api/diagnostics` + page | HTTP | 03, 05, 06a, 11 `@kpi` |
+| `deploy/compose.yaml`; `make deploy` / compose on Pi and PC; image build | static read; real commands with `--run-external` | 00b |
+| CLI | n/a | Phase 2 |
+
+## Wave: DISTILL / [REF] Scaffolds (RED-ready scaffolding per nw-distill: `__SCAFFOLD__` marker, methods raise AssertionError)
+
+| File | Contents | Marker |
+|---|---|---|
+| `src/overland_planner/bootstrap/app_factory.py` | `create_app(environ=None, *, external=None)` raising `AssertionError("Not yet implemented -- RED scaffold ...")`; `ExternalPorts(clock, mount_table, tour_solver)` | `__SCAFFOLD__ = True` |
+| `src/overland_planner/application/ports/probe.py` | `ProbeResult(outcome, reason)`, `Probeable` | `__SCAFFOLD__ = True` |
+| `src/overland_planner/application/ports/clock.py` | `Clock` (`now`, `monotonic`) | `__SCAFFOLD__ = True` |
+| `src/overland_planner/application/ports/host.py` | `MountTable.entries() -> list[(mount_point, fstype)] | None` (D182) | `__SCAFFOLD__ = True` |
+| `src/overland_planner/{domain,application,adapters,bootstrap}/**/__init__.py` | DESIGN package layout | - |
+
+Only modules the tests import are scaffolded; slices 00b and 01a share the composition-root scaffold. Test doubles: `tests/common/fakes.py` (`FakeClock`, `FakeMountTable`).
+
+## Wave: DISTILL / [REF] Test placement
+
+`tests/acceptance/overland_route_planner_mvp/` (D103) and `tests/contract/routing_port/` (D181), following the DESIGN "Tests" row; data folders under the workspace (D182).
+
+## Wave: DISTILL / [REF] PBT and Tier-B strategy
+
+- Layer 1-2 `@property`: US-03 (HC-1, HC-5), US-04 (HC-2, round trip or one-way), US-05 (FR-5.6), US-07b (HC-3), US-19 (A-7). Hypothesis over Alpine-box projects with sparse / Unconfirmed / retrace pair plans; `InvariantGuard` as oracle; readable seeds as `@example`; profiles `ci` 1,000, `dev` 100, `mutation` 50 (D97); solver hosting per D192.
+- Layer 3+: example-only, sad paths enumerated (Mandate 11).
+- Tier B: plan-iteration state machine at slice 04/05 (D114).
+
+## Wave: DISTILL / [HOW] Domain language (fact -> step name, slices 00b and 01a)
+
+| Fact / observation | Step definition (Python) |
+|---|---|
+| Marco's planner is running on his home server with his trip collection saved there | `given_marco_has_started_the_planner_server` |
+| the planner is running | `given_the_planner_is_running` |
+| Marco has created the project "X" / creates it / with an empty name | `given_marco_has_created_the_project`, `when_marco_creates_the_project`, `when_marco_creates_a_project_without_a_name` |
+| Marco imports "file" / he has imported it | `when_marco_imports`, `given_he_has_imported_into_it` |
+| he sees track "T" from A to B / it still contains track ... | `then_he_sees_track_from_to`, `then_it_still_contains_track_from_to` |
+| Marco adds POI / he has added POI / appears as an Included POI | `when_marco_adds_poi`, `given_he_has_added_poi`, `then_appears_as_included_poi` |
+| Marco sets Start and End / S/E, Start, End badge | `when_marco_sets_round_trip`, `when_marco_sets_one_way`, `then_one_row_with_se_badge`, `then_shows_badge` |
+| the planner is restarted | `when_the_planner_is_restarted` |
+| Marco starts the planner / the planner refuses to start / names the part / data is newer | `when_marco_starts_the_planner`, `then_the_planner_refuses_to_start`, `then_log_names_part_and_reason`, `then_log_says_data_is_newer` |
+| Marco's data folder holds "X" saved by a newer planner / back on the newer planner X is unchanged | `given_data_folder_from_newer_version`, `then_newer_planner_finds_data_unchanged` |
+| the shared household password is switched on / Giulia without it / with a wrong one | `given_basic_auth_enabled`, `when_giulia_opens_without_credentials`, `when_giulia_opens_with_wrong_password` |
+| he sees "message" | `then_he_sees` (also checks the error envelope, D183) |
+
+## Wave: DISTILL / [REF] Pre-requisites
+
+- DESIGN brief §5 HTTP contract (D130) and the `.env` keys of brief §12.
+- DEVOPS: job 2 builds the web app before pytest (D162); job 7 runs `--run-external -m "compose or security"` plus the `--run-pending` slices that are still pending (D190); `make acceptance-pi` hosts `@pi` (user names the start time).
+- Alembic `migrations/` in the repository (the newer-version precondition uses the planner's own migrations, W3).
+- Marco's real `assietta.gpx` before the 01a demo; the 10-file corpus before slices 07/08 (D158).
+- Slice 03-ops: committed 60-item fixtures and golden hash (OD-7). Slice 06a: recorded answers copied to `tests/contract/fixtures/valhalla-3.9.1/` with a sha256 manifest (D95).
+
+## Wave: DISTILL / [REF] Outcome registration
+
+Unchanged from the first pass: `nwave-ai outcomes register` fails on this machine (`FileNotFoundError: .../site-packages/docs/product/outcomes/schema.json`, a defect of the installed CLI), so OUT-1..OUT-19 are listed here as candidates and nothing was registered.
+
+| ID | Kind | Contract | Artifact |
+|---|---|---|---|
+| OUT-1 | operation | create project -> project / "Give the project a name" | slice-01a |
+| OUT-2 | operation | import trail files -> tracks with entry, exit, length + warnings; refused files named (D149) | slice-01a, 07 |
+| OUT-3 | operation | add POI -> Included POI / range refusal | slice-01a |
+| OUT-4 | specification | -90 <= lat <= 90, -180 <= lon <= 180 | slice-01a |
+| OUT-5 | operation | set Start/End (POIs only) -> anchor `start_end` or `start` + `end` | slice-01a, 02 |
+| OUT-6 | operation | health check -> ok / unhealthy with reason | slice-00b, 01a |
+| OUT-7 | specification | start-up refusal (unwritable data, newer data, keyed tile URL) -> one refusal line, non-zero exit | slice-01a, 09 |
+| OUT-8 | operation | request plan run (+ `ignore_memo`) -> job / refusal with enumerated code, no run | slice-01b, 03 |
+| OUT-9 | operation | stop plan job (idempotent) -> best so far / Failed / no run | slice-03 |
+| OUT-10 | invariant | track items entry -> exit in full; retrace only in the guarded exit-side form | slice-02, 03b |
+| OUT-11 | invariant | first stop = Start, last stop = End | slice-02 |
+| OUT-12 | invariant | report lists every project item once | slice-04 |
+| OUT-13 | invariant | toggle/remove-only Recalculate requests zero legs | slice-05 |
+| OUT-14 | invariant | identical solver inputs -> identical plan | slice-02 |
+| OUT-15 | specification | ladder Confirmed / Unconfirmed(reason) / None; order fewest Unconfirmed, fewest retraces, objective | slice-04, 06b, 03b |
+| OUT-16 | operation | export GPX -> GPX 1.1 with report and marks / refusal | slice-01b, 11 |
+| OUT-17 | operation | reverse track direction -> swapped entry/exit, history, Stale | slice-08 |
+| OUT-18 | operation | run diff / history | slice-10 |
+| OUT-19 | operation | diagnostics -> K1-K7, G1, G2, G4 (all cold runs counted, D147) | slice-03 |
+
+## Wave: DISTILL / [REF] Mandate compliance evidence
+
+- CM-A: production imports in tests are `overland_planner.bootstrap.app_factory` (`create_app`, `ExternalPorts`) and `overland_planner.application.ports.probe` (fakes). The newer-version precondition also uses Alembic on the planner's own migrations (waiver W3).
+- CM-B: grep over Gherkin step lines (comments and tags excluded) for API, HTTP, endpoint, JSON, database, SQL, SQLite, docker, compose, uvicorn, MockProvider, respx, status code, schema, fixture, subprocess, container, basic auth, image, port N, stack, apikey, URL, volume, alembic, probe, payload, cache key -> 0 hits in `tests/acceptance/`. The contract suite is `@technical` and may name engine concepts (batches, versions).
+- CM-C: 1 walking skeleton + 203 focused scenarios.
+- CM-E: every state-changing 00b/01a step captures before/after; universe `projects.names`, `project.items` only.
+- CM-F / CM-H: no Hypothesis in layer-3 tests; sad paths are named examples and outlines.
+- CM-G: Tier B declared for slices 04/05 (D114).
+
+## Wave: DISTILL / [REF] Handoff to DELIVER
+
+- Default run `uv run pytest -q tests`: the walking skeleton fails RED, everything else is skipped. Enable 00b and 01a scenarios one at a time (remove `@pending`), or see them all RED with `--run-pending=slice-00b --run-pending=slice-01a`. Evidence: `distill/red-classification.md`.
+- Order: 00a (enabler) -> 00b -> 01a (the WS turns GREEN here) -> 01b ...; for each later slice DISTILL writes steps and scaffolds first, confirms RED, then DELIVER builds.
+- Open items: `distill/upstream-issues.md` (all first-pass items closed; UI-19 open for the PO).

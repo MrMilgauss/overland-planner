@@ -17,6 +17,15 @@ Each row names the item, what DESIGN said, what DEVOPS needs, and the DEVOPS dec
 | DV-7 | ADR-011 `/data` mount probe | Reads `/proc/self/mountinfo` | On non-Linux platforms (macOS dev, no `/proc`) the probe returns `not_applicable` and the app stays healthy. On Linux the behaviour is unchanged | dev-mac has no Docker and no `/proc`; otherwise the dev app would always be degraded | D80 | Clarification; ADR-011 amendment note |
 | DV-8 | brief §1 / ADR-013 | "239 GB NVMe free", "about 11 GB free" | Informational. Measured 2026-11-02: 221 GB disk free, 12.3 GB MemAvailable, 2 GB swap (527 MB in use). `~/valhalla-spike` holds 18.3 GB that can be reclaimed after the first tileset is seeded (D92) | Keeps the resource budget honest | D83, D92 | Informational |
 
+### Added by the final review gate (2026-11-02)
+
+| # | Area | Requested change | Why | DEVOPS decision | Status |
+|---|---|---|---|---|---|
+| DV-9 | brief §7/§9 (runtime writes) | The planner writes only to `DATA_DIR` (`/data`) and `/tmp` (solver child pipes, temp files); bytecode is compiled at image build. Needed for `read_only: true` + a 64 MB `/tmp` tmpfs | Container hardening (Forge F-17) | D173 | Clarification for the architect / crafter; verified by job 7 `security` marker |
+| DV-10 | ADR-014 §1, D66/D67 (K5 claim population) | No exclusions: K5 counts every cold 60-item plan; retried and P2 > 700 counted separately for visibility | User UD-3 | D177 | Applied in `kpi-contracts.yaml`; ADR wording is the architect's (fixlist R-14 / UD-3) |
+| DV-11 | ADR-011 `/data` probe | DV-7 is subsumed by the architect's UI-1 amendment (longest-prefix fstype rule; non-Linux `not_applicable`). CI mapping in D168 | Forge F-09 | D168 | Architect amends ADR-011; DEVOPS records the CI mapping |
+| DV-12 | ADR-014 §1 (K5 claim wording) | Claim gate = cold plans with exactly 60 items at `make perf-pi` (authoritative), every run counted; diagnostics report p95 per size band (<=30, 31-59, 60, 61-70); done, failed and cancelled jobs all counted (elapsed as lower bound) and shown separately; no silent exclusions | DEVOPS re-review N-04, UD-3 | D177 | Applied in `kpi-contracts.yaml`; architect aligns ADR-014 |
+
 ## Naming note (no change requested)
 
 The user brief for this wave said "app" and "app-data". DEVOPS keeps the DESIGN names: the service is `planner`, the volumes are `planner-data` and `valhalla-data`. The compose project `overland` gives the Docker names `overland_planner-data` and `overland_valhalla-data`, fixed with an explicit `name:` so the ADR-018 backup commands stay stable.

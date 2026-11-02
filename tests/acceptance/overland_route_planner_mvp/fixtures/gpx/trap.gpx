@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gpx [
+  <!ENTITY secret SYSTEM "file:///etc/passwd">
+]>
+<gpx version="1.1" creator="overland-planner DISTILL fixture (XXE probe)" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>&secret;</name>
+    <trkseg>
+      <trkpt lat="45.0560" lon="7.0410"></trkpt>
+      <trkpt lat="44.9580" lon="6.8790"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

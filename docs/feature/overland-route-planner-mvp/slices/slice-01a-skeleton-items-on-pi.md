@@ -1,49 +1,49 @@
 # Slice 01a: Walking skeleton (a) - my trail and places on my own Pi
 
-Priority: 1 | Stories: US-01a, US-01b, US-02a | Jobs (primary per story): J-06, J-06, J-01 | Strategy: WS-B
+Priority: 1 | Stories: US-01b, US-02a, US-02c | Jobs (primary per story): J-06, J-01, J-01 | Strategy: WS-B | Revision 7 (final gate, D145): US-01a and all CI/image/deploy work moved to slices 00b and 00a
 
 ## Goal
 
-Marco runs `docker compose up -d` on his Pi, opens the planner from his desktop, creates a project, imports one real Alpine GPX, adds POIs by coordinates and sets Start/End. He can see his trail's length and its entry and exit, and the project is still there after a restart.
+On the planner that slice 00b deployed to his Pi (mock routing), Marco creates a project, imports one real Alpine GPX, adds POIs by coordinates and sets Start/End. He can see his trail's length and its entry and exit, and the project is still there after a restart.
 
 ## IN
 
-- Compose stack for ARM64 (Pi) and amd64 (PC), serving the UI at `<pi-host>:<port>`
-- Health check, structured stdout log line, optional basic auth, LAN-only by default, no secrets in the image, idle RAM < 300 MB
-- Create project (name required); project persists across restarts; a non-persistent volume is reported
-- Import ONE single-track GPX (original kept); invalid file rejected
-- Add POI by decimal degrees with range validation
-- Set Start/End (round trip = one S/E row)
+- Create project (name required); project persists across restarts; a non-persistent volume is reported; start-up refusals (unwritable data folder, data from a newer version) (US-01b)
+- Import ONE single-track GPX (original kept); non-GPX and no-usable-track files rejected; upload cap and hostile-file refusal (US-02a)
+- Add POI by decimal degrees with range validation; set Start/End (round trip = one S/E row) (US-02c)
+- The walking skeleton scenario (start, load Assietta, restart, still there)
 
 ## OUT
 
-- Optimize, itinerary and export (slice 01b); everything listed under OUT in slice 01b
+- CI pipeline and published image (slice 00a); compose deploy, basic auth, LAN-only, idle RAM (slice 00b, US-01a)
+- Optimize, itinerary and export (slice 01b)
 
 ## Learning hypothesis
 
-Disproves "a single compose stack runs on Marco's ARM64 Pi and keeps his data" if the image does not run on the Pi or a project is lost on restart.
+Disproves "the planner keeps Marco's trip data on the Pi" if a project or track is lost on restart, or if a bad file damages the project.
 
-## Acceptance criteria (each traces to a scenario in the .feature file)
+## Acceptance criteria (each traces to a scenario in `tests/acceptance/overland_route_planner_mvp/`)
 
-- [ ] US-01a: "Marco brings the planner up on his Pi with one command"; "The same setup runs on Marco's PC"; "Household members are asked for the shared password..."; "The planner stays on the home network by default"; "Sharing the planner image never shares Marco's secrets"; "The idle planner leaves room on the Pi"
-- [ ] US-01b: "Marco creates a trip project"; "A project without a name is not created"; "A trip project survives a restart"; "Missing persistent storage is reported..."
-- [ ] US-02a: "Marco imports his Assietta trail"; "Marco adds Briancon by coordinates"; "Coordinates out of range are rejected..."; "A file that is not GPX is rejected"; "Home is both Start and End of a round trip"; "A one-way trip has a different Start and End"
+- [ ] Walking skeleton: "Marco starts his planner, loads his Assietta trail and still finds it after a restart"
+- [ ] US-01b: "Marco creates a trip project"; "A project without a name is not created"; "A trip project survives a restart"; "Missing persistent storage is reported..." (+ 3 `@technical` start-up scenarios)
+- [ ] US-02a: "Marco imports his Assietta trail"; "A file that is not GPX is rejected"; "A trail file without any usable track is rejected" (+ 2 `@technical`: hostile file, upload cap)
+- [ ] US-02c: "Marco adds Briancon by coordinates"; "Coordinates out of range are rejected..."; "Coordinates on the edge of the valid range are accepted"; "Home is both Start and End of a round trip"; "A one-way trip has a different Start and End"
 
 ## Production-like data
 
-Real `assietta.gpx` (Strada dell'Assietta, Pian dell'Alpe -> Sestriere, ~34.2 km); POIs Casa Marco, Torino (45.0703, 7.6869), Briancon (44.8990, 6.6430), Aosta (45.7370, 7.3200).
+Marco's real `assietta.gpx` (Strada dell'Assietta, Pian dell'Alpe -> Sestriere, ~34.2 km); POIs Casa Marco, Torino (45.0703, 7.6869), Briancon (44.8990, 6.6430), Aosta (45.7370, 7.3200).
 
-## Dogfood moment
+## Dogfood moment and demo DoD
 
-Marco loads the Assietta on his own Pi, restarts the stack and finds it still there; Giulia opens the planner from her phone.
+Marco loads the Assietta on his own Pi, restarts the planner and finds it still there. **Precondition of the demo (D158, DEMO-1):** Marco's real `assietta.gpx` replaces the synthetic DISTILL stand-in (D112, UI-14) in the fixtures before the demo; the demo is not done on the synthetic file.
 
 ## Dependencies
 
-None. OD#4 resolved: Svelte 5 + MapLibre GL JS (DESIGN D19). OD#5 resolved: verified on Marco's Raspberry Pi 5 16 GB, `pi.example` (DESIGN D38) (U14). Revision 6 (U21): the "secrets" scenario checks the basic-auth password only, since the MVP has no routing API key; idle memory excludes the routing engine (NFR-5).
+Slice 00b (planner deployed on the Pi) and 00a (CI). OD#4 resolved: Svelte 5 + MapLibre GL JS (DESIGN D19).
 
 ## Effort and reference class
 
-1 day (US-01a 0.4 d, US-01b 0.3 d, US-02a 0.3 d). Reference class: greenfield CRUD + compose skeleton.
+0.85 day (US-01b 0.4 d incl. start-up refusals, US-02a 0.25 d, US-02c 0.2 d). Reference class: greenfield CRUD on real storage.
 
 ## Pre-slice spike
 

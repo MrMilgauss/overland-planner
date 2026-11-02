@@ -1,7 +1,7 @@
 # ADR-014: End-to-end performance budget, run limits and determinism
 
 ## Status
-Accepted (user decision N2, 2026-11-01). **Stage budget measured by SPIKE-1R and SPIKE-2R on 2026-11-01** (spike/findings.md; amendment D77, 2026-11-02). Supersedes ADR-005. Resolves review B1.
+Accepted (user decision N2, 2026-11-01). **Stage budget measured by SPIKE-1R and SPIKE-2R on 2026-11-01** (spike/findings.md; amendment D77, 2026-11-02). Supersedes ADR-005. Resolves review B1. **Final-gate amendment** D124/D126/D127/D131/D132/D135 (2026-11-02).
 
 ## Context
 FR-5.5 was revised on 2026-11-01. All limits are configurable:
@@ -41,9 +41,9 @@ Status of the rows: **all rows except UI were measured on the Pi** (p95, N=30, c
 - (a) pairs that were None after the legal pass, retried with permissive costing;
 - (b) retrace pairs entry(t) -> entry(j), only for (t, j) whose direct pair stayed None.
 
-So P2 = N_none + N_retrace <= N_none + T_dead x (n-1). The 15 s row is budgeted for **P2 <= 700 pairs** (about 20% of a 60-item one-way matrix) at <= 22 ms/pair (measured 5.6 ms/pair p95). The adapter groups rows with identical target sets into rectangular sub-matrices, so the requested pairs stay <= 2 x P2 (measured 1.02 x P2). Every run logs `second_pass_pairs`. A run with P2 > 700 is outside the p95 claim and is reported as such.
+So P2 = N_none + N_retrace <= N_none + T_dead x (n-1). The 15 s row is budgeted for **P2 <= 700 pairs** (about 20% of a 60-item one-way matrix) at <= 22 ms/pair (measured 5.6 ms/pair p95). The adapter groups rows with identical target sets into rectangular sub-matrices, so the requested pairs stay <= 2 x P2 (measured 1.02 x P2). Every run logs `second_pass_pairs`. ~~A run with P2 > 700 is outside the p95 claim and is reported as such.~~ **[Superseded by the final-gate amendment D127 (UD-3): runs with P2 > 700 count toward the p95 claim; their number is reported separately.]**
 
-**Retried runs.** A job in which any Valhalla call was retried (ADR-013 §6) records `retried=true` and is outside the p95 claim.
+**Retried runs.** A job in which any Valhalla call was retried (ADR-013 §6) records `retried=true` ~~and is outside the p95 claim~~ **[superseded, D127: it counts toward the p95 claim and is reported separately]**.
 
 A warm Recalculate (all legs cached) is dominated by the solve (<= 55 s) or is instant on a memo hit. If the spikes measure a stage above budget, `SOLVER_BUDGET` is the slack absorber: it is recalibrated so the measured sum of the other stages + solve p95 + reserve <= 180 s, as long as quality stays within 10% of the long reference (SPIKE-1R).
 
@@ -67,7 +67,7 @@ A warm Recalculate (all legs cached) is dominated by the solve (<= 55 s) or is i
 Nodes in stable item-id order; integer costs; lexicographic weights (ADR-016) and retrace arcs (ADR-017) derived deterministically from the cache snapshot.
 
 ### 5. Fingerprint memo (carried over)
-- SHA-256 over: ordered node ids + quantised coordinates + `direction_version`; arc costs including confidence levels and retrace options; objective; provider_id; profile; solver version, strategy and budget.
+- SHA-256 over: ordered node ids + quantised coordinates + `direction_version`; arc costs including confidence levels and retrace options; objective; provider_id; profile; solver version, strategy and budget. **[Final gate D124 adds: weighting mode (`two_phase` | `lexicographic`), phase-1 and phase-2 solution limits, `RETRACE_PENALTY_M` and `RETRACE_PENALTY_S`.]**
 - A stored successful run of the project with the same fingerprint gives its order (`memo_hit=true`, which inherits the source run's `reproducible` flag).
 - **Memo reuse of a stopped or time-limited run (review L-5; confirmed by the user, Q-U8 -> D74).** A later Calculate with identical inputs returns the same "not fully optimised" plan, with the label kept. This preserves FR-5.6. There is also a **"Re-optimise (ignore previous result)"** action (`POST /api/projects/{project_id}/plan-runs?ignore_memo=true`) that solves afresh to the budget, creates a new run, and leaves earlier runs untouched.
 - Totals, report and warnings are always recomputed.
@@ -85,3 +85,19 @@ Budget-only with very large limits, so A-6 does not depend on hardware speed. Th
 - Positive: the 180 s promise is budgeted honestly across every stage; determinism holds in normal runs; slow or interrupted runs are visible and contained.
 - Negative: the solve is now the dominant stage (~48 s of ~64 s measured); the cold matrix risk (SPIKE-2R K4) is retired at 10.5 s. The budget is host-specific and must be re-calibrated if the host changes (README).
 - US-06 is rewritten upstream: the end-to-end cold scenario needs Valhalla, so it moves to slice 06; slice 03 keeps the solve-stage scenarios on a precomputed matrix.
+
+## Amendment (final gate, D124, D126, D127, D131, D132, D135) — 2026-11-02
+Review findings R-04, R-07, R-13, R-14, R-17 and user decision UD-3 / orchestrator default OD-2. The stage budget and limits above are unchanged.
+
+- **One definition of "60 items" (D131, R-13).** "Items" are the Included **non-anchor** items. The 180 s claim is for k = 60 items **plus Start and End = 62 nodes**, which is exactly what SPIKE-1R/2R measured (40 tracks + 20 POIs). Required one-way pairs: Start -> each item, each item -> End, item -> item: **k² + k = 3,660** for k = 60; Start -> End is needed only when k = 0 (1 pair; OD-4). Round trip (one S/E item): k² + k as well (S/E counts as Start and as End). The earlier "3,423 pairs (k = 58)" reading is withdrawn everywhere.
+- **Supported size for the claim (D126, R-07, OD-2).** Up to 60 items (62 nodes) is the supported, measured size. 61–70 items are **allowed** (REQUIREMENTS §4 range) and never refused; the UI shows "Large project - calculation may take longer than 3 minutes" (product-owner wording) and the limits apply as usual. The claim is extended only after slice 03 re-calibrates `SOLVER_BUDGET` and the solve row at 70 items (72 nodes) on the Pi.
+- **K5 population (D127, UD-3).** The p95 <= 180 s target counts **every** cold 60-item plan, including jobs with `retried=true`, jobs with P2 > 700 and jobs that waited for the solver slot (ADR-015 amendment D133). Their counts are reported separately for visibility (diagnostics and `kpi-contracts.yaml`), never excluded. The "outside the p95 claim" clauses in §1 and in ADR-013 §6 are superseded; D66/D67 are amended accordingly.
+- **Spike figures labelled (D132, R-14).**
+  - Point snapping row: the measured 0.33 s is the legal `/locate` at 250 m then 1,500 m. The permissive `/locate` (ADR-016 §1 amendment D79) was not timed; its cost is an **estimate** (about the same again, <= 0.7 s together), well inside the 5 s row. Slice 06a measures it.
+  - Second-pass row: P2 = 720 is a **bounding case** (K4 requested all 122 endpoints, far points included). A realistic 60-item instance is about 600 pairs. 700 is the budgeting assumption of the 15 s row (measured 5.6 ms/pair, so the row holds up to about 2,600 pairs), not an exclusion.
+- **Fingerprint inputs (D124, R-04).** The memo key also covers the weighting mode, the phase-1 and phase-2 solution limits and both retrace penalties (§5). Test: changing any one of them (and nothing else) gives a memo miss and a fresh solve; changing none gives a hit.
+- **Guard at real track sizes (D135, R-17).** The 3 s "Guard + assemble + persist" row was measured with 40 tracks × 2,000 points. Full-sequence hashing (ADR-009 Amendment 2) scales with points, so slice 03 re-measures the row with 40 × 20,000-point tracks on the Pi. If p95 exceeds 3 s, a documented `MAX_TRACK_POINTS` import limit (canonical points per track) is introduced instead of weakening the guard.
+- **Solve row and CPU cap.** The 55 s solve row assumes one solver child (ADR-015 D133) on the planner's CPU allocation; with `cpus: 1` (OD-9) slice 03's `perf-pi` re-verifies solve p95 <= 55 s.
+
+## Amendment (DEVOPS re-review, DV-12 / D177) — 2026-11-02
+- **K5 gate and reporting.** The authoritative claim gate is `make perf-pi` on cold plans with exactly 60 items (62 stops). Diagnostics additionally report p95 per size band (<=30, 31-59, 60, 61-70). Done, failed and cancelled jobs are all counted (elapsed time as a lower bound) and shown separately; memo hits are shown separately because they are not cold plans. No silent exclusions (UD-3).

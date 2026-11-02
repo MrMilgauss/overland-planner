@@ -1,6 +1,6 @@
 # Slice 05: Recalculate without re-fetching what is already known
 
-Priority: 7 | Stories: US-09 | Job: J-03 | HC-4 | A-4 | FR-7.1, 7.2, 7.4, 7.5
+Priority: 7 | Stories: US-09a (reuse, 0.7 d), US-09b (forget known legs, 0.3 d) - split from US-09 at the final gate (D143) | Job: J-03 | HC-4 | A-4 | FR-7.1, 7.2, 7.4, 7.5
 
 ## Goal
 

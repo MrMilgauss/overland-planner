@@ -33,7 +33,7 @@ jobs:
     importance: 10
     satisfaction: 3
     opportunity_score: 17
-    stories: [US-02a, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16]   # primary job only (S11)
+    stories: [US-02a, US-02c, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16]   # primary job only (S11)
 
   - id: J-02
     name: trust-trail-integrity
@@ -73,7 +73,7 @@ jobs:
     importance: 8
     satisfaction: 2
     opportunity_score: 14
-    stories: [US-05, US-07a, US-09, US-17]
+    stories: [US-05, US-07a, US-09a, US-09b, US-17]   # US-09 split 2026-11-02 (D143)
 
   - id: J-04
     name: take-trip-to-device
@@ -153,3 +153,6 @@ changelog:
   - date: 2026-11-01
     feature: overland-route-planner-mvp
     change: "Revision 6 (post-DESIGN back-propagation): US-06 -> US-06a/b, US-10 -> US-10a/b (J-01); US-18 -> US-18a/b (J-04); new US-19 retrace (J-02); J-02 functional dimension mentions the exit-side retrace."
+  - date: 2026-11-02
+    feature: overland-route-planner-mvp
+    change: "Final review gate (D142, D143): US-02a -> US-02a (trail file) + US-02c (places and anchors), both J-01; US-09 -> US-09a (reuse known legs) + US-09b (forget known legs), both J-03."

@@ -12,7 +12,10 @@ Marco plans a realistic 60-item trip on his Raspberry Pi 5. With the road connec
 - "Stop and use best so far" during a run (DESIGN D43, ADR-015); Stop during leg fetching creates no run
 - Run time shown ("Planned 60 items in ...")
 - No-change Recalculate reuses the identical stored plan ("Reused the identical plan of run #N"), including a "not fully optimised" one; "Re-optimise (ignore previous result)" starts a fresh search (D73, U45)
-- Benchmark fixture: 60 items = 60 nodes = 40 tracks + 20 POIs, of which 2 POIs are the anchors (Start "Casa Marco, Torino", End "Briancon"). The road matrix is precomputed in memory and plan reuse is disabled for measurement, so there is no dependency on slice 05 (B7, U10).
+- Benchmark fixture: 60 items (40 tracks + 20 POIs) plus the anchors Start "Casa Marco, Torino" and End "Briancon" = 62 stops (D146; fixtures I1/I2 from slice 03-ops). The road matrix is precomputed in memory and plan reuse is disabled for measurement, so there is no dependency on slice 05 (B7, U10).
+- 61-70 items plan normally with the notice "Large project - calculation may take longer than 3 minutes"; this slice re-calibrates at 70 items before the 3-minute claim is extended (D146)
+- Plan job log, stage timings and the diagnostics page (US-06a `@technical`); limit during the look-up creates no run (D157); messages per D151
+- Moved to slice 03-ops (D145): golden-order fixtures and CI check, `make perf-pi`
 
 ## OUT
 
@@ -25,8 +28,8 @@ Disproves "the optimizer is viable on a Raspberry Pi 5 for 60 items" if no searc
 
 ## Acceptance criteria (each traces to a scenario)
 
-- [ ] US-06a: "The solve stage for 60 items fits the budget on the Pi" (p95 <= 55 s); "The best plan found is returned when the optimisation limit is reached" (20 s limit -> plan within 25 s, labelled "not fully optimised (time limit)"); "A plan found on the Pi is nearly as good as a long search" (within 10% of a 30-min PC reference); "Marco sees how long planning took"
-- [ ] US-06b: "Marco stops a long optimisation and keeps the best route so far"; "Stopping before any valid route fails the run with a reason"; "Stopping while roads are still being looked up changes nothing"; "No valid route within the feasibility limit"; "A later no-change Recalculate returns the same plan as a stopped run" (same "not fully optimised" plan at once, "Re-optimise (ignore previous result)" offered); "Re-optimise starts a fresh search" (D73, U45)
+- [ ] US-06a: "The solve stage for 60 items fits the budget on the Pi" (slowest of 10 <= 55 s, D159; measured with `make perf-pi`); "The best plan found is returned when the optimisation limit is reached" (20 s limit -> plan within 25 s, labelled "not fully optimised (time limit)"); "A plan found on the Pi is nearly as good as a long search" (within 10% of a 30-min PC reference); "Marco sees how long planning took"
+- [ ] US-06b: "Marco stops a long optimisation and keeps the best route so far"; "Stopping before any valid route fails the run with a reason"; "Stopping while roads are still being looked up changes nothing"; "No valid route within the feasibility limit" ("... - plan run #N failed", D151); "A later no-change Recalculate returns the same plan as a stopped run" (same "not fully optimised" plan at once, "Re-optimise (ignore previous result)" offered); "Re-optimise starts a fresh search" (D73, U45)
 - HC properties at 60 items are covered by the US-03/US-04 property scenarios (range 2-60). The idle RAM guardrail is DoD item 5.
 
 ## Production-like data
@@ -39,11 +42,11 @@ Marco runs his "everything I ever wanted to drive" collection (40 trails) on the
 
 ## Dependencies
 
-Slice 02 only. OD#5 resolved: Raspberry Pi 5 16 GB, `pi.example` (DESIGN D38) (U14).
+Slice 02 and slice 03-ops (fixtures I1/I2 with golden hash are a pre-requisite, OD-7; `make perf-pi`). OD#5 resolved: Raspberry Pi 5 16 GB, `pi.example` (DESIGN D38) (U14).
 
 ## Effort and reference class
 
-1 day after SPIKE-1R (US-06a 0.4 d, US-06b 0.6 d), at risk. Reference class: solver tuning plus a background job with stop (DESIGN ADR-015 already defines the job API).
+1 day, at risk (re-estimated at the final gate, D145: US-06a 0.3 d, US-06b 0.55 d, job log + diagnostics 0.15 d; golden order and perf tooling moved to 03-ops). SPIKE-1R is done. Reference class: solver tuning plus a background job with stop (DESIGN ADR-015 already defines the job API).
 
 ## Pre-slice SPIKE-1R - MANDATORY GATE (D14 amended, U12)
 

@@ -1,3 +1,7 @@
+# SUPERSEDED (2026-11-02, final review gate SSOT-1, D140): this file is a historical DISCUSS snapshot (Revision 6.1).
+# The executable scenario SSOT is tests/acceptance/overland_route_planner_mvp/*.feature (DISTILL, D103).
+# Do not edit or run this file; later wording changes (D116, OD-5 messages, D141-D159) are applied only there.
+#
 # Journey: Plan an overland trip (docs/product/journeys/plan-overland-trip.yaml)
 # Revision 1 (2026-11-01): every story UAT scenario of feature-delta.md is present here, tagged @US-xx.
 # Persona: Marco Ferri (overland-planner), Giulia Ferri (household-viewer).

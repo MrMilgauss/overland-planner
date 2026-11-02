@@ -1,0 +1,62 @@
+[project]
+name = "overland-planner"
+version = "0.0.0"
+description = "Self-hosted overland route planner (direction-safe, fixed-anchor itineraries on a Raspberry Pi)"
+readme = "REQUIREMENTS.md"
+requires-python = ">=3.12,<3.13"
+# Runtime dependencies from DESIGN "Technology choices". Exact pins are a DELIVER decision (slice 01a, D85),
+# except ortools, which DEVOPS D85 pins exactly.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.13",
+    "gpxpy>=1.6,<1.7",
+    "defusedxml>=0.7,<0.8",
+    "httpx>=0.27",
+    "structlog>=24",
+    "python-multipart>=0.0.9",
+    "ortools==9.15.6755",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-bdd>=8.1",
+    "hypothesis>=6.100",
+    "respx>=0.21",
+    "xmlschema>=3.3",
+    "pyyaml>=6.0",
+    # State-delta port (Mandate 8). Re-exported by tests/common/state_delta.py.
+    "nwave-ai>=3.21",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/overland_planner"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = ["-ra", "--import-mode=importlib"]
+bdd_features_base_dir = "tests/acceptance/overland_route_planner_mvp/"
+# Tags become markers through tests/conftest.py (hyphens -> underscores). Unknown-mark warnings are expected for
+# story/slice tags such as US_01a or slice_01a.
+filterwarnings = ["ignore::pytest.PytestUnknownMarkWarning"]
+markers = [
+    "pending: scenario of a slice whose step definitions or behaviour are not built yet (skipped by default)",
+    "walking_skeleton: the single end-to-end skeleton scenario of the feature",
+    "requires_external: needs a system outside the offline suite (Pi, Docker, live Valhalla); skipped unless enabled",
+    "real_provider: runs against live Valhalla on the Pi (make acceptance-pi), never in GitHub CI",
+    "pi: runs on pi-host (make acceptance-pi / perf-pi), never in GitHub CI",
+    "wiring_e2e: real uvicorn subprocess + real HTTP",
+    "property: property-based scenario (Hypothesis) at layer 1-2",
+    "slow: slower than the pre-push budget",
+    "solver_child: spawns the OR-Tools child process (excluded from mutation runs)",
+]

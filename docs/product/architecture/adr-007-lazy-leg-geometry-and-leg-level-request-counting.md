@@ -12,7 +12,7 @@ Accepted (user decision, 2026-11-01), **with Amendment 1** (Valhalla, confidence
 
 ## Decision
 1. **Recalculate fetches matrix values only.** Geometry is fetched lazily by `LegGeometryService` when a run's map is opened (`GET /api/plan-runs/{id}/geometry`) or when a GPX export is requested. It is cached in the leg cache (`geometry` column, encoded polyline).
-2. **Request counting unit = one leg (one ordered pair) requested through the `RoutingProvider` port**, counted by `CountingRoutingProvider` separately for matrix legs and geometry legs. The plan-run record and log line store `new_legs`, `cached_legs` and `provider_requests_legs` (matrix). HTTP call counts are logged as a diagnostic only.
+2. **Request counting unit = one leg (one ordered pair) requested through the `RoutingProvider` port**, counted by `CountingRoutingProvider` separately for matrix legs and geometry legs. The plan-run record and log line store `new_legs`, `cached_legs` and `provider_requests_legs` (matrix) **[final gate D130: named `legs_new`, `legs_cached` everywhere — poll payload, `plan_job_log`, plan-run record, log lines]**. HTTP call counts are logged as a diagnostic only.
 3. A geometry fetch that fails (unreachable or quota) leaves the run unchanged:
    - the map draws affected legs as dashed straight lines labelled "geometry unavailable";
    - **GPX export is refused** with "Road shapes could not be fetched from the routing provider - export not possible right now. Try again later."

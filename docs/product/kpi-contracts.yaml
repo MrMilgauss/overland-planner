@@ -100,17 +100,24 @@ kpis:
   - id: K5
     name: 60-item plan time on the Pi
     type: leading
-    target: "e2e p95 <= 180 s (cold legs); solve stage p95 <= 55 s"
+    target: "e2e p95 <= 180 s over cold plans with exactly 60 items at make perf-pi (every run counts; retried jobs and second-pass P2 > 700 included; UD-3, D177); solve stage p95 <= 55 s"
     baseline: "measured 2026-11-01 (SPIKE-1R/2R): sum of stage p95s 63.7 s, 73.7 s with UI + reserve; solve 47.56 s (dense)"
     instruments:
-      gate: make perf-pi (planner-perf on the Pi, client-observed from the Mac; N=10 -> gate on max, N=30 -> p95)
+      gate: "make perf-pi (planner-perf on the Pi, leg cache cleared, client-observed from the Mac; N=10 -> gate on max, N=30 -> p95). AUTHORITATIVE for K5: every run counts, none is dropped (D177). Solves the golden I1/I2 first and checks the order hash (D175)"
+      proxy: "/api/diagnostics K5 fields are a server-side proxy over production jobs (leg cache usually warm, no client time); they inform, they never open or close the claim (D177, F-25)"
       runtime_event: plan.job.finished (stage_ms, elapsed_ms) + plan.run.geometry_served (e2e_server_ms)
       diagnostics_fields:
-        k5.e2e_p95_s: "p95 of e2e_server_ms over the claim population, last 30 days (report max when N < 20)"
-        k5.solve_p95_s: p95 of stage_ms.solve over done jobs with items_included >= 50 and memo_hit = false
+        k5.e2e_p95_by_band_s: "p95 of e2e_server_ms (done) or elapsed_ms (failed, cancelled: lower bound) per size band {le_30, 31_59, 60, 61_70}, last 30 days (report max when N < 20); only band 60 is compared with 180 s"
+        k5.e2e_p95_s: same as band 60 (headline)
+        k5.solve_p95_s: p95 of stage_ms.solve per size band (band 60 compared with 55 s)
         k5.stage_p95_s: per stage (snapshot, snap, matrix, second_pass, reach_model, spawn, solve, guard_persist, geometry)
-        k5.out_of_claim: counts of jobs with retried=true, second_pass_pairs > 700, or memo_hit (reported, not in the p95)
-      claim_population: "done jobs, items_included >= 50, memo_hit=false, retried=false, second_pass_pairs <= 700"
+        k5.retried_jobs: per band, jobs with retried=true (visibility; INCLUDED in the p95)
+        k5.second_pass_gt_700_jobs: per band, jobs with second_pass_pairs > 700 (visibility; INCLUDED in the p95)
+        k5.failed_jobs: per band, failed jobs of any reason (INCLUDED, elapsed_ms as lower bound; also shown separately)
+        k5.cancelled_jobs: per band, jobs stopped by the user (INCLUDED, elapsed_ms as lower bound; also shown separately)
+        k5.memo_hit_jobs: per band, jobs answered from the memo (shown separately; they are not cold plans)
+      claim_population: "gate (authoritative): every make perf-pi run on the exactly-60-item fixture, leg cache cleared, ignore_memo=true; nothing dropped. Diagnostics (proxy): every non-memo plan job per size band, terminal state done, failed or cancelled; no silent exclusion (UD-3, re-review N-04). Band 61_70 is outside the 180 s claim (OD-2)"
+      adr_alignment: "ADR-014 s1 to carry the same wording (upstream DV-12, architect)"
     thresholds:
       e2e: {green: "<= 120 s", amber: "120-180 s", red: "> 180 s"}
       solve: {green: "<= 50 s", amber: "50-55 s", red: "> 55 s"}
@@ -169,5 +176,100 @@ diagnostics_endpoint:
   query: {days: "default 30", project_id: optional}
   sources: [plan_job_log, plan_runs, items, project_history, /proc, /sys/fs/cgroup]
   cost: read-only SQL aggregates over at most a few thousand rows; must answer in < 200 ms on the Pi; never takes the write lock
-  payload_keys: [version, k1, k2, k3, k4, k5, k7, g1, g2, g4, cache_hit_rate_30d, jobs_by_terminal_state_30d, retried_jobs_30d, second_pass_jobs_30d]
+  payload_keys: [version, process_started_at, k1, k2, k3, k4, k5, k7, g1, g2, g4, cache_hit_rate_30d, jobs_by_terminal_state_30d, retried_jobs_30d, second_pass_jobs_30d]
+  available_from: "03-ops slice (with plan_job_log). Before that, make diag = docker stats --no-stream + /healthz only (D178; closes UI-16)"
+  availability_slo: "none (D172): a single Pi cannot measure its own downtime; process_started_at + app_version are shown instead"
   cache_hit_rate: sum(legs_cached) / sum(legs_total) over done jobs
+
+delivery_metrics:   # DORA (DEVOPS D101, D176). Source: releases.log on the Pi (copied to the Mac by every make deploy/rollback); computed by `make dora`
+  source_fields: [ts, action, digest, git_sha, commit_ts, alembic_head, result, reason]   # commit_ts from OCI label org.overland.commit-ts
+  window: rolling 30 days, and per slice
+  metrics:
+    - id: D-1
+      name: Deployment frequency
+      definition: count of action=deploy with result=ok (unchanged excluded) per slice and per 30 days
+      target: ">= 1 per slice (about daily during DELIVER)"
+    - id: D-2
+      name: Lead time for changes
+      definition: "median of (deploy ts - commit_ts) over successful deploys"
+      target: "< 1 h"
+    - id: D-3
+      name: Change failure rate
+      definition: "(deploys followed by auto-rollback, or by a manual rollback within 24 h) / successful + failed deploys"
+      target: "< 15%"
+    - id: D-4
+      name: Time to restore
+      definition: "ts of the rollback (or auto-rollback) that restored a healthy release - ts of the failed deploy"
+      target: "< 15 min (make rollback)"
+  alert: none (reviewed at each slice demo)
+
+# ------------------------------------------------------------------------------------------------------------
+# Acceptance links (added by DISTILL, 2026-11-02; feature-delta "## Wave: DISTILL", decisions D103-D120).
+# Each KPI / guardrail -> the @kpi scenarios that prove the metric is producible or the guardrail holds.
+# Files are under tests/acceptance/overland_route_planner_mvp/. gate: hard = blocking in CI (or the named make
+# target); soft = observability only (the scenario proves the figure is emitted, not that the target is met).
+# window: the measurement window the scenario or instrument uses.
+acceptance_links:
+  K1:
+    gate: soft
+    window: "per project, first item created_at -> first export of a run with >= 20 items"
+    scenarios:
+      - {file: slice-11-device-ready-gpx.feature, scenario: "The first export of a big trip records how long planning took"}
+  K2:
+    gate: hard
+    window: "1,000 generated projects per property (Hypothesis profile ci); every run (guard)"
+    scenarios:
+      - {file: slice-02-directional-optimizer.feature, scenario: "No generated plan ever drives a track in reverse"}
+      - {file: slice-02-directional-optimizer.feature, scenario: "Tracks are always driven in full"}
+      - {file: slice-02-directional-optimizer.feature, scenario: "The trip always starts at Start and ends at End"}
+      - {file: slice-02-directional-optimizer.feature, scenario: "A plan that would break a hard rule is never shown"}
+      - {file: slice-03b-out-and-back-retrace.feature, scenario: "No track item is ever driven backwards, retraces included"}
+      - {file: slice-03-pi-performance.feature, scenario: "Marco's diagnostics show how planning went"}
+  K3:
+    gate: hard
+    window: "1,000 generated projects (property); every run (plan.run.completed report_items vs project_items)"
+    scenarios:
+      - {file: slice-04-consideration-list.feature, scenario: "Every project item is accounted for in the results"}
+      - {file: slice-04-consideration-list.feature, scenario: "The report is complete for any project"}
+      - {file: slice-03-pi-performance.feature, scenario: "Marco's diagnostics show how planning went"}
+  K4:
+    gate: hard
+    window: "per Recalculate job (distinct legs requested at the routing port); diagnostics over 30 days"
+    scenarios:
+      - {file: slice-05-incremental-recalculation.feature, scenario: "Excluding an item makes zero new routing requests"}
+      - {file: slice-05-incremental-recalculation.feature, scenario: "Adding one POI requests only the legs involving that POI"}
+      - {file: slice-05-incremental-recalculation.feature, scenario: "Diagnostics count toggle-only recalculations that needed the routing engine"}
+  K5:
+    gate: "hard via make perf-pi (D96), never in GitHub CI; soft in the diagnostics scenario"
+    window: "N=10 runs per gate (max = p95 of 10); diagnostics 30 days"
+    scenarios:
+      - {file: slice-03-pi-performance.feature, scenario: "The solve stage for 60 items fits the budget on the Pi", tags: "@requires_external @pi"}
+      - {file: slice-06a-valhalla-on-the-pi.feature, scenario: "A 60-item trip with no known roads is on screen within 3 minutes", tags: "@requires_external @real_provider @pi"}
+      - {file: slice-03-pi-performance.feature, scenario: "Marco's diagnostics show how planning went"}
+  K6:
+    gate: "hard for XSD validity (CI); manual for devices"
+    window: "every exported file in tests; device checklist at the slice 01b and 11 demos"
+    scenarios:
+      - {file: slice-01b-skeleton-plan-and-gpx.feature, scenario: "Marco downloads the first plan as a standard GPX file"}
+      - {file: slice-11-device-ready-gpx.feature, scenario: "The exported trip is standard GPX with real road shapes"}
+      - {file: slice-11-device-ready-gpx.feature, scenario: "The whole trip opens in OsmAnd in itinerary order", tags: "@manual"}
+  K7:
+    gate: soft
+    window: "per (project, local day), Europe/Rome"
+    scenarios:
+      - {file: slice-03-pi-performance.feature, scenario: "Marco's diagnostics show how planning went"}
+  G1:
+    gate: "hard at slice 01a / DoD 5 on the Pi (docker stats after 10 min idle)"
+    window: "one sample after 10 min idle"
+    scenarios:
+      - {file: slice-00b-planner-on-the-pi.feature, scenario: "The idle planner leaves room on the Pi", tags: "@requires_external @pi"}
+  G2:
+    gate: hard
+    window: "per provider failure in tests; startup quick_check at runtime"
+    scenarios:
+      - {file: slice-06a-valhalla-on-the-pi.feature, scenario: "Routing engine unreachable leaves the project intact"}
+  G4:
+    gate: soft
+    window: "30 days of plan.job.refused with reason engine_not_ready"
+    scenarios:
+      - {file: slice-06a-valhalla-on-the-pi.feature, scenario: "The routing engine is still loading its map data"}

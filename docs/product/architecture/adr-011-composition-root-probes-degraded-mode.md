@@ -1,7 +1,7 @@
 # ADR-011: Composition root — wire, probe, use; degraded mode for a non-persistent volume
 
 ## Status
-Accepted (user decision on degraded mode, 2026-11-01), **with Amendment 1** (simplified probe enforcement, solver degraded, Valhalla readiness, config validation).
+Accepted (user decision on degraded mode, 2026-11-01), **with Amendment 1** (simplified probe enforcement, solver degraded, Valhalla readiness, config validation), the DEVOPS amendment (DV-5, DV-7) and the **final-gate amendment D121** (`DATA_DIR` persistence by filesystem type, `MountTable` port).
 
 ## Context
 - Every driven adapter depends on something that can lie: Docker overlayfs without a volume looks writable but is lost on recreate; SQLite WAL can silently not be enabled on some filesystems; an OR-Tools wheel can fail on aarch64; ORS can return HTTP 200 with an error body or null cells; an API key can be invalid.
@@ -12,7 +12,7 @@ Accepted (user decision on degraded mode, 2026-11-01), **with Amendment 1** (sim
 - The composition root (`bootstrap`) loads config, wires the adapters chosen by config, runs migrations, then calls `probe()` on every adapter **before** serving traffic.
 - Outcome per probe class:
   - **Fatal** (DB round trip/WAL/quick_check, file write-fsync-rename round trip, solver known-instance solve, GPX parser/writer round trip, invalid config such as a missing `ORS_API_KEY` for `ROUTING_PROVIDER=ors` **[superseded by Amendment 1: no routing key in the MVP; the solver probe is now degraded, not fatal; fatal config checks are listed there]**): log `health.startup.refused` {component, reason} and exit non-zero (Docker shows the container as restarting or exited).
-  - **Degraded, unhealthy**: `/data` is not a mount point or is `overlay`/`tmpfs` (read from `/proc/self/mountinfo`). Log `health.startup.degraded` {reason: `data_dir_not_persistent`}. Serve; `/healthz` returns 503 `{"status":"unhealthy","reason":"Data directory is not persistent - projects would be lost on restart"}`; the home page shows a banner.
+  - **Degraded, unhealthy**: ~~`/data` is not a mount point or is `overlay`/`tmpfs`~~ **[superseded by Amendment (final gate, D121): classified by the filesystem type that holds `DATA_DIR`; "not a mount point" is no longer a criterion]** (read from `/proc/self/mountinfo`). Log `health.startup.degraded` {reason: `data_dir_not_persistent`}. Serve; `/healthz` returns 503 `{"status":"unhealthy","reason":"Data directory is not persistent - projects would be lost on restart"}`; the home page shows a banner.
   - **Degraded, healthy**: routing provider probe fails (offline at boot). Log `health.startup.degraded` {reason: `routing_provider_unreachable`}. `/healthz` stays `ok`; the provider is re-probed before each plan job and the job is refused with the US-10 S4/S5 message if it still fails.
 - `/api/health` returns per-component probe detail (behind Basic auth when enabled).
 - **[superseded by Amendment 1: two layers, mypy + gold tests; the AST hook and meta-test are dropped]** Probe contract enforcement in three layers: mypy (every port Protocol extends `Probeable`, typed registry), an AST pre-commit hook (adapter classes must have a non-trivial `probe`), and CI gold tests (a fault catalogue per adapter, including the specific lies above). A meta-test checks that every registered adapter has a catalogue entry.
@@ -44,3 +44,14 @@ Accepted (user decision on degraded mode, 2026-11-01), **with Amendment 1** (sim
 ## Amendment (DEVOPS, D80/D90) — 2026-11-02
 - DV-7 (clarification): on non-Linux platforms (macOS dev, which has no `/proc/self/mountinfo`), the `/data` persistence probe returns `not_applicable` and the app stays healthy. Linux behaviour is unchanged.
 - DV-5 (accepted by the user): a database revision unknown to the image is a **fatal** probe outcome (`db_newer_than_app`), listed with the other fatal storage probes. See ADR-018 amendment.
+
+## Amendment (final gate, D121) — 2026-11-02
+Resolves UI-1 and UI-12 (review R-01). The decision above is unchanged except for the persistence rule.
+- **Persistence rule for `DATA_DIR`.** Resolve `DATA_DIR` to its real path. Take the mount-table entry whose mount point is the **longest prefix** of that path. Classify by that entry's filesystem type:
+  - `overlay`, `tmpfs`, `ramfs` -> **degraded, unhealthy** (`data_dir_not_persistent`, same banner and `/healthz` 503 as before);
+  - any other type (ext4, xfs, btrfs, a Docker named or bind volume, ...) -> **ok**;
+  - no mount table (non-Linux, e.g. macOS) -> **not_applicable**, healthy (DV-7).
+- The root filesystem is never checked on its own; it only matters when it is the longest-prefix match. "Not a mount point" is no longer a criterion, so a bare-metal Linux host (CI job 2, a PC without Docker) with `DATA_DIR` on ext4 is healthy, while a container without a volume (`DATA_DIR` on the container's overlay root) stays degraded (US-01b S4).
+- **`MountTable` driven port** (`application/ports/host.py`, D105): `entries() -> [(mount_point, fstype)]` or "unavailable". Adapters: `ProcMountTable` (reads `/proc/self/mountinfo`) and `FakeMountTable` (tests). It is an external, non-deterministic port, substituted through `ExternalPorts` on `create_app` (D106). Its probe: the file can be read and parsed and contains an entry for `/`; on Linux a parse failure is treated as degraded (`data_dir_persistence_unknown`), never as ok.
+- **Gold catalogue** (the environment lies): `DATA_DIR` on overlay root; on tmpfs; on ramfs; on ext4 under an overlay root (longest prefix wins -> ok); a bind mount of a tmpfs path; a symlinked `DATA_DIR` resolving onto tmpfs; unparsable mountinfo.
+- **Test environments.** Real `ProcMountTable` in the CI jobs that run containers on named volumes; `FakeMountTable` in the in-process acceptance suite. The walking skeleton must not use the OS temp directory as `DATA_DIR` (on many Linux hosts `/tmp` is tmpfs, which would correctly report degraded); it uses a directory under the workspace.

@@ -1,7 +1,7 @@
 # ADR-009: HC invariant guard on every plan run
 
 ## Status
-Accepted (2026-11-01), **with Amendment 1** (versioned inputs, leg snapshot, retrace form, logging boundary) and **Amendment 2** (full-sequence hashes).
+Accepted (2026-11-01), **with Amendment 1** (versioned inputs, leg snapshot, retrace form, logging boundary) and **Amendment 2** (full-sequence hashes), and **Amendment 3** (final gate: check 5 after a retrace; hashing cost).
 
 ## Context
 - HC-1..HC-5 are non-negotiable. K2/K3 require 0 violations, measured by property tests **and a per-run invariant check in the logs** (US-03, US-04, US-08 KPIs).
@@ -45,3 +45,7 @@ The same guard functions are used as oracles in the 1,000-case property tests (U
 - The **itinerary snapshot** records, for every track stop, `track_id`, `direction_version`, `point_count` and `canonical_sha256`. For every retrace leg it records `retrace_sha256`: the SHA-256 of the canonical serialisation of the reversed point list of that same version.
 - Check 4 (HC-5) and check 6 (retrace) compare the **full-sequence hash** of the points read by version against these values. Count and first/last points are no longer the only checks, so a mid-sequence edit or truncation is caught.
 - GPX export and the map recompute and verify the same hashes before emitting points. A mismatch refuses the export with "Track data for this run is inconsistent - recalculate", and an `invariant.violation` event is logged.
+
+## Amendment 3 (final gate, D134, D135) — 2026-11-02
+- **Check 5 exemption after a retrace (R-16, F-7).** For the leg that immediately follows a retrace leg of track t, the reference pair is **entry(t) -> entry(next)** in the leg snapshot (its level and reasons must match), not exit(t) -> entry(next). Check 6 already requires exit(t) -> entry(next) to be None. All other legs keep the exit(i) -> entry(i+1) rule. Property tests cover runs with 0, 1 and 2 retraces.
+- **Hashing cost (R-17, F-5).** The guard's full-sequence hashing is re-measured at slice 03 with 40 × 20,000-point tracks (ADR-014 amendment D135). If the 3 s row is exceeded, an import limit on points per track is introduced; the checks themselves are never weakened.

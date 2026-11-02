@@ -22,7 +22,7 @@ schema_version: 1
 #   #9 duplicate removed ok. Lago, Isola, Lombarda and the duplicate are NOT among the 12 reference items.
 #   Run rules (Revision 5; full text in feature-delta.md "[REF] Plan run timeline"): first Optimize of a project with
 #   no runs = #1; only requests reaching the optimizer create runs (refused requests create none); main line = Alpi
-#   #5-#9 in order (US-09 S2 creates #5); any OTHER Optimize/Recalculate scenario is a branch fixture on its own copy
+#   #5-#9 in order (US-09a S2 creates #5); any OTHER Optimize/Recalculate scenario is a branch fixture on its own copy
 #   (number not asserted); opening a run creates none; fixtures outside both projects use no run numbers.
 # Default project: unqualified "plan run #N" ALWAYS means "Alpi Occidentali giugno 2027".
 #   "Dolomiti 2028" (fixture: Cortina d'Ampezzo S/E, Lago di Braies, track Malga Ra Stua) runs are always named with the project.
@@ -162,7 +162,7 @@ steps:
     emotional_state: {entry: "Purposeful", exit: "Productive"}
     integration_checkpoint: "Decimal degrees validated (lat -90..90, lon -180..180)."
     failure_modes:
-      - {mode: "Out-of-range coordinates", user_sees: "Latitude must be between -90 and 90", recovery: "Correct input", emotion: "Minor friction", story: US-02a}
+      - {mode: "Out-of-range coordinates", user_sees: "Latitude must be between -90 and 90", recovery: "Correct input", emotion: "Minor friction", story: US-02c}
       - {mode: "POI within 50 m of another", user_sees: "Duplicate warning", recovery: "Keep or remove", emotion: "Informed", story: US-14}
       - {mode: "Map click name prompt cancelled", user_sees: "No POI added", recovery: "Click again", emotion: "Neutral", story: US-16}
     gherkin: |

@@ -1,0 +1,134 @@
+"""Scenario state shared by the step definitions, and the port-exposed universe (Mandate 8).
+
+Universe names are what Marco can observe through the driving ports (DISTILL D115), never internal fields:
+- `projects.names`  -> the project list on the home page (GET /api/projects)
+- `project.items`   -> the item list of the open project: (type, name, included, anchor badge)
+(The earlier `saved_data.database` file fingerprint was removed: review H-07, DISTILL D185.)
+
+Error responses follow the HTTP contract (brief §5, D130): `{"code", "message"}` with an enumerated code per status.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from overland_planner.bootstrap.app_factory import ExternalPorts
+from tests.acceptance.overland_route_planner_mvp.steps.planner import (
+    Auth,
+    InProcessPlanner,
+    PlannerSession,
+    ServerPlanner,
+    StartRecord,
+)
+from tests.common.fakes import FakeClock, FakeMountTable
+
+CATALOG_UNIVERSE = {"projects.names", "project.items"}
+
+ERROR_CODES = {  # brief §5 "HTTP contract" (D130)
+    401: {"unauthorized"},
+    404: {"not_found"},
+    409: {"job_active"},
+    413: {"upload_too_large"},
+    422: {"validation_error", "missing_anchor"},
+    503: {"routing_engine_not_ready", "optimizer_unavailable"},
+}
+BADGE_TO_ANCHOR = {"S/E": "start_end", "Start": "start", "End": "end"}
+
+
+@dataclass
+class PlannerWorld:
+    tmp_path: Path
+    data_dir: Path
+    environ: dict[str, str]
+    clock: FakeClock
+    mount_table: FakeMountTable
+    planner: InProcessPlanner | ServerPlanner | None = None
+    marco_auth: Auth = None
+    project_id: str | None = None
+    project_name: str | None = None
+    last_track_name: str | None = None
+    response: httpx.Response | None = None
+    seen_messages: list[str] = field(default_factory=list)
+    before: dict[str, Any] = field(default_factory=dict)
+    after: dict[str, Any] = field(default_factory=dict)
+    last_start: StartRecord | None = None
+    giulia_responses: dict[str, httpx.Response] = field(default_factory=dict)
+    anchors_requested: tuple[str, str] | None = None
+    scratch: dict[str, Any] = field(default_factory=dict)
+
+    # --- the planner under test ------------------------------------------------------------------------
+    def ensure_planner(self) -> None:
+        if self.planner is None:
+            self.planner = InProcessPlanner(
+                self.environ, ExternalPorts(clock=self.clock, mount_table=self.mount_table)
+            )
+            self.planner.start()
+
+    def marco(self) -> PlannerSession:
+        assert self.planner is not None, "the planner is not running"
+        return self.planner.session(self.marco_auth)
+
+    def shutdown(self) -> None:
+        if self.planner is not None:
+            self.planner.stop()
+
+    # --- what Marco observes ---------------------------------------------------------------------------
+    def note(self, response: httpx.Response) -> httpx.Response:
+        self.response = response
+        if response.status_code >= 400:
+            message = _message_of(response)
+            if message:
+                self.seen_messages.append(message)
+        return response
+
+    def catalog_view(self) -> dict[str, Any]:
+        marco = self.marco()
+        listed = marco.projects()
+        assert listed.status_code == 200, f"the project list did not open: {listed.status_code} {listed.text[:300]}"
+        view: dict[str, Any] = {"projects.names": tuple(sorted(p["name"] for p in listed.json()))}
+        if self.project_id is not None:
+            items = marco.items(self.project_id)
+            assert items.status_code == 200, f"the item list did not open: {items.status_code} {items.text[:300]}"
+            view["project.items"] = tuple(sorted(item_row(i) for i in items.json()))
+        else:
+            view["project.items"] = ()
+        return view
+
+    def items(self) -> list[dict[str, Any]]:
+        assert self.project_id is not None, "no project is open"
+        response = self.marco().items(self.project_id)
+        assert response.status_code == 200, f"the item list did not open: {response.status_code}"
+        return list(response.json())
+
+    def item_named(self, name: str) -> dict[str, Any]:
+        matches = [i for i in self.items() if i["name"] == name]
+        assert len(matches) == 1, f"expected exactly one item named {name!r}, found {len(matches)}"
+        return matches[0]
+
+
+
+def item_row(item: dict[str, Any]) -> tuple[str, str, bool, str | None]:
+    return (item["type"], item["name"], bool(item["included"]), item.get("anchor"))
+
+
+def assert_error_envelope(response: httpx.Response) -> None:
+    """Every non-2xx answer under /api is {"code", "message"} with the code enumerated for its status (D130)."""
+    body = response.json()
+    assert set(body) >= {"code", "message"}, f"not the error envelope: {body}"
+    allowed = ERROR_CODES.get(response.status_code, set())
+    assert body["code"] in allowed, f"status {response.status_code} with code {body['code']!r}, expected one of {allowed}"
+
+
+def _message_of(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("reason")
+        return str(message) if message else None
+    return None

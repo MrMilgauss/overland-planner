@@ -1,7 +1,7 @@
 # ADR-013: Routing provider — self-hosted Valhalla on the Pi is the only MVP provider
 
 ## Status
-Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2026-11-01** (spike/findings.md; amendment D76, 2026-11-02). Supersedes ADR-002. Resolves REQUIREMENTS Open Decision #1 ("#1 resolved: self-hosted Valhalla in the MVP; a hosted adapter may come later"; §8 Phase 1 item 4).
+Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2026-11-01** (spike/findings.md; amendment D76, 2026-11-02). DEVOPS amendment D95; **final-gate amendment** D127/D128/D131/D133 (2026-11-02). Supersedes ADR-002. Resolves REQUIREMENTS Open Decision #1 ("#1 resolved: self-hosted Valhalla in the MVP; a hosted adapter may come later"; §8 Phase 1 item 4).
 
 ## Context
 - The user wants no API key, no quota and no coordinates leaving the LAN.
@@ -11,7 +11,7 @@ Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2
 - FR-5.5 (revised) target: p95 <= 180 s end to end for 60 items, **including the cold leg fetch** (ADR-014).
 - Required pair set, defined precisely. Let n be the Included items, with a round-trip S/E counted once.
   - Round trip: all ordered pairs exit(i) -> entry(j) with i != j, so n(n-1). Run #4 has 10 items, so 90 pairs.
-  - One-way, with k = n - 2 non-anchors: Start -> k, k -> End, k -> k, plus Start -> End, which gives k^2 + k + 1. The US-06 fixture (60 items, one-way) needs 3,423 pairs if its 60 items include Start and End (k = 58). The spikes measured the larger reading, 60 non-anchor items plus Start and End (k = 60): k(k-1) + 2k = **3,660 pairs**, plus Start -> End. All measured budgets therefore hold for the 3,423 case too.
+  - **[Final gate D131: superseded by "k non-anchor items, k² + k pairs" (ADR-014 amendment).]** One-way, with k = n - 2 non-anchors: Start -> k, k -> End, k -> k, plus Start -> End, which gives k^2 + k + 1. The US-06 fixture (60 items, one-way) needs 3,423 pairs if its 60 items include Start and End (k = 58). The spikes measured the larger reading, 60 non-anchor items plus Start and End (k = 60): k(k-1) + 2k = **3,660 pairs**, plus Start -> End. All measured budgets therefore hold for the 3,423 case too.
   - Plus entry(t) -> entry(j) pairs, fetched only for retrace candidates (ADR-017).
 
 ## Decision
@@ -30,7 +30,7 @@ Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2
    - One costing serves both objectives. The matrix returns distance and time of the fastest path, and the project objective only selects which value is the arc cost. Switching objective therefore needs no new legs.
    - The permissive variant (Unconfirmed U1) adds `ignore_access: true`, `ignore_closures: true`, `ignore_restrictions: true` (and `ignore_non_vehicular_restrictions` if the pinned version has it).
 3. **Snapping control.** Each location in Confirmed and U1 requests carries `search_cutoff = CONFIRMED_SNAP_M` (default 250 m). Valhalla's default (tens of km) would silently hide an off-network gap. Point classification and off-network links are described in ADR-016.
-4. **provider_id** = `valhalla:<tileset_last_modified from /status>`, so a tile rebuild invalidates cached legs automatically. **profile** = `4x4.v1` (it changes whenever the costing options change). Both are in the leg-cache key.
+4. **provider_id** = `valhalla:<tileset_last_modified from /status>` **[final gate D128: `valhalla:<version>:<tileset_last_modified>`, both from `/status`]**, so a tile rebuild invalidates cached legs automatically. **profile** = `4x4.v1` (it changes whenever the costing options change). Both are in the leg-cache key.
 5. **Service limits** (raised in `valhalla.json` by the build service):
    - `service_limits.auto.max_matrix_distance`: 2,000,000 m;
    - `thor.costmatrix.allow_second_pass`: **true** (default false). **Mandatory** (SPIKE-2R edge case 1): with the default, 29 of 40 sampled null cells were routable by `/route` and one cell was 33.7 % short; with `true`, 0/40 false nulls and 40/40 distances within 0.01 % of `/route`, at about 2× matrix time. Without it the ladder would negatively cache false None pairs.
@@ -44,7 +44,7 @@ Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2
    - **per-call deadline = min(read timeout, time remaining until the job's feasibility limit)** (Revision 2, review M-3). The ADR-014 stage budgets are p95 targets, not deadlines, so a slow call is never aborted just for exceeding its stage row;
    - retry **only** on 5xx, connect errors and timeouts: 3 attempts, backoff 0.5 / 1 / 2 s with jitter;
    - never retry 4xx;
-   - a job with any retried call records `retried=true` and is **outside the 180 s p95 claim** (ADR-014).
+   - a job with any retried call records `retried=true` ~~and is **outside the 180 s p95 claim** (ADR-014)~~ **[final gate D127 (UD-3): it counts toward the claim and is reported separately]**.
    - Error mapping:
      - connect error or timeout after retries -> `ProviderUnreachable`;
      - 5xx after retries -> `ProviderUnavailable` ("routing engine not ready / failing");
@@ -75,3 +75,10 @@ Accepted (user decision N1, 2026-11-01). **Parameters validated by SPIKE-2R on 2
 
 ## Amendment (DEVOPS, D95) — 2026-11-02
 DV-1, accepted by the user. Read "a scheduled live run against the Pi's Valhalla" as **a manual live run (`make contract-live`) from the Mac**, because GitHub-hosted runners cannot reach the Pi (no inbound access, no runner on the Pi). The same routing-port contract suite runs through an ephemeral loopback forwarder (`valhalla-tunnel`, 127.0.0.1:18002, ops profile) and an ssh tunnel. Valhalla itself stays unpublished (D52). Triggers: slices 06a/06b, any Valhalla image or `valhalla.json` change, every tile refresh. CI keeps replaying the recorded fixtures (blocking). The decision above is unchanged. See `docs/feature/overland-route-planner-mvp/feature-delta.md` "## Wave: DEVOPS".
+
+## Amendment (final gate, D127, D128, D131, D133) — 2026-11-02
+Review findings R-08 (UI-17), R-13, R-15 and user decision UD-3.
+- **provider_id and version pin (D128).** `provider_id` = `valhalla:<version>:<tileset_last_modified>`, both read from `/status`. The expected engine version is configuration (`VALHALLA_EXPECTED_VERSION`, default `3.9.1`, matching the pinned image). The provider probe compares it with `/status` `version`; a mismatch makes the probe fail with reason `routing_engine_version_mismatch` (degraded, `/healthz` stays ok, like "not ready"). Plan jobs are then refused with 503 `routing_engine_not_ready` and nothing is changed; `/api/health` names the two versions. Reason: unknown costing options are silently ignored by Valhalla, so an unpinned engine could return legs with different semantics under a cache key that looks valid. A version change also changes `provider_id`, so legs are never reused across versions.
+- **Concurrency is process-wide (D133).** "At most 2 concurrent requests" (§6) is one **process-wide semaphore of 2** in `ValhallaRoutingProvider`, shared by every caller: both possible jobs, lazy geometry and probes. It matches `server_threads: 2`. Probes still bypass the leg counter.
+- **Pair set (D131).** The §Context pair formulas are replaced by ADR-014 amendment D131: k non-anchor items, k² + k pairs (3,660 at k = 60, 62 nodes); 1 pair when k = 0. The "3,423 (k = 58)" reading is withdrawn.
+- **Retried jobs (D127, UD-3):** counted in K5, reported separately (§6 marked).

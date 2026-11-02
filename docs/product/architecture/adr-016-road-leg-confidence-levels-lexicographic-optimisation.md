@@ -1,7 +1,7 @@
 # ADR-016: Road-leg confidence levels and lexicographic optimisation
 
 ## Status
-Accepted (user decision N3, 2026-11-01). **Amended after SPIKE-1R/2R** (D78, D79, 2026-11-02): dual-costing point classification, legally snapped coordinates for permissive retries, two-phase weighting as default. Implements FR-5.8 and FR-8.2 (revised). Supersedes D39 (the old "any unroutable pair fails the run" proposal).
+Accepted (user decision N3, 2026-11-01). **Amended after SPIKE-1R/2R** (D78, D79, 2026-11-02): dual-costing point classification, legally snapped coordinates for permissive retries, two-phase weighting as default. **Final-gate amendment D125** (UD-4: optimisation order, penalty never reported; 2026-11-02). Implements FR-5.8 and FR-8.2 (revised). Supersedes D39 (the old "any unroutable pair fails the run" proposal).
 
 ## Context
 - FR-5.8: Confirmed -> Unconfirmed -> None.
@@ -40,7 +40,7 @@ Only for pairs missing from the cache. All passes are batched.
 ### 3. Reachability check (FR-8.2) before solving
 Build the arc graph: Confirmed + Unconfirmed arcs, plus retrace arcs (ADR-017). Every Included non-anchor item must have an incoming and an outgoing arc, be reachable from Start, and reach End. **Start needs an out-arc only; End needs an in-arc only** (review L-3). For a round-trip S/E item, it needs one out-arc as Start and one in-arc as End.
 - Items failing the check -> a numbered **Failed** run, before any solve. The message names each item: "'Isola del Giglio' cannot be connected to any other stop at any confidence level". The report marks the item Failed with reason "unreachable".
-- This check is necessary but not sufficient. A rare instance that passes it can still have no valid order; it then runs into the feasibility limit (ADR-014).
+- This check is necessary but not sufficient. A rare instance that passes it can still have no valid order; it then runs into the feasibility limit (ADR-014). **[Final gate D122: if the solver finishes without any valid incumbent, the run fails at once with `no_valid_route_found` (ADR-015 amendment); only a solver still searching runs into the limit.]**
 
 ### 4. Lexicographic cost (`SolverModelBuilder`, domain/planning)
 Arc cost = `W1 * unconfirmed(arc) + W2 * retrace(arc) + c(arc)`.
@@ -70,3 +70,15 @@ Arc cost = `W1 * unconfirmed(arc) + W2 * retrace(arc) + c(arc)`.
 - Positive: plans exist whenever they physically can; every compromise is visible and explained; caching covers all levels.
 - Negative: up to 2 extra matrix passes for missing pairs (budgeted at 15 s); a more complex model (weights, forbidden arcs); the snap thresholds are heuristics the user may tune.
 - The MockRoutingProvider must script levels, snap classes and None pairs per pair and per point (MockRoutingProvider fault and level plan, brief §6) so all of this is testable offline.
+
+## Amendment (final gate, D125) — 2026-11-02
+User decision UD-4 (review R-05/R-06, OBJ-1). This records §4 as an explicit clarification of FR-5.8 / FR-5.1 (the REQUIREMENTS wording is the product owner's).
+- **Optimisation order (strict, lexicographic):**
+  1. fewest **Unconfirmed legs** (a retrace leg is itself an Unconfirmed leg and counts here);
+  2. then fewest **retraces**;
+  3. then the **objective**: road km (the km of Valhalla's fastest routes, D75) or road time, plus retrace km or time.
+  No saving in (3) ever buys an extra Unconfirmed leg or retrace. Both weightings honour this order: single-phase through W1 > W2 > `c`; two-phase (the default) by capping U* and R* in phase 2.
+- **Solver cost vs reported values.** The solver's arc cost for a retrace arc includes `RETRACE_PENALTY_M`/`_S`; that term is a **tie-break inside level (3) only** and is part of `c` and `max_c` **only inside the model**. It is **never** included in any reported number: the itinerary, Totals, the run's `objective` field, the poll payload's `incumbent.objective`, diagnostics and the GPX report all show real values only:
+  - **reported objective** = road km of the chosen legs + retrace km (track length of each retraced track), or the same in time;
+  - **Totals** = road km/time of the road legs, and off-road km/time of the track items **plus** retrace km/time (D57).
+- Test: a run with one retrace reports objective = road + retrace km exactly, with no 10,000 m penalty; Totals road + off-road = reported objective + track off-road km.

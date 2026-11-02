@@ -1,6 +1,6 @@
 # Architecture Brief — Overland Route Planner
 
-SSOT for architecture. Sections are owned by architect roles: `## System Architecture` (nw-system-designer, not present), `## Domain Model` (nw-ddd-architect, not present), `## Application Architecture` (nw-solution-architect, this wave). First written 2026-11-01 in the DESIGN wave of `overland-route-planner-mvp`; **Revision 1** on 2026-11-01, after review iteration 1 and user decisions N1-N4.
+SSOT for architecture. Sections are owned by architect roles: `## System Architecture` (nw-system-designer, not present), `## Domain Model` (nw-ddd-architect, not present), `## Application Architecture` (nw-solution-architect, this wave). First written 2026-11-01 in the DESIGN wave of `overland-route-planner-mvp`; **Revision 1** on 2026-11-01, after review iteration 1 and user decisions N1-N4. **Final-gate pass** on 2026-11-02 (review-gate fix list R-01..R-21, UD-1..UD-4, OD-1..OD-9; decisions D121-D136, listed in feature-delta "DESIGN / [REF] DDD list").
 
 Source of truth for requirements: `REQUIREMENTS.md` (HC-1..HC-5 non-negotiable; HC-1 retrace bullet, FR-5.5 revised, FR-5.8, FR-8.2 revised, A-7). Feature context: `docs/feature/overland-route-planner-mvp/feature-delta.md`. Diagrams: `c4-diagrams.md`. Decisions: `adr-001` .. `adr-018` (index in §14).
 
@@ -37,6 +37,9 @@ Also covered: security (LAN only, opt-in Basic auth with a warning when off, no 
 Requirement interpretations recorded here:
 - **A-4**: "routing requests" = distinct legs (ordered pairs) requested at the RoutingProvider port during a Recalculate job. Geometry, snapping and probes are counted separately.
 - **FR-5.6**: "fixed seed" = a canonical model + deterministic search budget. OR-Tools routing has no seed to fix.
+- **FR-5.8 / FR-5.1 optimisation order (UD-4, D125)**: (1) fewest Unconfirmed legs (a retrace leg counts as one), (2) fewest retraces, (3) the objective: road km of Valhalla's fastest routes (D75) or road time, plus retrace km/time. `RETRACE_PENALTY` is a solver-internal tie-break only and never appears in any reported value; the itinerary and Totals show real road km and off-road km (tracks + retraces, D57) (ADR-016/017 amendments).
+- **"60 items" and the size limit (OD-2, D126, D131)**: items = Included non-anchor items. The 180 s claim covers up to 60 items + Start + End (62 nodes, as measured; k² + k = 3,660 one-way pairs). 61-70 items are allowed and never refused; the UI warns "large project - calculation may take longer than 3 minutes" until slice 03 re-calibrates at 70 items (ADR-014 amendment).
+- **K5 population (UD-3, D127)**: every cold 60-item plan counts toward p95 <= 180 s, including retried jobs, P2 > 700 and jobs that waited for the solver slot; those counts are reported separately, not excluded.
 
 ### 3. Architectural style
 
@@ -93,6 +96,9 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
 | `LegGeometryService` | application/routing | Lazy geometry from the same provider_id; retrace geometry from versioned points; links as straight segments |
 | `GpxExportService` + `GpxWriter` | application/export / adapters/gpx | GPX 1.1, ADR-010 + Amendment 1 |
 | `HealthService` | application/platform | Probe aggregation; `/healthz`; home-page banner |
+| `FilePinRegistry` | application/platform | In-memory `(track_id, direction_version)` pins of live jobs; registered together with the snapshot read under the write lock, released at job end; consulted by the orphan sweep (ADR-018, D65, D123) |
+| `OrphanSweep` | application/catalog | Deletes version files only if unreferenced, unpinned and older than 1 h, under the write lock (ADR-018 Rev 2) |
+| Solver slot | application/planning (inside `PlanJobRegistry`) | One solver child at a time; a second job waits in `waiting_for_optimizer` (ADR-015 amendment D133) |
 
 ### 5. Driving ports
 
@@ -103,6 +109,7 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
    - Items: (+) `GET /api/projects/{project_id}/items?type=`, `POST .../tracks` (multipart, capped), `POST .../tracks/merge`, `POST .../tracks/{track_id}/reverse`, `POST .../pois`, `PUT .../anchors`, `PATCH|DELETE .../items/{item_id}`, `POST .../items/bulk`.
    - Planning:
      - `POST /api/projects/{project_id}/plan-runs` -> 202 `{job_id}`, or 422 (missing anchor) / 409 (job active) / 503 (engine not ready or optimizer unavailable);
+     - (+) `POST /api/projects/{project_id}/plan-runs?ignore_memo=true` ("Re-optimise (ignore previous result)", D74): same lifecycle and the same status and error codes, skips the fingerprint memo;
      - (+) `GET /api/plan-jobs/{job_id}` (500 ms polling);
      - (+) `POST /api/plan-jobs/{job_id}/stop` ("Stop and use best so far");
      - `GET /api/projects/{project_id}/plan-runs`, `GET /api/plan-runs/{plan_run_id}`, `GET /api/plan-runs/{plan_run_id}/diff`;
@@ -110,6 +117,26 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
      - `GET /api/plan-runs/{plan_run_id}/export.gpx`.
    - Cache: `DELETE /api/projects/{project_id}/leg-cache`, `DELETE /api/leg-cache`.
    - (+) `GET /api/config/map`.
+   - **HTTP contract (D130, ratifies DISTILL D107; review R-10/R-21, UI-3):**
+     - JSON field names are **snake_case** everywhere (resources, poll payload, diagnostics).
+     - Statuses: 201 create, 200 read/update/action, 202 plan job accepted, 204 delete.
+     - **Error envelope** for every non-2xx response under `/api`: `{"code": "<code>", "message": "<user-facing text>"}`. Enumerated codes:
+
+       | Status | `code` |
+       |---|---|
+       | 422 | `validation_error`, `missing_anchor` |
+       | 409 | `job_active` |
+       | 503 | `routing_engine_not_ready`, `optimizer_unavailable` |
+       | 413 | `upload_too_large` (file size, request size or file count cap) |
+       | 401 | `unauthorized` (+ `WWW-Authenticate: Basic`) |
+       | 404 | `not_found` (unknown project, item, run or job id; added for completeness) |
+
+       A `RequestValidationError` handler maps FastAPI's default `{"detail": [...]}` body to the envelope with `validation_error`. New codes are added only through this table.
+     - Item `anchor` enum: `start` | `end` | `start_end` | `null`. Item resource per D107: `id`, `type` (`track` | `poi`), `name`, `included`, `anchor`, `location {lat, lon}` (POI), `entry {lat, lon}`, `exit {lat, lon}`, `length_m` (track).
+     - **One field-name table** for the poll payload (`GET /api/plan-jobs/{job_id}`) and `plan_job_log`: `state`, `reason`, `legs_new`, `legs_cached`, `legs_total`, `points_new`, `second_pass_pairs`, `retried`, `memo_hit`, `ignore_memo`, `elapsed_s`, `solver_wait_s`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message` (ADR-015 amendment).
+     - `POST /api/plan-jobs/{job_id}/stop` is idempotent: always 200 with the current payload (D136).
+     - `/healthz` keeps its own body (`{"status":"ok"}` / 503 `{"status":"unhealthy","reason":...}`), not the envelope.
+     - **OpenAPI snapshot in CI**: the generated `openapi.json` is committed; a CI test fails when the generated schema differs from the snapshot, so contract changes are deliberate.
 3. **CLI**: Phase 2, over the same application facades.
 
 ### 6. Driven ports and adapters
@@ -118,10 +145,11 @@ Every driven port extends `Probeable`.
 
 | Port | Contract (behavioural) | Adapters | Probe and fault catalogue |
 |---|---|---|---|
-| `RoutingProvider` | `provider_id`, `profile`, `display_name`; `locate(points) -> snap results`; `matrix(sources, targets, mode=legal\|permissive)` with `None` cells; `route_many(pairs, mode)`; typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderQuotaExceeded` (for future hosted adapters), `ProviderRejected` | `ValhallaRoutingProvider` (MVP real), `MockRoutingProvider` (tests/dev), `CountingRoutingProvider` (wrapper) | `/status` + 2x2 Torino <-> Susa matrix. Catalogue: connect refused, timeout, 5xx then success (retry), 5xx persistent, error 171 for one location, error 442, null cells, wrong shape, zero distance for distinct points. Degraded-healthy; re-probed every 60 s and before each job |
+| `RoutingProvider` | `provider_id`, `profile`, `display_name`; `locate(points) -> snap results`; `matrix(sources, targets, mode=legal\|permissive)` with `None` cells; `route_many(pairs, mode)`; typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderQuotaExceeded` (for future hosted adapters), `ProviderRejected` | `ValhallaRoutingProvider` (MVP real), `MockRoutingProvider` (tests/dev), `CountingRoutingProvider` (wrapper) | `/status` + 2x2 Torino <-> Susa matrix. Catalogue: connect refused, timeout, 5xx then success (retry), 5xx persistent, error 171 for one location, error 442, null cells, wrong shape, zero distance for distinct points, `/status` version not `VALHALLA_EXPECTED_VERSION` (`routing_engine_version_mismatch`, D128). Degraded-healthy; re-probed every 60 s and before each job. `provider_id` = `valhalla:<version>:<tileset_last_modified>`; all Valhalla calls share one process-wide semaphore of 2 (D133) |
 | `TourSolver` | `solve(model, budget, limits, stop_signal) -> stream of incumbents + final` | `OrToolsTourSolver` (child process); `HeuristicTourSolver` (fallback, only if built); `ScriptedTourSolver` (tests) | Fixed 6-node asymmetric instance with one track node and one forbidden arc, solved twice: known optimum, identical orders. Failure -> degraded, unhealthy (`optimizer_unavailable`) |
 | Repositories + `UnitOfWork` + `ProjectSnapshotReader` | One transaction per use case; run + number + snapshot (incl. leg snapshot, track versions) atomic; single writer lock | SQLAlchemy 2 / SQLite | Round-trip row, WAL active, busy_timeout set, quick_check, Alembic head. Fatal |
-| `FileStore` | Originals by sha256; versioned canonical/display points; atomic writes; sweep-only deletion (ADR-018 Rev 2, D65); orphan sweep | `LocalFileStore` | Write-fsync-rename-read round trip (fatal); `/data` mount not overlay/tmpfs (degraded, unhealthy) |
+| `FileStore` | Originals by sha256; versioned canonical/display points; atomic writes; sweep-only deletion (ADR-018 Rev 2, D65); orphan sweep | `LocalFileStore` | Write-fsync-rename-read round trip (fatal); filesystem type holding `DATA_DIR` (longest-prefix mount entry, via `MountTable`) is overlay/tmpfs/ramfs -> degraded, unhealthy; other -> ok; non-Linux -> not_applicable (ADR-011 amendment D121) |
+| `MountTable` (external, non-deterministic; D105) | `entries() -> [(mount_point, fstype)]`, or unavailable | `ProcMountTable` (`/proc/self/mountinfo`), `FakeMountTable` (tests, via `ExternalPorts` on `create_app`, D106) | Readable and parsable, has an entry for `/`; parse failure on Linux -> degraded (`data_dir_persistence_unknown`) |
 | `TrackFileParser` | `parse(bytes, name)` or `InvalidTrackFile`; rejects DTD/entities | `GpxpyParser` (defusedxml pre-parse, then gpxpy) | Embedded GPX; plus an XXE/billion-laughs sample that must be rejected. Fatal |
 | `GpxWriter` | GPX 1.1 bytes, no extensions | `GpxpyWriter` | Write + re-parse. Fatal |
 | `EventLog` | Structured application events | `StructlogEventLog` | - |
@@ -149,38 +177,41 @@ The composition root is `bootstrap/app_factory.py::create_app()` (Uvicorn factor
    - Fatal: invalid limits, keyed `MAP_TILE_URL`, bad upload caps.
    - Warning `security.auth.disabled` when Basic auth is off.
 2. Wire the adapters by `ROUTING_PROVIDER=valhalla|mock`.
-3. Pre-migration DB copy if needed, then `alembic upgrade head`.
+3. Database, in this order (D129): read the revision read-only; newer than the image -> `health.startup.refused` (`db_newer_than_app`) with nothing copied or written; older -> pre-migration copy, then `alembic upgrade head`; at head -> nothing.
 4. Probe every adapter:
    - fatal (DB, files, parser, writer) -> `health.startup.refused`, exit non-zero;
-   - non-persistent `/data` -> degraded, `/healthz` 503 + banner;
+   - non-persistent `DATA_DIR` -> degraded, `/healthz` 503 + banner. Rule (D121): the filesystem type of the longest-prefix `MountTable` entry for the resolved `DATA_DIR` is overlay/tmpfs/ramfs -> degraded; any other type -> ok; no mount table (macOS) -> `not_applicable`. The root filesystem is never checked on its own and "not a mount point" is not a criterion. Tests and the walking skeleton never use the OS temp directory as `DATA_DIR`;
    - solver probe failure -> degraded, `/healthz` 503 `optimizer_unavailable`; plan requests refused;
-   - Valhalla not ready -> degraded, `/healthz` ok; re-probe every 60 s; plan requests refused until ready.
+   - Valhalla not ready, or its `/status` version is not `VALHALLA_EXPECTED_VERSION` (D128) -> degraded, `/healthz` ok; re-probe every 60 s; plan requests refused (503 `routing_engine_not_ready`) until it passes.
 5. Log `app.started` as one structured line.
 
-Probe enforcement: two layers, **mypy strict** (every port Protocol extends `Probeable`; typed registry) and **CI gold tests** (a fault catalogue per adapter, including the environment lies: overlayfs/tmpfs `/data`, WAL silently off, Valhalla 171/442/null cells, solver child crash). The earlier AST hook and meta-test were dropped after review.
+Probe enforcement: two layers, **mypy strict** (every port Protocol extends `Probeable`; typed registry) and **CI gold tests** (a fault catalogue per adapter, including the environment lies: `DATA_DIR` on overlay/tmpfs/ramfs (also via symlink or bind mount), WAL silently off, Valhalla 171/442/null cells, solver child crash). The earlier AST hook and meta-test were dropped after review.
 
 ### 8. Planning pipeline
 
 ```
 POST plan-runs -> pre-checks (anchors, active job, engine ready, optimizer ready) else refuse (no job, no run)
- -> job: snapshot (included items, anchors, track versions + sha256, objective, settings, revision); pin track versions (released at job end)
+ -> job: snapshot (included items, anchors, track versions + sha256, objective, settings, revision) and pin track versions,
+    both in one critical section under the write lock (D123); pins released at job end
  -> PointSnapper (new points only; cached)            [state: snapping]
  -> LegResolver ladder for missing pairs (+ retrace pairs); cache all outcomes  [computing_legs]
     engine failure / Stop / feasibility limit here -> job ends, no run, legs kept
  -> numbered run created from here on:
     ReachabilityChecker -> unreachable items -> Failed run naming them
     FingerprintMemo hit -> reuse order
-    else SolverModelBuilder (lexicographic, forbidden arcs, retrace arcs) -> TourSolver child
+    else SolverModelBuilder (lexicographic, forbidden arcs, retrace arcs) -> wait for the solver slot (D133) -> TourSolver child
          streams incumbents; ends on budget | optimisation limit | Stop | feasibility limit
-         (no valid incumbent at the feasibility limit -> Failed "timeout"; Stop without one -> Failed "stopped ...")
+         (no valid incumbent at the feasibility limit -> Failed "timeout"; Stop without one -> Failed "stopped ...";
+          child finishes with none -> Failed no_valid_route_found at once; child crashes -> Failed optimizer_failed,
+          or with an incumbent: labelled "not fully optimised (optimizer_failed)" (D122))
  -> InvariantGuard (on the chosen order) -> violation -> Failed run "internal invariant violation"
  -> PlanRunAssembler -> one transaction (run number, snapshots incl. leg snapshot, results, flags)
  -> UI polls, shows itinerary, then requests geometry (lazy)
 ```
 
-Required pair set (ADR-013):
-- round trip: n(n-1). Run #4 has 10 items, so 90 pairs.
-- one-way: k^2 + k + 1 with k non-anchors. The 60-item one-way fixture needs 3,423 pairs.
+Required pair set (ADR-013; one definition, D131): k = Included non-anchor items.
+- one-way and round trip: k² + k (Start -> items, items -> End, item -> item; a round-trip S/E counts as both). Run #4 (9 items + S/E) gives 90 pairs. **60 items = 62 nodes = 3,660 pairs** (as measured by the spikes).
+- k = 0 (Start and End only, OD-4): the single pair Start -> End.
 - plus entry(t)->entry(j) only where exit(t)->entry(j) is None.
 
 **End-to-end budget** (ADR-014, 60 items, cold, p95 on the Pi):
@@ -200,11 +231,13 @@ Required pair set (ADR-013):
 | reserve | 8 s |
 | **Total** | **180 s** |
 
+Measured sum on the Pi: 63.7 s (73.7 s with UI and reserve; ADR-014 §1). The claim covers up to 60 items (61-70 allowed with a "may take longer" notice, D126) and counts every cold plan, including retried jobs and P2 > 700 (D127).
+
 Limits (configurable, measured from job start): `FEASIBILITY_LIMIT_S=600`, `OPTIMISATION_LIMIT_S=1800`; Stop is always available.
 
 Run flags:
 - `reproducible` (false on Stop or a limit hit);
-- `not_fully_optimised` with reason (`stopped` | `time_limit`);
+- `not_fully_optimised` with reason (`stopped` | `time_limit` | `optimizer_failed`);
 - `memo_hit`;
 - `unconfirmed_legs`, `retraces`.
 
@@ -213,7 +246,7 @@ Stale = project revision != the revision stored on the latest run.
 ### 9. Data and volume layout
 
 Volumes:
-- `planner-data` -> `/data` (app);
+- `planner-data` -> `/data` (app; Docker name `overland_planner-data`, compose project `overland`, §15);
 - `valhalla-data` -> `/custom_files` (tiles, extract, `valhalla.json`).
 
 ```
@@ -243,7 +276,7 @@ Writes:
 - files are written before the DB commit. They are deleted **only by the orphan sweep**: unreferenced by the DB and by any live-job pin (`FilePinRegistry`), and older than 1 h (ADR-018 Revision 2);
 - orphan sweep by DB reference **and** age > 1 h (ADR-018).
 
-Backup/restore: ADR-018 (stop -> tar the volume -> start; restore into an empty volume; Alembic upgrades after the pre-migration copy).
+Backup/restore: **rollback snapshot only; see D91** (no backups by user decision: the ADR-018 pre-migration copy and the predeploy volume snapshot, current + previous; accepted risk of device loss). The ADR-018 tar procedure is a reference, not a routine.
 
 ### 10. Technology stack
 
@@ -295,11 +328,11 @@ Contracts in `pyproject.toml`, run in pre-commit and CI:
   - GPX is pre-parsed with defusedxml (DTDs and entities rejected) before gpxpy;
   - originals are stored by hash, never by user-supplied path.
 - **Resources** (Pi 16 GB, about 11 GB free):
-  - `planner` `mem_limit: 1g` (idle main process < 300 MB per NFR-5, **measured in slice 01a** with `docker stats` after 10 min idle and recorded in README; the solver child is about 400 MB at most during a solve, to be measured in SPIKE-1R);
+  - `planner` `mem_limit: 1g` (idle main process < 300 MB per NFR-5, **measured in slice 01a** with `docker stats` after 10 min idle and recorded in README; the solver child **measured at 55–59 MB** peak RSS in SPIKE-1R, one child at a time (D133), container peak <= 55 MB of 1 GiB, 0 OOM);
   - `valhalla` `mem_limit: 4g` (target <= 2 GB idle), `server_threads: 2`;
   - `valhalla-build` capped at `--memory 9g`, run with serving stopped;
   - steady-state planned use is <= 5 GB, leaving >= 6 GB headroom.
-- **Logs**: JSON lines to stdout. Events: `app.started`, `health.startup.refused`, `health.startup.degraded`, `security.auth.disabled`, `plan.job.refused`, `plan.job.stopped`, `plan.job.timed_out`, `plan.run.completed` (number, status, new/cached legs, points located, unconfirmed legs, retraces, solver wall s, flags, invariants), `invariant.violation`, `routing.engine.error`, `export.gpx`, `import.track`.
+- **Logs**: JSON lines to stdout. Events: `app.started`, `health.startup.refused`, `health.startup.degraded`, `security.auth.disabled`, `plan.job.refused`, `plan.job.stopped`, `plan.job.timed_out`, `plan.job.finished` (one per terminal job, mirrors the `plan_job_log` row, DV-2/DV-6), `plan.run.completed` (number, status, `legs_new`/`legs_cached`, `points_new`, unconfirmed legs, retraces, solver wall s, flags, invariants), `plan.run.geometry_served` (DV-6), `invariant.violation`, `routing.engine.error`, `export.gpx`, `import.track`. Field names follow the §5 field-name table (D130).
 - **Images**:
   - multi-stage: a `node` build stage for `web/`, then `python:3.12-slim` runtime;
   - `linux/arm64` + `linux/amd64`;
@@ -311,7 +344,7 @@ Contracts in `pyproject.toml`, run in pre-commit and CI:
   - `valhalla-build` (profile `valhalla-build`, one-shot).
 - **`.env` keys** (indicative):
   - server and auth: `PLANNER_PORT`, `PLANNER_BASIC_AUTH_USER`, `PLANNER_BASIC_AUTH_PASSWORD`, `DATA_DIR=/data`, `LOG_LEVEL`;
-  - routing: `ROUTING_PROVIDER=valhalla|mock`, `VALHALLA_URL=http://valhalla:8002`, `VALHALLA_MAX_MATRIX_PAIRS=2500`, `VALHALLA_CONCURRENCY=2`, `CONFIRMED_SNAP_M=250`, `OFFNETWORK_LINK_MAX_M=1500`, `RETRACE_PENALTY_M=10000`, `RETRACE_PENALTY_S=1800`, `MOCK_PLAN`;
+  - routing: `ROUTING_PROVIDER=valhalla|mock`, `VALHALLA_URL=http://valhalla:8002`, `VALHALLA_MAX_MATRIX_PAIRS=2500`, `VALHALLA_CONCURRENCY=2` (process-wide, D133), `VALHALLA_EXPECTED_VERSION=3.9.1` (D128), `CONFIRMED_SNAP_M=250`, `OFFNETWORK_LINK_MAX_M=1500`, `RETRACE_PENALTY_M=10000`, `RETRACE_PENALTY_S=1800`, `MOCK_PLAN`;
   - solver: `SOLVER_BUDGET`, `FEASIBILITY_LIMIT_S=600`, `OPTIMISATION_LIMIT_S=1800`;
   - map: `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION`, `MAP_TILE_MAX_ZOOM`;
   - import defaults: `JUMP_THRESHOLD_KM=5`, `DEFAULT_OFFROAD_SPEED_KMH=15`, `LOOP_DISTANCE_M=200`, `DUPLICATE_POI_RADIUS_M=50`;
@@ -320,8 +353,9 @@ Contracts in `pyproject.toml`, run in pre-commit and CI:
 
 ### 13. Spikes gating DELIVER
 
-- **SPIKE-1R**: solver gate before slice 03.
-- **SPIKE-2R**: Valhalla on the Pi, mandatory before slice 06.
+- **SPIKE-1R**: solver gate before slice 03. **Done 2026-11-01: WORKS** (D78; `spike/findings.md`).
+- **SPIKE-2R**: Valhalla on the Pi, mandatory before slice 06. **Done 2026-11-01: WORKS** (D76, D77, D79).
+- Remaining measurements moved to slices: 70-item re-calibration (D126), guard with 20,000-point tracks (D135), permissive `/locate` timing (D132) and solve p95 under `cpus 1` (OD-9) at slice 03 / 06a.
 
 Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-delta.md` ("DESIGN / [REF] Open questions and pre-requisites").
 
@@ -335,31 +369,33 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 | ADR-004 | Map tiles | Accepted |
 | ADR-005 | Budget + 30 s ceiling + fingerprint | **Superseded by ADR-014** |
 | ADR-006 | Persistence SQLAlchemy + Alembic | Accepted, **partly superseded by ADR-018** |
-| ADR-007 | Lazy leg geometry, leg-level counting | Accepted + Amendment 1 |
+| ADR-007 | Lazy leg geometry, leg-level counting | Accepted + Amendment 1 (field names D130) |
 | ADR-008 | Plan run as async job + polling | **Superseded by ADR-015** |
-| ADR-009 | HC invariant guard | Accepted + Amendment 1 |
+| ADR-009 | HC invariant guard | Accepted + Amendments 1-3 (3: final gate D134/D135) |
 | ADR-010 | Consideration report in GPX 1.1 | Accepted + Amendment 1 |
-| ADR-011 | Composition root, probes, degraded mode | Accepted + Amendment 1 |
+| ADR-011 | Composition root, probes, degraded mode | Accepted + Amendment 1, DEVOPS amendment, final gate D121 |
 | ADR-012 | Solver port in a child process | **Superseded by ADR-015** |
-| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters pending SPIKE-2R |
-| ADR-014 | End-to-end budget, limits, determinism | Accepted; parameters pending spikes |
-| ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; parameters pending SPIKE-1R |
-| ADR-016 | Confidence levels + lexicographic optimisation | Accepted; parameters pending spikes |
-| ADR-017 | Out-and-back retrace (exit side only) | Accepted; penalties pending SPIKE-1R |
-| ADR-018 | Versioned track files + SQLite hardening | Accepted |
+| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133 |
+| ADR-014 | End-to-end budget, limits, determinism | Accepted; stage budget measured by the spikes (D77); final gate D124/D126/D127/D131/D132/D135 |
+| ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; measured by SPIKE-1R; final gate D122/D130/D133/D136 |
+| ADR-016 | Confidence levels + lexicographic optimisation | Accepted; amended after the spikes (D78, D79); final gate D125 |
+| ADR-017 | Out-and-back retrace (exit side only) | Accepted; penalty measured by SPIKE-1R; final gate D125/D134 |
+| ADR-018 | Versioned track files + SQLite hardening | Accepted; DEVOPS amendment D90/D91; final gate D123/D129 |
 
 ### 15. Deployment topology (added by DEVOPS, 2026-11-02)
 
-Owner: nw-platform-architect. Details: `docs/feature/overland-route-planner-mvp/feature-delta.md` "## Wave: DEVOPS" (D80-D102) and `devops/environments.yaml`. This section adds deployment-level containers and networks to the L2 view; it changes no application component.
+Owner: nw-platform-architect. Details: `docs/feature/overland-route-planner-mvp/feature-delta.md` "## Wave: DEVOPS" (D80-D102, D160-D179) and `devops/environments.yaml`. This section adds deployment-level containers and networks to the L2 view; it changes no application component.
 
 - Compose project `overland` in `~/apps/overland-planner/` on `pi.example`, next to the household stacks (`vlc-pi-prod`, `fate-ledger`), which it never touches.
 - Always on: `planner` (published on `192.168.1.10:8080`, networks `edge` + `routing`) and, from slice 06a, `valhalla` (network `routing`, `internal: true`, never published).
-- On demand (compose profiles): `valhalla-build` (network `egress`, tile build with serving stopped); `planner-perf` (same image, own volume `overland_perf-data`, loopback 18080, for `make perf-pi` / `make acceptance-pi`); `valhalla-tunnel` (socat on loopback 18002, for `make contract-live`).
+- On demand (compose profiles): `valhalla-build` (network `egress`, tile build with serving stopped); `planner-perf` (same image, own volume `overland_perf-data`, loopback 18080, for `make perf-pi` / `make acceptance-pi`); `valhalla-tunnel` (socat on loopback 18002, for `make contract-live`). Both join `edge` + `routing`, because Docker publishes no port of a container on an internal-only network (D164).
+- Runtime limits and hardening: planner `cpus 1`, `mem 1g`, `cap_drop ALL`, `no-new-privileges`, read-only root fs with a 64 MB `/tmp` tmpfs (the app writes only to `/data` and `/tmp`); valhalla `cpus 2` (`server_threads 2`), `mem 4g` (D167, D173). The planner port is `${PLANNER_BIND:?}` (fail closed, D174).
+- Release state on the Pi: `release.env` (planner digest only, two rollback pointers) and `routing.env` (`VALHALLA_TILESET` only) are separate, so an app rollback never changes the tileset (D166, D176). A deploy starts the new planner on 127.0.0.1, smoke-tests it, and only then publishes it on the LAN (publish = write gate, D165).
 - Volumes: `overland_planner-data` (`/data`), `overland_valhalla-data` (`tilesets/<date>/` served by subpath, `build/` scratch).
-- Delivery: GitHub Actions builds native arm64 + amd64 images into one digest-pinned GHCR manifest list. `make deploy` on the Mac pulls it onto the Pi over ssh (Recreate). The Pi has no CI runner and no inbound exposure.
-- **Accepted by the user (2026-11-02), recorded as DEVOPS amendments** (`devops/upstream-changes.md`; ADR-006, 011, 013, 015, 018 amendment notes): DV-1 manual `make contract-live` instead of a scheduled live run (D95); DV-2 append-only `plan_job_log` table (D93); DV-3 `GET /api/diagnostics` + `/diagnostics` page (D93); DV-4 `created_at`/export/geometry timestamp columns (D94); DV-5 tested downgrades and a fatal `db_newer_than_app` probe (D90). Clarifications: DV-6 events `plan.job.finished`, `plan.run.geometry_served` and version fields on `app.started` (§12); DV-7 `/data` probe `not_applicable` on macOS.
+- Delivery: GitHub Actions builds arm64 + amd64 images (amd64 native; **arm64 via QEMU by default, native when `ARM64_RUNNER` is set**) into one digest-pinned GHCR manifest list. `make deploy` on the Mac pulls it onto the Pi over ssh (Recreate). The Pi has no CI runner and no inbound exposure.
+- **Accepted by the user (2026-11-02), recorded as DEVOPS amendments** (`devops/upstream-changes.md`; ADR-006, 011, 013, 015, 018 amendment notes): DV-1 manual `make contract-live` instead of a scheduled live run (D95); DV-2 append-only `plan_job_log` table (D93); DV-3 `GET /api/diagnostics` + `/diagnostics` page (D93); DV-4 `created_at`/export/geometry timestamp columns (D94); DV-5 tested downgrades and a fatal `db_newer_than_app` probe (D90). Clarifications: DV-6 events `plan.job.finished`, `plan.run.geometry_served` and version fields on `app.started` (§12); DV-7 `/data` probe `not_applicable` on macOS, subsumed by DV-11 (ADR-011 UI-1 amendment: longest-prefix fstype rule; CI mapping D168). Final review gate: DV-9 (writes only to `/data` and `/tmp`, D173), DV-10/DV-12 (K5 claim wording, D177).
 - **Data safety (D91, user decision):** no backups. Only the ADR-018 pre-migration copy and the predeploy snapshot (current + previous) on the Pi, for rollback. Accepted risk: device/NVMe loss = data loss. This replaces the operated backup routine referenced in §9 and ADR-018.
-- CI on a personal free GitHub plan (private repo): amd64 native on `ubuntu-latest`, arm64 under QEMU by default (native `ubuntu-24.04-arm` opt-in), no branch protection (the deploy preflight is the gate). Owner `MrMilgauss`; image `ghcr.io/mrmilgauss/overland-planner`.
+- CI on a personal free GitHub plan (private repo): amd64 native on `ubuntu-24.04`, arm64 under QEMU by default (native `ubuntu-24.04-arm` opt-in), no branch protection (the deploy preflight, including `gh attestation verify`, is the gate; D171). Owner `MrMilgauss`; image `ghcr.io/mrmilgauss/overland-planner`.
 
 ```mermaid
 C4Deployment
@@ -368,7 +404,7 @@ C4Deployment
     Container(make, "make deploy / rollback / perf-pi", "Makefile + ssh", "Only client of the Pi")
   }
   Deployment_Node(gh, "GitHub", "private repo") {
-    Container(ci, "GitHub Actions", "ubuntu-latest; arm64 via QEMU (native arm64 opt-in)", "Tests, builds images")
+    Container(ci, "GitHub Actions", "ubuntu-24.04; arm64 via QEMU (native when ARM64_RUNNER is set)", "Tests, builds images")
     ContainerDb(ghcr, "GHCR", "ghcr.io/mrmilgauss/overland-planner", "Manifest list by digest")
   }
   Deployment_Node(pi, "pi-host", "Debian 13, Docker 29.5, compose project overland") {
@@ -474,7 +510,7 @@ New DESIGN decisions: D64-D68 (feature-delta D-list). Q-U8 resolved afterwards a
 | H-2 | Reverse never deletes. Live jobs pin `(track_id, version)` in `FilePinRegistry`. The orphan sweep deletes only files that are unreferenced, unpinned and older than 1 h, under the write lock (D65). New test "Reverse during a live job". | ADR-018 Revision 2; brief §8-9 |
 | M-1 | `c` = the full arc cost (retrace: track length + penalty + onward leg); `max_c` is taken over all arcs; the objective = road + retrace distance (or time); track off-road km stay outside it (D64). | ADR-016 §4; ADR-017 §1 |
 | M-2 | The itinerary snapshot holds `canonical_sha256` per track stop and `retrace_sha256` per retrace leg; guard checks 4 and 6, the map and the export verify full-sequence hashes (D68). | ADR-009 Amendment 2 |
-| M-3 | Per-call deadline = min(read timeout, time left to the feasibility limit); stage budgets are targets, not deadlines; retried jobs `retried=true` are outside the p95 claim (D67). | ADR-013 §6; ADR-014 §1 |
+| M-3 | Per-call deadline = min(read timeout, time left to the feasibility limit); stage budgets are targets, not deadlines; ~~retried jobs `retried=true` are outside the p95 claim (D67)~~ superseded by D127: retried jobs count in the p95 claim and are reported separately. | ADR-013 §6; ADR-014 §1 |
 | M-4 | SPIKE-2R measures major page faults (`pgmajfault`) and cold-matrix latency **under the 4g Valhalla cgroup cap**. SPIKE-1R (f) measures solver-child RSS plus main RSS against the 1g planner `mem_limit`. | feature-delta spikes |
 | M-5 | >= 30 repetitions for any p95 (otherwise report the max). "Cold" = `drop_caches` after user consent; a container restart alone is not cold. D62: the orchestrator asks the user for a start time before any Pi run. | feature-delta spikes |
 | M-6 | Inline "superseded" markers added in ADR-006 (layout lines, deletion), ADR-007 (ORS framing, `skip_segments`), ADR-011 (`ORS_API_KEY` fatal, AST hook). | ADRs 006, 007, 011 |

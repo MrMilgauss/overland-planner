@@ -1,7 +1,7 @@
 # ADR-018: Version-addressed track files and SQLite hardening
 
 ## Status
-Accepted (2026-11-01). Revision 2: job pins + sweep-only deletion (review H-2). Partly supersedes ADR-006 (file layout and SQLite settings). Resolves review B2 and the SQLite part of the high-priority finding.
+Accepted (2026-11-01). Revision 2: job pins + sweep-only deletion (review H-2). DEVOPS amendment D90/D91; **final-gate amendment D123/D129** (atomic snapshot + pin; check-copy-upgrade order). Partly supersedes ADR-006 (file layout and SQLite settings). Resolves review B2 and the SQLite part of the high-priority finding.
 
 ## Context
 - ADR-006 rewrote `canonical.json` in place on Reverse. Exporting a historical or stale run after a Reverse would then emit the reversed points, which is an HC-1 violation in the export (review B2).
@@ -32,9 +32,10 @@ Accepted (2026-11-01). Revision 2: job pins + sweep-only deletion (review H-2). 
 - `PRAGMA busy_timeout = 5000`, WAL, `foreign_keys = ON`.
 - A **single writer**: one process-wide write lock serialises all write transactions (HTTP and jobs). Leg-cache writes from a job are batched per matrix response.
 - Readers are not blocked (WAL).
-- **Pre-migration copy**: when the DB revision differs from the Alembic head, the startup first copies the DB with the SQLite online backup API to `/data/db/backups/planner-{revision}-{timestamp}.sqlite` (the last 3 are kept), then upgrades. A failed upgrade -> startup refused, with the backup path in the log.
+- **Pre-migration copy** **[ordering superseded by the final-gate amendment D129: check read-only first, copy only when older, then upgrade]**: when the DB revision differs from the Alembic head, the startup first copies the DB with the SQLite online backup API to `/data/db/backups/planner-{revision}-{timestamp}.sqlite` (the last 3 are kept), then upgrades. A failed upgrade -> startup refused, with the backup path in the log.
 
 ### Backup and restore (README)
+**[Final gate, R-19: rollback snapshot only; see D91 and the DEVOPS amendment below. The procedure is kept for reference and is not operated. The compose volume is `overland_planner-data`, not `planner-data`.]**
 - Backup:
   1. `docker compose stop planner`
   2. `docker run --rm -v planner-data:/data -v "$PWD":/b alpine tar czf /b/planner-backup.tgz -C /data .`
@@ -66,3 +67,14 @@ Accepted (2026-11-01). Revision 2: job pins + sweep-only deletion (review H-2). 
 DV-5, accepted by the user, and the user's backup decision.
 - **Downgrades and newer databases (D90):** every migration has a CI-tested `downgrade()`. At start-up, a DB revision the image does not know (DB newer than the app) refuses start-up (`health.startup.refused {component: db, reason: db_newer_than_app}`), so a rolled-back image never touches a newer schema. Rollback order: switch digest (same schema) -> `alembic downgrade` with the newer image -> restore the predeploy snapshot.
 - **Backups (D91):** the user does not want backups (2026-11-02). The "Backup and restore (README)" procedure above is **not operated as a routine**. What remains, for rollback only: the pre-migration copy decided above, and a predeploy snapshot of the volume taken by the deploy script while the planner is stopped (current + previous deploy kept). **Accepted risk:** both live on the same NVMe; loss of the Pi, its NVMe or the volume loses all project data (RPO undefined for device loss). The decision above is unchanged.
+
+## Amendment (final gate, D123, D129) — 2026-11-02
+Review findings R-03 (F-2), R-09 (UI-8), R-19.
+- **Snapshot and pin are atomic with the sweep (D123).** A plan job reads its project snapshot (included items, track versions + sha256, revision) **and** registers its `FilePinRegistry` pins inside **one critical section under the single write lock**. The orphan sweep decides and deletes under the same lock. So no sweep can run between "the job saw version n" and "version n is pinned", and no Reverse can commit between the snapshot read and the pin. The read itself stays a WAL read; only its ordering with the pin is serialised (cost measured in SPIKE-2R 6f: snapshot p95 0.12 s).
+  - Named test: **"snapshot and pin are atomic with the orphan sweep"** — a test hook pauses the job between the snapshot read and the pin registration and tries to run the sweep and a Reverse; both must wait for the lock, and after release the job's version is pinned and still on disk.
+- **Start-up order for the database (D129, replaces the "Pre-migration copy" wording above for its ordering).**
+  1. **Check, read-only**: open the DB read-only and read the Alembic revision. A revision unknown to the image (newer) -> `health.startup.refused {component: db, reason: db_newer_than_app}`; **nothing is copied or written**, so `/data/db/backups/` is untouched as well.
+  2. **Copy** only if the revision is older than head: online backup to `/data/db/backups/planner-{revision}-{timestamp}.sqlite` (last 3 kept).
+  3. **Upgrade** to head. A failed upgrade -> start-up refused, backup path in the log.
+  At head: no copy, no upgrade. Test: "newer database refused without any write" asserts the DB file and the backups directory are byte-identical before and after.
+- **Backups (R-19):** the "Backup and restore (README)" section is a rollback-snapshot reference only (D91). Volume name `overland_planner-data` (compose project `overland`, brief §15).

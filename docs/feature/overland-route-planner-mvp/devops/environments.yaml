@@ -1,5 +1,5 @@
 # Target environments -- overland-route-planner-mvp (DEVOPS wave, 2026-11-02, Apex)
-# Decisions referenced: D80-D102 (feature-delta.md "## Wave: DEVOPS"). Measured facts come from
+# Decisions referenced: D80-D102 and D160-D179 (final review gate 2026-11-02) (feature-delta.md "## Wave: DEVOPS"). Measured facts come from
 # spike/findings.md and from read-only probes of pi-host on 2026-11-02 (see coexistence.probed).
 
 schema_version: 1
@@ -23,23 +23,28 @@ environments:
 
   - id: ci-github-amd64
     purpose: Commit and acceptance stages, amd64 image, e2e on compose with mock routing
-    host: GitHub-hosted ubuntu-24.04 (x86_64), private repository
-    runs: [lint, typecheck, import-linter, gitleaks, unit+property+integration+gold, routing-port contract
+    host: GitHub-hosted ubuntu-24.04 (x86_64, pinned, D178), private repository
+    triggers: "jobs 1-4 on every push/PR; images, e2e, publish on main pushes and workflow_dispatch (D169)"
+    data_dir_rule: "job 2: DATA_DIR under $GITHUB_WORKSPACE (never the OS temp dir), df -T printed; in-process suites use FakeMountTable; jobs 6/7 use the real probe on named volumes (D168)"
+    caches: [setup-uv enable-cache (uv.lock), setup-node npm, "buildx type=gha mode=max scope=amd64|arm64"]
+    budget: "<= 1,500 of 2,000 runner-min/month; ~45 per main push, ~20 per branch push; 500 MB Packages+artifacts storage: image ~130 MB/arch (estimate, measured at 00a), GHCR keeps only the latest release (~300 MB), e2e artifact deleted after load, Pi keeps last 3 images locally (D169)"
+    pending_flags: "DEVOPS-owned PENDING_FLAGS in jobs 2 and 7, today --run-pending=slice-00b --run-pending=slice-01a; extended in the commit that turns a slice GREEN (D170)"
+    runs: [lint, typecheck, import-linter, gitleaks, "pip-audit + npm audit (blocking, D170)", "npm ci + vite build in job 2 (UD-1, D162)", unit+property+integration+gold, routing-port contract
            suite (recorded Valhalla 3.9.1 fixtures via respx), alembic round-trip, vitest, vite build,
-           amd64 image build, trivy, compose e2e (Playwright chromium + webkit iPhone), golden-order determinism]
+           amd64 image build, "trivy vuln,secret", "image to e2e as a 1-day artifact (D163)", "compose e2e (Playwright chromium + webkit iPhone) + pytest -m 'compose or security'", "golden-order determinism (from 03-ops)"]
     routing: mock only. No live Valhalla in CI
-    secrets: none (GITHUB_TOKEN with packages:write only, to push to GHCR)
+    secrets: none (GITHUB_TOKEN; packages:write + id-token:write + attestations:write at job level on jobs 5, 6, 9 only; push steps gated to main, D161)
 
   - id: ci-github-arm64
     purpose: linux/arm64 image build and smoke (the image that runs on the Pi)
     plan: personal free GitHub plan, private repository (OQ-1 answered 2026-11-02)
-    host_default: GitHub-hosted ubuntu-latest (x86_64) with QEMU binfmt (docker/setup-qemu-action) + buildx --platform linux/arm64
+    host_default: GitHub-hosted ubuntu-24.04 (x86_64) with QEMU binfmt (docker/setup-qemu-action) + buildx --platform linux/arm64
     host_opt_in: ubuntu-24.04-arm (native), selected by the repo variable ARM64_RUNNER, only if it proves available to the private repo
     emulation_scope: >
       Only the RUN steps of the Python stages run emulated: uv sync installs prebuilt aarch64 wheels
       (ortools==9.15.6755 and the rest); nothing is compiled. The node stage runs natively on $BUILDPLATFORM.
     ci_time_effect: "arm64 job about 2x native (< 15 min vs < 8 min); main pipeline to a deployable digest < 25 min; about 40 runner-minutes per main push"
-    runs: [arm64 image build, push by digest (main only), "functional smoke under the same arch: /healthz 200 + solver probe green + import ortools on aarch64",
+    runs: [arm64 image build, "trivy vuln,secret (D170)", push by digest (main only), "functional smoke under the same arch: /healthz 200 + solver probe green + import ortools on aarch64 + real /data probe on a named volume",
            "idle RSS sample only on a native runner (under QEMU timings and RSS are meaningless and skipped)"]
 
   - id: pi-prod
@@ -54,9 +59,13 @@ environments:
     files_on_host:
       - compose.yaml              # from git (deploy/compose.yaml), rsynced by make deploy
       - .env                      # Pi-local, mode 600, hand-edited, never in git (from .env.example)
-      - release.env               # written only by deploy.sh: PLANNER_IMAGE=...@sha256, PLANNER_GIT_SHA, PLANNER_ALEMBIC_HEAD
-      - release.env.prev          # previous release, used by rollback
-      - releases.log              # append-only: ts, action (deploy|rollback|auto-rollback), digest, git_sha, alembic_head, result
+      - release.env               # written only by deploy.sh/rollback.sh: PLANNER_IMAGE=...@sha256, PLANNER_GIT_SHA, PLANNER_COMMIT_TS, PLANNER_ALEMBIC_HEAD; other lines preserved (D166)
+      - release.env.prev          # previous release, used by make rollback
+      - release.env.prev2         # release before that, make rollback STEPS=2 (D176)
+      - release.env.failed        # last release rolled away from (info only; never a rollback target)
+      - routing.env               # VALHALLA_TILESET only; written only by tiles-seed/tiles-refresh (from 06a-ops, D166)
+      - routing.env.prev          # previous tileset, used by make tiles-rollback
+      - releases.log              # append-only: ts, action (deploy|rollback|auto-rollback), digest, git_sha, commit_ts, alembic_head, result, reason (D176)
       - scripts/                  # deploy.sh, rollback.sh, tiles-*.sh, spike-cleanup.sh, preflight.sh (from git)
       - valhalla/valhalla.overrides.json   # config deltas (allow_second_pass etc.), from git
       - snapshots/                # predeploy-<ts>.tgz for D89/D90 rollback only; current + previous deploy kept (not a backup, same NVMe)
@@ -65,29 +74,33 @@ environments:
         image: ghcr.io/mrmilgauss/overland-planner@sha256:<from release.env>
         profile: default
         init: true
-        ports: ["${PLANNER_BIND}:${PLANNER_PORT:-8080}:8080"]   # PLANNER_BIND=192.168.1.10 on the Pi
+        ports: ["${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER_PORT:-8080}:8080"]   # Pi .env: 192.168.1.10; .env.example: 127.0.0.1 (D174). deploy.sh starts with PLANNER_BIND=127.0.0.1, smokes, then publishes (D165)
         networks: [edge, routing]
         volumes: ["planner-data:/data"]
         mem_limit: 1g
         memswap_limit: 1g
-        cpus: 2.0
+        cpus: 1.0                                   # OD-9, D167; re-verify solve <= 55 s at perf-pi
         pids_limit: 256
+        cap_drop: [ALL]                             # D173
+        security_opt: ["no-new-privileges:true"]
+        read_only: true
+        tmpfs: ["/tmp:size=64m,mode=1777"]
         oom_score_adj: 500
         restart: unless-stopped
         healthcheck: {test: python -c urllib /healthz, interval: 30s, timeout: 5s, retries: 3, start_period: 30s}
         logging: {driver: json-file, max-size: 10m, max-file: "5"}
-        depends_on: {valhalla: service_started}     # from slice 06a; never waits for healthy (ADR-013 s8)
+        depends_on: {valhalla: service_started}     # from slice 06a-ops; never waits for healthy (ADR-013 s8)
       valhalla:
         image: ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6
-        profile: default (added in slice 06a)
+        profile: default (added in slice 06a-ops)
         networks: [routing]                          # internal: true. Never published
-        volumes: ["valhalla-data:/custom_files (subpath tilesets/${VALHALLA_TILESET})"]
+        volumes: ["valhalla-data:/custom_files (subpath tilesets/${VALHALLA_TILESET})"]   # VALHALLA_TILESET from routing.env (D166)
         env: {serve_tiles: "True", use_tiles_ignore_pbf: "True", force_rebuild: "False", server_threads: "2",
               update_existing_config: "False", build_admins: "False", build_time_zones: "False",
               build_elevation: "False", build_transit: "False"}
         mem_limit: 4g
         memswap_limit: 4g
-        cpus: 3.0
+        cpus: 2.0                                   # OD-9, D167 (server_threads 2)
         oom_score_adj: 500
         restart: unless-stopped
         healthcheck: {test: "curl -fsS http://localhost:8002/status (verify curl is in the image at 06a)", interval: 30s, start_period: 120s}
@@ -106,15 +119,19 @@ environments:
         profile: perf (ephemeral; perf and @real_provider acceptance runs only)
         image: same digest as planner
         ports: ["127.0.0.1:18080:8080"]              # reached from the Mac via ssh -L
-        networks: [routing]
+        networks: [edge, routing]                    # D164: an internal-only network gets no published ports
         volumes: ["perf-data:/data"]                 # overland_perf-data, removed after the run
         mem_limit: 1g
+        cpus: 1.0
+        hardening: same as planner (D173)
+        golden_order_check: solves I1/I2 first and compares the committed hash (D175)
       valhalla-tunnel:
         profile: ops (ephemeral; make contract-live only)
         image: alpine/socat@<pinned digest>
         command: TCP-LISTEN:8002,fork TCP:valhalla:8002
         ports: ["127.0.0.1:18002:8002"]
-        networks: [routing]
+        networks: [edge, routing]                    # D164
+    network_check: "docker compose -p overland --profile perf --profile ops config shows edge+routing and the loopback binds; reachability from the Mac checked at 03-ops (perf) and 06a-ops (tunnel) (D164)"
     networks:
       edge: {driver: bridge}
       routing: {driver: bridge, internal: true}
@@ -123,7 +140,10 @@ environments:
       planner-data: {name: overland_planner-data}
       valhalla-data: {name: overland_valhalla-data}
       perf-data: {name: overland_perf-data}
-    steady_state_budget: {planner_cap_gb: 1, valhalla_cap_gb: 4, valhalla_measured_steady_gb: 1.3, headroom_after_caps_gb: 7.3}
+    steady_state_budget: {planner_cap_gb: 1, valhalla_cap_gb: 4, valhalla_measured_steady_gb: 1.3, headroom_after_caps_gb: 7.3, cpu_caps_serving: "planner 1 + valhalla 2 of 4 cores"}
+    network_prerequisite: "192.168.1.10 is a DHCP reservation (or static) for pi-host (D178)"
+    ghcr_credential: "fine-grained token if it can read GHCR, else classic read:packages PAT; ~/.docker/config.json mode 600; no credential helper (headless, accepted) (D178)"
+    basic_auth: "recommended on in the Pi .env (user's choice, NFR-4) (D178)"
 
   - id: pc-amd64
     optional: true
@@ -133,15 +153,15 @@ environments:
 spike_leftovers:
   path: /home/deploy/valhalla-spike
   size_gb: 18.3
-  fate: seed source for the first tileset at slice 06a, then deleted (D92)
+  fate: seed source for the first tileset at slice 06a-ops, then deleted by make spike-cleanup only after a sha256 match of the four seeded files (D92, D178)
 
 platform_coverage:
   server_arch: [linux/arm64 (production, native), linux/amd64 (CI, PC dev)]
   browsers:
-    - {client: desktop Chrome (latest 2), viewport: ">= 1280 px", role: primary (Marco), ci: chromium every push}
+    - {client: desktop Chrome (latest 2), viewport: ">= 1280 px", role: primary (Marco), ci: "chromium on main pushes + manual (job 7); no browser check on branch pushes (D169)"}
     - {client: desktop Safari (latest 2), viewport: ">= 1280 px", role: primary alt, ci: webkit desktop on main}
     - {client: desktop Firefox (latest 2), viewport: ">= 1280 px", role: supported, ci: firefox weekly}
-    - {client: iPhone Safari (current iOS), viewport: 390x844, role: results reader (Giulia), ci: "webkit 'iPhone 14' device every push"}
+    - {client: iPhone Safari (current iOS), viewport: 390x844, role: results reader (Giulia), ci: "webkit 'iPhone 14' device on main pushes + manual (job 7)"}
   name_resolution: pi.example via mDNS (avahi active on the Pi; macOS and iOS resolve .local natively)
   gpx_consumers_manual: [OsmAnd, Locus Map, Garmin]   # KPI K6 dogfood checklist; XSD validation is automated in CI
 
@@ -153,6 +173,7 @@ coexistence:
                       10200 10300 10400 10700]
   ports_claimed_by_this_stack:
     - {port: 8080, bind: 192.168.1.10, service: planner, status: verified free}
+    - {port: 8080, bind: 127.0.0.1, service: planner (deploy smoke only, D165), status: verified free, lifetime: seconds per deploy}
     - {port: 18080, bind: 127.0.0.1, service: planner-perf, status: verified free, lifetime: ephemeral}
     - {port: 18002, bind: 127.0.0.1, service: valhalla-tunnel, status: verified free, lifetime: ephemeral}
     - {port: 8002, bind: none, service: valhalla, note: internal network only, never published}
@@ -170,7 +191,7 @@ coexistence:
     Household stack uses ~3.9 GB. Our caps add at most 5 GB (planner 1 + valhalla 4). oom_score_adj 500 on our
     services makes the kernel pick them before household containers under pressure. The tile build (9 GiB) runs
     only with valhalla serving stopped and after a MemAvailable preflight.
-  cpu: planner capped at 2 cores, valhalla at 3, build at 3; at least 1 core always left to the household stack
+  cpu: planner capped at 1 core, valhalla at 2, build at 3 (serving stopped); at least 1 core always left to the household stack (D167)
   logs: per-service json-file rotation in compose; /etc/docker/daemon.json is never created or edited
   forbidden_commands: [docker system prune, docker volume prune, docker image prune -a, docker network prune,
                        "docker compose down without -p overland", "any edit under ~/MissionControl, ~/voice-light-control, ~/apps/fate-ledger"]
@@ -178,12 +199,12 @@ coexistence:
 deployment_assumptions:
   - "Deploy is pull-based and manual: `make deploy` on the Mac -> ssh -> scripts/deploy.sh on the Pi. The Pi has no runner and no inbound access from GitHub"
   - "Idempotent. Running deploy twice with the same digest changes nothing (compose up -d is a no-op, releases.log records \"unchanged\"). A flock on ~/apps/overland-planner/.deploy.lock prevents concurrent deploys"
-  - "Only CI-green main SHAs are deployable (preflight queries `gh run list --commit <sha>`)"
+  - "Only CI-green main SHAs are deployable (preflight queries `gh run list --commit <sha>`); default SHA = newest green main SHA with a release.json (D176); `gh attestation verify` must pass, fail closed (D171)"
   - "Images are referenced by digest only. Tags (sha-<12>, main) are for humans"
-  - "Strategy Recreate. Planner downtime about 10-30 s per deploy (stop, migrate, probes). Valhalla is only recreated when its compose definition changes"
+  - "Strategy Recreate. Planner downtime about 15-35 s per deploy (stop, migrate, probes, loopback smoke, publish recreate; D165). Valhalla is only recreated when its compose definition changes"
   - "The first deploy creates the install dir, volumes and networks. No step touches resources outside the `overland` compose project"
   - "Safe uninstall: `make uninstall` = docker compose -p overland down (volumes kept). `make purge` = typed confirmation (no backup is taken; the data is gone afterwards), then remove only overland_* volumes and ghcr.io/mrmilgauss/overland-planner images"
-  - "No backups (user 2026-11-02, D91). Only rollback safety on the Pi: the ADR-018 pre-migration copy and the predeploy snapshot (current + previous). ACCEPTED RISK: if the Pi, its NVMe or the volume is lost, all project data is lost; RPO for device loss is undefined. RPO for a failed deploy or migration = 0"
+  - "No backups (user 2026-11-02, D91). Only rollback safety on the Pi: the ADR-018 pre-migration copy and the predeploy snapshot (current + previous). ACCEPTED RISK: if the Pi, its NVMe or the volume is lost, all project data is lost; RPO for device loss is undefined. RPO = 0 only for a deploy or migration that fails before the LAN publish (the new version is reachable only on 127.0.0.1 until its smoke passes, D165); after the publish, writes are kept by a digest-only rollback, but a schema downgrade can lose data only the newer schema holds"
   - "Only CI-green main SHAs reach the Pi; no branch protection is assumed on the private repo (personal free plan), so the deploy preflight is the gate (D88)"
   - "Valhalla tiles are rebuildable. The previous tileset is kept for rollback"
   - "Slice 06a seeds the first tileset (tilesets/20261101/) from ~/valhalla-spike/custom_files (user-approved, OQ-5). Once production valhalla serves it and make contract-live is green, ~/valhalla-spike (18.3 GB) is deleted by make spike-cleanup at a start time the user names"

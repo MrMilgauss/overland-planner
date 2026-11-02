@@ -8,7 +8,7 @@ Valhalla runs in Marco's compose stack on the Pi. Switching from the MockProvide
 
 ## IN
 
-- Valhalla in the compose stack, selected by configuration; no API key (DESIGN D40, ADR-013)
+- The planner's Valhalla adapter, selected by configuration; no API key (DESIGN D40, ADR-013); routing-port contract suite on recorded fixtures (US-10a `@technical`). The Valhalla service, tileset seeding, build profile, `contract-live`, `acceptance-pi` and the end-to-end `perf-pi` mode moved to slice 06a-ops (D145)
 - Results header "Provider: Valhalla (map data <date>) / profile: 4x4"
 - Confirmed legs (level 1 of FR-5.8)
 - Objective per project; new projects default to distance (D7)
@@ -27,7 +27,7 @@ Disproves "self-hosted Valhalla on the Pi serves a 60-item cold matrix within th
 ## Acceptance criteria (each traces to a scenario)
 
 - [ ] US-10a: "Marco plans with Valhalla on his Pi" (Torino -> Susa within 15% of openstreetmap.org's Valhalla planner); "Marco switches the objective to road time"; "New projects minimise road distance by default"; "Routing engine unreachable leaves the project intact"; "The routing engine is still loading its map data"; "Marco's password is never shown"; "A trail entry reached by a forest track is Confirmed"
-- [ ] US-06a: "A 60-item trip with no known roads is on screen within 3 minutes" (p95 <= 180 s)
+- [ ] US-06a: "A 60-item trip with no known roads is on screen within 3 minutes" (slowest of 10 <= 180 s; every cold run counts, retried jobs and second-pass > 700 pairs included and reported separately, D147, D159)
 
 ## Production-like data
 
@@ -39,11 +39,11 @@ Marco compares mock and Valhalla road km for his Assietta weekend.
 
 ## Dependencies
 
-Slice 05 (legs reused per provider; a map-data rebuild counts as a provider change). OD#1 resolved: self-hosted Valhalla (DESIGN D40).
+Slice 05 (legs reused per provider; a map-data rebuild counts as a provider change) and slice 06a-ops (Valhalla serving on the Pi). OD#1 resolved: self-hosted Valhalla (DESIGN D40).
 
 ## Effort and reference class
 
-1 day after SPIKE-2R, at risk (adapter 0.7 d + S1b measurement). Reference class: HTTP adapter + error mapping + compose service.
+1 day, at risk (re-estimated at the final gate, D145: adapter + contract suite on fixtures 0.6 d, US-10a user-facing parts 0.3 d, S1b measurement 0.1 d). SPIKE-2R is done. Reference class: HTTP adapter + error mapping.
 
 ## Pre-slice SPIKE-2R - MANDATORY GATE (U13, U26)
 

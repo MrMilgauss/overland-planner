@@ -1,7 +1,7 @@
 # ADR-015: Plan job lifecycle — limits, Stop, incumbent streaming, solver child process
 
 ## Status
-Accepted; parameters pending SPIKE-1R (2026-11-01). The Stop semantics were confirmed by the user (D60). Supersedes ADR-008 and ADR-012. Resolves review B3.
+Accepted (2026-11-01). Parameters measured by SPIKE-1R (2026-11-01; spike/findings.md: streaming, kill, spawn, child RSS). **Final-gate amendment** D122, D130, D133, D136 (2026-11-02). The Stop semantics were confirmed by the user (D60). Supersedes ADR-008 and ADR-012. Resolves review B3.
 
 ## Context
 - A plan job now runs from seconds up to 30 min (ADR-014). The UI must show progress and offer "Stop and use best so far" at all times.
@@ -29,11 +29,11 @@ solving                   -- budget used up | optimisation limit | stop -->  fin
 solving                   -- no valid incumbent at feasibility limit -->  done (Failed run, reason "timeout")
 solving                   -- stop with no valid incumbent -->  done (Failed run, reason "stopped before a valid route was found")
 solving                   -- feasibility limit WITH a valid incumbent -->  stays solving (continues to budget / optimisation limit / stop)
-finalising                -- stop -->  ignored (finalising is short and not stoppable; poll shows stoppable=false)
+finalising                -- stop -->  ignored (finalising is short and not stoppable; poll shows stoppable=false)   [final gate D136: Stop returns 200 idempotently with the incumbent being written]
 finalising                -- guard fails on the chosen (last) incumbent -->  done (Failed run, reason "internal invariant violation"); NO fallback to an earlier incumbent
 ```
 (Revision 2 rows from review L-2. Not falling back to an earlier incumbent is deliberate: a guard failure means a model or solver defect, which must surface rather than be masked.)
-- Poll payload: `state`, `new_legs`, `cached_legs`, `legs_total`, `points_located`, `elapsed_s`, `incumbent` (unconfirmed count, objective, found_at_s), `stoppable`, `plan_run_id`, `message`.
+- Poll payload **[field names superseded by the final-gate amendment D130: `legs_new`, `legs_cached`, `points_new`]**: `state`, `new_legs`, `cached_legs`, `legs_total`, `points_located`, `elapsed_s`, `incumbent` (unconfirmed count, objective, found_at_s), `stoppable`, `plan_run_id`, `message`.
 
 ### Solver child process (carried over from ADR-012, extended)
 - `OrToolsTourSolver` spawns one child per solve (`multiprocessing`, `spawn`). `ortools` is imported only in the child.
@@ -43,7 +43,7 @@ finalising                -- guard fails on the chosen (last) incumbent -->  don
 - The guard (ADR-009) runs in the parent on the chosen incumbent.
 
 ### Ownership
-`PlanJobRegistry` (application) holds jobs in memory, runs them on a bounded thread executor (max 1 job per project, max 2 overall), and keeps finished jobs for 10 minutes. A process restart loses running jobs: no run exists, cached legs remain.
+`PlanJobRegistry` (application) holds jobs in memory, runs them on a bounded thread executor (max 1 job per project, max 2 overall; **one solver child at a time**, final gate D133), and keeps finished jobs for 10 minutes. A process restart loses running jobs: no run exists, cached legs remain.
 
 ### Gold tests
 - Kill the parent mid-solve: the child is gone within 3 s.
@@ -65,3 +65,33 @@ finalising                -- guard fails on the chosen (last) incumbent -->  don
 
 ## Amendment (DEVOPS, D93/D94) — 2026-11-02
 DV-2, accepted by the user. Jobs stay in memory as decided above. In addition, when a job reaches a terminal state the application writes **one append-only `plan_job_log` row** (under the single write lock): job id, project, start/end, terminal state, plan run id (if any), item/leg/point counts (`legs_new`, `legs_cached`, `points_new`), `second_pass_pairs`, `retried`, `memo_hit`, `ignore_memo`, `stage_ms`, solver solutions and incumbents, reproducibility and "not fully optimised" reason, Unconfirmed/retrace counts, `provider_id`, `app_version`. Synchronous refusals (422/409/503) still create no job and are only logged. The state machine and run-numbering rules are unchanged. The row feeds `GET /api/diagnostics` (DV-3) and the KPI contracts (`docs/product/kpi-contracts.yaml`).
+
+## Amendment (final gate, D122, D130, D133, D136) — 2026-11-02
+Review findings R-02 (UI-7), R-10, R-15, R-18. Additions to the state table and ownership; earlier rows are unchanged unless marked.
+
+**Additional state rows (D122).**
+```
+solving  -- child finishes normally (final) with NO valid incumbent (e.g. OR-Tools ROUTING_FAIL)
+             -->  done (Failed run, reason no_valid_route_found), immediately; the job does not wait for the feasibility limit
+solving  -- child exits abnormally (crash, OOM kill, non-zero exit, pipe EOF without final), no valid incumbent
+             -->  done (Failed run, reason optimizer_failed)
+solving  -- child exits abnormally WITH a valid incumbent
+             -->  finalising with that incumbent, labelled "not fully optimised (optimizer_failed)", reproducible=false
+```
+- The guard still runs on the incumbent; a guard failure gives Failed "internal invariant violation" as before.
+- `optimizer_failed` logs `plan.job.finished` with the child's exit code/signal; the run-numbering rule is unchanged (solver-side outcomes create a numbered run).
+- User-facing texts are the product owner's (OD-5 covers the limit cases). Reason codes are fixed here: `timeout`, `stopped`, `no_valid_route_found`, `optimizer_failed`, `internal_invariant_violation`, `unreachable`.
+- Gold tests added: scripted child returning `final` with no incumbent -> Failed `no_valid_route_found` well before the limit; child killed with SIGKILL before/after its first incumbent -> Failed `optimizer_failed` / labelled run.
+
+**Stop is idempotent (D136, replaces the row "finalising -- stop --> ignored").** `POST /api/plan-jobs/{job_id}/stop` always returns 200 with the current poll payload:
+- in `finalising`: the job completes with the incumbent already being written; the response shows `state: finalising`, `stoppable: false`; repeated Stops change nothing;
+- on a `done` job: returns the final payload (with `plan_run_id` if a run exists); no error;
+- unknown or expired job id: 404 `{code: "not_found"}`.
+
+**One solver slot (D133, replaces "max 2 overall" for the solve stage).** `PlanJobRegistry` keeps max 1 job per project and max 2 jobs overall, but only **one solver child runs at a time** (a process-wide slot). A job that reaches the solve stage while the slot is busy waits in state `waiting_for_optimizer`:
+- it is stoppable; Stop while waiting -> `cancelled`, no run, legs kept (it has not started solving);
+- the limits keep running from job start; the feasibility limit while waiting -> `timed_out`, no run, legs kept;
+- `plan_job_log` records `solver_wait_s`; such jobs **count** in K5 (UD-3) and are reported separately.
+Reason: the planner container is capped at 1 CPU (OD-9) and OR-Tools is single-threaded, so two children would each run at half speed and break the 55 s solve row; one child (55–59 MB measured) also closes F-6 (two children vs the 1g `mem_limit`).
+
+**Poll payload field names (D130).** One field-name table serves the poll payload and `plan_job_log`: `legs_new`, `legs_cached`, `legs_total`, `points_new` (replaces `new_legs`, `cached_legs`, `points_located` in the list above), plus `state`, `elapsed_s`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message`, `reason` (on terminal states). `incumbent.objective` is the reported objective (road + retrace km or time, without `RETRACE_PENALTY`; ADR-017 amendment). States in the payload are the snake_case names above, plus `waiting_for_optimizer`.

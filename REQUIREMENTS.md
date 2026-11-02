@@ -86,13 +86,16 @@ The app runs as Docker container(s) on a Raspberry Pi on the home LAN and is use
 
 ### 5.2 Importing tracks
 - **FR-2.1** Upload one or more track files at once: GPX (required). KML, KMZ and GeoJSON are nice to have.
+  - *Clarified 2026-11-02 (final gate):* if one file of a multi-file upload is bad, the valid files are imported and each refused file is listed by name with its reason; nothing partial is kept from a bad file. A valid GPX with no usable track is refused with "X has no usable track". Upload caps (defaults 25 MB per file, 100 MB per request, 50 files) are configurable.
 - **FR-2.2** A single file containing several tracks or segments → each becomes a separate track. The user can merge segments instead if they belong together.
 - **FR-2.3** Keep the original file unmodified. Store a parsed, simplified copy for display.
 - **FR-2.4** On import, show per track: name, length, entry/exit coordinates, elevation gain/loss (if present), and an estimated duration (see FR-4.6).
+  - *Clarified 2026-11-02 (final gate):* direction text ("Pian dell'Alpe -> Sestriere") uses place names from the GPX track name or description when present; otherwise it shows "entry"/"exit" with coordinates. No reverse geocoding in the MVP.
 - **FR-2.5** Detect loop tracks (entry ≈ exit within a configurable distance, default 200 m) and label them. A loop is still directional.
 - **FR-2.6** Detect obviously broken data (single point, huge jumps between points) and warn the user.
 - **FR-2.7** Explicit "Reverse track direction" action per HC-1.
 - **FR-2.8** Per-track editable fields: name, notes, difficulty (free text or 1–5), estimated duration override.
+  - *Clarified 2026-11-02 (final gate):* difficulty is a whole number 1–5 (or empty); free text goes in notes. FR-2.2 merging applies only to segments of the same file.
 
 ### 5.3 Adding POIs
 - **FR-3.1** Add a POI by:
@@ -112,6 +115,7 @@ The app runs as Docker container(s) on a Raspberry Pi on the home LAN and is use
 
 ### 5.5 Optimization
 - **FR-5.1** Objective (selectable per project): **minimise total road distance** (default) or **minimise total road time**.
+  - *Clarified 2026-11-02 (final gate):* the objective is the third criterion of the FR-5.8 ordering (after fewest Unconfirmed legs and fewest retraces). Any internal retrace penalty is a tie-break only and is never part of the reported km, time or objective; itinerary and totals show the real road km/time plus the retrace km/time.
 - **FR-5.2** The cost from item A to item B is the road leg from A's *exit point* to B's *entry point*. For a POI, entry = exit = its location. For a track, entry and exit are fixed by HC-1.
 - **FR-5.3** The off-road length and duration of tracks are constant whatever the order. They are added to the totals but do not influence the order. Exception (2026-11-01): a retrace leg (HC-1, FR-5.8) is counted as ordinary off-road driving, with no separate breakdown, and it does depend on the order.
 - **FR-5.4** Start and End are fixed (HC-2). All other included items are mandatory and must appear exactly once.
@@ -120,6 +124,12 @@ The app runs as Docker container(s) on a Raspberry Pi on the home LAN and is use
   - **Feasibility limit:** if no valid route has been found within **10 min**, the run aborts with a timeout error.
   - **Optimisation limit:** once a valid route exists, optimisation may continue until **30 min** after Calculate was pressed. The 30 min is measured from Calculate, not from the first valid route. If that limit is reached, return the best route found, labelled "not fully optimised".
   - **Stop:** a "Stop and use best so far" action is always available while a run is in progress.
+  - *Clarified 2026-11-02 (final gate):*
+    - **Population of the 180 s target:** every cold 60-item plan counts, including retried jobs and plans whose road matrix needed a second pass with more than 700 pairs; those cases are reported separately for visibility, never excluded.
+    - **Item ceiling:** "60 items" = up to 60 non-anchor items plus Start and End (62 stops, as measured). 61–70 items (the §4 range) are allowed and planned normally, with the notice "Large project - calculation may take longer than 3 minutes"; the 180 s claim is extended only after a re-calibration at 70 items.
+    - **Messages:** the feasibility limit reached while solving fails a numbered run: "No valid route found within the time limit - plan run #N failed". Reached while road legs are still being looked up, it creates no run and changes nothing: "No valid route found within the time limit - nothing was changed".
+    - **Vocabulary:** the UI action is "Calculate" for the first run and "Recalculate" afterwards.
+    - A plan with only Start and End included is valid: the Start -> End road route with its totals.
 - **FR-5.6** Deterministic for identical inputs (deterministic search budget plus reuse of the stored result), so recalculating with no changes gives the same plan. Exception (2026-11-01): the explicit action "Re-optimise (ignore previous result)" starts a fresh search and may return a different plan.
 - **FR-5.8** **Road-leg confidence levels** (added 2026-11-01). Tracks often start or end away from paved roads, so road legs may use unpaved roads and forest tracks a 4x4 can reasonably drive (not open-terrain routing). The planner tries, in order:
   1. **Confirmed:** legal roads under the 4x4/car profile, forest tracks included.
@@ -131,6 +141,8 @@ The app runs as Docker container(s) on a Raspberry Pi on the home LAN and is use
   3. **None:** no connection at any level.
 
   The optimizer first looks for an order with zero Unconfirmed legs. If none exists, it minimises the number of Unconfirmed legs, then the objective. A run fails only if some included item cannot be connected at any level; the failure names that item.
+
+  *Clarified 2026-11-02 (final gate):* the full ordering is (1) fewest Unconfirmed legs (a retrace counts as one), (2) fewest retraces, (3) the objective of FR-5.1 (road distance or road time). See FR-5.1 for how retraces are reported.
 - **FR-5.7** Optional **manual pinning**: the user can lock an item's position or force "A before B". Phase 2.
 
 ### 5.6 Results
@@ -177,6 +189,7 @@ The app runs as Docker container(s) on a Raspberry Pi on the home LAN and is use
 - **NFR-1 Platform:** runs on Raspberry Pi 4/5 (ARM64, 4–8 GB RAM). Images must be built for `linux/arm64`; `linux/amd64` should also work for development on a PC.
 - **NFR-2 Deployment:** `docker compose up -d` brings up the whole stack. Configuration is via `.env`. Data lives on a named volume or bind mount.
 - **NFR-3 Persistence:** SQLite for app data (single user, simple backups). Track files are stored on disk.
+  - *Clarified 2026-11-02 (final gate) — accepted risk (user decision, no backups; also job J-06 "own planning on the home LAN"):* the MVP takes no backups. Only rollback copies exist (pre-migration copy and pre-deploy snapshot), on the same Pi disk as the data. A failed deploy or migration loses nothing; losing the Pi, its disk or the data volume loses all project data. Original GPX files stay wherever the user keeps them. FR-1.3 project export (Phase 3) is the future mitigation.
 - **NFR-4 Security:** LAN-only by default. Optional basic auth via an environment variable. No secrets in images. API keys go in `.env`.
 - **NFR-5 Resource use:** app idle RAM < 300 MB (excluding any self-hosted routing engine).
 - **NFR-6 Resilience:** network failures toward external services produce clear errors and never corrupt project data.
