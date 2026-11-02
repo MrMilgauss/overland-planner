@@ -6,3 +6,19 @@ node_modules/
 .env
 .data/
 .pytest_cache/
+
+# GPX exports and uploads never enter git; test fixtures stay tracked (D178).
+*.gpx
+!tests/fixtures/**/*.gpx
+!tests/acceptance/overland_route_planner_mvp/fixtures/gpx/*.gpx
+
+# Build, mutation and coverage artefacts
+web/dist/
+mutants/
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+
+# Secrets stay out; the template is tracked.
+!.env.example

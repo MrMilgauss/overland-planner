@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Any
 
 import pytest
+from hypothesis import settings
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -65,3 +67,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             continue
         if "requires_external" in names and not run_external:
             item.add_marker(pytest.mark.skip(reason="requires_external: run with --run-external on the right host"))
+
+
+# Hypothesis profiles (D97), selected with HYPOTHESIS_PROFILE (default dev).
+settings.register_profile("dev", max_examples=100)
+settings.register_profile("ci", max_examples=1_000, derandomize=True)
+settings.register_profile("mutation", max_examples=50, derandomize=True)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))

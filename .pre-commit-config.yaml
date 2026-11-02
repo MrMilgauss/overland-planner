@@ -1,0 +1,60 @@
+# D87: pre-commit < 30 s (format, lint, secrets, lock, hygiene); pre-push < 5 min (mirrors CI jobs 1/2/4).
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+        exclude: execution-log\.json$  # written by the DES CLI
+      - id: trailing-whitespace
+      - id: check-added-large-files
+        args: [--maxkb=5120]
+        exclude: ^tests/(fixtures|acceptance/overland_route_planner_mvp/fixtures)/
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: uv-lock-check
+        name: uv lock --check
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy --strict (src)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: lint-imports
+        name: import-linter (brief section 11)
+        entry: uv run lint-imports
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: pytest-fast
+        name: pytest (not slow, solver_child, walking_skeleton)
+        entry: uv run pytest -q -m "not slow and not solver_child and not walking_skeleton"
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

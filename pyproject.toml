@@ -31,6 +31,13 @@ dev = [
     "pyyaml>=6.0",
     # State-delta port (Mandate 8). Re-exported by tests/common/state_delta.py.
     "nwave-ai>=3.21",
+    # Tooling (DELIVER 01-01, D85): exact pins.
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+    "import-linter==2.15",
+    "pytest-cov==7.1.0",
+    "pre-commit==4.7.0",
+    "types-PyYAML==6.0.12.20261030",
 ]
 
 [build-system]
@@ -60,3 +67,122 @@ markers = [
     "slow: slower than the pre-push budget",
     "solver_child: spawns the OR-Tools child process (excluded from mutation runs)",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
+# DISTILL-authored files that predate the ruff gate (step 01-01 may not edit them). Drop each entry the first time
+# DELIVER edits the file and runs `ruff format` / `ruff check --fix` on it.
+extend-exclude = [
+    "tests/acceptance/overland_route_planner_mvp/conftest.py",
+    "tests/acceptance/overland_route_planner_mvp/steps/platform_steps.py",
+    "tests/acceptance/overland_route_planner_mvp/steps/world.py",
+    "tests/common/state_delta.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["overland_planner"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+strict = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["pytest_bdd.*", "gpxpy.*", "defusedxml.*", "xmlschema.*", "nwave_ai.*", "des.*", "ortools.*"]
+ignore_missing_imports = true
+
+# Brief section 11 layer and module contracts. Contract 6 (application facades) is added per module when its
+# facade.py first appears (platform at 01-04, catalog at 02-02): ignore_imports that match nothing are errors.
+[tool.importlinter]
+root_package = "overland_planner"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Layers: bootstrap > adapters > application > domain"
+type = "layers"
+layers = [
+    "overland_planner.bootstrap",
+    "overland_planner.adapters",
+    "overland_planner.application",
+    "overland_planner.domain",
+]
+
+[[tool.importlinter.contracts]]
+id = "domain-forbidden"
+name = "Domain forbidden: frameworks, I/O and logging"
+type = "forbidden"
+source_modules = ["overland_planner.domain"]
+forbidden_modules = [
+    "sqlalchemy", "alembic", "fastapi", "starlette", "pydantic", "httpx", "ortools", "gpxpy", "defusedxml",
+    "structlog", "logging",
+]
+
+[[tool.importlinter.contracts]]
+id = "application-forbidden"
+name = "Application forbidden: infrastructure frameworks (logging via EventLog port)"
+type = "forbidden"
+source_modules = ["overland_planner.application"]
+forbidden_modules = ["sqlalchemy", "fastapi", "starlette", "httpx", "ortools", "gpxpy", "structlog"]
+
+[[tool.importlinter.contracts]]
+id = "adapter-independence"
+name = "Adapter independence"
+type = "independence"
+modules = [
+    "overland_planner.adapters.http",
+    "overland_planner.adapters.routing",
+    "overland_planner.adapters.solver",
+    "overland_planner.adapters.persistence",
+    "overland_planner.adapters.files",
+    "overland_planner.adapters.gpx",
+    "overland_planner.adapters.geocoding",
+    "overland_planner.adapters.logging",
+]
+
+[[tool.importlinter.contracts]]
+id = "domain-catalog"
+name = "Domain catalog does not import planning, export or routing"
+type = "forbidden"
+source_modules = ["overland_planner.domain.catalog"]
+forbidden_modules = [
+    "overland_planner.domain.planning",
+    "overland_planner.domain.export",
+    "overland_planner.domain.routing",
+]
+
+[[tool.importlinter.contracts]]
+id = "domain-routing"
+name = "Domain routing does not import planning or export"
+type = "forbidden"
+source_modules = ["overland_planner.domain.routing"]
+forbidden_modules = ["overland_planner.domain.planning", "overland_planner.domain.export"]
+
+[[tool.importlinter.contracts]]
+id = "ortools-solver-only"
+name = "ortools only in adapters.solver"
+type = "forbidden"
+# Direct imports only: the composition root reaches the solver adapter, which legitimately imports ortools.
+allow_indirect_imports = true
+source_modules = [
+    "overland_planner.domain",
+    "overland_planner.application",
+    "overland_planner.bootstrap",
+    "overland_planner.adapters.http",
+    "overland_planner.adapters.routing",
+    "overland_planner.adapters.persistence",
+    "overland_planner.adapters.files",
+    "overland_planner.adapters.gpx",
+    "overland_planner.adapters.geocoding",
+    "overland_planner.adapters.logging",
+    "overland_planner.adapters.clock",
+]
+forbidden_modules = ["ortools"]
