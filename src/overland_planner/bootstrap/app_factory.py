@@ -5,7 +5,9 @@ Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the sa
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: wire -> probe every registered component -> mount routes (API and health first, then the built web page,
 D162) -> log `app.started`. uvicorn serves only once the factory returns, so no request is answered before every
-component has reported its probe outcome. The database (02-01) and more probed adapters join in their slices.
+component has reported its probe outcome; each degraded component gets one `health.startup.degraded` line
+{component, reason} before `app.started`. The OR-Tools probe runs in a short-lived child process.
+The database (02-01) and more probed adapters join in their slices.
 
 stdout carries only the JSON event lines (brief §12): uvicorn's plain-text access log is switched off here, so the
 production command needs no logging flags.
@@ -18,7 +20,6 @@ import os
 import platform
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import FastAPI
 
@@ -26,9 +27,11 @@ from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
+from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
+from overland_planner.application.ports.tour_solver import TourSolver
 from overland_planner.bootstrap.probes import probe_every_component
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import Settings
@@ -43,7 +46,7 @@ class ExternalPorts:
 
     clock: Clock | None = None
     mount_table: MountTable | None = None
-    tour_solver: Any | None = None
+    tour_solver: TourSolver | None = None
 
 
 def create_app(
@@ -59,7 +62,11 @@ def create_app(
     registry = ProbeRegistry()
     registry.register("clock", clock)
     registry.register("event_log", event_log)
+    registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = probe_every_component(registry)
+    for name, result in health.detail().components.items():
+        if result.outcome.startswith("degraded"):
+            event_log.info("health.startup.degraded", component=name, reason=result.reason)
 
     logging.getLogger("uvicorn.access").disabled = True
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)

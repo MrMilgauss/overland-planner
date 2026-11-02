@@ -89,6 +89,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
             "components": {
                 "clock": {"outcome": "ok", "reason": None},
                 "event_log": {"outcome": "ok", "reason": None},
+                "tour_solver": {"outcome": "ok", "reason": None},
             },
             "banners": [],
         },
