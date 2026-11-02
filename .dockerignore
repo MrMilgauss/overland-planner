@@ -1,0 +1,27 @@
+# Build context of the planner image (D170): no secrets, no data, no GPX, no dev-only trees.
+.git
+.gitignore
+.data
+.env
+.env*
+**/.env*
+**/node_modules
+tests
+docs
+*.gpx
+**/*.gpx
+.venv
+web/dist
+web/src/**/*.test.ts
+mutants
+.nwave
+.hypothesis
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.import_linter_cache
+**/__pycache__
+**/*.pyc
+.coverage
+coverage.xml
+.DS_Store
