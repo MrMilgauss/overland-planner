@@ -1,5 +1,6 @@
 # Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169).
-# Jobs 5-9 (images, e2e, publish) arrive at 01-08/01-09. Actions pinned by commit SHA (D85), runners pinned (D178).
+# Step 01-08: jobs 5 image-amd64 and 6 image-arm64 on main pushes and manual runs only; jobs 7-9 (e2e, publish)
+# arrive at 01-09. Actions pinned by commit SHA (D85), runners pinned (D178).
 name: ci
 
 on:
@@ -20,6 +21,11 @@ env:
   # --run-pending=slice-01a, in the commit that turns the slice GREEN.
   PENDING_FLAGS: ""
   UV_VERSION: "0.11.16"
+  # Trivy as a sha256-verified binary (like the lint binaries) rather than aquasecurity/trivy-action, whose tags were
+  # rewritten in the March 2026 supply-chain incident.
+  TRIVY_VERSION: "0.76.1"
+  TRIVY_SHA256_X64: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  TRIVY_SHA256_ARM64: e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f
 
 jobs:
   changes:
@@ -248,3 +254,223 @@ jobs:
           path: web/dist
           if-no-files-found: error
           retention-days: 3
+
+  image-amd64:
+    name: "5 image-amd64"
+    needs: [changes, lint, test-python, test-web]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: # D161: only the image and publish jobs may write packages and attestations
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (01-09) assembles the index
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: meta
+        name: Build metadata (GIT_SHA, COMMIT_TS, ALEMBIC_HEAD)
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "commit_ts=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+          # No migrations exist yet; the step that adds alembic switches this to the real head revision.
+          echo "alembic_head=none" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the amd64 image as a docker tarball (every image run; e2e artifact, D163)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          outputs: type=docker,dest=/tmp/planner-amd64.tar
+          tags: overland-planner:ci-amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,scope=amd64,mode=max
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.git_sha }}
+            COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
+            ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
+      - name: Install trivy (sha256-verified)
+        run: |
+          case "$RUNNER_ARCH" in
+            X64) asset=Linux-64bit; sum="$TRIVY_SHA256_X64" ;;
+            ARM64) asset=Linux-ARM64; sum="$TRIVY_SHA256_ARM64" ;;
+            *) echo "unsupported runner architecture $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          archive="$RUNNER_TEMP/trivy.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${asset}.tar.gz"
+          echo "${sum}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Trivy HIGH findings (reported, non-blocking)
+        run: |
+          trivy image --input /tmp/planner-amd64.tar --scanners vuln,secret --severity HIGH --exit-code 0 --no-progress \
+            --format table --output "$RUNNER_TEMP/trivy-high.txt"
+          cat "$RUNNER_TEMP/trivy-high.txt"
+          {
+            echo "### Trivy HIGH findings (amd64, report only)"
+            echo '```'
+            cat "$RUNNER_TEMP/trivy-high.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Trivy CRITICAL with a fix (blocking)
+        run: |
+          trivy image --input /tmp/planner-amd64.tar --scanners vuln,secret --severity CRITICAL --ignore-unfixed --exit-code 1 \
+            --no-progress
+      - name: Compressed image size (D169)
+        run: |
+          zstd -T0 -10 -q -f /tmp/planner-amd64.tar -o /tmp/planner-amd64.tar.zst
+          size="$(stat -c %s /tmp/planner-amd64.tar.zst)"
+          echo "Compressed amd64 image: $((size / 1048576)) MiB (${size} bytes)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planner-image-amd64
+          path: /tmp/planner-amd64.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0 # already zstd
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        name: Push by digest with SBOM and provenance (main only; cache hit of the build above)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          outputs: type=image,name=ghcr.io/mrmilgauss/overland-planner,push-by-digest=true,name-canonical=true,push=true
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=amd64
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.git_sha }}
+            COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
+            ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          subject-name: ghcr.io/mrmilgauss/overland-planner
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  image-arm64:
+    name: "6 image-arm64"
+    needs: [changes, lint, test-python, test-web]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # QEMU on the hosted amd64 runner unless the repository variable ARM64_RUNNER names a native arm64 runner.
+    runs-on: ${{ vars.ARM64_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    permissions: # D161: only the image and publish jobs may write packages and attestations
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (01-09) assembles the index
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: meta
+        name: Build metadata (GIT_SHA, COMMIT_TS, ALEMBIC_HEAD)
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "commit_ts=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+          # No migrations exist yet; the step that adds alembic switches this to the real head revision.
+          echo "alembic_head=none" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: runner.arch != 'ARM64'
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and load the arm64 image (every image run; the smoke runs it)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          tags: overland-planner:ci-arm64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,scope=arm64,mode=max
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.git_sha }}
+            COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
+            ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
+      - name: Save the arm64 image for the scan
+        run: docker save overland-planner:ci-arm64 -o /tmp/planner-arm64.tar
+      - name: Install trivy (sha256-verified)
+        run: |
+          case "$RUNNER_ARCH" in
+            X64) asset=Linux-64bit; sum="$TRIVY_SHA256_X64" ;;
+            ARM64) asset=Linux-ARM64; sum="$TRIVY_SHA256_ARM64" ;;
+            *) echo "unsupported runner architecture $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          archive="$RUNNER_TEMP/trivy.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${asset}.tar.gz"
+          echo "${sum}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Trivy HIGH findings (reported, non-blocking)
+        run: |
+          trivy image --input /tmp/planner-arm64.tar --scanners vuln,secret --severity HIGH --exit-code 0 --no-progress \
+            --format table --output "$RUNNER_TEMP/trivy-high.txt"
+          cat "$RUNNER_TEMP/trivy-high.txt"
+          {
+            echo "### Trivy HIGH findings (arm64, report only)"
+            echo '```'
+            cat "$RUNNER_TEMP/trivy-high.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Trivy CRITICAL with a fix (blocking)
+        run: |
+          trivy image --input /tmp/planner-arm64.tar --scanners vuln,secret --severity CRITICAL --ignore-unfixed --exit-code 1 \
+            --no-progress
+      - name: Compressed image size (D169)
+        run: |
+          zstd -T0 -10 -q -f /tmp/planner-arm64.tar -o /tmp/planner-arm64.tar.zst
+          size="$(stat -c %s /tmp/planner-arm64.tar.zst)"
+          echo "Compressed arm64 image: $((size / 1048576)) MiB (${size} bytes)" >> "$GITHUB_STEP_SUMMARY"
+      - name: arm64 functional smoke (/healthz, solver probe, OR-Tools wheel)
+        env:
+          SMOKE_TIMEOUT: ${{ runner.arch == 'ARM64' && '60' || '180' }} # 180 s under QEMU, 60 s native
+        run: .github/scripts/image-smoke.sh overland-planner:ci-arm64 "$SMOKE_TIMEOUT"
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        name: Push by digest with SBOM and provenance (main only; cache hit of the build above)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/arm64
+          outputs: type=image,name=ghcr.io/mrmilgauss/overland-planner,push-by-digest=true,name-canonical=true,push=true
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=arm64
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.git_sha }}
+            COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
+            ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          subject-name: ghcr.io/mrmilgauss/overland-planner
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

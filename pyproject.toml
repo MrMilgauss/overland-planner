@@ -94,7 +94,14 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert (S101) and drive real processes they build themselves: uvicorn via sys.executable, git and
+# lint-imports from the dev environment (S603, S607). No untrusted input reaches them.
+"tests/**" = ["S101", "S603", "S607"]
+# The CI contract compares the workflow's runner /tmp paths as strings; it never opens them (S108).
+"tests/ci/**" = ["S101", "S603", "S607", "S108"]
 
 [tool.mypy]
 python_version = "3.12"

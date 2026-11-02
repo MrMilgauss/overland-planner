@@ -1,13 +1,15 @@
 """Static contract of the CI pipeline (slice 00a; D85, D86, D161, D162, D168, D169, D170, D178).
 
 `.github/workflows/ci.yml` and `.github/dependabot.yml` are parsed with PyYAML and checked against the DEVOPS CI
-table. Step 01-07 covers the commit stage (jobs 1 lint, 2 test-python, 4 test-web) plus the docs-only filter;
-steps 01-08/01-09 extend `JOB_RUNNERS` and add their own checks for the image, e2e and publish jobs.
+table. Step 01-07 covers the commit stage (jobs 1 lint, 2 test-python, 4 test-web) plus the docs-only filter; step 01-08
+the image jobs 5 image-amd64 and 6 image-arm64 and `.github/scripts/image-smoke.sh`; step 01-09 extends
+`JOB_RUNNERS` again for the e2e and publish jobs.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +18,22 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
+IMAGE_SMOKE = REPO_ROOT / ".github" / "scripts" / "image-smoke.sh"
 
 RUNNER = "ubuntu-24.04"  # D178
 COMMIT_STAGE = ("lint", "test-python", "test-web")
 # Every job of ci.yml and its runner; later steps add jobs 5-9 here.
-JOB_RUNNERS = {"changes": RUNNER, "lint-docs": RUNNER, **dict.fromkeys(COMMIT_STAGE, RUNNER)}
+IMAGE_JOBS = ("image-amd64", "image-arm64")
+ARM64_RUNNER = "${{ vars.ARM64_RUNNER || 'ubuntu-24.04' }}"  # QEMU on the hosted runner unless a native one is set
+JOB_RUNNERS = {
+    "changes": RUNNER,
+    "lint-docs": RUNNER,
+    **dict.fromkeys(COMMIT_STAGE, RUNNER),
+    "image-amd64": RUNNER,
+    "image-arm64": ARM64_RUNNER,
+}
+MAIN_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+IMAGE = "ghcr.io/mrmilgauss/overland-planner"
 USES = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>\S+)(?P<comment>.*)$", re.MULTILINE)
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 TAG_COMMENT = re.compile(r"#\s*v\d")
@@ -176,3 +189,135 @@ def test_dependabot_updates_every_ecosystem_weekly_in_groups() -> None:
     for update in updates:
         assert update["schedule"]["interval"] == "weekly"
         assert update.get("groups"), f"{update['package-ecosystem']} updates are not grouped"
+
+
+def _uses(job: dict[str, Any], action: str) -> list[dict[str, Any]]:
+    return [step for step in job["steps"] if str(step.get("uses", "")).startswith(f"{action}@")]
+
+
+def _writes_to_registry(step: dict[str, Any]) -> bool:
+    uses = str(step.get("uses", ""))
+    if uses.startswith(("docker/login-action@", "actions/attest-build-provenance@")):
+        return True
+    if uses.startswith("docker/build-push-action@"):
+        build = step.get("with", {})
+        return build.get("push") is True or "push=true" in str(build.get("outputs", ""))
+    return "docker push" in step.get("run", "") or "imagetools create" in step.get("run", "")
+
+
+def test_image_jobs_push_by_digest_only_on_main() -> None:
+    workflow = _workflow()
+
+    for name, scope in zip(IMAGE_JOBS, ("amd64", "arm64"), strict=True):
+        job = _job(workflow, name)
+        assert {"lint", "test-python", "test-web"} <= _needs(job), f"{name} must wait for the commit stage"
+        assert job["if"] == f"({MAIN_PUSH}) || github.event_name == 'workflow_dispatch'", f"{name} on main/manual only"
+
+        builds = _uses(job, "docker/build-push-action")
+        assert builds, f"{name} has no buildx build"
+        for build in builds:
+            settings = build["with"]
+            assert settings["platforms"] == f"linux/{scope}"
+            assert settings["cache-from"] == f"type=gha,scope={scope}", f"{name} must read its own gha cache"
+            assert "GIT_SHA=" in settings["build-args"] and "COMMIT_TS=" in settings["build-args"]
+            assert "ALEMBIC_HEAD=" in settings["build-args"]
+
+        writers = [step for step in job["steps"] if _writes_to_registry(step)]
+        assert {str(step.get("uses", "")).split("@")[0] for step in writers} >= {
+            "docker/login-action",
+            "docker/build-push-action",
+            "actions/attest-build-provenance",
+        }, f"{name} must log in, push and attest on main"
+        unguarded = [step.get("name", step.get("uses")) for step in writers if step.get("if") != MAIN_PUSH]
+        assert unguarded == [], f"{name} writes to GHCR outside main pushes: {unguarded}"
+
+        pushes = [b for b in builds if _writes_to_registry(b)]
+        assert len(pushes) == 1, f"{name} pushes exactly once"
+        push = pushes[0]
+        assert f"name={IMAGE}" in push["with"]["outputs"] and "push-by-digest=true" in push["with"]["outputs"]
+        assert push["with"]["sbom"] is True and "mode=max" in str(push["with"]["provenance"])
+        assert any(f"type=gha,scope={scope}" in str(b["with"].get("cache-to", "")) for b in builds)
+
+        attest = _uses(job, "actions/attest-build-provenance")[0]["with"]
+        assert attest["subject-name"] == IMAGE and attest["push-to-registry"] is True
+        assert attest["subject-digest"] == f"${{{{ steps.{push['id']}.outputs.digest }}}}"
+        assert job["outputs"]["digest"] == f"${{{{ steps.{push['id']}.outputs.digest }}}}", "publish (01-09) needs it"
+
+    qemu = _uses(_job(workflow, "image-arm64"), "docker/setup-qemu-action")
+    assert len(qemu) == 1 and "ARM64" in qemu[0]["if"], "QEMU only when the runner is not native arm64"
+
+
+def test_amd64_image_artifact_and_trivy_scans() -> None:
+    workflow = _workflow()
+    amd64 = _job(workflow, "image-amd64")
+
+    exports = [b for b in _uses(amd64, "docker/build-push-action") if not _writes_to_registry(b)]
+    assert len(exports) == 1 and not exports[0].get("if"), "the amd64 tarball is built on every image run"
+    assert exports[0]["with"]["outputs"] == "type=docker,dest=/tmp/planner-amd64.tar"
+    upload = _uses(amd64, "actions/upload-artifact")
+    assert len(upload) == 1 and not upload[0].get("if")
+    assert upload[0]["with"]["name"] == "planner-image-amd64"
+    assert upload[0]["with"]["path"] == "/tmp/planner-amd64.tar.zst"
+    assert upload[0]["with"]["retention-days"] == 1
+    assert "zstd" in _runs(amd64)[_index(amd64, "planner-amd64.tar.zst")]
+
+    for name in IMAGE_JOBS:
+        job = _job(workflow, name)
+        scripts = [s for s in _runs(job) if "trivy image" in s]
+        blocking = [
+            s for s in scripts if "--severity CRITICAL" in s and "--ignore-unfixed" in s and "--exit-code 1" in s
+        ]
+        reporting = [s for s in scripts if "--severity HIGH" in s and "--exit-code 0" in s]
+        assert blocking and reporting, f"{name}: fixable CRITICAL must fail, HIGH must be reported"
+        assert all("--scanners vuln,secret" in s for s in scripts), f"{name} scans vulnerabilities and secrets"
+        sizes = [s for s in _runs(job) if ".tar.zst" in s and "GITHUB_STEP_SUMMARY" in s]
+        assert sizes, f"{name} records the compressed image size in the job summary (D169)"
+
+
+def test_arm64_smoke_checks_healthz_and_solver_probe() -> None:
+    job = _job(_workflow(), "image-arm64")
+    loads = [b for b in _uses(job, "docker/build-push-action") if b["with"].get("load") is True]
+    assert len(loads) == 1 and not loads[0].get("if"), "the smoke needs the arm64 image loaded on every run"
+
+    smoke = [s for s in job["steps"] if ".github/scripts/image-smoke.sh" in s.get("run", "")]
+    assert len(smoke) == 1 and not smoke[0].get("continue-on-error")
+    assert _index(job, "image-smoke.sh") < job["steps"].index(
+        next(b for b in job["steps"] if _writes_to_registry(b) and "build-push-action" in str(b.get("uses")))
+    ), "the image is pushed only after the smoke passed"
+    assert "180" in str(smoke[0].get("env", {})), "QEMU allows 180 s to answer /healthz"
+
+    assert IMAGE_SMOKE.is_file(), ".github/scripts/image-smoke.sh missing"
+    script = IMAGE_SMOKE.read_text()
+    assert script.startswith("#!/usr/bin/env bash\n") and "set -euo pipefail" in script
+    for fragment in (
+        "docker run",
+        "--platform linux/arm64",
+        "--init",
+        "-m 1g",
+        "ROUTING_PROVIDER=mock",
+        ':/data"',
+        "/healthz",
+        "/api/health",
+        "tour_solver",
+        "import ortools",
+        "docker logs",
+    ):
+        assert fragment in script, f"image-smoke.sh lacks {fragment!r}"
+    syntax = subprocess.run(["bash", "-n", str(IMAGE_SMOKE)], capture_output=True, text=True, check=False)
+    assert syntax.returncode == 0, syntax.stderr
+
+
+def test_image_jobs_have_job_level_package_permissions() -> None:
+    workflow = _workflow()
+
+    assert workflow["permissions"] == {"contents": "read"}, "write scopes live on the image jobs only (D161)"
+    for name in IMAGE_JOBS:
+        assert _job(workflow, name)["permissions"] == {
+            "contents": "read",
+            "packages": "write",
+            "id-token": "write",
+            "attestations": "write",
+        }, f"{name} permissions"
+    for name, job in workflow["jobs"].items():
+        if name not in IMAGE_JOBS:
+            assert "permissions" not in job, f"{name} must inherit read-only permissions"
