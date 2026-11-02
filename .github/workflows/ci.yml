@@ -1,0 +1,250 @@
+# Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169).
+# Jobs 5-9 (images, e2e, publish) arrive at 01-08/01-09. Actions pinned by commit SHA (D85), runners pinned (D178).
+name: ci
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # D170, user decision 2026-11-02: starts empty; 02-07 adds --run-pending=slice-00b, 03-10 adds
+  # --run-pending=slice-01a, in the commit that turns the slice GREEN.
+  PENDING_FLAGS: ""
+  UV_VERSION: "0.11.16"
+
+jobs:
+  changes:
+    name: changes (docs-only filter)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        name: Classify changed paths (docs/** and *.md are docs)
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$EVENT" in
+            push) base="$PUSH_BEFORE" ;;
+            pull_request) base="$PR_BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            # Manual run, new branch or rewritten history: run everything.
+            code=true
+            docs=true
+          else
+            changed="$(git diff --name-only "$base" HEAD)"
+            code=false
+            docs=false
+            if printf '%s\n' "$changed" | grep -qvE '^docs/|\.md$'; then code=true; fi
+            if printf '%s\n' "$changed" | grep -qE '^docs/|\.md$'; then docs=true; fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "docs=$docs" >> "$GITHUB_OUTPUT"
+          echo "code changed: $code, docs changed: $docs"
+
+  lint-docs:
+    name: lint-docs (markdownlint)
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
+        with:
+          globs: "**/*.md"
+
+  lint:
+    name: "1 lint"
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: uv lock --check
+        run: uv lock --check
+      - name: ruff format --check
+        run: uv run ruff format --check .
+      - name: ruff check
+        run: uv run ruff check .
+      - name: mypy --strict (src)
+        run: uv run mypy
+      - name: import-linter (brief section 11)
+        run: uv run lint-imports
+      - name: gitleaks (full history)
+        env:
+          GITLEAKS_VERSION: "8.30.0" # same as .pre-commit-config.yaml
+          GITLEAKS_SHA256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+        run: |
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          PATH="$RUNNER_TEMP:$PATH" gitleaks git --redact --no-banner .
+      - name: hadolint Dockerfile
+        env:
+          HADOLINT_VERSION: "2.15.1"
+          HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+        run: |
+          bin="$RUNNER_TEMP/hadolint"
+          curl -fsSL -o "$bin" \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  ${bin}" | sha256sum --check --strict
+          chmod +x "$bin"
+          PATH="$RUNNER_TEMP:$PATH" hadolint Dockerfile
+      - name: actionlint (workflows, with shellcheck)
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          PATH="$RUNNER_TEMP:$PATH" actionlint -color
+      - name: npm ci (web)
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: svelte-check
+        working-directory: web
+        run: npm run check
+      - name: eslint
+        working-directory: web
+        run: npx --no-install eslint . --max-warnings=0
+      - name: prettier --check
+        working-directory: web
+        run: npx --no-install prettier --check .
+      - name: pip-audit (runtime dependencies, blocking on any known vulnerability)
+        run: |
+          uv export --frozen --no-dev --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit==2.10.1 --strict --disable-pip -r "$RUNNER_TEMP/requirements.txt"
+      - name: npm audit (runtime dependencies, high and above)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
+
+  test-python:
+    name: "2 test-python"
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the web page (D162)
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npx vite build
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: Filesystem type of the data folder (D168)
+        run: |
+          mkdir -p "$DATA_DIR"
+          df -T "$DATA_DIR"
+          {
+            echo "### Data folder filesystem"
+            echo '```'
+            df -T "$DATA_DIR"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: pytest (coverage >= 80 %)
+        run: |
+          # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
+          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not walking_skeleton" \
+            --cov=overland_planner --cov-report=term --cov-fail-under=80
+      - name: Walking skeleton (non-blocking until step 03-06)
+        id: walking_skeleton
+        continue-on-error: true
+        run: |
+          # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
+          uv run pytest -q $PENDING_FLAGS -m "walking_skeleton"
+      - name: Report the walking skeleton
+        if: always() && steps.walking_skeleton.outcome != 'skipped'
+        env:
+          OUTCOME: ${{ steps.walking_skeleton.outcome }}
+        run: |
+          echo "Walking skeleton: **${OUTCOME}** (non-blocking until step 03-06)" >> "$GITHUB_STEP_SUMMARY"
+
+  test-web:
+    name: "4 test-web"
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+      - name: vitest
+        run: npx --no-install vitest run
+      - name: vite build
+        run: npx --no-install vite build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 3
