@@ -58,3 +58,29 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+
+      - id: web-prettier
+        name: prettier (web)
+        entry: bash -c 'cd web && files=(); for f in "$@"; do files+=("${f#web/}"); done; npx --no-install prettier --check "${files[@]}"' --
+        language: system
+        files: ^web/.*\.(ts|js|svelte|json|html|css)$
+        exclude: ^web/package-lock\.json$
+      - id: web-eslint
+        name: eslint (web)
+        entry: bash -c 'cd web && files=(); for f in "$@"; do files+=("${f#web/}"); done; npx --no-install eslint --max-warnings=0 "${files[@]}"' --
+        language: system
+        files: ^web/.*\.(ts|js|svelte)$
+      - id: web-svelte-check
+        name: svelte-check (web)
+        entry: bash -c 'cd web && npm run --silent check'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: web-vitest
+        name: vitest (web)
+        entry: bash -c 'cd web && npx --no-install vitest run'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

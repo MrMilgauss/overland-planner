@@ -1,5 +1,5 @@
-# Developer entry points (Mac and Pi). test-web arrives at 01-02; run-local and mutate at 01-04.
-.PHONY: bootstrap lint test
+# Developer entry points (Mac and Pi). run-local and mutate arrive at 01-04.
+.PHONY: bootstrap lint test test-web
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 
@@ -15,3 +15,9 @@ lint: ## ruff, mypy --strict on src, import-linter (brief section 11)
 
 test: ## Fast suite (same selection as pre-push)
 	uv run pytest -q $(PYTEST_FAST)
+
+test-web: ## Reproducible web build from package-lock.json: npm ci, svelte-check, vitest, vite build -> web/dist
+	cd web && npm ci --no-audit --no-fund
+	cd web && npm run check
+	cd web && npx vitest run
+	cd web && npx vite build
