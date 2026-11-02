@@ -38,6 +38,8 @@ dev = [
     "pytest-cov==7.1.0",
     "pre-commit==4.7.0",
     "types-PyYAML==6.0.12.20261030",
+    # Mutation testing (D97): mutmut 3.x, exact pin.
+    "mutmut==3.8.1",
 ]
 
 [build-system]
@@ -67,6 +69,16 @@ markers = [
     "slow: slower than the pre-push budget",
     "solver_child: spawns the OR-Tools child process (excluded from mutation runs)",
 ]
+
+# Mutation testing (D97, DEVOPS mutation strategy): `make mutate BASE=<ref>` scopes the run to the changed domain and
+# application files; kill rate = (killed + timeout) / (killed + timeout + survived + no_tests) >= 80 %.
+[tool.mutmut]
+source_paths = ["src/"]
+only_mutate = ["src/overland_planner/domain/*", "src/overland_planner/application/*"]
+pytest_add_cli_args_test_selection = ["tests/unit", "tests/property", "tests/integration"]
+pytest_add_cli_args = ["-m", "not solver_child", "-p", "no:cacheprovider"]
+# The home-page integration tests serve the real web build (`make mutate` builds it first).
+also_copy = ["web/dist/"]
 
 [tool.ruff]
 target-version = "py312"
@@ -165,6 +177,21 @@ name = "Domain routing does not import planning or export"
 type = "forbidden"
 source_modules = ["overland_planner.domain.routing"]
 forbidden_modules = ["overland_planner.domain.planning", "overland_planner.domain.export"]
+
+[[tool.importlinter.contracts]]
+id = "facade-platform"
+name = "Application facades: other application modules reach platform only through its facade"
+type = "forbidden"
+source_modules = [
+    "overland_planner.application.catalog",
+    "overland_planner.application.export",
+    "overland_planner.application.planning",
+    "overland_planner.application.routing",
+]
+forbidden_modules = ["overland_planner.application.platform"]
+ignore_imports = ["overland_planner.application.** -> overland_planner.application.platform.facade"]
+# No module imports the platform facade yet; the allowance is declared ahead of its first user.
+unmatched_ignore_imports_alerting = "none"
 
 [[tool.importlinter.contracts]]
 id = "ortools-solver-only"
