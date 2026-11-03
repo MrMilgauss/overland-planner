@@ -77,4 +77,22 @@ on the Pi.
 Losing the device or the disk loses the data; the only copies are the short-lived predeploy/prerollback snapshots
 next to it (the newest two of each), which exist for rollback, not for recovery. This is stated to Marco at the demo.
 
+**Manual schema downgrade: snapshot first.** `make rollback` snapshots the volume before it runs `alembic downgrade`.
+Running the downgrade by hand (`docker compose run --rm planner alembic downgrade <head>`, D90) takes no snapshot,
+and a downgrade can commit part of its work before it fails (0004 commits mid-migration to switch
+`PRAGMA foreign_keys`), so a failure can leave the database half downgraded. Take the snapshot `make rollback` would
+take first, on the Pi in `~/apps/overland-planner` (add `--env-file routing.env` if that file exists):
+
+```bash
+docker compose -p overland --env-file .env --env-file release.env stop planner
+mkdir -p snapshots
+docker run --rm --network none -v overland_planner-data:/data:ro -v "$PWD/snapshots:/backup" \
+  alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f \
+  tar czf "/backup/prerollback-$(date -u +%Y%m%dT%H%M%SZ).tgz" -C /data .
+docker compose -p overland --env-file .env --env-file release.env run --rm planner alembic downgrade <head>
+```
+
+If the downgrade fails, restore that file into the volume (the image and mounts of `restore_snapshot` in
+`deploy/scripts/lib.sh`) before starting the planner again.
+
 Idle memory on pi-host: **67.3 MiB** (measured 2026-11-03 18:53 UTC, release `88d53e8`, `docker stats`, CPU 0.13%) (planner only, after 10 minutes idle; limit 300 MB, KPI G1).
