@@ -214,6 +214,8 @@ def test_a_file_above_the_upload_cap_is_refused_before_any_file_is_parsed(
         planner.imports.import_files(planner.project_id, uploads)
 
     assert (raised.value.messages, raised.value.too_large) == (("huge.gpx is larger than the 1 MB limit",), True)
+    # Not huge.gpx, nor any in-cap companion before or after it: the size refusal comes before every parse.
+    assert planner.parser.parsed == []
     assert_state_delta(before, planner.view(REFUSAL_UNIVERSE), REFUSAL_UNIVERSE, {}, strict=True)
 
 
