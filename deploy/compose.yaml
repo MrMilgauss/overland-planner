@@ -1,0 +1,63 @@
+# Overland route planner on the home server (slice 00b; D81, D82, D83, D167, D173, D174; brief section 15).
+#
+#   docker compose -p overland --env-file .env --env-file release.env up -d --wait
+#
+# .env (copied from .env.example, never committed) holds PLANNER_BIND and the settings; release.env (written by
+# deploy.sh) holds PLANNER_IMAGE. Only the planner is published, on PLANNER_BIND, which has no default: compose
+# refuses to start without it (fail-closed, D174). The routing engine (valhalla, slice 06a) joins later on an
+# internal `routing` network and is never published.
+name: overland
+
+services:
+  planner:
+    image: ${PLANNER_IMAGE:?PLANNER_IMAGE must be set (release.env from deploy.sh)}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER_PORT:-8080}:8080"
+    networks:
+      - edge
+    # Settings reach the container by interpolation from .env; nothing is baked into the image. WEB_DIST_DIR,
+    # MIGRATIONS_DIR and PLANNER_GIT_SHA are set by the image itself.
+    environment:
+      DATA_DIR: /data
+      ROUTING_PROVIDER: mock
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
+      PLANNER_BASIC_AUTH_USER: ${PLANNER_BASIC_AUTH_USER:-}
+      PLANNER_BASIC_AUTH_PASSWORD: ${PLANNER_BASIC_AUTH_PASSWORD:-}
+    volumes:
+      - planner-data:/data
+    # Resource caps (D83, D167): the Pi keeps room for the routing engine.
+    cpus: 1
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    oom_score_adj: 500
+    # Hardening (D173): uid 10001 from the image, no capabilities, read-only root; writes only /data and /tmp.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # Same curl-free probe as the image HEALTHCHECK, stated here so `up --wait` does not depend on the image.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  edge: {}
+
+volumes:
+  planner-data:
+    name: overland_planner-data

@@ -525,6 +525,8 @@ jobs:
       actions: write # delete the image artifact after loading it (D169)
     env:
       PLANNER_URL: http://127.0.0.1:8080
+      # compose.yaml fails closed without PLANNER_BIND (D174); compose.ci.yaml then pins the ports to loopback.
+      PLANNER_BIND: 127.0.0.1
       PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
       DATA_DIR: ${{ github.workspace }}/.data/ci/data
     steps:
@@ -546,16 +548,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ needs.image-amd64.outputs.artifact-id }}
         run: gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}"
-      - name: Start the planner image on loopback (named volume; compose replaces this at 02-04)
-        run: |
-          docker volume create overland-e2e
-          docker run --detach --name overland-e2e --init -p 127.0.0.1:8080:8080 -v overland-e2e:/data -e ROUTING_PROVIDER=mock "overland-planner:ci-${GITHUB_SHA}"
-          for _ in $(seq 1 60); do
-            if curl -fsS "${PLANNER_URL}/healthz" >/dev/null 2>&1; then echo "planner is up"; exit 0; fi
-            sleep 1
-          done
-          docker logs overland-e2e
-          exit 1
+      - name: Start the planner with compose (compose.yaml + compose.ci.yaml, loopback, step 02-04)
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait --wait-timeout 120
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
@@ -569,13 +563,13 @@ jobs:
       - name: Playwright home page (chromium, webkit-iphone14)
         working-directory: web
         # tests/e2e lives outside web/: NODE_PATH lets the spec resolve @playwright/test from web/node_modules.
-        run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test
+        run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test --project=chromium --project=webkit-iphone14
       - name: Planner logs on failure
         if: failure()
-        run: docker logs overland-e2e || true
-      - name: Stop the planner image
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml logs planner || true
+      - name: Stop the compose stack and remove its volume
         if: always()
-        run: docker rm -f overland-e2e >/dev/null 2>&1 || true
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml down -v || true
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
@@ -583,6 +577,8 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: uv sync --frozen
         run: uv sync --frozen
+      # Includes tests/deploy: compose fails closed without PLANNER_BIND, and the hardened container writes only
+      # /data and /tmp (D173).
       - name: pytest --run-external -m "compose or security" (D170)
         env:
           PLANNER_IMAGE: overland-planner:ci-${{ github.sha }}

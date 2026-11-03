@@ -1,7 +1,8 @@
 # Weekly scans (slice 00a, step 01-09; D86, D170): Monday 05:00 UTC and on demand. Re-scans the image behind the
 # `main` tag, audits the dependencies, runs the deep Hypothesis profile and reports package and artifact storage.
-# Nothing waits for this workflow: deploys use release.json from ci.yml. ZAP baseline and the Playwright
-# firefox/webkit-desktop projects arrive at step 02-04 with the compose stack.
+# Nothing waits for this workflow: deploys use release.json from ci.yml. Since step 02-04 the image behind `main` also
+# runs on the compose stack (deploy/compose.yaml) for a ZAP baseline (non-blocking) and the Playwright
+# firefox/webkit-desktop projects.
 name: weekly
 
 on:
@@ -17,6 +18,8 @@ env:
   IMAGE: ghcr.io/mrmilgauss/overland-planner
   TRIVY_VERSION: "0.76.1"
   TRIVY_SHA256_X64: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  # ZAP 2.17.0 (multi-arch index digest, resolved 2026-11-03 from ghcr.io).
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:030d3df57735dacbb83464854758e674dd9ad01d79d12a129a8e58b1fd384238
 
 jobs:
   rescan:
@@ -120,6 +123,57 @@ jobs:
         run: uv sync --frozen
       - name: pytest with HYPOTHESIS_PROFILE=deep
         run: uv run pytest -q -m "not real_provider and not pi and not walking_skeleton" --hypothesis-show-statistics
+
+  compose-stack:
+    name: ZAP baseline and Playwright firefox/webkit-desktop on the compose stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      PLANNER_BIND: 127.0.0.1
+      PLANNER_URL: http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start main on the compose stack (loopback)
+        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 180
+      - name: ZAP baseline against the planner (non-blocking)
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/zap" && chmod 777 "$RUNNER_TEMP/zap"
+          status=0
+          docker run --rm --network host -v "$RUNNER_TEMP/zap:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-baseline.py -t "$PLANNER_URL" -I -r zap-baseline.html -w zap-baseline.md || status=$?
+          { echo "### ZAP baseline (exit ${status})"; cat "$RUNNER_TEMP/zap/zap-baseline.md" 2>/dev/null || true; } \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci and the Playwright browsers
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx --no-install playwright install --with-deps firefox webkit
+      - name: Playwright home page (firefox, webkit-desktop)
+        working-directory: web
+        run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test --project=firefox --project=webkit-desktop
+      - name: Planner logs on failure
+        if: failure()
+        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml logs planner || true
+      - name: Stop the compose stack and remove its volume
+        if: always()
+        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml down -v || true
 
   storage:
     name: Package and artifact storage report

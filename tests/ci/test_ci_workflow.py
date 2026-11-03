@@ -367,13 +367,27 @@ def test_e2e_deletes_image_artifact_after_load() -> None:
     deletion = steps[delete]
     assert "-X DELETE" in deletion["run"] and "needs.image-amd64.outputs.artifact-id" in str(deletion["env"])
 
-    start = _runs(job)[_index(job, "docker run")]
-    assert "-p 127.0.0.1:8080:8080" in start and "-v overland-e2e:/data" in start, "loopback port, named volume"
-    assert "ROUTING_PROVIDER=mock" in start and "/healthz" in start
     playwright = _index(job, "playwright test")
     assert delete < playwright and _index(job, "playwright install") < playwright
     assert "chromium" in _runs(job)[_index(job, "playwright install")]
     assert "webkit" in _runs(job)[_index(job, "playwright install")]
+
+
+COMPOSE_CI_STACK = "docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml"
+
+
+def test_e2e_runs_on_the_compose_stack_and_tears_it_down_before_the_selection() -> None:
+    job = _job(_workflow(), "e2e")
+    steps = job["steps"]
+
+    assert job["env"]["PLANNER_BIND"] == "127.0.0.1", "compose.yaml fails closed without PLANNER_BIND"
+    assert all("docker run" not in script for script in _runs(job)), "job 7 starts the planner only through compose"
+    up = _index(job, f"{COMPOSE_CI_STACK} up -d --wait")
+    down = _index(job, f"{COMPOSE_CI_STACK} down -v")
+    playwright = _index(job, "playwright test")
+    assert _index(job, "docker load") < up < playwright < down < _index(job, "pytest-selection.sh")
+    assert steps[down]["if"] == "always()"
+    assert "--project=chromium --project=webkit-iphone14" in _runs(job)[playwright]
 
 
 def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
@@ -595,6 +609,12 @@ def test_weekly_workflow_rescans_audits_and_reports_without_gating_deploys() -> 
     ):
         assert fragment in scripts, f"weekly.yml lacks {fragment!r}"
     deep = [job for job in weekly["jobs"].values() if job.get("env", {}).get("HYPOTHESIS_PROFILE") == "deep"]
+    stack = [job for job in weekly["jobs"].values() if any("deploy/compose.yaml up -d --wait" in s for s in _runs(job))]
+    assert len(stack) == 1, "one weekly job runs main on the compose stack"
+    zap = [s for s in stack[0]["steps"] if "zap-baseline.py" in s.get("run", "")]
+    assert len(zap) == 1 and zap[0]["continue-on-error"] is True, "the ZAP baseline never blocks"
+    assert re.search(r"ZAP_IMAGE: \S+@sha256:[0-9a-f]{64}", text), "ZAP image pinned by digest"
+    assert any("--project=firefox --project=webkit-desktop" in s for s in _runs(stack[0]))
     assert len(deep) == 1, "one job runs the deep property profile"
     assert "workflow_run" not in _triggers(_workflow()), "ci.yml (and so publish) never waits for the weekly run"
     refs = [(m["ref"], m["comment"]) for m in USES.finditer(text)]

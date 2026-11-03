@@ -68,6 +68,8 @@ markers = [
     "property: property-based scenario (Hypothesis) at layer 1-2",
     "slow: slower than the pre-push budget",
     "solver_child: spawns the OR-Tools child process (excluded from mutation runs)",
+    "compose: checks the compose set-up with Docker (CI job 7, -m \"compose or security\")",
+    "security: security check against the packaged planner, e.g. the container cannot write /app (D173, CI job 7)",
 ]
 
 # Mutation testing (D97, DEVOPS mutation strategy): `make mutate BASE=<ref>` scopes the run to the changed domain and

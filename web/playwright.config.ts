@@ -14,6 +14,9 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'webkit-iphone14', use: { ...devices['iPhone 14'] } },
+    // Weekly only (weekly.yml, step 02-04); CI job 7 and `make e2e-local` select chromium and webkit-iphone14.
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit-desktop', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: process.env.E2E_START_LOCAL
     ? {

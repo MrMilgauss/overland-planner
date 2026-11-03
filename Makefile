@@ -58,14 +58,20 @@ run-local: web-dist ## The planner on http://$(HOST):$(PORT) with ./.data/dev an
 	mkdir -p .data/dev
 	DATA_DIR=./.data/dev ROUTING_PROVIDER=mock $(UVICORN) --host $(HOST) --port $(PORT)
 
-mutate: web-dist ## mutmut on domain/application files changed since BASE (default origin/main; BASE=all: every file); fails below 80 % kill rate
+mutate: web-dist ## mutmut on domain/application files changed since BASE (default origin/main; BASE=all: every file); fails below 80 % kill rate; files without mutants (e.g. only a Protocol) pass
 	@if [ "$(BASE)" = all ]; then files="$$(git ls-files -- $(MUTATE_SCOPE) | grep '\.py$$')"; \
 	else files="$$(git diff --name-only --diff-filter=d $$(git merge-base $(BASE) HEAD) -- $(MUTATE_SCOPE) | grep '\.py$$')"; fi; \
 	if [ -z "$$files" ]; then echo "mutate: no domain/application file changed since $(BASE)"; exit 0; fi; \
 	globs="$$(echo "$$files" | sed -e 's|^src/||' -e 's|\.py$$||' -e 's|/__init__$$||' -e 's|/|.|g' -e 's|$$|.*|')"; \
 	echo "mutate: $$(echo $$files)"; \
 	rm -rf mutants; \
-	HYPOTHESIS_PROFILE=mutation uv run mutmut run $$globs || exit 1; \
+	log="$$(mktemp)"; \
+	{ HYPOTHESIS_PROFILE=mutation uv run mutmut run $$globs 2>&1; echo "$$?" > "$$log.status"; } | tee "$$log"; \
+	status="$$(cat "$$log.status")"; \
+	if [ "$$status" != 0 ] && grep -q "Filtered for specific mutants, but nothing matches" "$$log"; then \
+	  rm -f "$$log" "$$log.status"; echo "mutate: no mutants in scope"; exit 0; fi; \
+	rm -f "$$log" "$$log.status"; \
+	[ "$$status" = 0 ] || exit 1; \
 	uv run mutmut export-cicd-stats >/dev/null || exit 1; \
 	uv run python -c 'import json, sys; s = json.load(open("mutants/mutmut-cicd-stats.json")); \
 	caught = s["killed"] + s["timeout"]; scored = caught + s["survived"] + s["no_tests"]; \
@@ -77,4 +83,4 @@ mutate: web-dist ## mutmut on domain/application files changed since BASE (defau
 e2e-local: ## Playwright home-page check (chromium, webkit-iphone14) against `make run-local`, started for the run
 	cd web && if [ ! -d node_modules ]; then npm ci --no-audit --no-fund; fi
 	cd web && npx --no-install playwright install chromium webkit
-	cd web && NODE_PATH="$$PWD/node_modules" E2E_START_LOCAL=1 PLANNER_URL=http://$(HOST):$(PORT) npx --no-install playwright test
+	cd web && NODE_PATH="$$PWD/node_modules" E2E_START_LOCAL=1 PLANNER_URL=http://$(HOST):$(PORT) npx --no-install playwright test --project=chromium --project=webkit-iphone14
