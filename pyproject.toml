@@ -192,18 +192,18 @@ forbidden_modules = ["overland_planner.domain.planning", "overland_planner.domai
 
 [[tool.importlinter.contracts]]
 id = "facade-platform"
-name = "Application facades: other application modules reach platform only through its facade"
+name = "Application facades: other modules reach platform only through its facade"
 type = "forbidden"
 source_modules = [
     "overland_planner.application.catalog",
     "overland_planner.application.export",
     "overland_planner.application.planning",
     "overland_planner.application.routing",
+    "overland_planner.adapters",
+    "overland_planner.bootstrap",
 ]
 forbidden_modules = ["overland_planner.application.platform"]
-ignore_imports = ["overland_planner.application.** -> overland_planner.application.platform.facade"]
-# No module imports the platform facade yet; the allowance is declared ahead of its first user.
-unmatched_ignore_imports_alerting = "none"
+ignore_imports = ["overland_planner.** -> overland_planner.application.platform.facade"]
 
 [[tool.importlinter.contracts]]
 id = "facade-catalog"
