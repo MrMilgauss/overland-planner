@@ -6,12 +6,16 @@
   DELIVER removes `@pending` from one scenario at a time.
 - `@requires_external` scenarios are skipped unless `--run-external` is given (Pi, Docker, PC, live Valhalla).
 - `@manual` scenarios are always skipped here; their evidence is logged by hand (docs/demo/).
+- Git isolation: pytest started inside a git hook (e.g. pre-push from a linked worktree) inherits GIT_DIR,
+  GIT_INDEX_FILE, GIT_WORK_TREE...; tests that shell out to git would then act on the hook's repository. The
+  session removes every repository-local GIT_* variable, so each git subprocess finds its repository from its cwd.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+import subprocess
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -67,6 +71,37 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             continue
         if "requires_external" in names and not run_external:
             item.add_marker(pytest.mark.skip(reason="requires_external: run with --run-external on the right host"))
+
+
+# Always removed, even if `git rev-parse --local-env-vars` cannot run or lists fewer (older git).
+_GIT_REPOSITORY_VARIABLES = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    }
+)
+
+
+def _git_repository_variables() -> frozenset[str]:
+    """Every variable git treats as local to one repository (`git rev-parse --local-env-vars`), plus the fixed set."""
+    try:
+        listed = subprocess.run(
+            ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=False, timeout=30
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        listed = []
+    return _GIT_REPOSITORY_VARIABLES | frozenset(listed)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _git_subprocesses_use_their_own_repository() -> Iterator[None]:
+    removed = {name: os.environ.pop(name) for name in _git_repository_variables() if name in os.environ}
+    yield
+    os.environ.update(removed)
 
 
 # Hypothesis profiles (D97), selected with HYPOTHESIS_PROFILE (default dev).

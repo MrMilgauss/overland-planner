@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Functional smoke of the arm64 planner image (DEVOPS job 6, step 01-08): runs it as on the Pi (--init, 1 GB limit,
-# named volume on /data, offline mock road map) and checks /healthz, the solver probe in /api/health and the
+# named volume on /data, offline mock road map) and checks /healthz, the solver and data folder probes in /api/health
+# (file_store, mount_table, data_dir: the volume is persistent, D121) and the
 # aarch64 OR-Tools wheel. Under QEMU the OR-Tools probe child is slow (probe timeout 30 s) and /healthz answers only
 # after the start-up probes, hence 180 s; a native arm64 runner passes 60. No timing or RSS figures under QEMU.
-# The real /data persistence check arrives at step 03-02 with its probe.
 #
 # Usage: image-smoke.sh IMAGE [TIMEOUT_SECONDS]
 set -euo pipefail
@@ -54,12 +54,15 @@ case "$healthz" in
 esac
 
 health="$(curl -fsS --max-time 10 "${base}/api/health")" || fail "/api/health did not answer"
-solver="$(printf '%s' "$health" | python3 -c 'import json, sys; print(json.load(sys.stdin)["components"]["tour_solver"]["outcome"])')" \
-  || fail "/api/health has no tour_solver component: ${health}"
-if [ "$solver" != "ok" ]; then
-  fail "solver probe outcome is ${solver}: ${health}"
-fi
-echo "image-smoke: /api/health tour_solver ok"
+# The named volume on /data is a persistent disk: the data folder probes (step 03-02, D121) must all report ok.
+for component in tour_solver file_store mount_table data_dir; do
+  outcome="$(printf '%s' "$health" | python3 -c 'import json, sys; print(json.load(sys.stdin)["components"][sys.argv[1]]["outcome"])' "$component")" \
+    || fail "/api/health has no ${component} component: ${health}"
+  if [ "$outcome" != "ok" ]; then
+    fail "${component} probe outcome is ${outcome}: ${health}"
+  fi
+  echo "image-smoke: /api/health ${component} ok"
+done
 
 docker exec "$container" python -c 'import ortools' || fail "import ortools failed inside the image"
 echo "image-smoke: import ortools ok"

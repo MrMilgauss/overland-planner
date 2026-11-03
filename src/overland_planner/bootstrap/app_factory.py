@@ -4,7 +4,8 @@ Production: `uvicorn --factory overland_planner.bootstrap.app_factory:create_app
 Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the same `.env` keys (brief §12)
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> wire -> probe every registered component in wiring order (the database probe migrates it to head
-first) -> mount routes (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
+first; then the file store round trip, the mount table and the `DATA_DIR` persistence verdict, D121) -> mount routes
+(API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
 exit non-zero, no `app.started`); each degraded component gets one `health.startup.degraded` line {component, reason}
@@ -23,10 +24,13 @@ import os
 import platform
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from fastapi import FastAPI
 
 from overland_planner.adapters.clock.system_clock import SystemClock
+from overland_planner.adapters.files.local_file_store import LocalFileStore
+from overland_planner.adapters.files.proc_mount_table import ProcMountTable
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
@@ -38,6 +42,7 @@ from overland_planner.adapters.persistence.migrator import AlembicMigrator, Data
 from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import ProjectService
+from overland_planner.application.platform.facade import DataDirPersistence, log_reason
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
@@ -85,11 +90,16 @@ def create_app(
     registry.register("clock", clock)
     registry.register("event_log", event_log)
     registry.register("database", DatabaseStartup(database, migrator, clock))
+    registry.register("file_store", LocalFileStore(settings.data_dir))
+    mount_table = ports.mount_table or ProcMountTable()
+    registry.register("mount_table", mount_table)
+    # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
+    registry.register("data_dir", DataDirPersistence(PurePosixPath(settings.data_dir.resolve()), mount_table))
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = gate.probe_in_order(registry.components())
     for name, result in health.detail().components.items():
         if result.outcome.startswith("degraded"):
-            event_log.info("health.startup.degraded", component=name, reason=result.reason)
+            event_log.info("health.startup.degraded", component=name, reason=log_reason(result.reason))
 
     logging.getLogger("uvicorn.access").disabled = True
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)

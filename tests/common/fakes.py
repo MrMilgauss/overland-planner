@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from overland_planner.application.ports.host import MountTableUnreadableError
 from overland_planner.application.ports.probe import ProbeResult
 
 
@@ -37,17 +38,33 @@ class FakeMountTable:
 
     Default: `/` on ext4 (a persistent host disk). `FakeMountTable.with_mount(folder, "overlay")` adds a mount entry,
     e.g. to make `DATA_DIR` look like a container layer that would not survive a restart.
+    `FakeMountTable.unreadable()` stands for a Linux host whose mount table cannot be read or parsed,
+    `FakeMountTable.absent()` for a host without a mount table (macOS).
     """
 
-    def __init__(self, entries: list[tuple[str, str]] | None = None) -> None:
+    def __init__(
+        self, entries: list[tuple[str, str]] | None = None, *, readable: bool = True, present: bool = True
+    ) -> None:
         self._entries = list(entries) if entries is not None else [("/", "ext4")]
+        self._readable = readable
+        self._present = present
+
+    @classmethod
+    def absent(cls) -> FakeMountTable:
+        return cls(present=False)
+
+    @classmethod
+    def unreadable(cls) -> FakeMountTable:
+        return cls(readable=False)
 
     @classmethod
     def with_mount(cls, folder: Path, fstype: str) -> FakeMountTable:
         return cls([("/", "ext4"), (str(folder.resolve()), fstype)])
 
     def entries(self) -> list[tuple[str, str]] | None:
-        return list(self._entries)
+        if not self._readable:
+            raise MountTableUnreadableError("fake: mount table unreadable")
+        return list(self._entries) if self._present else None
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")

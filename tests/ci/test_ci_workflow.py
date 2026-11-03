@@ -289,7 +289,7 @@ def test_amd64_image_artifact_and_trivy_scans() -> None:
         assert sizes, f"{name} records the compressed image size in the job summary (D169)"
 
 
-def test_arm64_smoke_checks_healthz_and_solver_probe() -> None:
+def test_arm64_smoke_checks_healthz_solver_and_data_folder_probes() -> None:
     job = _job(_workflow(), "image-arm64")
     loads = [b for b in _uses(job, "docker/build-push-action") if b["with"].get("load") is True]
     assert len(loads) == 1 and not loads[0].get("if"), "the smoke needs the arm64 image loaded on every run"
@@ -313,7 +313,8 @@ def test_arm64_smoke_checks_healthz_and_solver_probe() -> None:
         ':/data"',
         "/healthz",
         "/api/health",
-        "tour_solver",
+        "tour_solver file_store mount_table data_dir",
+        '!= "ok"',
         "import ortools",
         "docker logs",
     ):
@@ -400,6 +401,17 @@ def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     assert not selection.get("continue-on-error"), "the packaged-planner password check blocks publish"
     script = PYTEST_SELECTION.read_text()
     assert "--run-external" in script and "$PENDING_FLAGS" in script
+
+
+def test_e2e_checks_the_packaged_planner_without_data_storage_until_slice_01a_is_enabled() -> None:
+    # Step 03-02: the @compose scenario runs on the loaded image with PLANNER_IMAGE; reported only until 03-10 enables
+    # slice 01a in PENDING_FLAGS, after which the compose selection runs it as a blocking check.
+    job = _job(_workflow(), "e2e")
+    check = job["steps"][_index(job, "without_its_data_storage")]
+
+    assert "--run-pending=slice-01a" in check["run"] and "--run-external" in check["run"]
+    assert check.get("continue-on-error") is True
+    assert _index(job, f"{COMPOSE_CI_STACK} down -v") < _index(job, "without_its_data_storage")
 
 
 FAIL_CLOSED_COMPOSE_VARIABLES = ("PLANNER_IMAGE", "PLANNER_BIND")  # D174: compose.yaml interpolates both with :?

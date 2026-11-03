@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
-from tests.common.fakes import FakeClock
+from tests.common.fakes import FakeClock, FakeMountTable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILT_WEB_PAGE = REPO_ROOT / "web" / "dist" / "index.html"
@@ -44,7 +44,9 @@ class _UnhealthyClock(FakeClock):
 
 
 def _client(environ: dict[str, str], external: ExternalPorts | None = None) -> TestClient:
-    return TestClient(create_app(environ, external=external or ExternalPorts(clock=FakeClock())))
+    return TestClient(
+        create_app(environ, external=external or ExternalPorts(clock=FakeClock(), mount_table=FakeMountTable()))
+    )
 
 
 def test_server_answers_healthz_after_start_up_line(data_dir: Path) -> None:
@@ -88,8 +90,11 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
             "status": "ok",
             "components": {
                 "clock": {"outcome": "ok", "reason": None},
+                "data_dir": {"outcome": "ok", "reason": None},
                 "database": {"outcome": "ok", "reason": None},
                 "event_log": {"outcome": "ok", "reason": None},
+                "file_store": {"outcome": "ok", "reason": None},
+                "mount_table": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},
             },
             "banners": [],
@@ -98,7 +103,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
 
 
 def test_a_degraded_unhealthy_component_makes_healthz_503_with_its_reason_and_a_banner(data_dir: Path) -> None:
-    client = _client({"DATA_DIR": str(data_dir)}, ExternalPorts(clock=_UnhealthyClock()))
+    client = _client({"DATA_DIR": str(data_dir)}, ExternalPorts(clock=_UnhealthyClock(), mount_table=FakeMountTable()))
 
     health = client.get("/healthz")
     detail = client.get("/api/health").json()
@@ -106,6 +111,21 @@ def test_a_degraded_unhealthy_component_makes_healthz_503_with_its_reason_and_a_
     assert (health.status_code, health.json()) == (503, {"status": "unhealthy", "reason": NOT_PERSISTENT})
     assert (detail["status"], detail["banners"]) == ("unhealthy", [NOT_PERSISTENT])
     assert detail["components"]["clock"] == {"outcome": "degraded-unhealthy", "reason": NOT_PERSISTENT}
+
+
+def test_a_data_dir_symlinked_onto_tmpfs_is_reported_not_persistent(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ram_disk = data_dir / "ram"
+    ram_disk.mkdir()
+    (data_dir / "link").symlink_to(ram_disk)
+    tables = ExternalPorts(clock=FakeClock(), mount_table=FakeMountTable.with_mount(ram_disk, "tmpfs"))
+
+    client = _client({"DATA_DIR": str(data_dir / "link")}, tables)
+
+    assert (client.get("/healthz").status_code, client.get("/api/health").json()["banners"]) == (503, [NOT_PERSISTENT])
+    degraded = [json.loads(line) for line in capsys.readouterr().out.splitlines() if "health.startup.degraded" in line]
+    assert [(line["component"], line["reason"]) for line in degraded] == [("data_dir", "data_dir_not_persistent")]
 
 
 def test_a_refused_start_exits_non_zero_after_one_refusal_line_and_answers_nothing(data_dir: Path) -> None:
