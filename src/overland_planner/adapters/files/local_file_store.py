@@ -12,10 +12,9 @@ from __future__ import annotations
 import contextlib
 import os
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 
-from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
 
 
 class LocalFileStore:
@@ -44,20 +43,13 @@ class LocalFileStore:
         name = f"probe-{uuid.uuid4().hex}"
         written, final = self._scratch / f"{name}.part", self._scratch / name
         content = name.encode()
-        steps: tuple[tuple[str, Callable[[], bool]], ...] = (
-            ("file_store_not_writable", lambda: self._write_synced(written, content)),
-            ("file_store_rename_failed", lambda: self._rename_synced(written, final)),
-            ("file_store_read_back_failed", lambda: final.read_bytes() == content),
+        steps = (
+            ProbeCheck("file_store_not_writable", lambda: self._write_synced(written, content)),
+            ProbeCheck("file_store_rename_failed", lambda: self._rename_synced(written, final)),
+            ProbeCheck("file_store_read_back_failed", lambda: final.read_bytes() == content),
         )
         try:
-            for reason, step in steps:
-                try:
-                    passed = step()
-                except OSError:
-                    passed = False
-                if not passed:
-                    return ProbeResult(outcome="fatal", reason=reason)
-            return ProbeResult(outcome="ok")
+            return first_failure(steps, failing_errors=(OSError,))
         finally:
             for leftover in (written, final):
                 with contextlib.suppress(OSError):

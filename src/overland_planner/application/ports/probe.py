@@ -13,6 +13,7 @@ Outcomes (ADR-011 and its amendments):
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -27,3 +28,26 @@ class ProbeResult:
 
 class Probeable(Protocol):
     def probe(self) -> ProbeResult: ...
+
+
+@dataclass(frozen=True)
+class ProbeCheck:
+    """One step of a probe that is fatal when it fails; `reason` names the step."""
+
+    reason: str
+    passes: Callable[[], bool]
+
+
+def first_failure(checks: Iterable[ProbeCheck], *, failing_errors: tuple[type[Exception], ...]) -> ProbeResult:
+    """Run the checks in order and stop at the first one that fails: fatal with its reason, else ok.
+
+    A check that raises one of `failing_errors` has failed; any other error propagates.
+    """
+    for check in checks:
+        try:
+            passed = check.passes()
+        except failing_errors:
+            passed = False
+        if not passed:
+            return ProbeResult(outcome="fatal", reason=check.reason)
+    return ProbeResult(outcome="ok")

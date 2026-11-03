@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import secrets
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -30,7 +29,7 @@ from overland_planner.adapters.persistence.database import BUSY_TIMEOUT_MS, Sqli
 from overland_planner.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from overland_planner.application.platform.facade import MigrationAction, PreMigrationCopies, RevisionChain
 from overland_planner.application.ports.clock import Clock
-from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
 
 
 class AlembicMigrator:
@@ -92,21 +91,6 @@ class AlembicMigrator:
                 del self._config.attributes["connection"]
 
 
-_Checks = tuple[tuple[str, Callable[[], bool]], ...]
-
-
-def _first_failure(checks: _Checks) -> ProbeResult:
-    """Run the checks in order; the first one that fails or raises is fatal with its reason."""
-    for reason, check in checks:
-        try:
-            passed = check()
-        except Exception:  # any error of the check is its failure; the reason names the check
-            passed = False
-        if not passed:
-            return ProbeResult(outcome="fatal", reason=reason)
-    return ProbeResult(outcome="ok")
-
-
 class DatabaseStartup:
     def __init__(self, database: SqliteDatabase, migrator: AlembicMigrator, clock: Clock) -> None:
         self._database = database
@@ -123,7 +107,8 @@ class DatabaseStartup:
             return ProbeResult(outcome="fatal", reason="revision_unreadable")
         if action is MigrationAction.REFUSE_NEWER:
             return ProbeResult(outcome="fatal", reason="db_newer_than_app")
-        return _first_failure(self._checks(action, stored))
+        # any error of a check is its failure; the reason names the check
+        return first_failure(self._checks(action, stored), failing_errors=(Exception,))
 
     def _data_dir_writable(self) -> bool:
         folder = self._database.file.parent
@@ -133,20 +118,20 @@ class DatabaseStartup:
             return False
         return os.access(folder, os.W_OK)
 
-    def _checks(self, action: MigrationAction, stored: str | None) -> _Checks:
+    def _checks(self, action: MigrationAction, stored: str | None) -> tuple[ProbeCheck, ...]:
         """Migrate as the policy says, then prove the database works; each check named by its failure reason."""
         return (
-            ("quick_check_failed", self._quick_check),
-            (
+            ProbeCheck("quick_check_failed", self._quick_check),
+            ProbeCheck(
                 "pre_migration_copy_failed",
                 lambda: action is not MigrationAction.COPY_THEN_UPGRADE or self._copy(stored),
             ),
-            ("migration_failed", lambda: action is MigrationAction.NOTHING or self._upgrade()),
-            ("wal_not_active", lambda: self._pragma("journal_mode") == "wal"),
-            ("foreign_keys_off", lambda: self._pragma("foreign_keys") == 1),
-            ("busy_timeout_not_set", lambda: self._pragma("busy_timeout") == BUSY_TIMEOUT_MS),
-            ("round_trip_failed", self._round_trip),
-            ("not_at_head", lambda: self._migrator.current() == self._migrator.head()),
+            ProbeCheck("migration_failed", lambda: action is MigrationAction.NOTHING or self._upgrade()),
+            ProbeCheck("wal_not_active", lambda: self._pragma("journal_mode") == "wal"),
+            ProbeCheck("foreign_keys_off", lambda: self._pragma("foreign_keys") == 1),
+            ProbeCheck("busy_timeout_not_set", lambda: self._pragma("busy_timeout") == BUSY_TIMEOUT_MS),
+            ProbeCheck("round_trip_failed", self._round_trip),
+            ProbeCheck("not_at_head", lambda: self._migrator.current() == self._migrator.head()),
         )
 
     def _pragma(self, name: str) -> object:
