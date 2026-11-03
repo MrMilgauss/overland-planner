@@ -2,6 +2,8 @@
 
 The only source is the mapping given to `Settings.from_environ`; the composition root passes `os.environ` in
 production. Keys are case-sensitive; keys the planner does not read are ignored. An invalid value is fatal.
+The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD, brief §12) is set as a pair or not at all; an
+empty value counts as unset (a `KEY=` line). The password is a `SecretStr`, so no repr or error message shows it.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -42,6 +44,20 @@ class Settings(BaseSettings):
     planner_git_sha: Annotated[str, Field(validation_alias="PLANNER_GIT_SHA", min_length=1)] = "dev"
     web_dist_dir: Annotated[Path, Field(validation_alias="WEB_DIST_DIR")] = _REPO_WEB_DIST
     migrations_dir: Annotated[Path, Field(validation_alias="MIGRATIONS_DIR")] = _REPO_MIGRATIONS
+    basic_auth_user: Annotated[str | None, Field(validation_alias="PLANNER_BASIC_AUTH_USER")] = None
+    basic_auth_password: Annotated[SecretStr | None, Field(validation_alias="PLANNER_BASIC_AUTH_PASSWORD")] = None
+
+    @field_validator("basic_auth_user", "basic_auth_password", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @field_validator("basic_auth_user")
+    @classmethod
+    def _user_without_colon(cls, value: str | None) -> str | None:
+        if value is not None and ":" in value:
+            raise ValueError("must not contain ':' (HTTP Basic credentials end the user name at the first colon)")
+        return value
 
     @field_validator("data_dir", "web_dist_dir", "migrations_dir", mode="before")
     @classmethod
@@ -65,8 +81,12 @@ class Settings(BaseSettings):
     def from_environ(cls, environ: Mapping[str, str]) -> Settings:
         values: dict[str, Any] = dict(environ)  # raw text; pydantic converts and validates each field
         try:
-            return cls(**values)
+            settings = cls(**values)
         except ValidationError as error:
             raise InvalidSettingsError(
                 {str(problem["loc"][0]): problem["msg"] for problem in error.errors(include_url=False)}
             ) from None
+        if (settings.basic_auth_user is None) != (settings.basic_auth_password is None):
+            missing = "PLANNER_BASIC_AUTH_USER" if settings.basic_auth_user is None else "PLANNER_BASIC_AUTH_PASSWORD"
+            raise InvalidSettingsError({missing: "must be set together with the other shared password setting"})
+        return settings

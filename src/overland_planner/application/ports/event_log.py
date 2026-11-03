@@ -14,3 +14,7 @@ class EventLog(Probeable, Protocol):
     def info(self, event: str, **fields: object) -> None:
         """Record an informational event such as `app.started`."""
         ...
+
+    def warning(self, event: str, **fields: object) -> None:
+        """Record an event Marco should act on, such as `security.auth.disabled`."""
+        ...

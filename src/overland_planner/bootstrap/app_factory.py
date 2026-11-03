@@ -9,6 +9,8 @@ once the factory returns, so no request is answered before every component has r
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
 exit non-zero, no `app.started`); each degraded component gets one `health.startup.degraded` line {component, reason}
 before `app.started`. The OR-Tools probe runs in a short-lived child process.
+The shared household password (brief §12, D98), when both PLANNER_BASIC_AUTH_* keys are set, guards every path but
+`/healthz`; when off, every start logs one `security.auth.disabled` warning. The event log redacts the password.
 
 stdout carries only the JSON event lines (brief §12): uvicorn's plain-text access log is switched off here, so the
 production command needs no logging flags.
@@ -25,6 +27,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from overland_planner.adapters.clock.system_clock import SystemClock
+from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.platform_routes import platform_routes
@@ -66,7 +69,11 @@ def create_app(
     ports = external or ExternalPorts()
     clock = ports.clock or SystemClock()
     # The refusal of invalid settings is logged too, so the version cannot wait for validated settings.
-    event_log: EventLog = StructlogEventLog(clock, app_version=source.get("PLANNER_GIT_SHA") or "dev")
+    event_log: EventLog = StructlogEventLog(
+        clock,
+        app_version=source.get("PLANNER_GIT_SHA") or "dev",
+        secret=source.get("PLANNER_BASIC_AUTH_PASSWORD"),
+    )
     gate = StartupGate(event_log)
     try:
         settings = Settings.from_environ(source)
@@ -90,11 +97,18 @@ def create_app(
     app.include_router(platform_routes(health))
     app.include_router(catalog_routes(ProjectService(lambda: SqlAlchemyCatalogUnitOfWork(database), clock)))
     mount_web_page(app, settings.web_dist_dir)
+    auth_enabled = settings.basic_auth_user is not None and settings.basic_auth_password is not None
+    if auth_enabled and settings.basic_auth_user and settings.basic_auth_password:
+        credentials = BasicAuthCredentials(settings.basic_auth_user, settings.basic_auth_password.get_secret_value())
+        app.add_middleware(BasicAuthMiddleware, credentials=credentials)
+    else:
+        event_log.warning("security.auth.disabled", reason="PLANNER_BASIC_AUTH_USER and _PASSWORD are not set")
     event_log.info(
         "app.started",
         routing_provider=settings.routing_provider,
         solver_budget=settings.solver_budget,
         python_version=platform.python_version(),
         alembic_revision=migrator.head(),
+        auth_enabled=auth_enabled,
     )
     return app
