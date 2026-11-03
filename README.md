@@ -23,10 +23,11 @@ Acceptance scenarios tagged `@pending` run with `--run-pending=<slice>`; `@requi
 ## CI
 
 `.github/workflows/ci.yml`: lint, test-python and test-web on every push and pull request; on main pushes the
-image jobs (amd64, arm64), e2e on the amd64 image, scoped mutation testing and publish. Publish creates the attested
-manifest list `ghcr.io/mrmilgauss/overland-planner:sha-<12>` and `:main`, uploads `release.json` and prunes GHCR to
-that release. `.github/workflows/weekly.yml` re-scans `main`, audits dependencies, runs the deep property profile and
-reports storage; deploys never wait for it.
+image jobs (amd64, arm64), e2e on the amd64 image, scoped mutation testing and publish. The image jobs push with
+buildx in-registry SBOM and provenance (no GitHub attestations, D195). Publish creates the manifest list
+`ghcr.io/mrmilgauss/overland-planner:sha-<12>` and `:main`, fails unless the provenance of both platforms names this
+repository and commit, uploads `release.json` and prunes GHCR to that release. `.github/workflows/weekly.yml`
+re-scans `main`, audits dependencies, runs the deep property profile and reports storage; deploys never wait for it.
 
 ### CI budget
 

@@ -269,11 +269,9 @@ jobs:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions: # D161: only the image and publish jobs may write packages and attestations
+    permissions: # D161: only the image and publish jobs may write packages; D195: no GitHub attestations
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     outputs:
       digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (job 9) assembles the index
       artifact-id: ${{ steps.image-artifact.outputs.artifact-id }} # e2e (job 7) deletes it after loading (D169)
@@ -368,12 +366,6 @@ jobs:
             GIT_SHA=${{ steps.meta.outputs.git_sha }}
             COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
             ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          subject-name: ghcr.io/mrmilgauss/overland-planner
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
 
   image-arm64:
     name: "6 image-arm64"
@@ -382,11 +374,9 @@ jobs:
     # QEMU on the hosted amd64 runner unless the repository variable ARM64_RUNNER names a native arm64 runner.
     runs-on: ${{ vars.ARM64_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 45
-    permissions: # D161: only the image and publish jobs may write packages and attestations
+    permissions: # D161: only the image and publish jobs may write packages; D195: no GitHub attestations
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     outputs:
       digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (job 9) assembles the index
     steps:
@@ -482,12 +472,6 @@ jobs:
             GIT_SHA=${{ steps.meta.outputs.git_sha }}
             COMMIT_TS=${{ steps.meta.outputs.commit_ts }}
             ALEMBIC_HEAD=${{ steps.meta.outputs.alembic_head }}
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          subject-name: ghcr.io/mrmilgauss/overland-planner
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
 
   e2e:
     name: "7 e2e"
@@ -616,11 +600,9 @@ jobs:
     if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    permissions: # D161
+    permissions: # D161, D195
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -645,12 +627,37 @@ jobs:
           digest="$(docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA::12}" --format '{{json .Manifest}}' | jq -r .digest)"
           test -n "$digest" && [ "$digest" != null ]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Verify the buildx provenance of both platforms (D195; fails closed before release.json)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          subject-name: ghcr.io/mrmilgauss/overland-planner
-          subject-digest: ${{ steps.list.outputs.digest }}
-          push-to-registry: true
+        env:
+          IMAGE: ghcr.io/mrmilgauss/overland-planner
+          DIGEST: ${{ steps.list.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Provenance}}' > "$RUNNER_TEMP/provenance.json"
+          repo="https://github.com/${GITHUB_REPOSITORY,,}"
+          : > "$RUNNER_TEMP/provenance-errors"
+          {
+            echo "### Provenance of ${IMAGE}@${DIGEST} (buildx in-registry, D195)"
+            echo "Expected source \`${repo}\` at \`${GITHUB_SHA}\`."
+            echo '```json'
+            for platform in linux/amd64 linux/arm64; do
+              vcs="$(jq -c --arg p "$platform" '[.[$p] // {} | .. | objects | .vcs | objects] | first // {}' \
+                "$RUNNER_TEMP/provenance.json")"
+              echo "{\"${platform}\": ${vcs}}"
+              source="$(jq -r '.source // "" | ascii_downcase | sub("\\.git$"; "")' <<< "$vcs")"
+              revision="$(jq -r '.revision // ""' <<< "$vcs")"
+              if [ "$source" != "$repo" ] || [ "$revision" != "$GITHUB_SHA" ]; then
+                echo "${platform} provenance names '${source}' at '${revision}', expected ${repo} at ${GITHUB_SHA}" \
+                  >> "$RUNNER_TEMP/provenance-errors"
+              fi
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "$RUNNER_TEMP/provenance-errors" ]; then
+            sed 's/^/::error::/' "$RUNNER_TEMP/provenance-errors"
+            exit 1
+          fi
       - name: release.json (make deploy downloads it, D171)
         env:
           DIGEST: ${{ steps.list.outputs.digest }}
@@ -658,7 +665,8 @@ jobs:
           # No migrations exist yet; the step that adds alembic switches this to the real head revision.
           jq -n --arg git_sha "$GITHUB_SHA" --arg commit_ts "$(git log -1 --format=%cI)" --arg digest "$DIGEST" \
             --arg alembic_head none --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{git_sha: $git_sha, commit_ts: $commit_ts, digest: $digest, alembic_head: $alembic_head, created: $created}' \
+            '{git_sha: $git_sha, commit_ts: $commit_ts, digest: $digest, alembic_head: $alembic_head, created: $created,
+              provenance: "buildx"}' \
             > "$RUNNER_TEMP/release.json"
           {
             echo "### Release ghcr.io/mrmilgauss/overland-planner:sha-${GITHUB_SHA::12}"

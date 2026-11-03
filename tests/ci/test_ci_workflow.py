@@ -212,7 +212,7 @@ def _uses(job: dict[str, Any], action: str) -> list[dict[str, Any]]:
 
 def _writes_to_registry(step: dict[str, Any]) -> bool:
     uses = str(step.get("uses", ""))
-    if uses.startswith(("docker/login-action@", "actions/attest-build-provenance@")):
+    if uses.startswith("docker/login-action@"):
         return True
     if uses.startswith("docker/build-push-action@"):
         build = step.get("with", {})
@@ -241,8 +241,7 @@ def test_image_jobs_push_by_digest_only_on_main() -> None:
         assert {str(step.get("uses", "")).split("@")[0] for step in writers} >= {
             "docker/login-action",
             "docker/build-push-action",
-            "actions/attest-build-provenance",
-        }, f"{name} must log in, push and attest on main"
+        }, f"{name} must log in and push on main"
         unguarded = [step.get("name", step.get("uses")) for step in writers if step.get("if") != MAIN_PUSH]
         assert unguarded == [], f"{name} writes to GHCR outside main pushes: {unguarded}"
 
@@ -253,9 +252,6 @@ def test_image_jobs_push_by_digest_only_on_main() -> None:
         assert push["with"]["sbom"] is True and "mode=max" in str(push["with"]["provenance"])
         assert any(f"type=gha,scope={scope}" in str(b["with"].get("cache-to", "")) for b in builds)
 
-        attest = _uses(job, "actions/attest-build-provenance")[0]["with"]
-        assert attest["subject-name"] == IMAGE and attest["push-to-registry"] is True
-        assert attest["subject-digest"] == f"${{{{ steps.{push['id']}.outputs.digest }}}}"
         assert job["outputs"]["digest"] == f"${{{{ steps.{push['id']}.outputs.digest }}}}", "publish (01-09) needs it"
 
     qemu = _uses(_job(workflow, "image-arm64"), "docker/setup-qemu-action")
@@ -327,12 +323,8 @@ def test_image_jobs_have_job_level_package_permissions() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}, "write scopes live on the image and publish jobs (D161)"
     for name in REGISTRY_WRITERS:
-        assert _job(workflow, name)["permissions"] == {
-            "contents": "read",
-            "packages": "write",
-            "id-token": "write",
-            "attestations": "write",
-        }, f"{name} permissions"
+        # D195: no GitHub attestations, so no id-token or attestations scope.
+        assert _job(workflow, name)["permissions"] == {"contents": "read", "packages": "write"}, f"{name} permissions"
     # e2e deletes the image artifact it consumed (D169); that needs actions: write and nothing else.
     assert _job(workflow, "e2e")["permissions"] == {"contents": "read", "actions": "write"}
     for name, job in workflow["jobs"].items():
@@ -455,20 +447,32 @@ def test_publish_gating_matches_d160() -> None:
     assert _needs(_job(workflow, "mutation")) & {"image-amd64", "image-arm64", "e2e"} == set()
 
 
-def test_publish_creates_attested_manifest_list_and_release_json() -> None:
+def test_no_job_uses_github_attestations() -> None:
+    """D195: GitHub artifact attestations are unavailable for user-owned private repositories."""
+    workflows = {path.name: yaml.safe_load(path.read_text()) for path in (WORKFLOW, WEEKLY)}
+
+    for file, workflow in workflows.items():
+        for scope in [workflow, *workflow["jobs"].values()]:
+            granted = scope.get("permissions") or {}
+            assert not {"id-token", "attestations"} & set(granted), f"{file}: {scope.get('name')} requests {granted}"
+        for name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                text = f"{step.get('uses', '')} {step.get('run', '')}"
+                assert "attest" not in text, f"{file}/{name} uses GitHub attestations: {text.strip()}"
+
+
+def test_publish_creates_manifest_list_and_release_json() -> None:
     job = _job(_workflow(), "publish")
     create = _runs(job)[_index(job, "imagetools create")]
 
     assert "needs.image-amd64.outputs.digest" in str(job["steps"][_index(job, "imagetools create")]["env"])
     assert "needs.image-arm64.outputs.digest" in str(job["steps"][_index(job, "imagetools create")]["env"])
     assert ":sha-${GITHUB_SHA::12}" in create and ":main" in create
-    attest = _step_using(job, "actions/attest-build-provenance")["with"]
-    assert attest["subject-name"] == IMAGE and attest["push-to-registry"] is True
-    assert "outputs.digest" in attest["subject-digest"]
 
     release = _runs(job)[_index(job, "release.json")]
-    for key in ("git_sha", "commit_ts", "digest", "alembic_head", "created"):
+    for key in ("git_sha", "commit_ts", "digest", "alembic_head", "created", "provenance"):
         assert key in release, f"release.json lacks {key}"
+    assert 'provenance: "buildx"' in release, "release.json records the D195 provenance source"
     assert "GITHUB_STEP_SUMMARY" in release
     upload = _step_using(job, "actions/upload-artifact")["with"]
     assert upload["name"] == "release.json"
@@ -477,6 +481,21 @@ def test_publish_creates_attested_manifest_list_and_release_json() -> None:
         _index(job, "imagetools create") < prune
         and job["steps"].index(_step_using(job, "actions/upload-artifact")) < prune
     )
+
+
+def test_publish_fails_closed_without_buildx_provenance_for_both_platforms() -> None:
+    """D195: the manifest list must carry buildx provenance naming this repo and SHA before release.json exists."""
+    job = _job(_workflow(), "publish")
+    check = _index(job, "{{json .Provenance}}")
+    step, script = job["steps"][check], _runs(job)[check]
+
+    assert "imagetools inspect" in script and "steps.list.outputs.digest" in str(step.get("env", {}))
+    assert "set -euo pipefail" in script, "a failed inspect or jq must fail the step"
+    for fragment in ("linux/amd64", "linux/arm64", "GITHUB_SHA", "GITHUB_REPOSITORY", "GITHUB_STEP_SUMMARY", "exit 1"):
+        assert fragment in script, f"provenance check lacks {fragment!r}"
+    assert not step.get("continue-on-error")
+    upload = job["steps"].index(_step_using(job, "actions/upload-artifact"))
+    assert _index(job, "imagetools create") < check < _index(job, "release.json") < upload
 
 
 def _prune_module() -> ModuleType:
@@ -493,25 +512,43 @@ MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 digests = st.text("0123456789abcdef", min_size=8, max_size=8).map(lambda h: f"sha256:{h}")
 
 
-@given(release_children=st.lists(digests, min_size=1, max_size=4, unique=True), others=st.lists(digests, max_size=6))
-def test_prune_deletes_only_versions_outside_the_release(release_children: list[str], others: list[str]) -> None:
+@given(arches=st.lists(digests, min_size=1, max_size=3, unique=True), others=st.lists(digests, max_size=6))
+def test_prune_deletes_only_versions_outside_the_release(arches: list[str], others: list[str]) -> None:
+    """D195: buildx SBOM/provenance manifests hang off each per-arch index the list references; they must survive."""
     release, referrer = "sha256:release0", "sha256:referrer"
-    stale = [d for d in dict.fromkeys(others) if d not in {release, referrer, *release_children}]
+    images = {arch: f"{arch}-image" for arch in arches}
+    provenance = {arch: f"{arch}-attest" for arch in arches}
+    belongs = {release, referrer, *arches, *images.values(), *provenance.values()}
+    stale = [d for d in dict.fromkeys(others) if d not in belongs]
     manifests: dict[str, dict[str, Any]] = {
-        release: {"mediaType": INDEX, "manifests": [{"digest": d, "mediaType": MANIFEST} for d in release_children]},
-        referrer: {"mediaType": MANIFEST, "subject": {"digest": release}},  # the GitHub attestation of the list
-        **{d: {"mediaType": MANIFEST} for d in (*release_children, *stale)},
+        release: {"mediaType": INDEX, "manifests": [{"digest": a, "mediaType": INDEX} for a in arches]},
+        **{
+            a: {
+                "mediaType": INDEX,
+                "manifests": [
+                    {"digest": images[a], "mediaType": MANIFEST},
+                    {
+                        "digest": provenance[a],
+                        "mediaType": MANIFEST,
+                        "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+                    },
+                ],
+            }
+            for a in arches
+        },
+        referrer: {"mediaType": MANIFEST, "subject": {"digest": release}},  # any OCI referrer of the list
+        **{d: {"mediaType": MANIFEST} for d in (*images.values(), *provenance.values(), *stale)},
     }
     versions = [
         {"id": n, "name": d, "metadata": {"container": {"tags": ["main", "sha-0123456789ab"] if d == release else []}}}
-        for n, d in enumerate([release, referrer, *release_children, *stale])
+        for n, d in enumerate([release, referrer, *arches, *images.values(), *provenance.values(), *stale])
     ]
 
     plan = _prune_module().decide(versions, release, manifests.get)
 
     assert plan.skip_reason is None
     assert sorted(v["name"] for v in plan.delete) == sorted(stale)
-    assert {release, referrer, *release_children} <= plan.keep
+    assert belongs <= plan.keep
 
 
 @pytest.mark.parametrize("ambiguity", ["release not listed", "manifest unreadable", "main tag elsewhere"])
