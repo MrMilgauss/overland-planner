@@ -23,29 +23,13 @@ REDACTED = "[redacted]"
 _SECRET_KEYS = frozenset({"password", "authorization"})
 
 
-class StructlogEventLog:
-    def __init__(self, clock: Clock, *, app_version: str, secret: str | None = None) -> None:
-        self._clock = clock
+class _Redactor:
+    """Replaces the value of any secret-named field, at any depth, and every occurrence of the shared password."""
+
+    def __init__(self, secret: str | None) -> None:
         self._secret = secret or None
-        self._logger = structlog.wrap_logger(
-            structlog.PrintLogger(sys.stdout),
-            processors=[
-                structlog.processors.add_log_level,
-                self._add_timestamp,
-                self._redact,
-                structlog.processors.JSONRenderer(),
-            ],
-            wrapper_class=structlog.make_filtering_bound_logger(logging.NOTSET),
-            cache_logger_on_first_use=False,
-        ).bind(app_version=app_version)
 
-    def _add_timestamp(
-        self, _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
-    ) -> MutableMapping[str, Any]:
-        event_dict["ts"] = self._clock.now().astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        return event_dict
-
-    def _redact(self, _logger: Any, _method: str, event_dict: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    def __call__(self, _logger: Any, _method: str, event_dict: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
         return {key: self._scrub(key, value) for key, value in event_dict.items()}
 
     def _scrub(self, key: object, value: Any) -> Any:
@@ -58,6 +42,28 @@ class StructlogEventLog:
         if isinstance(value, list | tuple | set | frozenset):
             return [self._scrub(None, item) for item in value]
         return value
+
+
+class StructlogEventLog:
+    def __init__(self, clock: Clock, *, app_version: str, secret: str | None = None) -> None:
+        self._clock = clock
+        self._logger = structlog.wrap_logger(
+            structlog.PrintLogger(sys.stdout),
+            processors=[
+                structlog.processors.add_log_level,
+                self._add_timestamp,
+                _Redactor(secret),
+                structlog.processors.JSONRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(logging.NOTSET),
+            cache_logger_on_first_use=False,
+        ).bind(app_version=app_version)
+
+    def _add_timestamp(
+        self, _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+    ) -> MutableMapping[str, Any]:
+        event_dict["ts"] = self._clock.now().astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return event_dict
 
     def info(self, event: str, **fields: object) -> None:
         self._logger.info(event, **fields)

@@ -67,6 +67,56 @@ class ExternalPorts:
     tour_solver: TourSolver | None = None
 
 
+class _Wiring:
+    """The driven adapters of one planner process, built once from the validated settings."""
+
+    def __init__(self, settings: Settings, clock: Clock, event_log: EventLog, ports: ExternalPorts) -> None:
+        self._settings = settings
+        self._clock = clock
+        self._event_log = event_log
+        self._database = SqliteDatabase(settings.data_dir)
+        self.migrator = AlembicMigrator(self._database, settings.migrations_dir)
+        self._file_store = LocalFileStore(settings.data_dir)
+        self._mount_table = ports.mount_table or ProcMountTable()
+        self._gpx_parser = GpxpyParser()
+        self._tour_solver = ports.tour_solver or OrToolsTourSolver()
+
+    def probe_registry(self) -> ProbeRegistry:
+        """Every component in wiring order: the database probe migrates it before anything else touches it."""
+        registry = ProbeRegistry()
+        registry.register("clock", self._clock)
+        registry.register("event_log", self._event_log)
+        registry.register("database", DatabaseStartup(self._database, self.migrator, self._clock))
+        registry.register("file_store", self._file_store)
+        registry.register("mount_table", self._mount_table)
+        # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
+        data_dir = PurePosixPath(self._settings.data_dir.resolve())
+        registry.register("data_dir", DataDirPersistence(data_dir, self._mount_table))
+        registry.register("gpx_parser", self._gpx_parser)
+        registry.register("tour_solver", self._tour_solver)
+        return registry
+
+    def catalog_router(self) -> APIRouter:
+        settings = self._settings
+
+        def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
+            return SqlAlchemyCatalogUnitOfWork(self._database)
+
+        return catalog_routes(
+            ProjectService(catalog_unit_of_work, self._clock),
+            TrackImportService(
+                catalog_unit_of_work,
+                self._gpx_parser,
+                self._file_store,
+                self._event_log,
+                file_limit_mb=settings.max_upload_file_mb,
+            ),
+            PoiService(catalog_unit_of_work),
+            AnchorService(catalog_unit_of_work),
+            UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
+        )
+
+
 def create_app(
     environ: Mapping[str, str] | None = None,
     *,
@@ -82,22 +132,8 @@ def create_app(
         settings = Settings.from_environ(source)
     except InvalidSettingsError as invalid:
         gate.refuse("settings", str(invalid))
-    database = SqliteDatabase(settings.data_dir)
-    migrator = AlembicMigrator(database, settings.migrations_dir)
-    registry = ProbeRegistry()
-    registry.register("clock", clock)
-    registry.register("event_log", event_log)
-    registry.register("database", DatabaseStartup(database, migrator, clock))
-    file_store = LocalFileStore(settings.data_dir)
-    registry.register("file_store", file_store)
-    mount_table = ports.mount_table or ProcMountTable()
-    registry.register("mount_table", mount_table)
-    # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
-    registry.register("data_dir", DataDirPersistence(PurePosixPath(settings.data_dir.resolve()), mount_table))
-    gpx_parser = GpxpyParser()
-    registry.register("gpx_parser", gpx_parser)
-    registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
-    health = gate.probe_in_order(registry.components())
+    wiring = _Wiring(settings, clock, event_log, ports)
+    health = gate.probe_in_order(wiring.probe_registry().components())
     _log_degraded(health, event_log)
 
     logging.getLogger("uvicorn.access").disabled = True
@@ -105,7 +141,7 @@ def create_app(
     install_error_handlers(app)  # the {code, message} envelope for every non-2xx answer under /api (brief §5)
     app.include_router(platform_routes(health))
 
-    app.include_router(_catalog_router(settings, database, clock, gpx_parser, file_store, event_log))
+    app.include_router(wiring.catalog_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
     event_log.info(
@@ -113,7 +149,7 @@ def create_app(
         routing_provider=settings.routing_provider,
         solver_budget=settings.solver_budget,
         python_version=platform.python_version(),
-        alembic_revision=migrator.head(),
+        alembic_revision=wiring.migrator.head(),
         auth_enabled=auth_enabled,
     )
     return app
@@ -133,28 +169,6 @@ def _log_degraded(health: HealthService, event_log: EventLog) -> None:
     for name, result in health.detail().components.items():
         if result.outcome.startswith("degraded"):
             event_log.info("health.startup.degraded", component=name, reason=log_reason(result.reason))
-
-
-def _catalog_router(
-    settings: Settings,
-    database: SqliteDatabase,
-    clock: Clock,
-    gpx_parser: GpxpyParser,
-    file_store: LocalFileStore,
-    event_log: EventLog,
-) -> APIRouter:
-    def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
-        return SqlAlchemyCatalogUnitOfWork(database)
-
-    return catalog_routes(
-        ProjectService(catalog_unit_of_work, clock),
-        TrackImportService(
-            catalog_unit_of_work, gpx_parser, file_store, event_log, file_limit_mb=settings.max_upload_file_mb
-        ),
-        PoiService(catalog_unit_of_work),
-        AnchorService(catalog_unit_of_work),
-        UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
-    )
 
 
 def _guard_with_password(app: FastAPI, settings: Settings, event_log: EventLog) -> bool:

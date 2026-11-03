@@ -58,6 +58,30 @@ class _Part:
     content: bytearray = field(default_factory=bytearray)
 
 
+class _PartHeaders:
+    """Accumulates one part's header fields (python-multipart delivers them in pieces); keeps Content-Disposition."""
+
+    def __init__(self) -> None:
+        self._name = b""
+        self._value = b""
+        self.disposition = b""
+
+    def restart(self) -> None:
+        self.disposition = b""
+
+    def add_name(self, piece: bytes) -> None:
+        self._name += piece
+
+    def add_value(self, piece: bytes) -> None:
+        self._value += piece
+
+    def end_header(self) -> None:
+        if self._name.lower() == b"content-disposition":
+            self.disposition = self._value
+        self._name = b""
+        self._value = b""
+
+
 class _TrackFileCollector:
     """python-multipart callbacks: keeps each `files` part in memory, bounded by the caps."""
 
@@ -65,9 +89,7 @@ class _TrackFileCollector:
         self._limits = limits
         self._keep = limits.file_bytes + 1
         self._part = _Part()
-        self._header_name = b""
-        self._header_value = b""
-        self._disposition = b""
+        self._headers = _PartHeaders()
         self._file_count = 0
         self.files: list[TrackFile] = []
 
@@ -84,22 +106,19 @@ class _TrackFileCollector:
 
     def _on_part_begin(self) -> None:
         self._part = _Part()
-        self._disposition = b""
+        self._headers.restart()
 
     def _on_header_field(self, data: bytes, start: int, end: int) -> None:
-        self._header_name += data[start:end]
+        self._headers.add_name(data[start:end])
 
     def _on_header_value(self, data: bytes, start: int, end: int) -> None:
-        self._header_value += data[start:end]
+        self._headers.add_value(data[start:end])
 
     def _on_header_end(self) -> None:
-        if self._header_name.lower() == b"content-disposition":
-            self._disposition = self._header_value
-        self._header_name = b""
-        self._header_value = b""
+        self._headers.end_header()
 
     def _on_headers_finished(self) -> None:
-        _, options = parse_options_header(self._disposition)
+        _, options = parse_options_header(self._headers.disposition)
         self._part.field_name = options.get(b"name", b"").decode("utf-8", "replace")
         if b"filename" not in options or self._part.field_name != FILES_FIELD:
             return
