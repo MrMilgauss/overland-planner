@@ -9,6 +9,7 @@ the image jobs 5 image-amd64 and 6 image-arm64 and `.github/scripts/image-smoke.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import stat
@@ -92,8 +93,8 @@ def _index(job: dict[str, Any], fragment: str) -> int:
 
 
 def _main_pytest(job: dict[str, Any]) -> dict[str, Any]:
-    steps = [s for s in job["steps"] if "pytest" in s.get("run", "") and "not walking_skeleton" in s["run"]]
-    assert len(steps) == 1, "test-python needs exactly one main pytest step excluding the walking skeleton"
+    steps = [s for s in job["steps"] if "pytest" in s.get("run", "") and "--cov-fail-under" in s["run"]]
+    assert len(steps) == 1, "test-python needs exactly one main (coverage-gated) pytest step"
     return steps[0]
 
 
@@ -126,14 +127,14 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b"  # D170: slice 00b is GREEN (step 02-07)
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
-    assert '"$DATA_DIR"' in _runs(job)[_index(job, "df -T")]
+    assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]  # root of every test data folder
     for name in ("DATA_DIR", "PLANNER_TEST_WORKSPACE"):
         assert str(env[name]).startswith("${{ github.workspace }}/"), f"{name} must live under the workspace"
     assert env["HYPOTHESIS_PROFILE"] == "ci"
 
     command = pytest_step["run"]
     assert "$PENDING_FLAGS" in command
-    assert "not real_provider and not pi and not walking_skeleton" in command
+    assert '-m "not real_provider and not pi"' in command
     assert "--cov-fail-under=80" in command
     assert not pytest_step.get("continue-on-error")
     domain_gate = job["steps"][job["steps"].index(pytest_step) + 1]
@@ -141,24 +142,33 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     assert not domain_gate.get("continue-on-error")
 
 
-def test_walking_skeleton_step_is_non_blocking_until_slice_01a() -> None:
-    workflow = _workflow()
-    steps = [
-        s
-        for s in _job(workflow, "test-python")["steps"]
-        if "pytest" in s.get("run", "") and re.search(r"-m\s+\"?walking_skeleton\b", s["run"])
-    ]
+PRE_COMMIT = REPO_ROOT / ".pre-commit-config.yaml"
+MAKEFILE = REPO_ROOT / "Makefile"
 
-    assert len(steps) == 1, "test-python needs exactly one walking-skeleton pytest step"
-    assert steps[0]["continue-on-error"] is True
-    assert "$PENDING_FLAGS" in steps[0]["run"]
-    blocking = [
+
+def test_walking_skeleton_is_blocking_in_test_python() -> None:
+    """Slice 01a (D180): the walking skeleton runs in job 2's blocking pytest run, in pre-push and in `make test`."""
+    workflow = _workflow()
+    job = _job(workflow, "test-python")
+    pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
+
+    assert pytest_steps == [_main_pytest(job)], "the walking skeleton runs in the one blocking pytest step"
+    assert "walking_skeleton" not in json.dumps(pytest_steps)
+    non_blocking = [
         (name, step.get("name"))
         for name in COMMIT_STAGE
         for step in _job(workflow, name)["steps"]
-        if step.get("continue-on-error") and step is not steps[0]
+        if step.get("continue-on-error")
     ]
-    assert blocking == [], f"only the walking skeleton may be non-blocking: {blocking}"
+    assert non_blocking == [], f"no commit-stage step may be non-blocking: {non_blocking}"
+
+    hooks = {h["id"]: h for repo in yaml.safe_load(PRE_COMMIT.read_text())["repos"] for h in repo["hooks"]}
+    pre_push = hooks["pytest-fast"]
+    assert pre_push["stages"] == ["pre-push"]
+    assert "walking_skeleton" not in pre_push["entry"], "pre-push runs the walking skeleton"
+    assert "web/dist/index.html" in pre_push["entry"], "pre-push builds the web page the walking skeleton checks"
+    fast = re.search(r"^PYTEST_FAST := (?P<selection>.*)$", MAKEFILE.read_text(), re.MULTILINE)
+    assert fast is not None and "walking_skeleton" not in fast["selection"], "make test runs the walking skeleton"
 
 
 LINT_GATES = (

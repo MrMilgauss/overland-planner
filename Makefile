@@ -2,7 +2,7 @@
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
 	pi-preflight status logs diag image-gc uninstall purge dora
 
-PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
+PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
 # composition root switches off uvicorn's access log).
 UVICORN := uv run uvicorn --factory overland_planner.bootstrap.app_factory:create_app

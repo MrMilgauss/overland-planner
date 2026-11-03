@@ -59,8 +59,8 @@ repos:
         always_run: true
         stages: [pre-push]
       - id: pytest-fast
-        name: pytest (not slow, solver_child, walking_skeleton)
-        entry: uv run pytest -q -m "not slow and not solver_child and not walking_skeleton"
+        name: pytest (not slow, solver_child; walking skeleton included, builds web/dist when missing)
+        entry: bash -c '{ [ -f web/dist/index.html ] || make web-dist; } && uv run pytest -q -m "not slow and not solver_child"'
         language: system
         pass_filenames: false
         always_run: true

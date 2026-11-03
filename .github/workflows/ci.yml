@@ -217,35 +217,25 @@ jobs:
         run: npm ci --no-audit --no-fund && npx vite build
       - name: uv sync --frozen
         run: uv sync --frozen
-      - name: Filesystem type of the data folder (D168)
+      - name: Filesystem type of the test data folders, walking skeleton included (D168)
         run: |
+          # PLANNER_TEST_WORKSPACE is the root of every test data folder: DATA_DIR and the acceptance
+          # conftest's per-scenario folders (the walking skeleton's among them) live under it.
           mkdir -p "$DATA_DIR"
-          df -T "$DATA_DIR"
+          df -T "$PLANNER_TEST_WORKSPACE"
           {
-            echo "### Data folder filesystem"
+            echo "### Test data folder filesystem"
             echo '```'
-            df -T "$DATA_DIR"
+            df -T "$PLANNER_TEST_WORKSPACE"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: pytest (coverage >= 80 %)
         run: |
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
-          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not walking_skeleton" \
+          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi" \
             --cov=overland_planner --cov-report=term --cov-fail-under=80
       - name: Domain coverage (>= 90 %)
         run: uv run coverage report --include='*/overland_planner/domain/*' --fail-under=90
-      - name: Walking skeleton (non-blocking until step 03-06)
-        id: walking_skeleton
-        continue-on-error: true
-        run: |
-          # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
-          uv run pytest -q $PENDING_FLAGS -m "walking_skeleton"
-      - name: Report the walking skeleton
-        if: always() && steps.walking_skeleton.outcome != 'skipped'
-        env:
-          OUTCOME: ${{ steps.walking_skeleton.outcome }}
-        run: |
-          echo "Walking skeleton: **${OUTCOME}** (non-blocking until step 03-06)" >> "$GITHUB_STEP_SUMMARY"
 
   test-web:
     name: "4 test-web"
