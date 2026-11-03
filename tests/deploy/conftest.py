@@ -168,15 +168,24 @@ class FakeRegistry:
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.fetched: dict[
+            str, str
+        ] = {}  # what the verifier fetches -> its digest: index, attestation:<p>, provenance:<p>
         self.refuse_token = False
         self.digest = ""
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
-    def publish(self, vcs_by_platform: dict[str, dict[str, str] | None]) -> str:
-        """Store an image whose provenance names `vcs_by_platform[p]` (None = no attestation); return its digest."""
+    def publish(
+        self, vcs_by_platform: dict[str, dict[str, str] | None], subjects: dict[str, list[dict[str, Any]]] | None = None
+    ) -> str:
+        """Store an image whose provenance names `vcs_by_platform[p]` (None = no attestation); return its digest.
+
+        The in-toto statement's `subject` names the platform image manifest (as buildx writes it) unless `subjects[p]`
+        replaces it."""
         self.objects.clear()
+        self.fetched.clear()
         entries: list[dict[str, Any]] = []
         for platform in PLATFORMS:
             os_name, arch = platform.split("/")
@@ -186,9 +195,16 @@ class FakeRegistry:
             vcs = vcs_by_platform.get(platform)
             if vcs is None:
                 continue
+            subject = [
+                {
+                    "name": f"pkg:docker/{IMAGE}@sha-x?platform={os_name}%2F{arch}",
+                    "digest": {"sha256": image_digest.removeprefix("sha256:")},
+                }
+            ]
             statement = {
                 "_type": "https://in-toto.io/Statement/v0.1",
                 "predicateType": "https://slsa.dev/provenance/v0.2",
+                "subject": (subjects or {}).get(platform, subject),
                 "predicate": {
                     "builder": {"id": ""},
                     "metadata": {"https://mobyproject.org/buildkit@v1#metadata": {"vcs": vcs}},
@@ -214,6 +230,7 @@ class FakeRegistry:
                 }
             )
             self.objects[attestation_digest] = attestation
+            self.fetched |= {f"attestation:{platform}": attestation_digest, f"provenance:{platform}": layer_digest}
             entries.append(
                 {
                     "digest": attestation_digest,
@@ -226,6 +243,7 @@ class FakeRegistry:
             )
         index, self.digest = _blob({"schemaVersion": 2, "manifests": entries})
         self.objects[self.digest] = index
+        self.fetched["index"] = self.digest
         return self.digest
 
     def _handler(self) -> type[BaseHTTPRequestHandler]:

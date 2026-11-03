@@ -561,6 +561,18 @@ def test_publish_fails_closed_without_buildx_provenance_for_both_platforms() -> 
     assert _index(job, "imagetools create") < check < _index(job, "release.json") < upload
 
 
+def test_publish_runs_the_make_deploy_gate_so_each_statement_subject_is_its_platform_image() -> None:
+    """F10: the in-toto subject of each platform's provenance must be that platform's image manifest, checked by the
+    same deploy/scripts/verify_provenance.py the Mac runs, before release.json exists."""
+    job = _job(_workflow(), "publish")
+    gate = _index(job, "deploy/scripts/verify_provenance.py")
+    step, script = job["steps"][gate], _runs(job)[gate]
+
+    assert '--sha "$GITHUB_SHA"' in script and "steps.list.outputs.digest" in str(step.get("env", {}))
+    assert "secrets.GITHUB_TOKEN" in str(step["env"].get("GH_TOKEN")) and not step.get("continue-on-error")
+    assert _index(job, "{{json .Provenance}}") < gate < _index(job, "release.json")
+
+
 def _prune_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location("ghcr_prune", GHCR_PRUNE)
     assert spec and spec.loader, "ghcr_prune.py missing"

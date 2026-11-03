@@ -697,6 +697,17 @@ jobs:
             sed 's/^/::error::/' "$RUNNER_TEMP/provenance-errors"
             exit 1
           fi
+      - name: Verify the in-toto subjects name the platform images (the make deploy gate, F10; fails closed)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DIGEST: ${{ steps.list.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          # The Mac gate itself (deploy/scripts/verify_provenance.py): every fetched object matches its digest, the
+          # provenance names this repository at this SHA and each statement's subject is that platform's image.
+          printf '{"git_sha": "%s", "digest": "%s"}\n' "$GITHUB_SHA" "$DIGEST" > "$RUNNER_TEMP/gate-input.json"
+          python3 deploy/scripts/verify_provenance.py --release-json "$RUNNER_TEMP/gate-input.json" --sha "$GITHUB_SHA"
       - name: release.json (make deploy downloads it, D171)
         env:
           DIGEST: ${{ steps.list.outputs.digest }}
