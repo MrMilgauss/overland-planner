@@ -59,6 +59,8 @@ NEW = _release("b", "2026-11-03T07:30:00Z", "0003_auth")
 PI_BIND = "192.168.1.10"
 BASIC_AUTH_USER = "ferri"
 BASIC_AUTH_PASSWORD = 'sh4red "family" pw'  # noqa: S105 - test value
+# What the gh shim answers to `gh auth token` (D196: the Mac's token, delivered to deploy.sh on ssh stdin).
+GH_TOKEN = "fake-gh-token-for-d196-tests"  # noqa: S105  gitleaks:allow - test value, not a credential
 
 
 def release_env_text(release: Release, extra: str = "") -> str:
@@ -108,9 +110,11 @@ class FakePi:
         rules.append({"tool": tool, "args_contain": list(args_contain), **answer})
         rules_file.write_text(json.dumps(rules))
 
-    def deploy(self, digest: str) -> subprocess.CompletedProcess[str]:
+    def deploy(self, digest: str, token: str = GH_TOKEN) -> subprocess.CompletedProcess[str]:
+        """deploy.sh as make deploy runs it: the GHCR token on stdin (D196)."""
         return subprocess.run(
             ["bash", str(self.dir / "scripts/deploy.sh"), digest],
+            input=f"{token}\n" if token else "",
             cwd=self.root,
             env=shim_env(self.shim_home),
             capture_output=True,
@@ -310,7 +314,7 @@ class MacCheckout:
             self.rule(
                 "gh", "run download", exit=1, stderr="no artifact matches any of the names or patterns provided\n"
             )
-        self.rule("gh", "auth token", stdout="gho_fake_token\n")
+        self.rule("gh", "auth token", stdout=f"{GH_TOKEN}\n")
 
     def make_deploy(self, *variables: str) -> subprocess.CompletedProcess[str]:
         return self.make("deploy", *variables)

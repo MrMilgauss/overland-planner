@@ -178,12 +178,13 @@ def test_pi_preflight_reads_only_and_never_prints_the_password(pi_home: FakePi, 
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PLANNER_BIND=192.168.1.10" in result.stdout and "all checks passed" in result.stdout
+    assert "WARN  registry access: per-deploy login (D196)" in result.stdout  # a stored ghcr.io login is unexpected
     assert BASIC_AUTH_PASSWORD not in result.stdout + result.stderr and "c2VjcmV0" not in result.stdout
     docker_verbs = [shlex.join(call["argv"][:2]) for call in pi_home.calls("docker")]
     assert set(docker_verbs) <= {"ps --filter", "compose ls"}
 
 
-def test_pi_preflight_fails_without_planner_bind_or_registry_login(pi_home: FakePi, tmp_path: Path) -> None:
+def test_pi_preflight_fails_without_planner_bind_not_without_stored_login(pi_home: FakePi, tmp_path: Path) -> None:
     env_file = pi_home.dir / ".env"
     env_file.write_text(
         "".join(line + "\n" for line in env_file.read_text().splitlines() if "PLANNER_BIND" not in line)
@@ -192,4 +193,5 @@ def test_pi_preflight_fails_without_planner_bind_or_registry_login(pi_home: Fake
     result = preflight(pi_home, tmp_path)
 
     assert result.returncode == 1
-    assert "FAIL  .env has no PLANNER_BIND" in result.stdout and "FAIL  no registry login for ghcr.io" in result.stdout
+    assert "FAIL  .env has no PLANNER_BIND" in result.stdout and "1 check(s) failed" in result.stdout
+    assert "ok    registry access: per-deploy login (D196)" in result.stdout

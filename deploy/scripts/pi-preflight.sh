@@ -6,7 +6,8 @@
 #   port 8080 on PLANNER_BIND free, or published by compose project overland
 #   disk free under the install dir >= 5 GB      MemAvailable >= 1 GB
 #   the compose projects already on the Pi (ours is `overland`; another stack is left alone)
-#   .env present with PLANNER_BIND               a registry login for ghcr.io (credentials never shown)
+#   .env present with PLANNER_BIND               registry access: per-deploy login (D196), so no stored ghcr.io
+#                                                login is expected (WARN if one exists; credentials never shown)
 #
 # Usage: pi-preflight.sh [INSTALL_DIR]   (default apps/overland-planner, relative to $HOME)
 # Exit 0 when every check passes, 1 otherwise. MEMINFO overrides /proc/meminfo (offline tests only).
@@ -65,9 +66,10 @@ else
 fi
 
 if grep -q '"ghcr.io"' "$HOME/.docker/config.json" 2>/dev/null; then
-  ok "registry login for ghcr.io present"
+  printf 'WARN  registry access: per-deploy login (D196), but a ghcr.io login is stored in ~/.docker/config.json;'
+  printf ' remove that entry (deploys log in and out by themselves)\n'
 else
-  bad "no registry login for ghcr.io (classic PAT with read:packages only, D178)"
+  ok "registry access: per-deploy login (D196)"
 fi
 
 if [ "$problems" -gt 0 ]; then

@@ -17,6 +17,7 @@ from tests.deploy.conftest import (
     BASIC_AUTH_PASSWORD,
     BASIC_AUTH_USER,
     CURRENT,
+    GH_TOKEN,
     IMAGE,
     NEW,
     OLDEST,
@@ -240,6 +241,8 @@ def test_deploy_stays_inside_the_overland_scope(pi: FakePi, rule: tuple[Any, ...
         assert call["cwd"] == str(pi.dir)
         if argv[0] == "compose":
             assert argv[1:3] == ["-p", "overland"]
+        elif argv[0] in ("login", "logout"):  # D196: per-deploy login to our registry only
+            assert argv in (["login", "ghcr.io", "-u", "MrMilgauss", "--password-stdin"], ["logout", "ghcr.io"])
         elif argv[0] in ("pull", "manifest", "image"):
             assert argv[-1].startswith(f"{IMAGE}@sha256:")
         elif argv[0] == "run":
@@ -250,6 +253,69 @@ def test_deploy_stays_inside_the_overland_scope(pi: FakePi, rule: tuple[Any, ...
         else:
             assert argv[:3] == ["volume", "inspect", "overland_planner-data"]
     assert {path.name for path in pi.root.iterdir()} == {"overland-planner", "shim"}
+
+
+# ---- D196: per-deploy GHCR login, nothing stored on the Pi -------------------------------------------------------
+
+REGISTRY_PATHS = {
+    "deployed": (NEW.digest, None),
+    "unchanged": (CURRENT.digest, None),
+    "login refused": (NEW.digest, ("docker", ("login",), {"exit": 1, "stderr": "denied\n"})),
+    "refused at preflight": (
+        NEW.digest,
+        ("docker", ("manifest", "inspect"), {"stdout": '{"manifests":[{"platform":{"architecture":"amd64"}}]}'}),
+    ),
+    "pull fails": (OLDEST.digest.replace("0", "9"), None),
+    "auto-rollback before publish": (NEW.digest, ("curl", (f"{LOOPBACK}:8080/healthz",), {"exit": 22, "times": 1})),
+    "auto-rollback after publish": (NEW.digest, ("curl", (f"{PI_BIND}:8080/healthz",), {"exit": 7, "times": 1})),
+    "rollback fails too": (NEW.digest, ("curl", ("/healthz",), {"exit": 22})),
+}
+
+
+def registry_calls(pi: FakePi) -> list[dict[str, Any]]:
+    return [c for c in pi.calls("docker") if c["argv"][0] in ("login", "logout", "pull", "manifest")]
+
+
+@pytest.mark.parametrize("path", REGISTRY_PATHS.values(), ids=REGISTRY_PATHS.keys())
+def test_registry_login_is_per_deploy_and_always_logged_out(pi: FakePi, path: tuple[Any, ...]) -> None:
+    digest, rule = path
+    if rule is not None:
+        pi.rule(rule[0], *rule[1], **rule[2])
+
+    result = pi.deploy(digest)
+
+    verbs = [c["argv"][0] for c in registry_calls(pi)]
+    assert verbs[0] == "login" and verbs[-1] == "logout" and verbs.count("login") == 1, verbs
+    login = registry_calls(pi)[0]
+    assert login["argv"][-1] == "--password-stdin" and login["stdin"] == f"{GH_TOKEN}\n"
+    assert not (pi.shim_home / "docker-auth.json").exists()  # docker's login state is gone on every path
+    assert all(c["argv"][0] != "login" for c in pi.calls("docker")[pi.calls("docker").index(login) + 1 :])
+    if rule is None and digest == NEW.digest:
+        assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("path", REGISTRY_PATHS.values(), ids=REGISTRY_PATHS.keys())
+def test_gh_token_never_leaks_on_the_pi(pi: FakePi, path: tuple[Any, ...]) -> None:
+    digest, rule = path
+    if rule is not None:
+        pi.rule(rule[0], *rule[1], **rule[2])
+
+    result = pi.deploy(digest)
+
+    assert GH_TOKEN not in result.stdout + result.stderr
+    assert all(GH_TOKEN not in " ".join(c["argv"]) for c in pi.calls())
+    written = [f for f in pi.root.rglob("*") if f.is_file() and pi.shim_home not in f.parents]
+    assert written and all(GH_TOKEN not in f.read_text(errors="replace") for f in written)
+
+
+def test_deploy_without_a_token_on_stdin_refuses_before_any_registry_call(pi: FakePi) -> None:
+    result = pi.deploy(NEW.digest, token="")
+
+    assert result.returncode != 0
+    assert registry_calls(pi) == []
+    assert pi.pointers() == pi.originals
+    line = pi.releases_log()[-1]
+    assert (line["action"], line["result"]) == ("deploy", "failed") and "token" in line["reason"]
 
 
 # ---- make deploy on the Mac -------------------------------------------------------------------------------------
@@ -278,6 +344,21 @@ def test_make_deploy_ships_the_verified_digest_to_the_pi(mac: MacCheckout) -> No
     )
     assert f"scripts/deploy.sh {digest}" in steps[2][1]
     assert "releases.log" in steps[3][1] and ".data/ops/releases.log" in steps[3][1]
+
+
+def test_make_deploy_hands_the_gh_token_to_the_pi_only_on_ssh_stdin(mac: MacCheckout) -> None:
+    digest = mac.registry.publish(dict.fromkeys(("linux/amd64", "linux/arm64"), GOOD_VCS))
+    mac.green_run(NEW.git_sha, digest)
+
+    result = mac.make_deploy()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    remote = [c for c in mac.calls("ssh") if "deploy.sh" in " ".join(c["argv"])]
+    assert len(remote) == 1 and remote[0]["stdin"] == f"{GH_TOKEN}\n"
+    assert all(GH_TOKEN not in " ".join(c["argv"]) for c in mac.calls())
+    assert GH_TOKEN not in result.stdout + result.stderr
+    files = [f for f in mac.dir.rglob("*") if f.is_file() and ".git" not in f.parts]
+    assert all(GH_TOKEN not in f.read_text(errors="replace") for f in files)
 
 
 GATES = {

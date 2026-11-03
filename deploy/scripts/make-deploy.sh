@@ -8,7 +8,8 @@
 #    that SHA on linux/amd64 and linux/arm64 (fail closed)
 #  5 read-only ssh preflight: the Pi has .env with PLANNER_BIND
 #  6 rsync deploy/ (never .env, release pointers, releases.log or snapshots; no --delete)
-#  7 ssh scripts/deploy.sh <digest>; copy releases.log back to .data/ops/releases.log
+#  7 ssh scripts/deploy.sh <digest> with `gh auth token` on its stdin (D196: the Pi stores no registry credential;
+#    the token is never on a command line or in a file); copy releases.log back to .data/ops/releases.log
 set -uo pipefail
 
 PI_HOST=${PI_HOST:-deploy@pi.example}
@@ -57,13 +58,17 @@ digest=$(python3 deploy/scripts/verify_provenance.py --release-json "$work/$run_
 ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && test -f .env && grep -Eq '^PLANNER_BIND=[^[:space:]]+' .env" ||
   die "the Pi has no ~/$PI_DIR/.env with PLANNER_BIND set; create it from .env.example (mode 600) first"
 
+token=$(gh auth token 2>/dev/null) && [ -n "$token" ] ||
+  die "gh is not logged in — run: gh auth login -h github.com -s read:packages"
+
 rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
   --exclude=.deploy.lock --exclude='routing.env*' --exclude=__pycache__/ \
   deploy/ "$PI_HOST:$PI_DIR/" || die "rsync to $PI_HOST failed"
 
 status=0
 # shellcheck disable=SC2029 # expanded on the Mac on purpose
-ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && bash scripts/deploy.sh $digest" || status=$?
+printf '%s\n' "$token" | ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && bash scripts/deploy.sh $digest" || status=$?
+token=
 
 mkdir -p .data/ops
 if rsync -a "$PI_HOST:$PI_DIR/releases.log" .data/ops/releases.log; then

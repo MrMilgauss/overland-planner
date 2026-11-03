@@ -54,6 +54,30 @@ planner_port() {
   printf '%s\n' "${port:-8080}"
 }
 
+# ---- registry access (D196): per-deploy login with the Mac's gh token, nothing stored on the Pi -----------------
+
+REGISTRY=ghcr.io
+REGISTRY_USER=MrMilgauss
+# Set while docker may hold a ghcr.io login of ours (from the login attempt until a successful logout).
+REGISTRY_LOGGED_IN=
+
+# registry_login TOKEN: the token reaches docker on stdin only (printf is a builtin: no argv, no ps).
+registry_login() {
+  REGISTRY_LOGGED_IN=yes
+  printf '%s\n' "$1" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin >&2
+}
+
+# registry_logout: drop docker's ghcr.io login state; a no-op when we never logged in or already logged out.
+registry_logout() {
+  [ -n "$REGISTRY_LOGGED_IN" ] || return 0
+  if docker logout "$REGISTRY" >&2; then
+    REGISTRY_LOGGED_IN=
+  else
+    say "deploy: docker logout $REGISTRY failed; remove the $REGISTRY entry from ~/.docker/config.json by hand"
+    return 1
+  fi
+}
+
 # ---- release pointers (D166, D176) ------------------------------------------------------------------------------
 
 # release.env.prev -> release.env.prev2, release.env -> release.env.prev (whole files: every line kept).

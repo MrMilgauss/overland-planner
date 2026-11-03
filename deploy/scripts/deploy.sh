@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy one planner release on the Pi, loopback first (D89, D91, D165, D176). Run by `make deploy` over ssh:
 #
-#   cd ~/apps/overland-planner && bash scripts/deploy.sh sha256:<manifest-list digest>
+#   cd ~/apps/overland-planner && bash scripts/deploy.sh sha256:<manifest-list digest>   (GHCR token on stdin)
 #
 #  1 lock (.deploy.lock)          4 stop planner, predeploy snapshot   7 loopback smoke (/healthz, /api/health,
 #  2 preflight (compose config,   5 rotate release pointers,             app.started app_version)
@@ -11,7 +11,15 @@
 # Failure at 4-7 (nobody on the LAN could write yet): restore the snapshot and the previous release pointers, start,
 # smoke and publish the previous release. Failure at 8: digest-only rollback (no snapshot restore; writes may have
 # happened, D90). Both log `auto-rollback` with the reason and exit 1. Every outcome appends one releases.log line.
+#
+# Registry access (D196): the first stdin line is the Mac's gh token (read:packages). It stays in a shell variable
+# (never exported, never on a command line or in a file), feeds `docker login --password-stdin` before the manifest
+# check and is dropped; `docker logout ghcr.io` runs right after the pull and, from the EXIT trap, on every other path.
 set -uo pipefail
+
+GHCR_TOKEN=
+if [ ! -t 0 ]; then IFS= read -r GHCR_TOKEN || true; fi
+exec </dev/null
 
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=deploy/scripts/lib.sh
@@ -30,7 +38,10 @@ NEW_TS=
 NEW_HEAD=
 SNAPSHOT=
 SAVED=
-trap 'if [ -n "$SAVED" ]; then rm -rf "$SAVED"; fi' EXIT
+trap 'registry_logout; if [ -n "$SAVED" ]; then rm -rf "$SAVED"; fi' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 record() { append_release_log "$1" "$DIGEST" "$NEW_SHA" "$NEW_TS" "$NEW_HEAD" "$2" "${3:-}"; }
 
@@ -91,9 +102,12 @@ if ! flock -n 9; then
 fi
 
 # 2. Preflight. The target image stands in for a missing release.env (first deploy).
+[ -n "$GHCR_TOKEN" ] || refuse "preflight: no GHCR token on stdin (deploy with make deploy from the Mac, D196)"
 PLANNER_IMAGE=$TARGET planner_compose config -q >/dev/null || refuse "preflight: docker compose config failed"
 free_kb=$(df -Pk . | awk 'NR == 2 { print $4 }')
 [ "${free_kb:-0}" -ge 5242880 ] || refuse "preflight: less than 5 GB free on the install disk"
+registry_login "$GHCR_TOKEN" || refuse "preflight: docker login to $REGISTRY failed (the gh token needs read:packages)"
+GHCR_TOKEN=
 manifest=$(docker manifest inspect "$TARGET") || refuse "preflight: cannot read the manifest list of $DIGEST"
 case $(printf '%s' "$manifest" | tr -d ' \n\r') in
   *'"architecture":"arm64"'*) ;;
@@ -111,6 +125,7 @@ fi
 
 # 3. Pull by digest; the release facts come from the image labels.
 docker pull "$TARGET" >&2 || refuse "pull of $TARGET failed"
+registry_logout
 labels=$(docker image inspect --format \
   '{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.overland.commit-ts"}} {{index .Config.Labels "org.overland.alembic-head"}}' \
   "$TARGET") || refuse "cannot read the labels of $TARGET"

@@ -9,6 +9,9 @@ environment, curl's stdin config, the PLANNER_IMAGE of the release.env compose w
 2. with the behaviour of a healthy Pi / GitHub (defaults below).
 
 `$SHIM_HOME/images.json` maps a digest to its OCI labels; `docker pull` of an unknown digest fails.
+GHCR is private: `docker login ghcr.io --password-stdin` stores `$SHIM_HOME/docker-auth.json` (docker's transient
+login state), `docker logout ghcr.io` removes it, and `docker pull` / `docker manifest inspect` fail without it.
+The stdin of `docker login --password-stdin` and of an ssh running deploy.sh is recorded (the D196 token channel).
 `flock -n <fd>` takes a real non-blocking flock(2) on the inherited descriptor, exactly like util-linux flock.
 """
 
@@ -39,12 +42,20 @@ def main(tool: str) -> None:
 
 
 def _record(tool: str, argv: list[str]) -> dict[str, Any]:
-    stdin = sys.stdin.read() if tool == "curl" and "-K" in argv else ""
+    stdin = sys.stdin.read() if _reads_stdin(tool, argv) else ""
     record: dict[str, Any] = {"tool": tool, "argv": argv, "cwd": os.getcwd(), "stdin": stdin}
     record["bind_env"] = os.environ.get("PLANNER_BIND")
     if tool == "docker" and argv[:1] == ["compose"]:
         record["planner_image"] = _release_value("PLANNER_IMAGE", argv)
     return record
+
+
+def _reads_stdin(tool: str, argv: list[str]) -> bool:
+    if tool == "curl":
+        return "-K" in argv
+    if tool == "docker":
+        return argv[:1] == ["login"] and "--password-stdin" in argv
+    return tool == "ssh" and "deploy.sh" in " ".join(argv)
 
 
 def _release_value(key: str, argv: list[str]) -> str | None:
@@ -97,7 +108,20 @@ def _default(tool: str, argv: list[str], record: dict[str, Any]) -> None:
 
 def _docker(argv: list[str], record: dict[str, Any]) -> None:
     images = json.loads((HOME / "images.json").read_text()) if (HOME / "images.json").is_file() else {}
-    if argv[:1] == ["compose"] and "logs" in argv:
+    auth = HOME / "docker-auth.json"
+    if argv[:1] == ["login"]:
+        if not record["stdin"].strip():
+            sys.stderr.write("Error: Cannot perform an interactive login from a non TTY device\n")
+            sys.exit(1)
+        auth.write_text(json.dumps({"auths": {argv[1]: {"user": argv[argv.index("-u") + 1]}}}))
+        print("Login Succeeded")
+    elif argv[:1] == ["logout"]:
+        auth.unlink(missing_ok=True)
+        print(f"Removing login credentials for {argv[1]}")
+    elif (argv[:1] == ["pull"] or argv[:2] == ["manifest", "inspect"]) and not auth.is_file():
+        sys.stderr.write("unauthorized: authentication required\n")
+        sys.exit(1)
+    elif argv[:1] == ["compose"] and "logs" in argv:
         version = _release_value("PLANNER_GIT_SHA", argv) or "dev"
         print(
             json.dumps({"ts": "2026-11-03T08:00:00Z", "level": "info", "event": "app.started", "app_version": version})

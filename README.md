@@ -45,7 +45,7 @@ compose project `overland`. Every Pi target acts only on project `overland`, the
 
 | Target | What it does |
 |---|---|
-| `make pi-preflight` | Read-only: port 8080 on 192.168.1.10 free (or ours), disk, MemAvailable, compose projects, `.env` with `PLANNER_BIND`, registry login for ghcr.io. Prints no secret. |
+| `make pi-preflight` | Read-only: port 8080 on 192.168.1.10 free (or ours), disk, MemAvailable, compose projects, `.env` with `PLANNER_BIND`; warns if a ghcr.io login is stored (D196 expects none). Prints no secret. |
 | `make deploy [SHA=]` | Deploys a CI-green main SHA (provenance-checked); loopback smoke first, then the LAN publish; rolls back by itself on failure. |
 | `make rollback [STEPS=1\|2]` | Back to `release.env.prev` (or `.prev2`); the image is already on the Pi. |
 | `make status` / `make logs [SVC=planner]` / `make diag` | Read-only: compose ps, serving digest, `/healthz`, `/api/health`; the JSON log; `docker stats --no-stream` and `/healthz`. |
@@ -55,8 +55,14 @@ compose project `overland`. Every Pi target acts only on project `overland`, the
 | `make dora` | Deployment frequency, lead time, change failure rate and time to restore from `.data/ops/releases.log` (copied back by every deploy and rollback). |
 
 Before the first deploy (D178): give pi-host a DHCP reservation for 192.168.1.10 on the home router (the planner
-binds only that address), and log the Pi in to ghcr.io with a classic personal access token limited to
-`read:packages` (fine-grained tokens cannot pull from GHCR).
+binds only that address).
+
+Registry access (D196): the Pi stores no GHCR credential. `make deploy` reads the Mac's token with `gh auth token`
+(it needs `read:packages`: `gh auth refresh -h github.com -s read:packages`) and pipes it over the ssh stdin to
+`scripts/deploy.sh`, which runs `docker login ghcr.io -u MrMilgauss --password-stdin`, pulls the digest and runs
+`docker logout ghcr.io` on every exit path. The token never appears on a command line, in a file or in the output.
+If an older stored ghcr.io login is still on the Pi, `make pi-preflight` warns; remove it with `docker logout ghcr.io`
+on the Pi.
 
 **Accepted risk: no backups (D91).** The trip data lives only in the `overland_planner-data` volume on the Pi's NVMe.
 Losing the device or the disk loses the data; the only copies are the short-lived predeploy/prerollback snapshots
