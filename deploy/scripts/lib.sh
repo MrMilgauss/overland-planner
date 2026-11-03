@@ -112,16 +112,20 @@ restore_snapshot() {
     sh -c 'find /data -mindepth 1 -delete && tar xzf "/backup/$1" -C /data' sh "$1"
 }
 
-# Keep the two newest predeploy snapshots (names sort by their UTC timestamp).
+# Keep the two newest predeploy and the two newest prerollback snapshots (names sort by their UTC timestamp); any
+# other file under snapshots/ is never touched.
 prune_snapshots() {
-  local all=() i
-  for i in snapshots/predeploy-*.tgz; do
-    if [ -f "$i" ]; then all+=("$i"); fi
-  done
-  i=0
-  while [ $((i + 2)) -lt ${#all[@]} ]; do
-    rm -f "${all[$i]}"
-    i=$((i + 1))
+  local kind all i
+  for kind in predeploy prerollback; do
+    all=()
+    for i in snapshots/"$kind"-*.tgz; do
+      if [ -f "$i" ]; then all+=("$i"); fi
+    done
+    i=0
+    while [ $((i + 2)) -lt ${#all[@]} ]; do
+      rm -f "${all[$i]}"
+      i=$((i + 1))
+    done
   done
 }
 

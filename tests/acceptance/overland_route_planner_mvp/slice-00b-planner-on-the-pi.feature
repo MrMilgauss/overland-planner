@@ -5,7 +5,7 @@
 # the Pi (make acceptance-pi), an amd64 PC, or CI job 7 (-m "compose or security", D170).
 # Slice 00a (CI and image) is an enabler without scenarios of its own (D145).
 
-@slice-00b @pending
+@slice-00b
 Feature: The planner on my home Pi, reachable from home only
   As Marco, I want the planner to come up on my home Pi with one command, ask the household for our shared
   password when I want that, and stay inside the home network, so that my trip data stays private.

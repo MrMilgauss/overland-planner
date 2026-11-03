@@ -327,3 +327,23 @@ def test_rollback_stays_inside_the_overland_scope(pi: FakePi, scenario: Any) -> 
         else:
             assert argv[:3] == ["volume", "inspect", "overland_planner-data"]
     assert {path.name for path in pi.root.iterdir()} == {"overland-planner", "shim"}
+
+
+def test_rollback_keeps_only_the_two_newest_prerollback_snapshots(pi: FakePi) -> None:
+    snapshots = pi.dir / "snapshots"
+    snapshots.mkdir()
+    older = ("prerollback-20261101T090000Z.tgz", "prerollback-20261102T090000Z.tgz")
+    others = ("predeploy-20261102T090500Z.tgz", "notes.txt", "prerollback-manual-copy.tar")
+    for name in (*older, *others):
+        (snapshots / name).write_text("kept by hand\n")
+    (pi.dir / "release.env.prev").write_text(release_env_text(PREVIOUS))  # older schema: a fresh prerollback
+
+    result = pi.rollback()
+
+    assert result.returncode == 0, result.stderr
+    remaining = sorted(path.name for path in snapshots.iterdir())
+    fresh = [
+        name for name in remaining if name.startswith("prerollback-") and name not in older and name.endswith(".tgz")
+    ]
+    assert len(fresh) == 1, remaining
+    assert remaining == sorted([older[1], fresh[0], *others])

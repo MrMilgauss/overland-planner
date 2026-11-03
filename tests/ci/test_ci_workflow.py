@@ -123,7 +123,7 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     env = {**workflow.get("env", {}), **job.get("env", {})}
     pytest_step = _main_pytest(job)
 
-    assert workflow["env"]["PENDING_FLAGS"] == ""
+    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b"  # D170: slice 00b is GREEN (step 02-07)
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
     assert '"$DATA_DIR"' in _runs(job)[_index(job, "df -T")]
@@ -170,7 +170,7 @@ LINT_GATES = (
     "gitleaks git",
     "hadolint Dockerfile",
     "actionlint",
-    "shellcheck .github/scripts/*.sh deploy/scripts/*.sh",  # D89 deploy scripts (step 02-05)
+    'shellcheck" --severity=info .github/scripts/*.sh deploy/scripts/*.sh',  # D89 deploy scripts (step 02-05)
     "npm run check",  # svelte-check --fail-on-warnings
     "eslint",
     "prettier --check",
@@ -682,3 +682,49 @@ def test_image_metadata_and_release_json_carry_the_alembic_head_of_the_repositor
         assert f"alembic_head={head}" in output.read_text().splitlines(), f"{name} labels the wrong Alembic head"
     release = _runs(_job(workflow, "publish"))[_index(_job(workflow, "publish"), "release.json")]
     assert '--arg alembic_head "$alembic_head"' in release and 'pathlib.Path("migrations/versions")' in release
+
+
+SHELLCHECK_RELEASE = "0.11.0"  # shellcheck-py 0.11.0.1 in the Makefile (make lint-ci) and .pre-commit-config.yaml
+
+
+def test_lint_uses_the_pinned_shellcheck_never_the_runner_one() -> None:
+    """Step 02-07: the runner's preinstalled shellcheck once disagreed with make lint-ci (SC2015 at info)."""
+    job = _job(_workflow(), "lint")
+    install = job["steps"][_index(job, "shellcheck.tar.xz")]
+    runs = _runs(job)
+    shellcheck_runs = [line.strip() for run in runs for line in run.splitlines() if re.search(r"shellcheck\b", line)]
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    pre_commit = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+
+    assert install["env"]["SHELLCHECK_VERSION"] == SHELLCHECK_RELEASE
+    assert re.fullmatch(r"[0-9a-f]{64}", install["env"]["SHELLCHECK_SHA256"])
+    assert "sha256sum --check --strict" in install["run"]
+    assert _index(job, "shellcheck.tar.xz") < _index(job, 'actionlint" -color')
+    assert '-shellcheck "$RUNNER_TEMP/shellcheck"' in runs[_index(job, 'actionlint" -color')]
+    bare = [line for line in shellcheck_runs if re.match(r"shellcheck\b", line)]
+    assert bare == [], f"lint runs the runner's shellcheck from PATH: {bare}"
+    assert '"$RUNNER_TEMP/shellcheck" --severity=info .github/scripts/*.sh deploy/scripts/*.sh' in "\n".join(runs)
+    assert f"SHELLCHECK_PY := shellcheck-py=={SHELLCHECK_RELEASE}.1" in makefile
+    assert "SHELLCHECK_SEVERITY := info" in makefile and "--severity=$(SHELLCHECK_SEVERITY)" in makefile
+    assert f"rev: v{SHELLCHECK_RELEASE}.1" in pre_commit and "args: [--severity=info]" in pre_commit
+
+
+def test_job_7_selection_runs_the_enabled_slice_00b_security_checks() -> None:
+    """D170: with slice 00b enabled the compose/security selection must collect the packaged-planner checks."""
+    expression = "compose or security"
+    assert f'pytest-selection.sh "{expression}"' in _runs(_job(_workflow(), "e2e"))[-1]
+    pending = _workflow()["env"]["PENDING_FLAGS"].split()
+
+    collected = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "--run-external", *pending, "-m", expression],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert "test_slice_00b.py::test_sharing_the_packaged_planner_never_shares_marcos_password" in collected.stdout
+    assert "test_container_hardening.py::test_planner_container_writes_only_data_and_tmp_without_privileges" in (
+        collected.stdout
+    )

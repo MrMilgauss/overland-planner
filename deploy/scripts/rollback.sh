@@ -139,6 +139,7 @@ write_release release.env "$TARGET" "$NEW_SHA" "$NEW_TS" "$NEW_HEAD" || refuse "
 # 6-7. Loopback start, smoke, publish.
 if start_loopback && smoke_loopback && publish; then
   record ok "$DATA_NOTE"
+  prune_snapshots
   say "rollback: $TARGET serving on $(env_value .env PLANNER_BIND):$(planner_port) (git $NEW_SHA)"
   exit 0
 fi

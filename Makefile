@@ -1,5 +1,6 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback
+.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
+	pi-preflight status logs diag image-gc uninstall purge dora
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -19,6 +20,16 @@ PI_HOST ?= deploy@pi.example
 PI_DIR ?= apps/overland-planner
 SHA ?=
 STEPS ?= 1
+SVC ?= planner
+RELEASES_LOG ?= .data/ops/releases.log
+# shellcheck severity of every local and CI run (make lint-ci, pre-commit, CI job 1): all findings down to info.
+SHELLCHECK_SEVERITY := info
+# Pi operations (D99): only compose project `overland`, volumes overland_*, images of PLANNER_REPO; never a prune.
+# The remote shell is the deploy user's login shell on pi-host (bash); scripts/lib.sh is there since the first deploy.
+PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
+PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
+PI_COMPOSE := docker compose -p overland --env-file .env --env-file release.env
+PURGE_WORD := purge overland
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -33,10 +44,11 @@ lint: ## ruff, mypy --strict on src, import-linter (brief section 11)
 lint-ci: ## actionlint + shellcheck on the workflows and shellcheck on .github/scripts and deploy/scripts (as CI job 1 lint)
 	@if command -v actionlint >/dev/null && command -v shellcheck >/dev/null; then \
 	  echo "lint-ci: using $$(command -v actionlint) and $$(command -v shellcheck)"; \
-	  actionlint .github/workflows/*.yml && shellcheck $(SHELL_SCRIPTS); \
+	  actionlint -shellcheck "$$(command -v shellcheck)" .github/workflows/*.yml && \
+	  shellcheck --severity=$(SHELLCHECK_SEVERITY) $(SHELL_SCRIPTS); \
 	elif command -v uvx >/dev/null; then \
 	  echo "lint-ci: actionlint and/or shellcheck not on PATH; using uvx $(ACTIONLINT_PY) and $(SHELLCHECK_PY)"; \
-	  uvx --from $(SHELLCHECK_PY) shellcheck $(SHELL_SCRIPTS) && \
+	  uvx --from $(SHELLCHECK_PY) shellcheck --severity=$(SHELLCHECK_SEVERITY) $(SHELL_SCRIPTS) && \
 	  uvx --from $(ACTIONLINT_PY) --with $(SHELLCHECK_PY) actionlint .github/workflows/*.yml; \
 	else \
 	  echo "lint-ci: FAILED - actionlint and shellcheck are not installed (and uvx is missing);" \
@@ -102,3 +114,44 @@ rollback: ## Roll the Pi back to release.env.prev (STEPS=2: .prev2); image alrea
 	if rsync -a $(PI_HOST):$(PI_DIR)/releases.log .data/ops/releases.log; then tail -n 3 .data/ops/releases.log; \
 	else echo "make rollback: could not copy releases.log back" >&2; fi; \
 	if [ $$status -ne 0 ]; then echo "make rollback: rollback failed on the Pi (exit $$status); see releases.log" >&2; exit 1; fi
+
+pi-preflight: ## Read-only Pi check before the first deploy: port 8080 free or ours, disk, MemAvailable, compose projects, .env, ghcr login
+	$(PI_SSH) 'bash -s -- $(PI_DIR)' < deploy/scripts/pi-preflight.sh
+
+status: ## compose ps of project overland, the serving digest, /healthz and /api/health (read-only)
+	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) ps && grep "^PLANNER_IMAGE=" release.env && . scripts/lib.sh && \
+	  url="http://$$(env_value .env PLANNER_BIND):$$(planner_port)" && curl -fsS --max-time 10 "$$url/healthz" && echo && \
+	  curl_planner "$$url/api/health" && echo'
+
+logs: ## Follow the JSON log of SVC (default planner), pretty-printed with jq when the Mac has it (read-only)
+	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) logs -f --no-log-prefix $(SVC)' | \
+	  if command -v jq >/dev/null; then jq -R 'fromjson? // .'; else cat; fi
+
+diag: ## Container stats of project overland (no stream) and /healthz; /api/diagnostics comes with 03-ops (read-only)
+	$(PI_SSH) 'cd $(PI_DIR) && docker stats --no-stream $$($(PI_COMPOSE) ps -q) && . scripts/lib.sh && \
+	  curl -fsS --max-time 10 "http://$$(env_value .env PLANNER_BIND):$$(planner_port)/healthz" && echo'
+
+image-gc: ## Remove planner images except the three digests of release.env, .prev and .prev2 (rollback needs them)
+	$(PI_SSH) 'cd $(PI_DIR) && keep="$$(sed -n "s|^PLANNER_IMAGE=.*@||p" release.env release.env.prev release.env.prev2 2>/dev/null)" && \
+	  docker image ls --digests --format "{{.Repository}}@{{.Digest}}" $(PLANNER_REPO) | while read -r ref; do \
+	    case "$${ref#*@}" in "<none>"|"") continue ;; esac; \
+	    case " $$(echo $$keep) " in *" $${ref#*@} "*) echo "image-gc: keeping $$ref" ;; \
+	      *) docker image rm "$$ref" || echo "image-gc: $$ref still in use, kept" ;; esac; \
+	  done'
+
+uninstall: ## Stop and remove the overland containers and network; the data volume and the files stay
+	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) down'
+
+purge: ## Remove project overland with its overland_* volumes and planner images (typed confirmation; NO backup is taken)
+	@printf '%s\n' "make purge removes the overland containers, every overland_* volume (ALL trip data) and the" \
+	  "$(PLANNER_REPO) images on $(PI_HOST). No backup is taken (D91). Type '$(PURGE_WORD)' to go on:"; \
+	read -r answer || answer=; \
+	if [ "$$answer" != "$(PURGE_WORD)" ]; then echo "make purge: aborted, nothing removed" >&2; exit 1; fi; \
+	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) down && \
+	  docker volume ls -q | while read -r volume; do case "$$volume" in overland_*) docker volume rm "$$volume" ;; esac; done && \
+	  docker image ls --digests --format "{{.Repository}}@{{.Digest}}" $(PLANNER_REPO) | while read -r ref; do \
+	    case "$${ref#*@}" in "<none>"|"") ;; *) docker image rm "$$ref" ;; esac; \
+	  done'
+
+dora: ## DORA metrics (deployment frequency, lead time, change failure rate, time to restore) from RELEASES_LOG
+	uv run python deploy/scripts/dora.py $(RELEASES_LOG)

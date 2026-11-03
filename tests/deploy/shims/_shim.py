@@ -1,4 +1,5 @@
-"""Shared engine of the fake external commands for the offline deploy tests (docker, curl, df, flock, gh, ssh, rsync).
+"""Shared engine of the fake external commands for the offline deploy tests (docker, curl, df, flock, gh, ssh, rsync,
+ss).
 
 Each shim appends one JSON record per invocation to `$SHIM_HOME/calls.jsonl` (tool, argv, cwd, PLANNER_BIND from the
 environment, curl's stdin config, the PLANNER_IMAGE of the release.env compose would read) and then answers:

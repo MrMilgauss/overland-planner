@@ -36,3 +36,30 @@ re-scans `main`, audits dependencies, runs the deep property profile and reports
 | Compressed image size, amd64 | _TBD (orchestrator)_ |
 | Compressed image size, arm64 | _TBD (orchestrator)_ |
 | Actions minutes per main push | _TBD (orchestrator)_ |
+
+## Operations (pi-host)
+
+The planner runs on Marco's Raspberry Pi 5 (`deploy@pi.example`, install dir `~/apps/overland-planner`) as
+compose project `overland`. Every Pi target acts only on project `overland`, the `overland_*` volumes and the
+`ghcr.io/mrmilgauss/overland-planner` images; none ever runs a docker prune or touches another stack (D99).
+
+| Target | What it does |
+|---|---|
+| `make pi-preflight` | Read-only: port 8080 on 192.168.1.10 free (or ours), disk, MemAvailable, compose projects, `.env` with `PLANNER_BIND`, registry login for ghcr.io. Prints no secret. |
+| `make deploy [SHA=]` | Deploys a CI-green main SHA (provenance-checked); loopback smoke first, then the LAN publish; rolls back by itself on failure. |
+| `make rollback [STEPS=1\|2]` | Back to `release.env.prev` (or `.prev2`); the image is already on the Pi. |
+| `make status` / `make logs [SVC=planner]` / `make diag` | Read-only: compose ps, serving digest, `/healthz`, `/api/health`; the JSON log; `docker stats --no-stream` and `/healthz`. |
+| `make image-gc` | Removes planner images except the three digests of `release.env`, `.prev` and `.prev2` (what rollback needs). |
+| `make uninstall` | `docker compose down`: containers and network go, the data volume and files stay. |
+| `make purge` | Asks you to type `purge overland`; then removes the containers, every `overland_*` volume (all trip data) and the planner images. No backup is taken. |
+| `make dora` | Deployment frequency, lead time, change failure rate and time to restore from `.data/ops/releases.log` (copied back by every deploy and rollback). |
+
+Before the first deploy (D178): give pi-host a DHCP reservation for 192.168.1.10 on the home router (the planner
+binds only that address), and log the Pi in to ghcr.io with a classic personal access token limited to
+`read:packages` (fine-grained tokens cannot pull from GHCR).
+
+**Accepted risk: no backups (D91).** The trip data lives only in the `overland_planner-data` volume on the Pi's NVMe.
+Losing the device or the disk loses the data; the only copies are the short-lived predeploy/prerollback snapshots
+next to it (the newest two of each), which exist for rollback, not for recovery. This is stated to Marco at the demo.
+
+Idle memory on pi-host: <to be measured> (planner only, after 10 minutes idle; limit 300 MB, KPI G1).

@@ -22,6 +22,7 @@ repos:
     rev: v0.11.0.1  # same release as SHELLCHECK_PY in the Makefile (make lint-ci) and CI job 1
     hooks:
       - id: shellcheck
+        args: [--severity=info]  # SHELLCHECK_SEVERITY of make lint-ci and CI job 1
         files: ^(\.github|deploy)/scripts/.*\.sh$
 
   - repo: local
