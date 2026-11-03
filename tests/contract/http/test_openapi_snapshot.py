@@ -19,7 +19,13 @@ from fastapi.testclient import TestClient
 from overland_planner.bootstrap.app_factory import create_app
 
 SNAPSHOT = Path(__file__).with_name("openapi.json")
-ERROR_CODES = {401: {"unauthorized"}, 404: {"not_found"}, 413: {"upload_too_large"}, 422: {"validation_error"}}
+ERROR_CODES = {
+    401: {"unauthorized"},
+    404: {"not_found"},
+    413: {"upload_too_large"},
+    422: {"validation_error"},
+    500: {"internal_error"},
+}
 UNKNOWN_ID = "0" * 32
 
 
@@ -61,6 +67,19 @@ def test_every_api_error_is_the_envelope_with_the_code_of_its_status(
     assert (response.status_code, set(response.json())) == (status, {"code", "message"})
     assert response.json()["code"] == code and code in ERROR_CODES[status]
     assert response.json()["message"]
+
+
+def test_an_unhandled_api_error_is_the_internal_error_envelope(tmp_path: Path) -> None:
+    app = create_app({"DATA_DIR": str(tmp_path), "ROUTING_PROVIDER": "mock"})
+
+    def broken() -> None:
+        raise RuntimeError("never shown")
+
+    app.add_api_route("/api/broken", broken)
+    app.router.routes.insert(0, app.router.routes.pop())  # ahead of the web page mount
+    response = TestClient(app, raise_server_exceptions=False).get("/api/broken")
+    assert (response.status_code, response.json()["code"]) == (500, "internal_error")
+    assert "never shown" not in response.text
 
 
 def test_healthz_keeps_its_own_body(client: TestClient) -> None:

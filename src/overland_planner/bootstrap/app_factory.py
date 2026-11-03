@@ -141,7 +141,8 @@ def create_app(
 
     logging.getLogger("uvicorn.access").disabled = True
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)
-    install_error_handlers(app)  # the {code, message} envelope for every non-2xx answer under /api (brief §5)
+    # The {code, message} envelope for every non-2xx answer under /api (brief §5, D197).
+    install_error_handlers(app, event_log)
     app.include_router(platform_routes(health))
 
     app.include_router(wiring.catalog_router())
