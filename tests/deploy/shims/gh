@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Fake `gh` for the offline deploy tests (behaviour in _shim.py)."""
+
+import _shim
+
+_shim.main("gh")

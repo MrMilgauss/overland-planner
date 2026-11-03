@@ -18,6 +18,12 @@ repos:
     hooks:
       - id: gitleaks
 
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1  # same release as SHELLCHECK_PY in the Makefile (make lint-ci) and CI job 1
+    hooks:
+      - id: shellcheck
+        files: ^(\.github|deploy)/scripts/.*\.sh$
+
   - repo: local
     hooks:
       - id: ruff-format

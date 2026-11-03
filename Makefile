@@ -1,5 +1,5 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local
+.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -13,6 +13,10 @@ KILL_RATE_MIN := 80
 # Fallback when actionlint/shellcheck are not on PATH: the PyPI wheels that ship the same release binaries.
 ACTIONLINT_PY := actionlint-py==1.7.12.24
 SHELLCHECK_PY := shellcheck-py==0.11.0.1
+SHELL_SCRIPTS := .github/scripts/*.sh deploy/scripts/*.sh
+# make deploy target (D89); override for another host.
+PI_HOST ?= deploy@pi.example
+SHA ?=
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -24,13 +28,13 @@ lint: ## ruff, mypy --strict on src, import-linter (brief section 11)
 	uv run mypy
 	uv run lint-imports
 
-lint-ci: ## actionlint + shellcheck on the workflows and shellcheck on .github/scripts (as CI job 1 lint)
+lint-ci: ## actionlint + shellcheck on the workflows and shellcheck on .github/scripts and deploy/scripts (as CI job 1 lint)
 	@if command -v actionlint >/dev/null && command -v shellcheck >/dev/null; then \
 	  echo "lint-ci: using $$(command -v actionlint) and $$(command -v shellcheck)"; \
-	  actionlint .github/workflows/*.yml && shellcheck .github/scripts/*.sh; \
+	  actionlint .github/workflows/*.yml && shellcheck $(SHELL_SCRIPTS); \
 	elif command -v uvx >/dev/null; then \
 	  echo "lint-ci: actionlint and/or shellcheck not on PATH; using uvx $(ACTIONLINT_PY) and $(SHELLCHECK_PY)"; \
-	  uvx --from $(SHELLCHECK_PY) shellcheck .github/scripts/*.sh && \
+	  uvx --from $(SHELLCHECK_PY) shellcheck $(SHELL_SCRIPTS) && \
 	  uvx --from $(ACTIONLINT_PY) --with $(SHELLCHECK_PY) actionlint .github/workflows/*.yml; \
 	else \
 	  echo "lint-ci: FAILED - actionlint and shellcheck are not installed (and uvx is missing);" \
@@ -84,3 +88,6 @@ e2e-local: ## Playwright home-page check (chromium, webkit-iphone14) against `ma
 	cd web && if [ ! -d node_modules ]; then npm ci --no-audit --no-fund; fi
 	cd web && npx --no-install playwright install chromium webkit
 	cd web && NODE_PATH="$$PWD/node_modules" E2E_START_LOCAL=1 PLANNER_URL=http://$(HOST):$(PORT) npx --no-install playwright test --project=chromium --project=webkit-iphone14
+
+deploy: ## Deploy a CI-green main SHA to the Pi (default: newest with release.json); provenance-checked, loopback-first, auto-rollback
+	PI_HOST=$(PI_HOST) bash deploy/scripts/make-deploy.sh $(SHA)

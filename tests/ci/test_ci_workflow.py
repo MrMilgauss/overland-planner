@@ -170,6 +170,7 @@ LINT_GATES = (
     "gitleaks git",
     "hadolint Dockerfile",
     "actionlint",
+    "shellcheck .github/scripts/*.sh deploy/scripts/*.sh",  # D89 deploy scripts (step 02-05)
     "npm run check",  # svelte-check --fail-on-warnings
     "eslint",
     "prettier --check",
