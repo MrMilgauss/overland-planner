@@ -68,4 +68,4 @@ on the Pi.
 Losing the device or the disk loses the data; the only copies are the short-lived predeploy/prerollback snapshots
 next to it (the newest two of each), which exist for rollback, not for recovery. This is stated to Marco at the demo.
 
-Idle memory on pi-host: <to be measured> (planner only, after 10 minutes idle; limit 300 MB, KPI G1).
+Idle memory on pi-host: **67.3 MiB** (measured 2026-11-03 18:53 UTC, release `88d53e8`, `docker stats`, CPU 0.13%) (planner only, after 10 minutes idle; limit 300 MB, KPI G1).

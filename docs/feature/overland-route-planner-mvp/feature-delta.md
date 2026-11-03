@@ -4545,3 +4545,21 @@ Unchanged from the first pass: `nwave-ai outcomes register` fails on this machin
 | D196 | 2026-11-03 | DEVOPS D98, D178; DEVOPS pre-requisites 3 and 5; make deploy (02-05) | The user delegated the Pi/GitHub pre-requisites to the orchestrator. A classic PAT can only be created in the user's browser, so the stored `read:packages` PAT on the Pi (D98/D178) is not available. | **User decision (2026-11-03): ephemeral GHCR login, nothing stored on the Pi.** The Mac's `gh` token gains `read:packages` (one browser approval). `make deploy` pipes it over ssh stdin to `docker login ghcr.io --password-stdin` on the Pi, pulls the digest, and runs `docker logout ghcr.io` whatever the outcome; the token never appears on a command line, in a file in git or in any log. `make rollback` needs no registry access (images already on the Pi). Pi `.env` created by the orchestrator (mode 600; `PLANNER_BIND=192.168.1.10`, `ROUTING_PROVIDER=mock`, shared password on for user `deploy`, generated on the Pi). The Pi's 192.168.1.10 is a DHCP lease (wlan0, dynamic); a router reservation could not be verified from the Pi; static addressing was not changed (household services share the host). |
 | UI-DELIVER-1 | 2026-11-02 | DISTILL test code | Four DISTILL test modules fail the new ruff gate and `mypy tests` has 7 errors in DISTILL code. | Excluded from ruff (`extend-exclude`) and mypy runs on `src` only; whoever next edits each file removes its exclusion. |
 | UI-DELIVER-2 | 2026-11-02 | slice-00b-planner-on-the-pi.md | Scenario titles in the slice brief are stale (old file name, "basic auth is enabled", "shares Marco's secrets"). | Feature file is the SSOT; brief to be corrected by the PO. |
+
+## Wave: DELIVER / [REF] Demo Evidence
+
+### Slice 00b gate on pi-host (2026-11-03, user start "go"; orchestrator-run)
+
+| Check | Command / scenario | Result |
+|---|---|---|
+| Pi preflight (read-only) | `make pi-preflight` | all checks passed: .env present (PLANNER_BIND=192.168.1.10), port 8080 free, 220 GB disk, 12.5 GB MemAvailable, household stacks fate-ledger / vlc-devmock / vlc-pi-prod untouched, registry access per-deploy (D196) |
+| Deploy A | `make deploy SHA=4b246e8` | ok — provenance verified (both platforms), loopback start + smoke, then LAN publish; `docker logout ghcr.io` after pull; no credential stored |
+| US-01a "Marco brings the planner up on his Pi with one command" | `pytest test_slice_00b.py --run-external -k one_command` | **PASSED** |
+| LAN check from the Mac | `curl` /healthz, `/`, `/api/projects` | `{"status":"ok"}`; 401 without password, 200 text/html with it; `[]` |
+| Rollback drill | deploy A → B (b9576e5) → C (88d53e8) → `make rollback` → `make rollback STEPS=2` | landed on B then A, `releases.log` result ok each time, `release.env` and `app.started.app_version` agree; C redeployed afterwards (production = main) |
+| US-01a "The idle planner leaves room on the Pi" (G1) | `pytest test_slice_00b.py --run-external -k idle` after 11 idle min | **PASSED** — 67.3 MiB / 1 GiB, CPU 0.13% |
+| DORA | `make dora` | 4 deploys, lead time 14 min median, CFR 25 % (the drill rollback), time to restore 20 s |
+| Giulia's iPhone | manual | not run by the orchestrator (needs the phone); LAN behaviour verified from the Mac |
+| US-01a "The same setup runs on Marco's PC" | `--run-external -k PC` on an amd64 PC with Docker | not run (no amd64 PC with Docker available); needs `PLANNER_IMAGE` set when run |
+
+Release published by CI for each: run 41688121121 (A), 41692371041 (B), 41694465934 (C). Image size: 135.7 MB amd64 / 132.3 MB arm64 compressed.
