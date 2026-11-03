@@ -7,6 +7,9 @@ their environment knobs are PLANNER_PI_SSH (default deploy@pi.example), PLANNER_
 
 from __future__ import annotations
 
+import gzip
+import importlib
+import io
 import os
 import platform
 import re
@@ -14,7 +17,9 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import tarfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -465,6 +470,57 @@ def given_settings_file_with_password(world: PlannerWorld) -> None:
     world.scratch["settings_file"] = settings_file
 
 
+_GZIP_MAGIC = b"\x1f\x8b"
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def _decompressed(blob: bytes, name: str) -> bytes:
+    """A blob of a `docker image save` archive as stored inside the layer: gzip, zstd (containerd store) or plain."""
+    if blob.startswith(_GZIP_MAGIC):
+        return gzip.decompress(blob)
+    if blob.startswith(_ZSTD_MAGIC):
+        try:
+            zstandard: Any = importlib.import_module("zstandard")  # only when the image store wrote a zstd layer
+        except ImportError:
+            pytest.fail(f"{name} is a zstd-compressed layer and the zstandard module is missing: it cannot be searched")
+        return bytes(zstandard.ZstdDecompressor().stream_reader(io.BytesIO(blob)).read())
+    return blob
+
+
+def _layer_entries(blob: bytes) -> list[bytes] | None:
+    """The name, link target and content of every entry of a layer tar; None when the blob is not a tar."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:") as layer:
+            entries = []
+            for member in layer:
+                entries.append(f"{member.name}\0{member.linkname}".encode())
+                content = layer.extractfile(member) if member.isfile() else None
+                if content is not None:
+                    entries.append(content.read())
+            return entries
+    except tarfile.ReadError:
+        return None
+
+
+def image_findings(saved: bytes, needles: Mapping[str, bytes]) -> dict[str, set[str]]:
+    """Where each needle occurs in a `docker image save` archive (docker or OCI layout): `layer` = a file name or
+    content inside a layer, whatever its compression; `metadata` = any other blob (config with history, manifests,
+    index, repositories)."""
+    found: dict[str, set[str]] = {label: set() for label in needles}
+    with tarfile.open(fileobj=io.BytesIO(saved), mode="r:") as archive:
+        for member in archive:
+            stored = archive.extractfile(member) if member.isfile() else None
+            if stored is None:
+                continue
+            blob = _decompressed(stored.read(), member.name)
+            entries = _layer_entries(blob)
+            where, texts = ("metadata", [blob]) if entries is None else ("layer", entries)
+            for label, needle in needles.items():
+                if any(needle in text for text in texts):
+                    found[label].add(where)
+    return found
+
+
 @when("anyone inspects the packaged planner built from Marco's folder")
 def when_anyone_inspects_the_image(world: PlannerWorld) -> None:
     tag = "overland-planner:secret-check"
@@ -472,18 +528,22 @@ def when_anyone_inspects_the_image(world: PlannerWorld) -> None:
         build = _run(["docker", "build", "-t", tag, str(REPO_ROOT)], timeout=1800)
         assert build.returncode == 0, f"image build failed:\n{build.stderr[-2000:]}"
         saved = subprocess.run(["docker", "image", "save", tag], capture_output=True, timeout=600, check=False)
+        assert saved.returncode == 0 and saved.stdout, f"docker image save failed:\n{saved.stderr[-2000:]!r}"
         history = _run(["docker", "history", "--no-trunc", tag]).stdout
         inspect = _run(["docker", "image", "inspect", tag]).stdout
-        world.scratch["image_text"] = (saved.stdout, history + inspect)
+        # Positive control: alembic.ini is copied into the image as is (Dockerfile), so the search must find it.
+        needles = {"password": world.scratch["password"].encode(), "sentinel": (REPO_ROOT / "alembic.ini").read_bytes()}
+        world.scratch["image_findings"] = (image_findings(saved.stdout, needles), history + inspect)
     finally:
         world.scratch["settings_file"].unlink(missing_ok=True)
 
 
 @then("the password is not found in it")
 def then_password_not_found(world: PlannerWorld) -> None:
-    layers, metadata = world.scratch["image_text"]
+    findings, metadata = world.scratch["image_findings"]
     password: str = world.scratch["password"]
-    assert password.encode() not in layers, "the password is inside an image layer"
+    assert "layer" in findings["sentinel"], "the search cannot see inside the layers: alembic.ini was not found"
+    assert findings["password"] == set(), f"the password is in the image ({', '.join(sorted(findings['password']))})"
     assert password not in metadata, "the password is in the image history or configuration"
 
 
@@ -519,4 +579,3 @@ def when_marco_asks_whether_healthy(world: PlannerWorld) -> None:
 def then_health_unhealthy_with(world: PlannerWorld, reason: str) -> None:
     response = world.scratch["container_health"]
     assert (response.status_code, response.json()) == (503, {"status": "unhealthy", "reason": reason})
-
