@@ -4,7 +4,8 @@ Production: `uvicorn --factory overland_planner.bootstrap.app_factory:create_app
 Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the same `.env` keys (brief §12)
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> wire -> probe every registered component in wiring order (the database probe migrates it to head
-first; then the file store round trip, the mount table and the `DATA_DIR` persistence verdict, D121) -> mount routes
+first; then the file store round trip, the mount table, the `DATA_DIR` persistence verdict (D121) and the GPX
+parser's embedded-sample and billion-laughs check) -> mount routes
 (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
@@ -31,6 +32,7 @@ from fastapi import FastAPI
 from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.files.local_file_store import LocalFileStore
 from overland_planner.adapters.files.proc_mount_table import ProcMountTable
+from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
@@ -95,6 +97,7 @@ def create_app(
     registry.register("mount_table", mount_table)
     # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
     registry.register("data_dir", DataDirPersistence(PurePosixPath(settings.data_dir.resolve()), mount_table))
+    registry.register("gpx_parser", GpxpyParser())  # parse() gets its caller with the track import (03-05)
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = gate.probe_in_order(registry.components())
     for name, result in health.detail().components.items():
