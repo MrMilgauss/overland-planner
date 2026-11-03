@@ -1,8 +1,8 @@
 """HealthService (ADR-011, brief §5 and §7, D108): what the start-up probes mean for the planner's health.
 
-Every registered component is probed exactly once, when the service is created; the composition root creates it
-before the app serves its first request. Components are reported in name order, so the result does not depend on
-the order in which they were registered.
+The service holds the outcome of every registered component's start-up probe; `bootstrap/startup.py` probes each
+component exactly once, in wiring order, before the app serves its first request. Components are reported in name
+order, so the result does not depend on the order in which they were registered.
 
 - `liveness()` (behind `/healthz`): unhealthy when any component is degraded-unhealthy or fatal; the reason is the
   first such component's reason.
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from overland_planner.application.ports.probe import Probeable, ProbeOutcome, ProbeResult
+from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 
 HealthStatus = Literal["ok", "unhealthy"]
 
@@ -39,11 +39,6 @@ class HealthDetail:
 class HealthService:
     def __init__(self, outcomes: Mapping[str, ProbeResult]) -> None:
         self._outcomes = MappingProxyType({name: outcomes[name] for name in sorted(outcomes)})
-
-    @classmethod
-    def after_probing(cls, components: Mapping[str, Probeable]) -> HealthService:
-        """Probe every component once and keep the outcomes."""
-        return cls({name: component.probe() for name, component in components.items()})
 
     def liveness(self) -> Liveness:
         unhealthy = [result for result in self._outcomes.values() if result.outcome in _UNHEALTHY]

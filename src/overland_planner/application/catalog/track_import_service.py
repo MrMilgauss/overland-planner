@@ -30,7 +30,7 @@ from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStatsCalculator, UnusableTrack
 
 FIRST_DIRECTION_VERSION = 1
-MIB = 1024 * 1024
+MIB = 1024 * 1024  # MB in every upload cap (MAX_UPLOAD_*_MB) means MiB
 
 
 @dataclass(frozen=True)

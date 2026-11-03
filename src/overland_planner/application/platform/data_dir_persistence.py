@@ -21,7 +21,7 @@ from overland_planner.application.ports.probe import ProbeResult
 
 NOT_PERSISTENT_MESSAGE = "Data directory is not persistent - projects would be lost on restart"
 NON_PERSISTENT_FILESYSTEMS = frozenset({"overlay", "tmpfs", "ramfs"})
-LOG_REASONS = {NOT_PERSISTENT_MESSAGE: "data_dir_not_persistent"}  # event-log codes of the banner reasons
+_LOG_REASONS = {NOT_PERSISTENT_MESSAGE: "data_dir_not_persistent"}  # event-log codes of the banner reasons
 
 OK = ProbeResult(outcome="ok")
 NOT_APPLICABLE = ProbeResult(outcome="not_applicable")
@@ -31,7 +31,7 @@ UNKNOWN = ProbeResult(outcome="degraded-healthy", reason="data_dir_persistence_u
 
 def log_reason(reason: str | None) -> str | None:
     """The event-log code for a probe reason (the banner text of a non-persistent folder is logged as a code)."""
-    return LOG_REASONS.get(reason or "", reason)
+    return _LOG_REASONS.get(reason or "", reason)
 
 
 def classify_data_dir(data_dir: PurePosixPath, entries: Sequence[MountEntry] | None) -> ProbeResult:

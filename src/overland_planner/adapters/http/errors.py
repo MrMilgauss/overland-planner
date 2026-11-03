@@ -19,7 +19,7 @@ from overland_planner.domain.catalog.coordinate import CoordinateOutOfRangeError
 from overland_planner.domain.catalog.poi import PoiNameRequiredError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 
-_CODES = {401: "unauthorized", 404: "not_found", 413: "upload_too_large", 422: "validation_error"}
+_CODE_BY_STATUS = {401: "unauthorized", 404: "not_found", 413: "upload_too_large", 422: "validation_error"}
 
 
 def envelope(status: int, code: str, message: str) -> JSONResponse:
@@ -33,7 +33,7 @@ def install_error_handlers(app: FastAPI) -> None:
             return await http_exception_handler(request, error)
         if error.status_code == 405:  # no such operation on this path: the same answer as an unknown path
             return envelope(404, "not_found", "Not found")
-        return envelope(error.status_code, _CODES.get(error.status_code, "not_found"), str(error.detail))
+        return envelope(error.status_code, _CODE_BY_STATUS.get(error.status_code, "not_found"), str(error.detail))
 
     @app.exception_handler(RequestValidationError)
     async def on_invalid_request(request: Request, error: RequestValidationError) -> Response:

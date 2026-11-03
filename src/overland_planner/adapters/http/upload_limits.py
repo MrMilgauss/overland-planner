@@ -16,9 +16,8 @@ from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from starlette.requests import Request
 
-from overland_planner.application.catalog.facade import TrackFile
+from overland_planner.application.catalog.facade import MIB, TrackFile
 
-MIB = 1024 * 1024
 FILES_FIELD = "files"
 _DEFAULT_FILE_NAME = "upload.gpx"
 

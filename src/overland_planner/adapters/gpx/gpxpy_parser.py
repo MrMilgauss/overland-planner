@@ -31,8 +31,7 @@ from overland_planner.application.ports.track_file_parser import (
     TrackFileOutcome,
 )
 from overland_planner.domain.catalog.track import TrackPoint
-
-MINIMUM_POINTS = 2
+from overland_planner.domain.catalog.track_stats_calculator import MINIMUM_POINTS
 
 EMBEDDED_GPX = (
     b'<?xml version="1.0" encoding="UTF-8"?>'
