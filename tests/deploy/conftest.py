@@ -82,7 +82,7 @@ class FakePi:
         (self.dir / "scripts").mkdir(parents=True)
         self.shim_home.mkdir()
         shutil.copy(REPO / "deploy/compose.yaml", self.dir)
-        for script in ("deploy.sh", "lib.sh"):
+        for script in ("deploy.sh", "rollback.sh", "lib.sh"):
             source = REPO / "deploy/scripts" / script
             if source.exists():
                 shutil.copy(source, self.dir / "scripts")
@@ -111,6 +111,16 @@ class FakePi:
     def deploy(self, digest: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["bash", str(self.dir / "scripts/deploy.sh"), digest],
+            cwd=self.root,
+            env=shim_env(self.shim_home),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def rollback(self, *steps: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(self.dir / "scripts/rollback.sh"), *steps],
             cwd=self.root,
             env=shim_env(self.shim_home),
             capture_output=True,
@@ -303,8 +313,14 @@ class MacCheckout:
         self.rule("gh", "auth token", stdout="gho_fake_token\n")
 
     def make_deploy(self, *variables: str) -> subprocess.CompletedProcess[str]:
+        return self.make("deploy", *variables)
+
+    def make_rollback(self, *variables: str) -> subprocess.CompletedProcess[str]:
+        return self.make("rollback", *variables)
+
+    def make(self, target: str, *variables: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["make", "-s", "-C", str(self.dir), "deploy", *variables],
+            ["make", "-s", "-C", str(self.dir), target, *variables],
             env=shim_env(self.shim_home, GHCR_URL=self.registry.url),
             capture_output=True,
             text=True,

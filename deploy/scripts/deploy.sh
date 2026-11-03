@@ -117,7 +117,9 @@ labels=$(docker image inspect --format \
 read -r NEW_SHA NEW_TS NEW_HEAD <<EOF
 $labels
 EOF
-[ -n "$NEW_SHA" ] && [ -n "$NEW_HEAD" ] || refuse "$TARGET lacks the revision or alembic-head label"
+if [ -z "$NEW_SHA" ] || [ -z "$NEW_HEAD" ]; then
+  refuse "$TARGET lacks the revision or alembic-head label"
+fi
 
 # 4. Stop and snapshot (only when a release is installed; the first deploy has nothing to protect).
 save_pointers || refuse "cannot save the release pointers"

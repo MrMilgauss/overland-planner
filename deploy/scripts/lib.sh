@@ -169,8 +169,9 @@ smoke_loopback() {
   expected=$(env_value release.env PLANNER_GIT_SHA)
   version=$(planner_compose logs --no-color --no-log-prefix planner 2>/dev/null |
     grep -E '"event": *"app\.started"' | tail -n 1 | sed -nE 's/.*"app_version": *"([^"]*)".*/\1/p')
-  [ -n "$expected" ] && [ "$version" = "$expected" ] ||
+  if [ -z "$expected" ] || [ "$version" != "$expected" ]; then
     fail "loopback smoke: app.started app_version '$version', expected '$expected'"
+  fi
 }
 
 # Publish (write gate): recreate with the .env PLANNER_BIND, then smoke on http://PLANNER_BIND:PLANNER_PORT (F-20).

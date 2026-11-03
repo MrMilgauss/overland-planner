@@ -1,5 +1,5 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy
+.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -16,7 +16,9 @@ SHELLCHECK_PY := shellcheck-py==0.11.0.1
 SHELL_SCRIPTS := .github/scripts/*.sh deploy/scripts/*.sh
 # make deploy target (D89); override for another host.
 PI_HOST ?= deploy@pi.example
+PI_DIR ?= apps/overland-planner
 SHA ?=
+STEPS ?= 1
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -91,3 +93,12 @@ e2e-local: ## Playwright home-page check (chromium, webkit-iphone14) against `ma
 
 deploy: ## Deploy a CI-green main SHA to the Pi (default: newest with release.json); provenance-checked, loopback-first, auto-rollback
 	PI_HOST=$(PI_HOST) bash deploy/scripts/make-deploy.sh $(SHA)
+
+rollback: ## Roll the Pi back to release.env.prev (STEPS=2: .prev2); image already on the Pi, so no provenance check (D195)
+	@case "$(STEPS)" in 1|2) ;; *) echo "make rollback: STEPS must be 1 or 2" >&2; exit 2 ;; esac; \
+	status=0; \
+	ssh -o BatchMode=yes $(PI_HOST) 'cd $(PI_DIR) && bash scripts/rollback.sh $(STEPS)' || status=$$?; \
+	mkdir -p .data/ops; \
+	if rsync -a $(PI_HOST):$(PI_DIR)/releases.log .data/ops/releases.log; then tail -n 3 .data/ops/releases.log; \
+	else echo "make rollback: could not copy releases.log back" >&2; fi; \
+	if [ $$status -ne 0 ]; then echo "make rollback: rollback failed on the Pi (exit $$status); see releases.log" >&2; exit 1; fi
