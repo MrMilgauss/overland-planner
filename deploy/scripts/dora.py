@@ -9,7 +9,8 @@ git_sha, commit_ts, alembic_head, result, reason); `make deploy` and `make rollb
 for the whole log:
 
 D-1 Deployment frequency: deploy lines with result ok (unchanged, aborted and failed excluded).
-D-2 Lead time for changes: median of (ts - commit_ts) over those deploys; a deploy whose commit_ts is missing or
+D-2 Lead time for changes: median of (ts - commit_ts) in absolute time (both carry Z or a git %cI +HH:MM offset)
+    over those deploys; a deploy whose commit_ts is missing or
     later than its ts (clock skew) has no lead time and is left out.
 D-3 Change failure rate: failed changes / deploy attempts. Attempts are successful deploys, refused deploys
     (deploy failed) and auto-rollback lines (deploy.sh writes one auto-rollback line, never a deploy line, for an
@@ -40,13 +41,18 @@ ACTION_ORDER = {"deploy": 0, "auto-rollback": 1, "rollback": 2}
 
 
 def parse_ts(value: object) -> datetime | None:
-    if not isinstance(value, str):
+    """An ISO 8601 date-time with Z or a +HH:MM offset (deploy.sh ts, git %cI commit_ts) as an aware UTC datetime.
+
+    A time without offset is ambiguous and therefore unreadable."""
+    if not isinstance(value, str) or "T" not in value:
         return None
     try:
-        moment = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        moment = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return moment.replace(tzinfo=UTC)
+    if moment.tzinfo is None:
+        return None
+    return moment.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -165,17 +171,18 @@ def report(lines: Sequence[str], now: datetime) -> dict[str, Any]:
 def duration(seconds: float | None) -> str:
     if seconds is None:
         return "n/a"
+    if seconds < 60:
+        return f"{seconds:.0f} s"
     if seconds < 3600:
         return f"{seconds / 60:.0f} min"
     return f"{seconds / 3600:.1f} h"
 
 
 def render(source: str, metrics: dict[str, Any]) -> str:
-    rows = [f"DORA metrics from {source} ({metrics['ignored_lines']} unreadable lines ignored)"]
-    rows.append(f"{'':28}{'last 30 days':<24}all")
+    table: list[tuple[str, str, str]] = [("", "last 30 days", "all")]
 
     def row(label: str, cell: Any) -> None:
-        rows.append(f"{label:<28}{cell(metrics['last_30_days']):<24}{cell(metrics['all'])}")
+        table.append((label, cell(metrics["last_30_days"]), cell(metrics["all"])))
 
     row("Deployment frequency", lambda m: f"{m['deployment_frequency']} deploys")
     row("Lead time for changes", lambda m: f"{duration(m['lead_time_median_s'])} median")
@@ -191,6 +198,10 @@ def render(source: str, metrics: dict[str, Any]) -> str:
         "Time to restore",
         lambda m: f"{duration(m['time_to_restore_median_s'])} median, {m['unrestored_failures']} unrestored",
     )
+    label_width = max(len(label) for label, _, _ in table) + 4
+    cell_width = max(len(cell) for _, cell, _ in table) + 4
+    rows = [f"DORA metrics from {source} ({metrics['ignored_lines']} unreadable lines ignored)"]
+    rows += [f"{label:<{label_width}}{recent:<{cell_width}}{whole}".rstrip() for label, recent, whole in table]
     return "\n".join(rows)
 
 
@@ -198,11 +209,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="DORA metrics from releases.log (make dora)")
     parser.add_argument("log", nargs="?", default=DEFAULT_LOG, help=f"releases.log (default {DEFAULT_LOG})")
     parser.add_argument("--json", action="store_true", help="print the metrics as JSON")
-    parser.add_argument("--now", help="end of the 30-day window, UTC like 2026-11-03T08:00:00Z (default: now)")
+    parser.add_argument(
+        "--now", help="end of the 30-day window, like 2026-11-03T08:00:00Z or with a +01:00 offset (default: now)"
+    )
     args = parser.parse_args(argv)
     now = parse_ts(args.now) if args.now else datetime.now(UTC)
     if now is None:
-        parser.error(f"--now {args.now!r} is not a UTC time like 2026-11-03T08:00:00Z")
+        parser.error(f"--now {args.now!r} is not a time with offset like 2026-11-03T08:00:00Z")
     try:
         with open(args.log, encoding="utf-8") as log:
             lines = log.read().splitlines()
