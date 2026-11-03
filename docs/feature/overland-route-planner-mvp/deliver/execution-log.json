@@ -946,6 +946,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-03T19:16:25Z"
+    },
+    {
+      "sid": "03-07",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-03T19:20:29Z"
+    },
+    {
+      "sid": "03-07",
+      "p": "RED_ACCEPTANCE",
+      "s": "EXECUTED",
+      "d": "PASS: upload_limit fails (201 imported 26MB huge.gpx, message missing); not_gpx x2, usable_track, other_files already pass from 03-05",
+      "t": "2026-11-03T19:20:29Z"
+    },
+    {
+      "sid": "03-07",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "PASS: new PBT test_a_file_above_the_upload_cap_is_refused_before_any_file_is_parsed fails (parser reached: KeyError on unscripted oversized bytes) without the cap",
+      "t": "2026-11-03T19:22:53Z"
+    },
+    {
+      "sid": "03-07",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS: 01a 4 target scenarios (5 cases) green; make test 264 passed; pytest not real_provider/pi 268 passed; lint, lint-ci, test-web green; mutation track_import_service 114/120 = 95%",
+      "t": "2026-11-03T19:32:23Z"
+    },
+    {
+      "sid": "03-07",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS: 3d32b82",
+      "t": "2026-11-03T19:32:28Z"
     }
   ]
 }
