@@ -47,15 +47,21 @@ jobs:
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           digest="$(docker buildx imagetools inspect "${IMAGE}:main" --format '{{json .Manifest}}' | jq -r .digest)"
-          echo "### Trivy re-scan of ${IMAGE}:main (${digest})" >> "$GITHUB_STEP_SUMMARY"
           status=0
-          for platform in linux/amd64 linux/arm64; do
-            trivy image --platform "$platform" --scanners vuln,secret --severity HIGH,CRITICAL --no-progress \
-              --format table --output "$RUNNER_TEMP/trivy.txt" "${IMAGE}@${digest}"
-            { echo "#### ${platform}"; echo '```'; cat "$RUNNER_TEMP/trivy.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            trivy image --platform "$platform" --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
-              --no-progress --quiet "${IMAGE}@${digest}" || status=1
-          done
+          {
+            echo "### Trivy re-scan of ${IMAGE}:main (${digest})"
+            for platform in linux/amd64 linux/arm64; do
+              trivy image --platform "$platform" --scanners vuln,secret --severity HIGH,CRITICAL --no-progress \
+                --format table --output "$RUNNER_TEMP/trivy.txt" "${IMAGE}@${digest}"
+              echo "#### ${platform}"
+              echo '```'
+              cat "$RUNNER_TEMP/trivy.txt"
+              echo '```'
+              # The blocking scan's own report goes to the job log, not the summary.
+              trivy image --platform "$platform" --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                --no-progress --quiet "${IMAGE}@${digest}" >&2 || status=1
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
   audit:
@@ -138,22 +144,20 @@ jobs:
         run: |
           versions="$(gh api --paginate "/${OWNER_TYPE}/${OWNER}/packages/container/overland-planner/versions?per_page=100" \
             --jq '.[] | "\(.name) \(.metadata.container.tags | join(","))"')"
+          index="$(docker buildx imagetools inspect --raw "${IMAGE}:main")"
+          artifacts="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | .size_in_bytes' | awk '{s += $1} END {print s + 0}')"
+          cache="$(gh api "repos/${GITHUB_REPOSITORY}/actions/cache/usage" --jq '.active_caches_size_in_bytes')"
           {
             echo "### GHCR overland-planner: $(printf '%s\n' "$versions" | grep -c .) versions"
             echo '```'
             printf '%s\n' "$versions"
             echo '```'
             echo "### Compressed size of main per platform"
-          } >> "$GITHUB_STEP_SUMMARY"
-          index="$(docker buildx imagetools inspect --raw "${IMAGE}:main")"
-          for child in $(jq -r '.manifests[] | select(.platform.os == "linux") | "\(.platform.architecture)=\(.digest)"' <<<"$index"); do
-            bytes="$(docker buildx imagetools inspect --raw "${IMAGE}@${child#*=}" | jq '[.config.size, .layers[].size] | add')"
-            echo "- ${child%%=*}: $((bytes / 1048576)) MiB" >> "$GITHUB_STEP_SUMMARY"
-          done
-          artifacts="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.expired | not) | .size_in_bytes' | awk '{s += $1} END {print s + 0}')"
-          cache="$(gh api "repos/${GITHUB_REPOSITORY}/actions/cache/usage" --jq '.active_caches_size_in_bytes')"
-          {
+            for child in $(jq -r '.manifests[] | select(.platform.os == "linux") | "\(.platform.architecture)=\(.digest)"' <<<"$index"); do
+              bytes="$(docker buildx imagetools inspect --raw "${IMAGE}@${child#*=}" | jq '[.config.size, .layers[].size] | add')"
+              echo "- ${child%%=*}: $((bytes / 1048576)) MiB"
+            done
             echo "### Actions storage"
             echo "- artifacts: $((artifacts / 1048576)) MiB"
             echo "- caches: $((cache / 1048576)) MiB"

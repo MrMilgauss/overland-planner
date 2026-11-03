@@ -559,3 +559,17 @@ def test_weekly_workflow_rescans_audits_and_reports_without_gating_deploys() -> 
     assert "workflow_run" not in _triggers(_workflow()), "ci.yml (and so publish) never waits for the weekly run"
     refs = [(m["ref"], m["comment"]) for m in USES.finditer(text)]
     assert [r for r, c in refs if not (PINNED.match(r) and TAG_COMMENT.search(c))] == []
+
+
+STEP_FILE_APPEND = re.compile(r'>>\s*"?\$\{?(?P<target>GITHUB_OUTPUT|GITHUB_STEP_SUMMARY)\b')
+
+
+def test_run_blocks_group_step_file_appends_for_shellcheck() -> None:
+    """SC2129 offline guard: actionlint+shellcheck in job 1 lint rejects repeated `>> file` in one script."""
+    repeated = []
+    for path in (WORKFLOW, WEEKLY):
+        for job_name, job in yaml.safe_load(path.read_text())["jobs"].items():
+            for script in _runs(job):
+                targets = [m["target"] for m in STEP_FILE_APPEND.finditer(script)]
+                repeated += [f"{path.name}:{job_name} -> {t}" for t in set(targets) if targets.count(t) > 1]
+    assert repeated == [], 'group appends as `{ ...; } >> "$FILE"` (SC2129)'

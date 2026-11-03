@@ -79,7 +79,7 @@ def decide(versions: list[Version], release: str, read_manifest: ManifestReader)
 
 def _gh(*args: str) -> str:
     # gh from the runner PATH; arguments are built here from the workflow's own context, never from user input.
-    return subprocess.run(["gh", "api", *args], capture_output=True, text=True, check=True).stdout  # noqa: S603, S607
+    return subprocess.run(["gh", "api", *args], capture_output=True, text=True, check=True).stdout
 
 
 def _manifest_reader(image: str) -> ManifestReader:
@@ -87,8 +87,8 @@ def _manifest_reader(image: str) -> ManifestReader:
 
     def read(digest: str) -> dict[str, Any] | None:
         if digest not in cache:
-            run = subprocess.run(  # noqa: S603 - digests come from the GHCR listing of our own package
-                ["docker", "buildx", "imagetools", "inspect", "--raw", f"{image}@{digest}"],  # noqa: S607
+            run = subprocess.run(  # digests come from the GHCR listing of our own package
+                ["docker", "buildx", "imagetools", "inspect", "--raw", f"{image}@{digest}"],
                 capture_output=True,
                 text=True,
                 check=False,

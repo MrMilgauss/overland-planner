@@ -102,6 +102,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
 "tests/**" = ["S101", "S603", "S607"]
 # The CI contract compares the workflow's runner /tmp paths as strings; it never opens them (S108).
 "tests/ci/**" = ["S101", "S603", "S607", "S108"]
+# CI helper scripts call gh and docker from the runner PATH with arguments from our own package listing.
+".github/scripts/**" = ["S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"

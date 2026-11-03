@@ -1,5 +1,5 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint test test-web web-dist mutate run-local e2e-local
+.PHONY: bootstrap lint lint-ci test test-web web-dist mutate run-local e2e-local
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -10,6 +10,9 @@ PORT ?= 8080
 BASE ?= origin/main
 MUTATE_SCOPE := src/overland_planner/domain src/overland_planner/application
 KILL_RATE_MIN := 80
+# Fallback when actionlint/shellcheck are not on PATH: the PyPI wheels that ship the same release binaries.
+ACTIONLINT_PY := actionlint-py==1.7.12.24
+SHELLCHECK_PY := shellcheck-py==0.11.0.1
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -20,6 +23,20 @@ lint: ## ruff, mypy --strict on src, import-linter (brief section 11)
 	uv run ruff check .
 	uv run mypy
 	uv run lint-imports
+
+lint-ci: ## actionlint + shellcheck on the workflows and shellcheck on .github/scripts (as CI job 1 lint)
+	@if command -v actionlint >/dev/null && command -v shellcheck >/dev/null; then \
+	  echo "lint-ci: using $$(command -v actionlint) and $$(command -v shellcheck)"; \
+	  actionlint .github/workflows/*.yml && shellcheck .github/scripts/*.sh; \
+	elif command -v uvx >/dev/null; then \
+	  echo "lint-ci: actionlint and/or shellcheck not on PATH; using uvx $(ACTIONLINT_PY) and $(SHELLCHECK_PY)"; \
+	  uvx --from $(SHELLCHECK_PY) shellcheck .github/scripts/*.sh && \
+	  uvx --from $(ACTIONLINT_PY) --with $(SHELLCHECK_PY) actionlint .github/workflows/*.yml; \
+	else \
+	  echo "lint-ci: FAILED - actionlint and shellcheck are not installed (and uvx is missing);" \
+	    "without shellcheck actionlint skips the run: scripts, so CI findings would be missed" >&2; \
+	  exit 1; \
+	fi
 
 test: web-dist ## Fast suite (same selection as pre-push); builds the web page first (D162 home-page tests)
 	uv run pytest -q $(PYTEST_FAST)
