@@ -11,14 +11,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.catalog.poi import AnchorRole, PoiItem
 
 ItemType = Literal["track", "poi"]
 
 
 @dataclass(frozen=True)
 class TrackItem:
-    """An imported track. `anchor` stays `None` until anchors arrive (03-09)."""
+    """An imported track. `anchor` is always `None`: a track is never an anchor (D6)."""
 
     id: str
     project_id: str
@@ -32,7 +32,7 @@ class TrackItem:
     exit: Coordinate
     length_m: float
     included: bool = True
-    anchor: str | None = None
+    anchor: AnchorRole | None = None
 
     @property
     def type(self) -> ItemType:

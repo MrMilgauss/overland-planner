@@ -133,7 +133,43 @@ def test_downgrading_0003_drops_the_pois_and_keeps_projects_and_tracks(data_dir:
     kept.close()
 
     command.upgrade(config, "0003")
-    assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0003"])
+    assert (_tables(file), _revision(file)) == ({"projects", "items", "tracks", "pois"}, ["0003"])
+
+
+def _project_columns(file: Path) -> set[str]:
+    with sqlite3.connect(file) as connection:
+        rows = connection.execute("PRAGMA table_info(projects)").fetchall()
+    connection.close()
+    return {row[1] for row in rows}
+
+
+def test_downgrading_0004_drops_the_anchor_columns_and_keeps_projects_and_items(data_dir: Path) -> None:
+    file = data_dir / "db" / "planner.sqlite"
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0004")
+    with sqlite3.connect(file) as seeded:
+        seeded.execute(
+            "INSERT INTO projects (id, name, objective, settings, revision, created_at) "
+            "VALUES ('p1', 'Alpi', 'distance', '{}', 3, '2026-11-03 08:00:00')"
+        )
+        seeded.execute(
+            "INSERT INTO items (id, project_id, type, name, included, position) "
+            "VALUES ('i1', 'p1', 'poi', 'Casa', 1, 1)"
+        )
+        seeded.execute("INSERT INTO pois (item_id, lat, lon) VALUES ('i1', 45.0703, 7.6869)")
+        seeded.execute("UPDATE projects SET start_item_id = 'i1', end_item_id = 'i1' WHERE id = 'p1'")
+    seeded.close()
+
+    command.downgrade(config, "0003")
+    assert ({"start_item_id", "end_item_id"} & _project_columns(file), _revision(file)) == (set(), ["0003"])
+    with sqlite3.connect(file) as kept:
+        assert kept.execute("SELECT p.id, i.id FROM projects p JOIN items i ON i.project_id = p.id").fetchall() == [
+            ("p1", "i1")
+        ]
+    kept.close()
+
+    command.upgrade(config, "0004")
+    assert ({"start_item_id", "end_item_id"} <= _project_columns(file), _revision(file)) == (True, ["0004"])
 
 
 def test_an_external_url_and_extra_version_locations_are_honoured(data_dir: Path, tmp_path: Path) -> None:

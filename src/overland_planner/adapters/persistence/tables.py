@@ -18,6 +18,9 @@ projects = Table(
     Column("settings", JSON, nullable=False),
     Column("revision", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    # The trip's Start and End POIs (HC-2, brief §9); cleared when the item goes. `use_alter`: items reference projects.
+    Column("start_item_id", Text, ForeignKey("items.id", ondelete="SET NULL", use_alter=True), nullable=True),
+    Column("end_item_id", Text, ForeignKey("items.id", ondelete="SET NULL", use_alter=True), nullable=True),
 )
 
 # One row per catalog item (brief §9); `position` keeps the order items were added within their project.

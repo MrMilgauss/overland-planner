@@ -50,6 +50,9 @@ class _Items:
     def add(self, item: CatalogItem) -> None:
         self._rows.append(item)
 
+    def get(self, item_id: str) -> CatalogItem | None:
+        return next((item for item in self._rows if item.id == item_id), None)
+
     def list(self, project_id: str) -> list[CatalogItem]:
         return [item for item in self._rows if item.project_id == project_id]
 

@@ -1,6 +1,25 @@
 {
   "components": {
     "schemas": {
+      "AnchorsChoice": {
+        "description": "The Start and End item ids (HC-2): POIs of the project, the same one for a round trip. Both required in 01a.",
+        "properties": {
+          "end_item_id": {
+            "title": "End Item Id",
+            "type": "string"
+          },
+          "start_item_id": {
+            "title": "Start Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_item_id",
+          "end_item_id"
+        ],
+        "title": "AnchorsChoice",
+        "type": "object"
+      },
       "ErrorEnvelope": {
         "description": "Every non-2xx answer under /api (D183).",
         "properties": {
@@ -26,6 +45,11 @@
           "anchor": {
             "anyOf": [
               {
+                "enum": [
+                  "start",
+                  "end",
+                  "start_end"
+                ],
                 "type": "string"
               },
               {
@@ -351,6 +375,66 @@
           }
         },
         "summary": "Open Project"
+      }
+    },
+    "/api/projects/{project_id}/anchors": {
+      "put": {
+        "description": "Replaces Start and End. Unknown ids answer 404; a track or another project's item 422; nothing changes.",
+        "operationId": "set_anchors_api_projects__project_id__anchors_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnchorsChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Set Anchors"
       }
     },
     "/api/projects/{project_id}/items": {

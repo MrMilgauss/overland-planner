@@ -10,6 +10,9 @@ from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 
+# An item's role in the trip as the item list shows it (brief §5 D183); `None` for every other item.
+AnchorRole = Literal["start", "end", "start_end"]
+
 
 class PoiNameRequiredError(ValueError):
     """A POI name is empty once its surrounding whitespace is trimmed."""
@@ -20,14 +23,14 @@ class PoiNameRequiredError(ValueError):
 
 @dataclass(frozen=True)
 class PoiItem:
-    """A POI of a project. `anchor` stays `None` until anchors arrive (03-09)."""
+    """A POI of a project. `anchor` is its role in the trip, set by `Anchors.marked`."""
 
     id: str
     project_id: str
     name: str
     location: Coordinate
     included: bool = True
-    anchor: str | None = None
+    anchor: AnchorRole | None = None
 
     @classmethod
     def named(cls, poi_id: str, project_id: str, name: str, location: Coordinate) -> PoiItem:

@@ -1,5 +1,6 @@
 """Catalog module facade (brief §3, §11 contract 6): the only `application.catalog` import other modules may use."""
 
+from overland_planner.application.catalog.anchor_service import AnchorService, ItemNotFoundError
 from overland_planner.application.catalog.poi_service import PoiService
 from overland_planner.application.catalog.project_service import ProjectNotFoundError, ProjectService
 from overland_planner.application.catalog.track_import_service import (
@@ -9,6 +10,8 @@ from overland_planner.application.catalog.track_import_service import (
 )
 
 __all__ = [
+    "AnchorService",
+    "ItemNotFoundError",
     "PoiService",
     "ProjectNotFoundError",
     "ProjectService",

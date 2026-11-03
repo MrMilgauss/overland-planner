@@ -9,6 +9,7 @@ from sqlalchemy import Connection, select
 from overland_planner.adapters.persistence.item_repository import SqlAlchemyItemRepository
 from overland_planner.adapters.persistence.tables import projects
 from overland_planner.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from overland_planner.domain.catalog.anchors import Anchors
 from overland_planner.domain.catalog.project import Project, ProjectName
 
 # Column values until the objective and project settings become editable (distance is the default objective).
@@ -40,7 +41,15 @@ class SqlAlchemyProjectRepository:
         return [_project(row) for row in rows]
 
     def update(self, project: Project) -> None:
-        self._connection.execute(projects.update().where(projects.c.id == project.id).values(revision=project.revision))
+        self._connection.execute(
+            projects.update()
+            .where(projects.c.id == project.id)
+            .values(
+                revision=project.revision,
+                start_item_id=project.anchors.start_item_id,
+                end_item_id=project.anchors.end_item_id,
+            )
+        )
 
 
 class SqlAlchemyCatalogUnitOfWork(SqlAlchemyUnitOfWork):
@@ -56,4 +65,10 @@ class SqlAlchemyCatalogUnitOfWork(SqlAlchemyUnitOfWork):
 
 
 def _project(row: Any) -> Project:
-    return Project(id=row["id"], name=ProjectName(row["name"]), revision=row["revision"], created_at=row["created_at"])
+    return Project(
+        id=row["id"],
+        name=ProjectName(row["name"]),
+        revision=row["revision"],
+        created_at=row["created_at"],
+        anchors=Anchors(start_item_id=row["start_item_id"], end_item_id=row["end_item_id"]),
+    )

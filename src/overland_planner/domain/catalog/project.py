@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+
+from overland_planner.domain.catalog.anchors import Anchors
 
 
 class ProjectNameRequiredError(ValueError):
@@ -34,6 +36,7 @@ class Project:
     name: ProjectName
     revision: int
     created_at: datetime
+    anchors: Anchors = field(default_factory=Anchors)
 
     @classmethod
     def create(cls, project_id: str, name: ProjectName, created_at: datetime) -> Project:
@@ -42,3 +45,7 @@ class Project:
     def revised(self) -> Project:
         """The project after one more catalog change (brief §3: each change increments the revision)."""
         return replace(self, revision=self.revision + 1)
+
+    def anchored(self, anchors: Anchors) -> Project:
+        """The project with new Start and End, replacing the previous ones: one more catalog change."""
+        return replace(self, anchors=anchors).revised()

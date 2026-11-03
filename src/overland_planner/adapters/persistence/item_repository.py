@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import Connection, Select, func, select
 
 from overland_planner.adapters.persistence.tables import items, pois, tracks
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -54,15 +54,21 @@ class SqlAlchemyItemRepository:
             )
         )
 
+    def get(self, item_id: str) -> CatalogItem | None:
+        row = self._connection.execute(_with_details().where(items.c.id == item_id)).mappings().first()
+        return None if row is None else _item(row)
+
     def list(self, project_id: str) -> list[CatalogItem]:
-        query = (
-            select(items, tracks, pois.c.lat, pois.c.lon)
-            .outerjoin(tracks, tracks.c.item_id == items.c.id)
-            .outerjoin(pois, pois.c.item_id == items.c.id)
-            .where(items.c.project_id == project_id)
-            .order_by(items.c.position)
-        )
+        query = _with_details().where(items.c.project_id == project_id).order_by(items.c.position)
         return [_item(row) for row in self._connection.execute(query).mappings()]
+
+
+def _with_details() -> Select[Any]:
+    return (
+        select(items, tracks, pois.c.lat, pois.c.lon)
+        .outerjoin(tracks, tracks.c.item_id == items.c.id)
+        .outerjoin(pois, pois.c.item_id == items.c.id)
+    )
 
 
 def _item(row: Any) -> CatalogItem:

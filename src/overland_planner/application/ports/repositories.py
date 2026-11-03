@@ -19,12 +19,16 @@ class ProjectRepository(Protocol):
         ...
 
     def update(self, project: Project) -> None:
-        """Store the project's new revision."""
+        """Store the project's new revision and anchors."""
         ...
 
 
 class ItemRepository(Protocol):
     def add(self, item: CatalogItem) -> None: ...
+
+    def get(self, item_id: str) -> CatalogItem | None:
+        """The item with this id, whichever project it belongs to."""
+        ...
 
     def list(self, project_id: str) -> list[CatalogItem]:
         """The project's items in the order they were added."""

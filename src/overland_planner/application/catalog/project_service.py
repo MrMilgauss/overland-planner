@@ -41,8 +41,9 @@ class ProjectService:
         return project
 
     def items(self, project_id: str) -> Sequence[CatalogItem]:
-        """The open project's items in the order they were added; empty for a new project."""
+        """The open project's items in the order they were added, each with its anchor; empty for a new project."""
         with self._unit_of_work() as uow:
-            if uow.projects.get(project_id) is None:
+            project = uow.projects.get(project_id)
+            if project is None:
                 raise ProjectNotFoundError(project_id)
-            return uow.items.list(project_id)
+            return project.anchors.marked(uow.items.list(project_id))

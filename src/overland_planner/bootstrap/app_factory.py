@@ -44,7 +44,7 @@ from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
-from overland_planner.application.catalog.facade import PoiService, ProjectService, TrackImportService
+from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.application.platform.facade import DataDirPersistence, log_reason
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
@@ -122,6 +122,7 @@ def create_app(
                 catalog_unit_of_work, gpx_parser, file_store, event_log, file_limit_mb=settings.max_upload_file_mb
             ),
             PoiService(catalog_unit_of_work),
+            AnchorService(catalog_unit_of_work),
             UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
         )
     )

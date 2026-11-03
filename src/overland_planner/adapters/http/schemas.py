@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
+from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
 
 
@@ -28,6 +29,13 @@ class PoiCreate(BaseModel):
     name: str
     lat: float
     lon: float
+
+
+class AnchorsChoice(BaseModel):
+    """The Start and End item ids (HC-2): POIs of the project, the same one for a round trip. Both required in 01a."""
+
+    start_item_id: str
+    end_item_id: str
 
 
 class ProjectResource(BaseModel):
@@ -56,7 +64,7 @@ class ItemResource(BaseModel):
     type: ItemType
     name: str
     included: bool
-    anchor: str | None
+    anchor: AnchorRole | None
     location: PointResource | None
     entry: PointResource | None
     exit: PointResource | None

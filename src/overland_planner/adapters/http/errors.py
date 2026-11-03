@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException
 
 from overland_planner.adapters.http.upload_limits import UploadFormError, UploadTooLargeError
-from overland_planner.application.catalog.facade import ProjectNotFoundError, TrackFilesRefusedError
+from overland_planner.application.catalog.facade import ItemNotFoundError, ProjectNotFoundError, TrackFilesRefusedError
+from overland_planner.domain.catalog.anchors import AnchorNotAPlaceError
 from overland_planner.domain.catalog.coordinate import CoordinateOutOfRangeError
 from overland_planner.domain.catalog.poi import PoiNameRequiredError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
@@ -44,6 +45,7 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProjectNameRequiredError)
     @app.exception_handler(PoiNameRequiredError)
     @app.exception_handler(CoordinateOutOfRangeError)
+    @app.exception_handler(AnchorNotAPlaceError)
     async def on_refused_value(request: Request, error: ValueError) -> Response:
         return envelope(422, "validation_error", str(error))
 
@@ -64,3 +66,7 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProjectNotFoundError)
     async def on_unknown_project(request: Request, error: ProjectNotFoundError) -> Response:
         return envelope(404, "not_found", "Project not found")
+
+    @app.exception_handler(ItemNotFoundError)
+    async def on_unknown_item(request: Request, error: ItemNotFoundError) -> Response:
+        return envelope(404, "not_found", "Item not found")

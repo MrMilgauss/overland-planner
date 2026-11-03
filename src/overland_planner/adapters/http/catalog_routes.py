@@ -1,4 +1,4 @@
-"""Catalog HTTP routes (brief §5): projects, track file imports, POIs by coordinates and a project's items."""
+"""Catalog HTTP routes (brief §5): projects, track file imports, POIs by coordinates, anchors and a project's items."""
 
 from __future__ import annotations
 
@@ -9,13 +9,14 @@ from starlette.concurrency import run_in_threadpool
 
 from overland_planner.adapters.http.schemas import (
     ERROR_RESPONSES,
+    AnchorsChoice,
     ItemResource,
     PoiCreate,
     ProjectCreate,
     ProjectResource,
 )
 from overland_planner.adapters.http.upload_limits import FILES_FIELD, UploadLimits, read_track_files
-from overland_planner.application.catalog.facade import PoiService, ProjectService, TrackImportService
+from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 
 # The body is read by `read_track_files` (bounded, never spooled to disk), so the schema is declared here.
 _TRACK_UPLOAD_BODY: dict[str, Any] = {
@@ -41,7 +42,11 @@ _TRACK_UPLOAD_BODY: dict[str, Any] = {
 
 
 def catalog_routes(
-    catalog: ProjectService, imports: TrackImportService, places: PoiService, limits: UploadLimits
+    catalog: ProjectService,
+    imports: TrackImportService,
+    places: PoiService,
+    anchors: AnchorService,
+    limits: UploadLimits,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/projects", responses=ERROR_RESPONSES)
 
@@ -68,6 +73,11 @@ def catalog_routes(
     def add_poi(project_id: str, body: PoiCreate) -> ItemResource:
         """Out-of-range coordinates or a blank name answer 422 `validation_error` with the reason; nothing is added."""
         return ItemResource.of(places.add(project_id, body.name, body.lat, body.lon))
+
+    @router.put("/{project_id}/anchors")
+    def set_anchors(project_id: str, body: AnchorsChoice) -> ProjectResource:
+        """Replaces Start and End. Unknown ids answer 404; a track or another project's item 422; nothing changes."""
+        return ProjectResource.of(anchors.set(project_id, body.start_item_id, body.end_item_id))
 
     @router.get("/{project_id}/items")
     def project_items(project_id: str) -> list[ItemResource]:
