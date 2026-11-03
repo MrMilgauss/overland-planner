@@ -33,9 +33,9 @@ re-scans `main`, audits dependencies, runs the deep property profile and reports
 
 | Item | Value |
 | --- | --- |
-| Compressed image size, amd64 | _TBD (orchestrator)_ |
-| Compressed image size, arm64 | _TBD (orchestrator)_ |
-| Actions minutes per main push | _TBD (orchestrator)_ |
+| Compressed image size, amd64 | 135.7 MB (release `sha256:83a835f8…`, 2026-11-03) |
+| Compressed image size, arm64 | 132.3 MB (same release; one release ≈ 268 MB of the 500 MB GHCR budget) |
+| Actions minutes per main push | ≈ 18 billed min (run 41603868244: 9.2 min wall; per-job rounding), + ≈ 1 when the mutation job runs |
 
 ## Operations (pi-host)
 
