@@ -12,11 +12,14 @@ import sqlite3
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+
+from overland_planner.adapters.persistence.database import SqliteDatabase, database_file
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
@@ -170,6 +173,83 @@ def test_downgrading_0004_drops_the_anchor_columns_and_keeps_projects_and_items(
 
     command.upgrade(config, "0004")
     assert ({"start_item_id", "end_item_id"} <= _project_columns(file), _revision(file)) == (True, ["0004"])
+
+
+def _seed_trip_at_head(file: Path) -> None:
+    with sqlite3.connect(file) as seeded:
+        seeded.execute(
+            "INSERT INTO projects (id, name, objective, settings, revision, created_at) "
+            "VALUES ('p1', 'Alpi', 'distance', '{}', 4, '2026-11-03 08:00:00')"
+        )
+        seeded.execute(
+            "INSERT INTO items (id, project_id, type, name, included, position) VALUES "
+            "('i1', 'p1', 'track', 'Assietta', 1, 1), ('i2', 'p1', 'poi', 'Casa', 1, 2)"
+        )
+        seeded.execute(
+            "INSERT INTO tracks (item_id, original_sha256, direction_version, canonical_sha256, point_count, "
+            "entry_lat, entry_lon, exit_lat, exit_lon, length_m) VALUES ('i1', 'a', 1, 'b', 2, 45, 7, 45, 7, 1)"
+        )
+        seeded.execute("INSERT INTO pois (item_id, lat, lon) VALUES ('i2', 45.0703, 7.6869)")
+        seeded.execute("UPDATE projects SET start_item_id = 'i2', end_item_id = 'i2' WHERE id = 'p1'")
+    seeded.close()
+
+
+def _trip(file: Path) -> dict[str, list[tuple[str, ...]]]:
+    with sqlite3.connect(file) as connection:
+        trip = {
+            table: connection.execute(f"SELECT {key} FROM {table} ORDER BY 1").fetchall()  # noqa: S608 - fixed names
+            for table, key in (("projects", "id"), ("items", "id, type"), ("tracks", "item_id"), ("pois", "item_id"))
+        }
+    connection.close()
+    return trip
+
+
+SEEDED_TRIP = {"projects": [("p1",)], "items": [("i1", "track"), ("i2", "poi")], "tracks": [("i1",)], "pois": [("i2",)]}
+
+
+def _downgrade_through_the_operator_path(config: Config, data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `docker compose run --rm planner alembic downgrade 0003` (D90): no URL on the Config, the database under DATA_DIR.
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    command.downgrade(_config(), "0003")
+
+
+def _downgrade_on_a_connection_with_foreign_keys_on(config: Config, data_dir: Path, _mp: pytest.MonkeyPatch) -> None:
+    # The planner's own connection (WAL, foreign_keys=ON), handed over to env.py as at start-up.
+    database = SqliteDatabase(data_dir)
+    try:
+        with database.engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+            config.attributes["connection"] = connection
+            command.downgrade(config, "0003")
+            connection.commit()
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1, "enforcement is restored"
+    finally:
+        config.attributes.pop("connection", None)
+        database.engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "downgrade",
+    [_downgrade_through_the_operator_path, _downgrade_on_a_connection_with_foreign_keys_on],
+    ids=["operator-path", "foreign-keys-on"],
+)
+def test_downgrading_0004_never_cascades_to_the_items_of_a_project_with_anchors(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    # Regression (03-09): the 0004 downgrade rebuilds `projects`; with foreign_keys=ON the rebuild's DROP TABLE would
+    # cascade-delete every item, so the downgrade switches foreign keys off around the rebuild.
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "head")
+    _seed_trip_at_head(file)
+
+    downgrade(config, data_dir, monkeypatch)
+
+    assert (_trip(file), _revision(file)) == (SEEDED_TRIP, ["0003"])
+    assert {"start_item_id", "end_item_id"} & _project_columns(file) == set()
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
 
 
 def test_an_external_url_and_extra_version_locations_are_honoured(data_dir: Path, tmp_path: Path) -> None:

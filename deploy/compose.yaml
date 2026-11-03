@@ -26,6 +26,10 @@ services:
       SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
       PLANNER_BASIC_AUTH_USER: ${PLANNER_BASIC_AUTH_USER:-}
       PLANNER_BASIC_AUTH_PASSWORD: ${PLANNER_BASIC_AUTH_PASSWORD:-}
+      # Trail upload caps; empty when unset in .env, which the planner reads as its default (25 MiB, 100 MiB, 50).
+      MAX_UPLOAD_FILE_MB: ${MAX_UPLOAD_FILE_MB:-}
+      MAX_UPLOAD_REQUEST_MB: ${MAX_UPLOAD_REQUEST_MB:-}
+      MAX_UPLOAD_FILES: ${MAX_UPLOAD_FILES:-}
     volumes:
       - planner-data:/data
     # Resource caps (D83, D167): the Pi keeps room for the routing engine.

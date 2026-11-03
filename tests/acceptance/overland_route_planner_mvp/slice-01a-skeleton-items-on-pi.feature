@@ -6,7 +6,7 @@
 # state-delta asserted). @wiring_e2e = real server process. @technical = derived from DESIGN/DEVOPS decisions,
 # outside the 3-7 UAT band (D141).
 
-@slice-01a @pending
+@slice-01a
 Feature: My trail and places on my own Pi
   As Marco, I want the planner on my home Pi to keep my projects, trails and places safely,
   so that nothing I enter is lost.

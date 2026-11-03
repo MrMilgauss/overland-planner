@@ -7,7 +7,10 @@ Create Date: 2026-11-03
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import sqlite3
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import cast
 
 from alembic import op
 
@@ -28,8 +31,35 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Every revision has a CI-tested downgrade (DV-5); the operator's `alembic downgrade` (D90) runs with SQLite's
-    default `foreign_keys=OFF`, so the rebuild that drops the referencing columns keeps every project and item."""
-    with op.batch_alter_table("projects") as batch:
+    """Every revision has a CI-tested downgrade (DV-5). Dropping a referencing column rebuilds `projects`, and the
+    rebuild's DROP TABLE would cascade-delete every item while foreign keys are enforced (the planner's connections
+    run `foreign_keys=ON`). So enforcement is switched off around the rebuild and restored after it. SQLite ignores
+    `PRAGMA foreign_keys` inside a transaction, so an open one (earlier steps of this run) is committed first."""
+    with _foreign_keys_off(), op.batch_alter_table("projects") as batch:
         for column in _ANCHOR_COLUMNS:
             batch.drop_column(column)
+
+
+@contextmanager
+def _foreign_keys_off() -> Iterator[None]:
+    if op.get_context().as_sql:
+        op.execute("PRAGMA foreign_keys=OFF")
+        yield
+        op.execute("PRAGMA foreign_keys=ON")
+        return
+    driver = cast(sqlite3.Connection, op.get_bind().connection.driver_connection)
+    enforced = bool(driver.execute("PRAGMA foreign_keys").fetchone()[0])
+    if not enforced:
+        yield
+        return
+    _outside_a_transaction(driver, "PRAGMA foreign_keys=OFF")
+    try:
+        yield
+    finally:
+        _outside_a_transaction(driver, "PRAGMA foreign_keys=ON")
+
+
+def _outside_a_transaction(driver: sqlite3.Connection, pragma: str) -> None:
+    if driver.in_transaction:
+        driver.commit()
+    driver.execute(pragma).close()

@@ -26,6 +26,7 @@ ENV_EXAMPLE = REPO_ROOT / ".env.example"
 FAIL_CLOSED_PORTS = "${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER_PORT:-8080}:8080"
 INTERPOLATION = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?P<rest>[^}]*)\}")
 SECRET_SETTINGS = ("PLANNER_BASIC_AUTH_PASSWORD",)
+UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")  # ADR-011 Am. 1
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -106,7 +107,8 @@ def test_data_volume_log_rotation_and_curl_free_healthcheck() -> None:
 def test_settings_reach_the_container_by_interpolation_and_secrets_are_never_written_down() -> None:
     environment: dict[str, str] = _planner()["environment"]
 
-    for key in ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD"):
+    # Empty when unset; the planner reads an empty value as its default (shared password off, caps 25/100/50).
+    for key in ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD", *UPLOAD_CAPS):
         assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     assert environment["DATA_DIR"] == "/data" and environment["ROUTING_PROVIDER"] == "mock"
     for path in (COMPOSE, COMPOSE_CI, ENV_EXAMPLE):

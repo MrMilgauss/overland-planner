@@ -4,7 +4,8 @@ The only source is the mapping given to `Settings.from_environ`; the composition
 production. Keys are case-sensitive; keys the planner does not read are ignored. An invalid value is fatal.
 The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD, brief §12) is set as a pair or not at all; an
 empty value counts as unset (a `KEY=` line). The password is a `SecretStr`, so no repr or error message shows it.
-The upload caps (MAX_UPLOAD_FILE_MB, MAX_UPLOAD_REQUEST_MB in MiB, MAX_UPLOAD_FILES) must be positive (ADR-011 Am. 1).
+The upload caps (MAX_UPLOAD_FILE_MB, MAX_UPLOAD_REQUEST_MB in MiB, MAX_UPLOAD_FILES) must be positive (ADR-011 Am. 1);
+an empty cap (compose passes `${MAX_UPLOAD_...:-}`) is its default.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -55,6 +56,11 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("max_upload_file_mb", "max_upload_request_mb", "max_upload_files", mode="before")
+    @classmethod
+    def _empty_cap_is_default(cls, value: object, info: ValidationInfo) -> object:
+        return cls.model_fields[str(info.field_name)].default if value == "" else value
 
     @field_validator("basic_auth_user")
     @classmethod

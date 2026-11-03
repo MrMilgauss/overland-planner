@@ -13,12 +13,21 @@ make lint        # ruff, mypy --strict, import-linter
 make test        # fast suite (builds web/dist first)
 make test-web    # npm ci, svelte-check, vitest, vite build
 make run-local   # the planner on http://127.0.0.1:8080 with the offline mock road map
-make e2e-local   # Playwright home-page check (chromium, webkit-iphone14) against run-local
+make e2e-local   # Playwright home page and workspace journey (chromium, webkit-iphone14) against run-local
 make mutate      # mutmut on domain/application files changed since origin/main (kill rate >= 80 %)
 ```
 
 Acceptance scenarios tagged `@pending` run with `--run-pending=<slice>`; `@requires_external` ones with
-`--run-external` on the right host.
+`--run-external` on the right host. CI enables slices 00b and 01a (`PENDING_FLAGS` in ci.yml, D170).
+
+## Using the planner
+
+Open the planner in a browser (desktop or phone). The home page lists the **Projects**, shows every warning the
+planner's health reports (e.g. a data folder that would not survive a restart) and creates a **New project**. In a
+project's workspace (`#/projects/<id>`) Marco imports GPX trails, adds places by decimal degrees (latitude,
+longitude) and chooses the trip's Start and End; the item list shows each item's type, name, the **Included** badge
+and the **S/E**, **Start** or **End** badge. A refusal is shown with the planner's own message. The upload caps
+(`MAX_UPLOAD_FILE_MB`, `MAX_UPLOAD_REQUEST_MB`, `MAX_UPLOAD_FILES`) are set in `.env`; empty means the default.
 
 ## CI
 

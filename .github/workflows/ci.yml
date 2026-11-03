@@ -20,7 +20,7 @@ permissions:
 env:
   # D170, user decision 2026-11-02: started empty; 02-07 added --run-pending=slice-00b, 03-10 adds
   # --run-pending=slice-01a, in the commit that turns the slice GREEN.
-  PENDING_FLAGS: "--run-pending=slice-00b"
+  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a"
   UV_VERSION: "0.11.16"
   # Trivy as a sha256-verified binary (like the lint binaries) rather than aquasecurity/trivy-action, whose tags were
   # rewritten in the March 2026 supply-chain incident.
@@ -565,7 +565,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx --no-install playwright install --with-deps chromium webkit
-      - name: Playwright home page (chromium, webkit-iphone14)
+      - name: Playwright home page and workspace journey (chromium, webkit-iphone14)
         working-directory: web
         # tests/e2e lives outside web/: NODE_PATH lets the spec resolve @playwright/test from web/node_modules.
         run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test --project=chromium --project=webkit-iphone14
@@ -582,15 +582,8 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: uv sync --frozen
         run: uv sync --frozen
-      # Step 03-02 (D121): no volume on /data -> overlay -> /healthz 503 with the not-persistent reason. Reported only
-      # until step 03-10 enables slice 01a in PENDING_FLAGS; the selection below then runs it as a blocking check.
-      - name: Packaged planner without its data storage (slice 01a, non-blocking until 03-10)
-        continue-on-error: true
-        run: >-
-          uv run pytest -q -rs --run-external --run-pending=slice-01a -m compose
-          -k without_its_data_storage tests/acceptance/overland_route_planner_mvp/test_slice_01a.py
       # Includes tests/deploy: compose fails closed without PLANNER_BIND, and the hardened container writes only
-      # /data and /tmp (D173).
+      # /data and /tmp (D173); with slice 01a enabled also the packaged planner without its data storage (D121).
       - name: pytest --run-external -m "compose or security" (D170)
         run: .github/scripts/pytest-selection.sh "compose or security"
 

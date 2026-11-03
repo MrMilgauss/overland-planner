@@ -156,3 +156,24 @@ def test_the_shared_password_set_without_its_user_or_the_reverse_is_refused(
         Settings.from_environ(environ)
     assert refused.value.setting_names == frozenset({missing})
     assert missing in str(refused.value)
+
+
+@given(case=environments(), empty_caps=st.lists(st.sampled_from(UPLOAD_CAPS), unique=True, min_size=1))
+def test_an_empty_upload_cap_falls_back_to_its_default(
+    case: tuple[dict[str, str], dict[str, Any]], empty_caps: list[str]
+) -> None:
+    # compose.yaml passes every cap as `${MAX_UPLOAD_...:-}`: a cap missing from .env reaches the planner as `KEY=`.
+    environ, expected_values = case
+    environ.update(dict.fromkeys(empty_caps, ""))
+    before = observable(Settings.from_environ({}))
+    after = observable(Settings.from_environ(environ))
+    assert_state_delta(
+        before,
+        after,
+        universe=UNIVERSE,
+        expected={
+            key: set_to(expected_values[key]) if key in expected_values and key not in empty_caps else unchanged()
+            for key in KEYS
+        },
+        strict=True,
+    )

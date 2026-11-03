@@ -124,7 +124,8 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     env = {**workflow.get("env", {}), **job.get("env", {})}
     pytest_step = _main_pytest(job)
 
-    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b"  # D170: slice 00b is GREEN (step 02-07)
+    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10).
+    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b --run-pending=slice-01a"
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
     assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]  # root of every test data folder
@@ -413,15 +414,13 @@ def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     assert "--run-external" in script and "$PENDING_FLAGS" in script
 
 
-def test_e2e_checks_the_packaged_planner_without_data_storage_until_slice_01a_is_enabled() -> None:
-    # Step 03-02: the @compose scenario runs on the loaded image with PLANNER_IMAGE; reported only until 03-10 enables
-    # slice 01a in PENDING_FLAGS, after which the compose selection runs it as a blocking check.
+def test_every_e2e_step_blocks_once_slice_01a_is_enabled() -> None:
+    # Step 03-10 (D170): slice 01a is in PENDING_FLAGS, so the 03-02 non-blocking run of the @compose scenario is gone;
+    # the compose/security selection runs it as a blocking check (test_job_7_selection_runs_the_enabled_slices...).
     job = _job(_workflow(), "e2e")
-    check = job["steps"][_index(job, "without_its_data_storage")]
 
-    assert "--run-pending=slice-01a" in check["run"] and "--run-external" in check["run"]
-    assert check.get("continue-on-error") is True
-    assert _index(job, f"{COMPOSE_CI_STACK} down -v") < _index(job, "without_its_data_storage")
+    assert [s.get("name") for s in job["steps"] if s.get("continue-on-error")] == []
+    assert all("without_its_data_storage" not in script for script in _runs(job))
 
 
 FAIL_CLOSED_COMPOSE_VARIABLES = ("PLANNER_IMAGE", "PLANNER_BIND")  # D174: compose.yaml interpolates both with :?
@@ -731,8 +730,8 @@ def test_lint_uses_the_pinned_shellcheck_never_the_runner_one() -> None:
     assert f"rev: v{SHELLCHECK_RELEASE}.1" in pre_commit and "args: [--severity=info]" in pre_commit
 
 
-def test_job_7_selection_runs_the_enabled_slice_00b_security_checks() -> None:
-    """D170: with slice 00b enabled the compose/security selection must collect the packaged-planner checks."""
+def test_job_7_selection_runs_the_enabled_slices_compose_and_security_checks() -> None:
+    """D170: with slices 00b and 01a enabled the compose/security selection must collect the packaged-planner checks."""
     expression = "compose or security"
     assert f'pytest-selection.sh "{expression}"' in _runs(_job(_workflow(), "e2e"))[-1]
     pending = _workflow()["env"]["PENDING_FLAGS"].split()
@@ -747,6 +746,10 @@ def test_job_7_selection_runs_the_enabled_slice_00b_security_checks() -> None:
 
     assert collected.returncode == 0, collected.stdout + collected.stderr
     assert "test_slice_00b.py::test_sharing_the_packaged_planner_never_shares_marcos_password" in collected.stdout
+    assert (
+        "test_slice_01a.py::test_the_packaged_planner_started_without_its_data_storage_reports_that_projects_would_be_lost"
+        in collected.stdout
+    )
     assert "test_container_hardening.py::test_planner_container_writes_only_data_and_tmp_without_privileges" in (
         collected.stdout
     )
