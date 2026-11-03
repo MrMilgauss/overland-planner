@@ -77,8 +77,9 @@ source_paths = ["src/"]
 only_mutate = ["src/overland_planner/domain/*", "src/overland_planner/application/*"]
 pytest_add_cli_args_test_selection = ["tests/unit", "tests/property", "tests/integration"]
 pytest_add_cli_args = ["-m", "not solver_child", "-p", "no:cacheprovider"]
-# The home-page integration tests serve the real web build (`make mutate` builds it first).
-also_copy = ["web/dist/"]
+# The home-page integration tests serve the real web build (`make mutate` builds it first); every app start migrates
+# the database with the repository's Alembic migrations (MIGRATIONS_DIR defaults to <repo>/migrations).
+also_copy = ["web/dist/", "migrations/", "alembic.ini"]
 
 [tool.ruff]
 target-version = "py312"

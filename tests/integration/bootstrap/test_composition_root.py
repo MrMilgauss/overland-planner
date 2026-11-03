@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
-from overland_planner.bootstrap.settings import InvalidSettingsError
+from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.fakes import FakeClock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -33,8 +33,9 @@ def _started(text: str) -> list[dict[str, Any]]:
 
 
 def test_create_app_reads_os_environ_when_given_no_mapping(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("PLANNER_GIT_SHA", "0123456789ab")
     monkeypatch.setenv("ROUTING_PROVIDER", "mock")
 
@@ -45,27 +46,32 @@ def test_create_app_reads_os_environ_when_given_no_mapping(
 
 
 def test_create_app_given_a_mapping_reads_only_that_mapping(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     monkeypatch.setenv("PLANNER_GIT_SHA", "from-process-env")
     monkeypatch.setenv("ROUTING_PROVIDER", "valhalla")  # would be refused if the process environment were read
 
-    create_app({"PLANNER_GIT_SHA": "from-mapping"})
+    create_app({"PLANNER_GIT_SHA": "from-mapping", "DATA_DIR": str(tmp_path)})
 
     (started,) = _started(capsys.readouterr().out)
     assert started["app_version"] == "from-mapping"
     assert started["routing_provider"] == "mock"
 
 
-def test_an_invalid_setting_stops_start_up_naming_the_setting() -> None:
-    with pytest.raises(InvalidSettingsError, match="ROUTING_PROVIDER"):
+def test_an_invalid_setting_refuses_start_up_naming_the_setting(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(StartupRefusedError) as refused:
         create_app({"ROUTING_PROVIDER": "valhalla"})
 
+    assert (refused.value.code, refused.value.component) == (1, "settings")
+    (line,) = _json_lines(capsys.readouterr().out)
+    assert (line["event"], line["component"]) == ("health.startup.refused", "settings")
+    assert "ROUTING_PROVIDER" in line["reason"]
 
-def test_every_event_is_one_json_line_with_utc_timestamp(capsys: pytest.CaptureFixture[str]) -> None:
+
+def test_every_event_is_one_json_line_with_utc_timestamp(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     clock = FakeClock(datetime(2026, 11, 2, 19, 30, 15, 250_000, tzinfo=UTC))
 
-    create_app({"PLANNER_GIT_SHA": "abc"}, external=ExternalPorts(clock=clock))
+    create_app({"PLANNER_GIT_SHA": "abc", "DATA_DIR": str(tmp_path)}, external=ExternalPorts(clock=clock))
 
     records = _json_lines(capsys.readouterr().out)  # every stdout line must parse as one JSON object
     assert records, "no event was logged"
@@ -108,3 +114,4 @@ def test_each_start_logs_one_app_started_line(tmp_path: Path) -> None:
         assert started[0]["app_version"] == "0123456789ab"
         assert started[0]["routing_provider"] == "mock"
         assert started[0]["python_version"] == platform.python_version()
+        assert started[0]["alembic_head"] == "0001"

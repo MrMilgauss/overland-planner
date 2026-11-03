@@ -1,0 +1,99 @@
+"""Alembic migrations from the repository (ADR-006, DV-5: every revision has a CI-tested downgrade; CI job 2 runs this).
+
+Integration level: single examples on a real SQLite file in a workspace data folder, driven through the repository
+`alembic.ini` like the operator's `alembic` command (D90).
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sqlite3
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+STUB_REVISION = "f1f1f1f1f1f1"
+
+
+@pytest.fixture
+def data_dir() -> Iterator[Path]:
+    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
+    folder = root / uuid.uuid4().hex[:12] / "data"
+    (folder / "db").mkdir(parents=True)
+    yield folder
+    shutil.rmtree(folder.parent, ignore_errors=True)
+
+
+def _config(url: str | None = None, extra_versions: Path | None = None) -> Config:
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    if url is not None:
+        config.set_main_option("sqlalchemy.url", url)
+    if extra_versions is not None:
+        locations = [str(REPO_ROOT / "migrations" / "versions"), str(extra_versions)]
+        config.set_main_option("version_locations", os.pathsep.join(locations))
+    return config
+
+
+def _tables(file: Path) -> set[str]:
+    with sqlite3.connect(file) as connection:
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    connection.close()
+    return {name for (name,) in rows} - {"alembic_version"}
+
+
+def _revision(file: Path) -> list[str]:
+    with sqlite3.connect(file) as connection:
+        rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    connection.close()
+    return [version for (version,) in rows]
+
+
+def test_upgrade_downgrade_to_base_and_upgrade_again_on_a_seeded_database(data_dir: Path) -> None:
+    file = data_dir / "db" / "planner.sqlite"
+    config = _config(f"sqlite:///{file}")
+    head = ScriptDirectory.from_config(config).get_current_head()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(file) as seeded:
+        seeded.execute(
+            "INSERT INTO projects (id, name, objective, settings, revision, created_at) "
+            "VALUES ('p1', 'Dolomiti 2028', 'balanced', '{}', 1, '2026-11-03 08:00:00')"
+        )
+    seeded.close()
+    assert (_tables(file), _revision(file)) == ({"projects"}, [head])
+
+    command.downgrade(config, "base")
+    assert (_tables(file), _revision(file)) == (set(), [])
+
+    command.upgrade(config, "head")
+    assert (_tables(file), _revision(file)) == ({"projects"}, [head])
+
+
+def test_an_external_url_and_extra_version_locations_are_honoured(data_dir: Path, tmp_path: Path) -> None:
+    head = ScriptDirectory.from_config(_config()).get_current_head()
+    (tmp_path / f"{STUB_REVISION}_later.py").write_text(
+        f'revision = "{STUB_REVISION}"\ndown_revision = "{head}"\nbranch_labels = None\ndepends_on = None\n\n\n'
+        "def upgrade() -> None:\n    pass\n\n\ndef downgrade() -> None:\n    pass\n"
+    )
+    file = data_dir / "db" / "elsewhere.sqlite"
+
+    command.upgrade(_config(f"sqlite:///{file}", extra_versions=tmp_path), "heads")
+
+    assert _revision(file) == [STUB_REVISION]
+
+
+def test_without_a_url_alembic_uses_the_database_under_data_dir(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    command.upgrade(_config(), "head")
+
+    assert _tables(data_dir / "db" / "planner.sqlite") == {"projects"}

@@ -610,3 +610,26 @@ def test_run_blocks_group_step_file_appends_for_shellcheck() -> None:
                 targets = [m["target"] for m in STEP_FILE_APPEND.finditer(script)]
                 repeated += [f"{path.name}:{job_name} -> {t}" for t in set(targets) if targets.count(t) > 1]
     assert repeated == [], 'group appends as `{ ...; } >> "$FILE"` (SC2129)'
+
+
+def test_image_metadata_and_release_json_carry_the_alembic_head_of_the_repository(tmp_path: Path) -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    head = ScriptDirectory.from_config(Config(str(REPO_ROOT / "alembic.ini"))).get_current_head()
+    workflow = _workflow()
+    for name in IMAGE_JOBS:
+        meta = next(step for step in _job(workflow, name)["steps"] if step.get("id") == "meta")
+        output = tmp_path / f"{name}.out"
+        result = subprocess.run(
+            ["bash", "-e", "-c", meta["run"]],
+            cwd=REPO_ROOT,
+            env={**os.environ, "GITHUB_OUTPUT": str(output)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"alembic_head={head}" in output.read_text().splitlines(), f"{name} labels the wrong Alembic head"
+    release = _runs(_job(workflow, "publish"))[_index(_job(workflow, "publish"), "release.json")]
+    assert '--arg alembic_head "$alembic_head"' in release and 'pathlib.Path("migrations/versions")' in release

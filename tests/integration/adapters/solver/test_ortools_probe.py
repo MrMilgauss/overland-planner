@@ -15,6 +15,7 @@ import json
 import os
 import time
 from multiprocessing.connection import Connection
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,9 +70,10 @@ def test_probe_solves_known_instance_twice_identically() -> None:
     assert OrToolsTourSolver().probe() == ProbeResult(outcome="ok")
 
 
-def _degraded_client(child_main: object, timeout_s: float = 10.0) -> TestClient:
+def _degraded_client(child_main: object, data_dir: Path, timeout_s: float = 10.0) -> TestClient:
     solver = OrToolsTourSolver(child_main=child_main, timeout_s=timeout_s)  # type: ignore[arg-type]
-    return TestClient(create_app({}, external=ExternalPorts(clock=FakeClock(), tour_solver=solver)))
+    environ = {"DATA_DIR": str(data_dir)}
+    return TestClient(create_app(environ, external=ExternalPorts(clock=FakeClock(), tour_solver=solver)))
 
 
 def _assert_optimizer_unavailable(client: TestClient) -> None:
@@ -86,8 +88,8 @@ def _assert_optimizer_unavailable(client: TestClient) -> None:
     assert body["banners"] == ["optimizer_unavailable"]
 
 
-def test_child_crash_degrades_with_optimizer_unavailable(capsys: pytest.CaptureFixture[str]) -> None:
-    client = _degraded_client(_crashing_child)
+def test_child_crash_degrades_with_optimizer_unavailable(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    client = _degraded_client(_crashing_child, tmp_path)
 
     _assert_optimizer_unavailable(client)
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
@@ -96,14 +98,14 @@ def test_child_crash_degrades_with_optimizer_unavailable(capsys: pytest.CaptureF
     assert [line["event"] for line in lines][-1] == "app.started"
 
 
-def test_child_timeout_degrades_with_optimizer_unavailable() -> None:
+def test_child_timeout_degrades_with_optimizer_unavailable(tmp_path: Path) -> None:
     started = time.monotonic()
-    client = _degraded_client(_hanging_child, timeout_s=1.0)
+    client = _degraded_client(_hanging_child, tmp_path, timeout_s=1.0)
     elapsed = time.monotonic() - started
 
     _assert_optimizer_unavailable(client)
     assert elapsed < 5.0, f"a hanging child must be killed at its timeout, start-up took {elapsed:.1f}s"
 
 
-def test_wrong_order_degrades_with_optimizer_unavailable() -> None:
-    _assert_optimizer_unavailable(_degraded_client(_wrong_order_child))
+def test_wrong_order_degrades_with_optimizer_unavailable(tmp_path: Path) -> None:
+    _assert_optimizer_unavailable(_degraded_client(_wrong_order_child, tmp_path))

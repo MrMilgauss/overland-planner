@@ -46,11 +46,15 @@ RUN groupadd --gid 10001 planner \
     && chown 10001:10001 /data
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=web /build/web/dist /app/web/dist
+# Alembic migrations, applied at start (MIGRATIONS_DIR), and alembic.ini for `docker compose run --rm planner alembic`.
+COPY migrations /app/migrations
+COPY alembic.ini /app/alembic.ini
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
     WEB_DIST_DIR=/app/web/dist \
+    MIGRATIONS_DIR=/app/migrations \
     ROUTING_PROVIDER=mock \
     PLANNER_GIT_SHA=${GIT_SHA}
 WORKDIR /app

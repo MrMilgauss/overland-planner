@@ -71,6 +71,14 @@ def test_node_stage_runs_on_buildplatform() -> None:
     assert any("web/dist" in i.args and "--from=" in i.args for i in _of("COPY", final)), "runtime lacks web/dist"
 
 
+def test_runtime_ships_the_migrations_and_alembic_ini() -> None:
+    final = _final_stage()
+    copies = [i.args for i in _of("COPY", final)]
+    assert "migrations /app/migrations" in copies, "runtime lacks the Alembic migrations"
+    assert "alembic.ini /app/alembic.ini" in copies, "runtime lacks alembic.ini (D90 downgrade path)"
+    assert any("MIGRATIONS_DIR=/app/migrations" in i.args for i in _of("ENV", final))
+
+
 def test_python_installed_with_uv_sync_frozen_no_dev() -> None:
     syncs = [i for i in _of("RUN") if "uv sync" in i.args]
     assert syncs, "no uv sync in any stage"

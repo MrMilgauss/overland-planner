@@ -3,11 +3,12 @@
 Production: `uvicorn --factory overland_planner.bootstrap.app_factory:create_app` (reads `os.environ`).
 Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the same `.env` keys (brief §12)
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
-Order: wire -> probe every registered component -> mount routes (API and health first, then the built web page,
-D162) -> log `app.started`. uvicorn serves only once the factory returns, so no request is answered before every
-component has reported its probe outcome; each degraded component gets one `health.startup.degraded` line
-{component, reason} before `app.started`. The OR-Tools probe runs in a short-lived child process.
-The database (02-01) and more probed adapters join in their slices.
+Order: settings -> wire -> probe every registered component in wiring order (the database probe migrates it to head
+first) -> mount routes (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
+once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
+settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
+exit non-zero, no `app.started`); each degraded component gets one `health.startup.degraded` line {component, reason}
+before `app.started`. The OR-Tools probe runs in a short-lived child process.
 
 stdout carries only the JSON event lines (brief §12): uvicorn's plain-text access log is switched off here, so the
 production command needs no logging flags.
@@ -27,14 +28,16 @@ from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
+from overland_planner.adapters.persistence.database import SqliteDatabase
+from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
 from overland_planner.application.ports.tour_solver import TourSolver
-from overland_planner.bootstrap.probes import probe_every_component
 from overland_planner.bootstrap.registry import ProbeRegistry
-from overland_planner.bootstrap.settings import Settings
+from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
+from overland_planner.bootstrap.startup import StartupGate
 
 
 @dataclass(frozen=True)
@@ -55,15 +58,24 @@ def create_app(
     external: ExternalPorts | None = None,
 ) -> FastAPI:
     """Build the planner application. `environ=None` means `os.environ`; a mapping is the only source read."""
-    settings = Settings.from_environ(os.environ if environ is None else environ)
+    source = os.environ if environ is None else environ
     ports = external or ExternalPorts()
     clock = ports.clock or SystemClock()
-    event_log: EventLog = StructlogEventLog(clock, app_version=settings.planner_git_sha)
+    # The refusal of invalid settings is logged too, so the version cannot wait for validated settings.
+    event_log: EventLog = StructlogEventLog(clock, app_version=source.get("PLANNER_GIT_SHA") or "dev")
+    gate = StartupGate(event_log)
+    try:
+        settings = Settings.from_environ(source)
+    except InvalidSettingsError as invalid:
+        gate.refuse("settings", str(invalid))
+    database = SqliteDatabase(settings.data_dir)
+    migrator = AlembicMigrator(database, settings.migrations_dir)
     registry = ProbeRegistry()
     registry.register("clock", clock)
     registry.register("event_log", event_log)
+    registry.register("database", DatabaseStartup(database, migrator))
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
-    health = probe_every_component(registry)
+    health = gate.probe_in_order(registry.components())
     for name, result in health.detail().components.items():
         if result.outcome.startswith("degraded"):
             event_log.info("health.startup.degraded", component=name, reason=result.reason)
@@ -77,5 +89,6 @@ def create_app(
         routing_provider=settings.routing_provider,
         solver_budget=settings.solver_budget,
         python_version=platform.python_version(),
+        alembic_head=migrator.head(),
     )
     return app

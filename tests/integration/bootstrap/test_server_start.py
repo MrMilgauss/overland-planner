@@ -88,6 +88,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
             "status": "ok",
             "components": {
                 "clock": {"outcome": "ok", "reason": None},
+                "database": {"outcome": "ok", "reason": None},
                 "event_log": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},
             },
@@ -105,3 +106,18 @@ def test_a_degraded_unhealthy_component_makes_healthz_503_with_its_reason_and_a_
     assert (health.status_code, health.json()) == (503, {"status": "unhealthy", "reason": NOT_PERSISTENT})
     assert (detail["status"], detail["banners"]) == ("unhealthy", [NOT_PERSISTENT])
     assert detail["components"]["clock"] == {"outcome": "degraded-unhealthy", "reason": NOT_PERSISTENT}
+
+
+def test_a_refused_start_exits_non_zero_after_one_refusal_line_and_answers_nothing(data_dir: Path) -> None:
+    planner = ServerPlanner({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "valhalla"}, workdir=REPO_ROOT)
+
+    record = planner.launch()
+    planner.stop()
+
+    assert not record.answered
+    assert record.exit_code not in (None, 0), record.tail()
+    assert [(line["event"], line["component"]) for line in record.json_lines()] == [
+        ("health.startup.refused", "settings")
+    ], record.tail()
+    assert "ROUTING_PROVIDER" in record.json_lines()[0]["reason"]
+    assert len(record.stdout) == 1, "stdout must hold only the refusal line"

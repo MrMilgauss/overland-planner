@@ -17,7 +17,10 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # Only the mock provider exists until slice 06a wires Valhalla.
 RoutingProvider = Literal["mock"]
 
-_REPO_WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_WEB_DIST = _REPO_ROOT / "web" / "dist"
+# The planner's Alembic migrations; the image sets MIGRATIONS_DIR=/app/migrations.
+_REPO_MIGRATIONS = _REPO_ROOT / "migrations"
 
 
 class InvalidSettingsError(ValueError):
@@ -38,8 +41,9 @@ class Settings(BaseSettings):
     solver_budget: Annotated[int, Field(validation_alias="SOLVER_BUDGET", gt=0)] = 10_000
     planner_git_sha: Annotated[str, Field(validation_alias="PLANNER_GIT_SHA", min_length=1)] = "dev"
     web_dist_dir: Annotated[Path, Field(validation_alias="WEB_DIST_DIR")] = _REPO_WEB_DIST
+    migrations_dir: Annotated[Path, Field(validation_alias="MIGRATIONS_DIR")] = _REPO_MIGRATIONS
 
-    @field_validator("data_dir", "web_dist_dir", mode="before")
+    @field_validator("data_dir", "web_dist_dir", "migrations_dir", mode="before")
     @classmethod
     def _path_not_empty(cls, value: object) -> object:
         if value == "":

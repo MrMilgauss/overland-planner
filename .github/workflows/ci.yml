@@ -282,11 +282,30 @@ jobs:
       - id: meta
         name: Build metadata (GIT_SHA, COMMIT_TS, ALEMBIC_HEAD)
         run: |
+          # The single Alembic head of migrations/versions (revision not named as any down_revision), parsed from the
+          # sources so the label needs no Python environment; more than one head fails the build.
+          alembic_head="$(python3 - <<'PY'
+          import pathlib
+          import re
+
+          texts = [path.read_text() for path in pathlib.Path("migrations/versions").glob("*.py")]
+
+
+          def found(name):
+              pattern = rf"^{name}\b[^=]*=\s*[\"']([^\"']+)[\"']"
+              return {match for text in texts for match in re.findall(pattern, text, re.M)}
+
+
+          heads = sorted(found("revision") - found("down_revision"))
+          if len(heads) != 1:
+              raise SystemExit(f"expected exactly one Alembic head in migrations/versions, found {heads}")
+          print(heads[0])
+          PY
+          )"
           {
             echo "git_sha=$(git rev-parse HEAD)"
             echo "commit_ts=$(git log -1 --format=%cI)"
-            # No migrations exist yet; the step that adds alembic switches this to the real head revision.
-            echo "alembic_head=none"
+            echo "alembic_head=${alembic_head}"
           } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build the amd64 image as a docker tarball (every image run; e2e artifact, D163)
@@ -386,11 +405,30 @@ jobs:
       - id: meta
         name: Build metadata (GIT_SHA, COMMIT_TS, ALEMBIC_HEAD)
         run: |
+          # The single Alembic head of migrations/versions (revision not named as any down_revision), parsed from the
+          # sources so the label needs no Python environment; more than one head fails the build.
+          alembic_head="$(python3 - <<'PY'
+          import pathlib
+          import re
+
+          texts = [path.read_text() for path in pathlib.Path("migrations/versions").glob("*.py")]
+
+
+          def found(name):
+              pattern = rf"^{name}\b[^=]*=\s*[\"']([^\"']+)[\"']"
+              return {match for text in texts for match in re.findall(pattern, text, re.M)}
+
+
+          heads = sorted(found("revision") - found("down_revision"))
+          if len(heads) != 1:
+              raise SystemExit(f"expected exactly one Alembic head in migrations/versions, found {heads}")
+          print(heads[0])
+          PY
+          )"
           {
             echo "git_sha=$(git rev-parse HEAD)"
             echo "commit_ts=$(git log -1 --format=%cI)"
-            # No migrations exist yet; the step that adds alembic switches this to the real head revision.
-            echo "alembic_head=none"
+            echo "alembic_head=${alembic_head}"
           } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: runner.arch != 'ARM64'
@@ -662,9 +700,27 @@ jobs:
         env:
           DIGEST: ${{ steps.list.outputs.digest }}
         run: |
-          # No migrations exist yet; the step that adds alembic switches this to the real head revision.
+          # Same head computation as the image jobs' build metadata (org.overland.alembic-head).
+          alembic_head="$(python3 - <<'PY'
+          import pathlib
+          import re
+
+          texts = [path.read_text() for path in pathlib.Path("migrations/versions").glob("*.py")]
+
+
+          def found(name):
+              pattern = rf"^{name}\b[^=]*=\s*[\"']([^\"']+)[\"']"
+              return {match for text in texts for match in re.findall(pattern, text, re.M)}
+
+
+          heads = sorted(found("revision") - found("down_revision"))
+          if len(heads) != 1:
+              raise SystemExit(f"expected exactly one Alembic head in migrations/versions, found {heads}")
+          print(heads[0])
+          PY
+          )"
           jq -n --arg git_sha "$GITHUB_SHA" --arg commit_ts "$(git log -1 --format=%cI)" --arg digest "$DIGEST" \
-            --arg alembic_head none --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg alembic_head "$alembic_head" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{git_sha: $git_sha, commit_ts: $commit_ts, digest: $digest, alembic_head: $alembic_head, created: $created,
               provenance: "buildx"}' \
             > "$RUNNER_TEMP/release.json"
