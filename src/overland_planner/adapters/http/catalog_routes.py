@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -41,13 +42,18 @@ _TRACK_UPLOAD_BODY: dict[str, Any] = {
 }
 
 
-def catalog_routes(
-    catalog: ProjectService,
-    imports: TrackImportService,
-    places: PoiService,
-    anchors: AnchorService,
-    limits: UploadLimits,
-) -> APIRouter:
+@dataclass(frozen=True)
+class CatalogUseCases:
+    """The catalog application services behind the /api/projects routes."""
+
+    projects: ProjectService
+    imports: TrackImportService
+    places: PoiService
+    anchors: AnchorService
+
+
+def catalog_routes(use_cases: CatalogUseCases, limits: UploadLimits) -> APIRouter:
+    catalog, imports, places, anchors = use_cases.projects, use_cases.imports, use_cases.places, use_cases.anchors
     router = APIRouter(prefix="/api/projects", responses=ERROR_RESPONSES)
 
     @router.post("", status_code=201)

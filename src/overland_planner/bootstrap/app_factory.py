@@ -34,7 +34,7 @@ from overland_planner.adapters.files.local_file_store import LocalFileStore
 from overland_planner.adapters.files.proc_mount_table import ProcMountTable
 from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
-from overland_planner.adapters.http.catalog_routes import catalog_routes
+from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.upload_limits import UploadLimits
@@ -80,6 +80,11 @@ class _Wiring:
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
+        self._upload_limits = UploadLimits(
+            file_mb=settings.max_upload_file_mb,
+            request_mb=settings.max_upload_request_mb,
+            files=settings.max_upload_files,
+        )
 
     def probe_registry(self) -> ProbeRegistry:
         """Every component in wiring order: the database probe migrates it before anything else touches it."""
@@ -97,24 +102,22 @@ class _Wiring:
         return registry
 
     def catalog_router(self) -> APIRouter:
-        settings = self._settings
-
         def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
             return SqlAlchemyCatalogUnitOfWork(self._database)
 
-        return catalog_routes(
-            ProjectService(catalog_unit_of_work, self._clock),
-            TrackImportService(
+        use_cases = CatalogUseCases(
+            projects=ProjectService(catalog_unit_of_work, self._clock),
+            imports=TrackImportService(
                 catalog_unit_of_work,
                 self._gpx_parser,
                 self._file_store,
                 self._event_log,
-                file_limit_mb=settings.max_upload_file_mb,
+                file_limit_mb=self._upload_limits.file_mb,
             ),
-            PoiService(catalog_unit_of_work),
-            AnchorService(catalog_unit_of_work),
-            UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
+            places=PoiService(catalog_unit_of_work),
+            anchors=AnchorService(catalog_unit_of_work),
         )
+        return catalog_routes(use_cases, self._upload_limits)
 
 
 def create_app(

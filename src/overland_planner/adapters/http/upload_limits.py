@@ -59,7 +59,7 @@ class _Part:
 
 
 class _PartHeaders:
-    """Accumulates one part's header fields (python-multipart delivers them in pieces); keeps Content-Disposition."""
+    """python-multipart header callbacks: a header arrives in pieces; only Content-Disposition is kept."""
 
     def __init__(self) -> None:
         self._name = b""
@@ -69,13 +69,13 @@ class _PartHeaders:
     def restart(self) -> None:
         self.disposition = b""
 
-    def add_name(self, piece: bytes) -> None:
-        self._name += piece
+    def on_header_field(self, data: bytes, start: int, end: int) -> None:
+        self._name += data[start:end]
 
-    def add_value(self, piece: bytes) -> None:
-        self._value += piece
+    def on_header_value(self, data: bytes, start: int, end: int) -> None:
+        self._value += data[start:end]
 
-    def end_header(self) -> None:
+    def on_header_end(self) -> None:
         if self._name.lower() == b"content-disposition":
             self.disposition = self._value
         self._name = b""
@@ -96,9 +96,9 @@ class _TrackFileCollector:
     def callbacks(self) -> dict[str, object]:
         return {
             "on_part_begin": self._on_part_begin,
-            "on_header_field": self._on_header_field,
-            "on_header_value": self._on_header_value,
-            "on_header_end": self._on_header_end,
+            "on_header_field": self._headers.on_header_field,
+            "on_header_value": self._headers.on_header_value,
+            "on_header_end": self._headers.on_header_end,
             "on_headers_finished": self._on_headers_finished,
             "on_part_data": self._on_part_data,
             "on_part_end": self._on_part_end,
@@ -107,15 +107,6 @@ class _TrackFileCollector:
     def _on_part_begin(self) -> None:
         self._part = _Part()
         self._headers.restart()
-
-    def _on_header_field(self, data: bytes, start: int, end: int) -> None:
-        self._headers.add_name(data[start:end])
-
-    def _on_header_value(self, data: bytes, start: int, end: int) -> None:
-        self._headers.add_value(data[start:end])
-
-    def _on_header_end(self) -> None:
-        self._headers.end_header()
 
     def _on_headers_finished(self) -> None:
         _, options = parse_options_header(self._headers.disposition)
