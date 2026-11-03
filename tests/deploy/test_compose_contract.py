@@ -121,13 +121,13 @@ def test_env_example_documents_every_setting_and_binds_loopback() -> None:
     compose_variables = {m["name"] for path in (COMPOSE, COMPOSE_CI) for m in INTERPOLATION.finditer(path.read_text())}
 
     assert example.get("PLANNER_BIND") == "127.0.0.1"
-    assert sorted((planner_settings | compose_variables) - {"GITHUB_SHA"} - set(example)) == []
+    assert sorted((planner_settings | compose_variables) - set(example)) == []
 
 
 def test_ci_override_runs_the_loaded_image_on_loopback_only() -> None:
     planner = _load(COMPOSE_CI)["services"]["planner"]
 
-    assert planner["image"] == "overland-planner:ci-${GITHUB_SHA:?GITHUB_SHA names the loaded CI image}"
+    assert "image" not in planner, "compose.yaml is interpolated first: the CI image comes from PLANNER_IMAGE"
     assert planner["pull_policy"] == "never"
     assert planner["ports"] == ["127.0.0.1:8080:8080"]
     assert re.search(r"^\s*ports:\s*!override\b", COMPOSE_CI.read_text(), re.MULTILINE), "replaces, not appends"

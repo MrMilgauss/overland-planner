@@ -1,11 +1,12 @@
 # CI job 7 override (step 02-04): the image loaded from the job 5 artifact, never pulled, on loopback only.
 #
-#   PLANNER_BIND=127.0.0.1 docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait
+#   PLANNER_BIND=127.0.0.1 PLANNER_IMAGE=overland-planner:ci-$GITHUB_SHA \
+#     docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait
 #
-# PLANNER_BIND must still be set (the base file fails closed while it is read); the ports are then replaced here.
+# compose.yaml is interpolated before this file is merged, so PLANNER_BIND and PLANNER_IMAGE must be set in the
+# environment (job 7 sets both at job level); the ports are then replaced here.
 services:
   planner:
-    image: overland-planner:ci-${GITHUB_SHA:?GITHUB_SHA names the loaded CI image}
     pull_policy: never
     ports: !override
       - "127.0.0.1:8080:8080"

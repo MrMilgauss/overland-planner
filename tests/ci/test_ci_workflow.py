@@ -396,10 +396,34 @@ def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     selection = job["steps"][_index(job, "pytest-selection.sh")]
 
     assert "'compose or security'" in selection["run"] or '"compose or security"' in selection["run"]
-    assert selection["env"]["PLANNER_IMAGE"] == "overland-planner:ci-${{ github.sha }}"
+    assert job["env"]["PLANNER_IMAGE"] == "overland-planner:ci-${{ github.sha }}", "the image loaded from job 5"
     assert not selection.get("continue-on-error"), "the packaged-planner password check blocks publish"
     script = PYTEST_SELECTION.read_text()
     assert "--run-external" in script and "$PENDING_FLAGS" in script
+
+
+FAIL_CLOSED_COMPOSE_VARIABLES = ("PLANNER_IMAGE", "PLANNER_BIND")  # D174: compose.yaml interpolates both with :?
+
+
+def test_every_compose_run_sets_the_fail_closed_variables_in_its_env() -> None:
+    # Compose interpolates deploy/compose.yaml before any override file, so the variables must be in the step's
+    # environment (workflow, job or step `env:`), not left to an override or an inline shell prefix.
+    compose_runs = 0
+    missing = []
+    for path in (WORKFLOW, WEEKLY):
+        workflow = yaml.safe_load(path.read_text())
+        for name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                if "docker compose -f deploy/compose.yaml" not in step.get("run", ""):
+                    continue
+                compose_runs += 1
+                env = workflow.get("env", {}) | job.get("env", {}) | step.get("env", {})
+                gaps = [v for v in FAIL_CLOSED_COMPOSE_VARIABLES if not str(env.get(v, "")).strip()]
+                if gaps:
+                    missing.append(f"{path.name}:{name}:{step.get('name', step['run'][:40])} lacks {gaps}")
+
+    assert compose_runs >= 6, "job 7 and the weekly compose-stack job each start, log and stop the stack"
+    assert missing == []
 
 
 def _fake_uv(tmp_path: Path, exit_code: int) -> dict[str, str]:
@@ -612,6 +636,7 @@ def test_weekly_workflow_rescans_audits_and_reports_without_gating_deploys() -> 
     deep = [job for job in weekly["jobs"].values() if job.get("env", {}).get("HYPOTHESIS_PROFILE") == "deep"]
     stack = [job for job in weekly["jobs"].values() if any("deploy/compose.yaml up -d --wait" in s for s in _runs(job))]
     assert len(stack) == 1, "one weekly job runs main on the compose stack"
+    assert stack[0]["env"]["PLANNER_IMAGE"] == f"{weekly['env']['IMAGE']}:main", "the stack runs the pulled main"
     zap = [s for s in stack[0]["steps"] if "zap-baseline.py" in s.get("run", "")]
     assert len(zap) == 1 and zap[0]["continue-on-error"] is True, "the ZAP baseline never blocks"
     assert re.search(r"ZAP_IMAGE: \S+@sha256:[0-9a-f]{64}", text), "ZAP image pinned by digest"

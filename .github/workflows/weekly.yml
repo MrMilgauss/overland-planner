@@ -132,7 +132,9 @@ jobs:
       contents: read
       packages: read
     env:
+      # compose.yaml fails closed without both (D174); job env cannot read the workflow `env`, hence IMAGE spelled out.
       PLANNER_BIND: 127.0.0.1
+      PLANNER_IMAGE: ghcr.io/mrmilgauss/overland-planner:main
       PLANNER_URL: http://127.0.0.1:8080
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,7 +146,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Start main on the compose stack (loopback)
-        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 180
+        run: docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 180
       - name: ZAP baseline against the planner (non-blocking)
         continue-on-error: true
         run: |
@@ -170,10 +172,10 @@ jobs:
         run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test --project=firefox --project=webkit-desktop
       - name: Planner logs on failure
         if: failure()
-        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml logs planner || true
+        run: docker compose -f deploy/compose.yaml logs planner || true
       - name: Stop the compose stack and remove its volume
         if: always()
-        run: PLANNER_IMAGE="${IMAGE}:main" docker compose -f deploy/compose.yaml down -v || true
+        run: docker compose -f deploy/compose.yaml down -v || true
 
   storage:
     name: Package and artifact storage report

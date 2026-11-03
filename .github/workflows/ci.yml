@@ -526,8 +526,10 @@ jobs:
       actions: write # delete the image artifact after loading it (D169)
     env:
       PLANNER_URL: http://127.0.0.1:8080
-      # compose.yaml fails closed without PLANNER_BIND (D174); compose.ci.yaml then pins the ports to loopback.
+      # compose.yaml fails closed without PLANNER_BIND and PLANNER_IMAGE (D174) and is interpolated before any override,
+      # so both are job-level for every compose run; compose.ci.yaml then pins the ports to loopback and never pulls.
       PLANNER_BIND: 127.0.0.1
+      PLANNER_IMAGE: overland-planner:ci-${{ github.sha }}
       PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
       DATA_DIR: ${{ github.workspace }}/.data/ci/data
     steps:
@@ -581,8 +583,6 @@ jobs:
       # Includes tests/deploy: compose fails closed without PLANNER_BIND, and the hardened container writes only
       # /data and /tmp (D173).
       - name: pytest --run-external -m "compose or security" (D170)
-        env:
-          PLANNER_IMAGE: overland-planner:ci-${{ github.sha }}
         run: .github/scripts/pytest-selection.sh "compose or security"
 
   mutation:
