@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from overland_planner.application.catalog.project_service import ProjectNotFoundError
+from overland_planner.application.catalog.project_service import existing_project
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.poi import PoiItem
@@ -23,9 +23,7 @@ class PoiService:
         """Raises `PoiNameRequiredError`, `CoordinateOutOfRangeError` or `ProjectNotFoundError`; nothing is added."""
         poi = PoiItem.named(uuid.uuid4().hex, project_id, name, Coordinate(latitude, longitude))
         with self._unit_of_work() as uow:
-            project = uow.projects.get(project_id)
-            if project is None:
-                raise ProjectNotFoundError(project_id)
+            project = existing_project(uow, project_id)
             uow.items.add(poi)
             uow.projects.update(project.revised())
             uow.commit()

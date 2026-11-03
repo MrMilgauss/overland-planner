@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.files.local_file_store import LocalFileStore
@@ -45,7 +45,7 @@ from overland_planner.adapters.persistence.migrator import AlembicMigrator, Data
 from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
-from overland_planner.application.platform.facade import DataDirPersistence, log_reason
+from overland_planner.application.platform.facade import DataDirPersistence, HealthService, log_reason
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
@@ -76,12 +76,7 @@ def create_app(
     source = os.environ if environ is None else environ
     ports = external or ExternalPorts()
     clock = ports.clock or SystemClock()
-    # The refusal of invalid settings is logged too, so the version cannot wait for validated settings.
-    event_log: EventLog = StructlogEventLog(
-        clock,
-        app_version=source.get("PLANNER_GIT_SHA") or "dev",
-        secret=source.get("PLANNER_BASIC_AUTH_PASSWORD"),
-    )
+    event_log = _event_log(source, clock)
     gate = StartupGate(event_log)
     try:
         settings = Settings.from_environ(source)
@@ -103,36 +98,16 @@ def create_app(
     registry.register("gpx_parser", gpx_parser)
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = gate.probe_in_order(registry.components())
-    for name, result in health.detail().components.items():
-        if result.outcome.startswith("degraded"):
-            event_log.info("health.startup.degraded", component=name, reason=log_reason(result.reason))
+    _log_degraded(health, event_log)
 
     logging.getLogger("uvicorn.access").disabled = True
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)
     install_error_handlers(app)  # the {code, message} envelope for every non-2xx answer under /api (brief §5)
     app.include_router(platform_routes(health))
 
-    def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
-        return SqlAlchemyCatalogUnitOfWork(database)
-
-    app.include_router(
-        catalog_routes(
-            ProjectService(catalog_unit_of_work, clock),
-            TrackImportService(
-                catalog_unit_of_work, gpx_parser, file_store, event_log, file_limit_mb=settings.max_upload_file_mb
-            ),
-            PoiService(catalog_unit_of_work),
-            AnchorService(catalog_unit_of_work),
-            UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
-        )
-    )
+    app.include_router(_catalog_router(settings, database, clock, gpx_parser, file_store, event_log))
     mount_web_page(app, settings.web_dist_dir)
-    auth_enabled = settings.basic_auth_user is not None and settings.basic_auth_password is not None
-    if auth_enabled and settings.basic_auth_user and settings.basic_auth_password:
-        credentials = BasicAuthCredentials(settings.basic_auth_user, settings.basic_auth_password.get_secret_value())
-        app.add_middleware(BasicAuthMiddleware, credentials=credentials)
-    else:
-        event_log.warning("security.auth.disabled", reason="PLANNER_BASIC_AUTH_USER and _PASSWORD are not set")
+    auth_enabled = _guard_with_password(app, settings, event_log)
     event_log.info(
         "app.started",
         routing_provider=settings.routing_provider,
@@ -142,3 +117,51 @@ def create_app(
         auth_enabled=auth_enabled,
     )
     return app
+
+
+def _event_log(source: Mapping[str, str], clock: Clock) -> EventLog:
+    # The refusal of invalid settings is logged too, so the version cannot wait for validated settings.
+    return StructlogEventLog(
+        clock,
+        app_version=source.get("PLANNER_GIT_SHA") or "dev",
+        secret=source.get("PLANNER_BASIC_AUTH_PASSWORD"),
+    )
+
+
+def _log_degraded(health: HealthService, event_log: EventLog) -> None:
+    """One `health.startup.degraded` line per degraded component, before `app.started`."""
+    for name, result in health.detail().components.items():
+        if result.outcome.startswith("degraded"):
+            event_log.info("health.startup.degraded", component=name, reason=log_reason(result.reason))
+
+
+def _catalog_router(
+    settings: Settings,
+    database: SqliteDatabase,
+    clock: Clock,
+    gpx_parser: GpxpyParser,
+    file_store: LocalFileStore,
+    event_log: EventLog,
+) -> APIRouter:
+    def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
+        return SqlAlchemyCatalogUnitOfWork(database)
+
+    return catalog_routes(
+        ProjectService(catalog_unit_of_work, clock),
+        TrackImportService(
+            catalog_unit_of_work, gpx_parser, file_store, event_log, file_limit_mb=settings.max_upload_file_mb
+        ),
+        PoiService(catalog_unit_of_work),
+        AnchorService(catalog_unit_of_work),
+        UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
+    )
+
+
+def _guard_with_password(app: FastAPI, settings: Settings, event_log: EventLog) -> bool:
+    """Put the shared household password in front of the app when both keys are set; True iff it is on."""
+    user, password = settings.basic_auth_user, settings.basic_auth_password
+    if user is None or password is None:
+        event_log.warning("security.auth.disabled", reason="PLANNER_BASIC_AUTH_USER and _PASSWORD are not set")
+        return False
+    app.add_middleware(BasicAuthMiddleware, credentials=BasicAuthCredentials(user, password.get_secret_value()))
+    return True

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -19,20 +17,13 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.fakes import FakeClock, FakeMountTable
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
+from tests.common.workspace import workspace_data_dir
 
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    for path in (folder, *folder.rglob("*")):
-        if path.is_dir():
-            path.chmod(0o755)
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def test_the_round_trip_succeeds_and_leaves_no_probe_file(data_dir: Path) -> None:

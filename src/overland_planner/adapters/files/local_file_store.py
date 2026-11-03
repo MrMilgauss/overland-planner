@@ -36,8 +36,7 @@ class LocalFileStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._write_synced(written, content)
-            os.replace(written, target)
-            _fsync_folder(target.parent)
+            self._rename_synced(written, target)
         finally:
             written.unlink(missing_ok=True)
 
@@ -72,9 +71,11 @@ class LocalFileStore:
             os.fsync(handle.fileno())
         return True
 
-    def _rename_synced(self, source: Path, target: Path) -> bool:
+    @staticmethod
+    def _rename_synced(source: Path, target: Path) -> bool:
+        """Rename into place and fsync the target's folder, so the rename survives a power cut."""
         os.replace(source, target)
-        _fsync_folder(self._scratch)
+        _fsync_folder(target.parent)
         return True
 
 

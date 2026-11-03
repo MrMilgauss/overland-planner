@@ -72,28 +72,32 @@ class ItemResource(BaseModel):
 
     @classmethod
     def of(cls, item: CatalogItem) -> ItemResource:
-        if not isinstance(item, TrackItem):
-            return cls(
-                id=item.id,
-                type=item.type,
-                name=item.name,
-                included=item.included,
-                anchor=item.anchor,
-                location=PointResource.of(item.location),
-                entry=None,
-                exit=None,
-                length_m=None,
-            )
+        if isinstance(item, TrackItem):
+            entry, exit_ = PointResource.of(item.entry), PointResource.of(item.exit)
+            return cls._with(item, entry=entry, exit=exit_, length_m=item.length_m)
+        return cls._with(item, location=PointResource.of(item.location))
+
+    @classmethod
+    def _with(
+        cls,
+        item: CatalogItem,
+        *,
+        location: PointResource | None = None,
+        entry: PointResource | None = None,
+        exit: PointResource | None = None,
+        length_m: float | None = None,
+    ) -> ItemResource:
+        """The fields every item has, plus the type-specific ones (null when the type has none)."""
         return cls(
             id=item.id,
             type=item.type,
             name=item.name,
             included=item.included,
             anchor=item.anchor,
-            location=None,
-            entry=PointResource.of(item.entry),
-            exit=PointResource.of(item.exit),
-            length_m=item.length_m,
+            location=location,
+            entry=entry,
+            exit=exit,
+            length_m=length_m,
         )
 
 

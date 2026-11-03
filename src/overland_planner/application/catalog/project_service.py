@@ -16,6 +16,14 @@ class ProjectNotFoundError(LookupError):
         super().__init__(f"No project with id {project_id}")
 
 
+def existing_project(uow: CatalogUnitOfWork, project_id: str) -> Project:
+    """The project in this unit of work; raises `ProjectNotFoundError` when there is none."""
+    project = uow.projects.get(project_id)
+    if project is None:
+        raise ProjectNotFoundError(project_id)
+    return project
+
+
 class ProjectService:
     def __init__(self, unit_of_work: Callable[[], CatalogUnitOfWork], clock: Clock) -> None:
         self._unit_of_work = unit_of_work
@@ -35,15 +43,10 @@ class ProjectService:
 
     def open(self, project_id: str) -> Project:
         with self._unit_of_work() as uow:
-            project = uow.projects.get(project_id)
-        if project is None:
-            raise ProjectNotFoundError(project_id)
-        return project
+            return existing_project(uow, project_id)
 
     def items(self, project_id: str) -> Sequence[CatalogItem]:
         """The open project's items in the order they were added, each with its anchor; empty for a new project."""
         with self._unit_of_work() as uow:
-            project = uow.projects.get(project_id)
-            if project is None:
-                raise ProjectNotFoundError(project_id)
+            project = existing_project(uow, project_id)
             return project.anchors.marked(uow.items.list(project_id))

@@ -121,24 +121,39 @@ class _TrackFileCollector:
 
 async def read_track_files(request: Request, limits: UploadLimits) -> list[TrackFile]:
     """The files of a multipart upload. Raises `UploadTooLargeError` or `UploadFormError`."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > limits.request_bytes:
-        raise limits.request_too_large()
-    content_type, params = parse_options_header(request.headers.get("content-type", ""))
-    if content_type != b"multipart/form-data" or not params.get(b"boundary"):
-        raise UploadFormError("Invalid request - files: the upload must be a multipart form")
+    _refuse_declared_oversize(request, limits)
     collector = _TrackFileCollector(limits)
-    parser = MultipartParser(params[b"boundary"], collector.callbacks())  # type: ignore[arg-type]
-    received = 0
+    parser = MultipartParser(_multipart_boundary(request), collector.callbacks())  # type: ignore[arg-type]
     try:
-        async for chunk in request.stream():
-            received += len(chunk)
-            if received > limits.request_bytes:
-                raise limits.request_too_large()
-            parser.write(chunk)
-        parser.finalize()
+        await _feed_bounded(parser, request, limits)
     except FormParserError:
         raise UploadFormError("Invalid request - files: the upload is not a valid multipart form") from None
     if not collector.files:
         raise UploadFormError("Invalid request - files: Field required")
     return collector.files
+
+
+def _refuse_declared_oversize(request: Request, limits: UploadLimits) -> None:
+    """Refuse on Content-Length alone, before a byte of the body is read."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limits.request_bytes:
+        raise limits.request_too_large()
+
+
+def _multipart_boundary(request: Request) -> bytes:
+    content_type, params = parse_options_header(request.headers.get("content-type", ""))
+    boundary = params.get(b"boundary")
+    if content_type != b"multipart/form-data" or not boundary:
+        raise UploadFormError("Invalid request - files: the upload must be a multipart form")
+    return boundary
+
+
+async def _feed_bounded(parser: MultipartParser, request: Request, limits: UploadLimits) -> None:
+    """Stream the body into the parser, stopping at the first chunk that takes it above the request cap."""
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > limits.request_bytes:
+            raise limits.request_too_large()
+        parser.write(chunk)
+    parser.finalize()

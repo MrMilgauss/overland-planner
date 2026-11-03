@@ -6,27 +6,21 @@ Integration level: single examples on the real filesystem, under the workspace a
 from __future__ import annotations
 
 import hashlib
-import os
-import shutil
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from overland_planner.adapters.files.local_file_store import LocalFileStore
+from tests.common.workspace import workspace_data_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 GPX = b'<?xml version="1.0"?>\n<gpx version="1.1" creator="t"><trk><name>Assietta</name></trk></gpx>\r\n'
 
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def _files(folder: Path) -> list[str]:

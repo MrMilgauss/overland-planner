@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import tempfile
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -24,8 +21,8 @@ from fastapi.testclient import TestClient
 
 from overland_planner.bootstrap.app_factory import create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
+from tests.common.workspace import workspace_data_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 MIB = 1024 * 1024
 CAPS = {"MAX_UPLOAD_FILE_MB": "1", "MAX_UPLOAD_REQUEST_MB": "2", "MAX_UPLOAD_FILES": "2"}
 GPX = (
@@ -38,11 +35,8 @@ GPX = (
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
     """A workspace data folder, never the OS temp folder (ADR-011 D121)."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 @pytest.fixture

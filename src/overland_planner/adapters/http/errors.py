@@ -20,10 +20,33 @@ from overland_planner.domain.catalog.poi import PoiNameRequiredError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 
 _CODE_BY_STATUS = {401: "unauthorized", 404: "not_found", 413: "upload_too_large", 422: "validation_error"}
+_NOT_FOUND = 404
+_NO_SUCH_OPERATION = 405  # no such operation on this path: the same answer as an unknown path
+_TOO_LARGE = 413
+_INVALID = 422
+
+# Refusals answered with their own message as the reason.
+_REFUSED_WITH_REASON: dict[type[Exception], int] = {
+    ProjectNameRequiredError: _INVALID,
+    PoiNameRequiredError: _INVALID,
+    CoordinateOutOfRangeError: _INVALID,
+    AnchorNotAPlaceError: _INVALID,
+    UploadFormError: _INVALID,
+    UploadTooLargeError: _TOO_LARGE,
+}
+# Unknown ids: a fixed message that never echoes the id.
+_NOT_FOUND_MESSAGES: dict[type[Exception], str] = {
+    ProjectNotFoundError: "Project not found",
+    ItemNotFoundError: "Item not found",
+}
 
 
 def envelope(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse({"code": code, "message": message}, status_code=status)
+
+
+def _coded(status: int, message: str) -> JSONResponse:
+    return envelope(status, _CODE_BY_STATUS[status], message)
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -31,42 +54,38 @@ def install_error_handlers(app: FastAPI) -> None:
     async def on_http_error(request: Request, error: HTTPException) -> Response:
         if not request.url.path.startswith("/api"):
             return await http_exception_handler(request, error)
-        if error.status_code == 405:  # no such operation on this path: the same answer as an unknown path
-            return envelope(404, "not_found", "Not found")
+        if error.status_code == _NO_SUCH_OPERATION:
+            return _coded(_NOT_FOUND, "Not found")
         return envelope(error.status_code, _CODE_BY_STATUS.get(error.status_code, "not_found"), str(error.detail))
 
     @app.exception_handler(RequestValidationError)
     async def on_invalid_request(request: Request, error: RequestValidationError) -> Response:
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in e['loc'] if part != 'body')}: {e['msg']}" for e in error.errors()
-        )
-        return envelope(422, "validation_error", f"Invalid request - {problems}")
-
-    @app.exception_handler(ProjectNameRequiredError)
-    @app.exception_handler(PoiNameRequiredError)
-    @app.exception_handler(CoordinateOutOfRangeError)
-    @app.exception_handler(AnchorNotAPlaceError)
-    async def on_refused_value(request: Request, error: ValueError) -> Response:
-        return envelope(422, "validation_error", str(error))
+        return _coded(_INVALID, f"Invalid request - {_problems(error)}")
 
     @app.exception_handler(TrackFilesRefusedError)
     async def on_refused_track_files(request: Request, error: TrackFilesRefusedError) -> Response:
-        if error.too_large:
-            return envelope(413, "upload_too_large", str(error))
-        return envelope(422, "validation_error", str(error))
+        return _coded(_TOO_LARGE if error.too_large else _INVALID, str(error))
 
-    @app.exception_handler(UploadTooLargeError)
-    async def on_upload_too_large(request: Request, error: UploadTooLargeError) -> Response:
-        return envelope(413, "upload_too_large", str(error))
+    async def on_refusal(request: Request, error: Exception) -> Response:
+        return _coded(_registered(_REFUSED_WITH_REASON, error), str(error))
 
-    @app.exception_handler(UploadFormError)
-    async def on_invalid_upload_form(request: Request, error: UploadFormError) -> Response:
-        return envelope(422, "validation_error", str(error))
+    async def on_unknown_id(request: Request, error: Exception) -> Response:
+        return _coded(_NOT_FOUND, _registered(_NOT_FOUND_MESSAGES, error))
 
-    @app.exception_handler(ProjectNotFoundError)
-    async def on_unknown_project(request: Request, error: ProjectNotFoundError) -> Response:
-        return envelope(404, "not_found", "Project not found")
+    for refusal in _REFUSED_WITH_REASON:
+        app.add_exception_handler(refusal, on_refusal)
+    for unknown in _NOT_FOUND_MESSAGES:
+        app.add_exception_handler(unknown, on_unknown_id)
 
-    @app.exception_handler(ItemNotFoundError)
-    async def on_unknown_item(request: Request, error: ItemNotFoundError) -> Response:
-        return envelope(404, "not_found", "Item not found")
+
+def _registered[T](table: dict[type[Exception], T], error: Exception) -> T:
+    """The entry of the error's class, or of the nearest registered base class (Starlette's handler lookup order)."""
+    return next(table[cls] for cls in type(error).__mro__ if cls in table)
+
+
+def _problems(error: RequestValidationError) -> str:
+    """`field: message` per problem, the `body` prefix of the location left out."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in problem['loc'] if part != 'body')}: {problem['msg']}"
+        for problem in error.errors()
+    )

@@ -7,9 +7,7 @@ Integration level: single examples on a real SQLite file in a workspace data fol
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -20,6 +18,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from overland_planner.adapters.persistence.database import SqliteDatabase, database_file
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
@@ -28,11 +27,9 @@ HEAD_TABLES = {"projects", "items", "tracks", "pois"}
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    (folder / "db").mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        (folder / "db").mkdir()
+        yield folder
 
 
 def _config(url: str | None = None, extra_versions: Path | None = None) -> Config:

@@ -7,9 +7,6 @@ the aggregation invariants live in tests/unit/application/platform/test_health_s
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -20,6 +17,7 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.common.fakes import FakeClock, FakeMountTable
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILT_WEB_PAGE = REPO_ROOT / "web" / "dist" / "index.html"
@@ -29,11 +27,8 @@ NOT_PERSISTENT = "Data directory is not persistent - projects would be lost on r
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
     """A workspace data folder, never the OS temp folder (ADR-011 D121)."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 class _UnhealthyClock(FakeClock):

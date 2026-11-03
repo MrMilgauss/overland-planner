@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from overland_planner.application.catalog.project_service import ProjectNotFoundError
+from overland_planner.application.catalog.project_service import existing_project
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
 from overland_planner.domain.catalog.anchors import Anchors
 from overland_planner.domain.catalog.item import CatalogItem
@@ -27,9 +27,7 @@ class AnchorService:
     def set(self, project_id: str, start_item_id: str, end_item_id: str) -> Project:
         """Raises `ProjectNotFoundError`, `ItemNotFoundError` or `AnchorNotAPlaceError`; nothing changes."""
         with self._unit_of_work() as uow:
-            project = uow.projects.get(project_id)
-            if project is None:
-                raise ProjectNotFoundError(project_id)
+            project = existing_project(uow, project_id)
             start, end = (_found(uow.items.get(item_id), item_id) for item_id in (start_item_id, end_item_id))
             anchored = project.anchored(Anchors.chosen(project_id, start, end))
             uow.projects.update(anchored)

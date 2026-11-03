@@ -8,11 +8,9 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
 import time
-import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +21,7 @@ import pytest
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.fakes import FakeClock
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FACTORY = "overland_planner.bootstrap.app_factory:create_app"
@@ -31,11 +30,8 @@ FACTORY = "overland_planner.bootstrap.app_factory:create_app"
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
     """A fresh DATA_DIR under the workspace, never the OS temp folder (D182), removed after the test."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def _json_lines(text: str) -> list[dict[str, Any]]:

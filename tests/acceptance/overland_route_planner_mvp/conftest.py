@@ -19,22 +19,16 @@ from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import *  #
 from tests.acceptance.overland_route_planner_mvp.steps.platform_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
 from tests.common.fakes import FakeClock, FakeMountTable
+from tests.common.workspace import workspace_data_dir
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    """The planner's data folder, under the workspace and never under the OS temp folder (ADR-011 D121, review H-02):
-    on many Linux hosts /tmp is tmpfs, which the persistence probe rightly reports as not persistent. Root: env
-    PLANNER_TEST_WORKSPACE, else <repo>/.data (git-ignored; in CI the checkout under $GITHUB_WORKSPACE)."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "acceptance"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    folder.chmod(0o755)
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    """The planner's data folder, under the workspace, never the OS temp folder (`tests/common/workspace.py`)."""
+    with workspace_data_dir("acceptance") as folder:
+        yield folder
 
 
 @pytest.fixture

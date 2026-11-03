@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from overland_planner.application.catalog.project_service import ProjectNotFoundError
+from overland_planner.application.catalog.project_service import existing_project
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.file_store import FileStore
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
@@ -81,9 +81,7 @@ class TrackImportService:
         self._refuse_oversized(uploads)
         accepted = self._parse_all(uploads)
         with self._unit_of_work() as uow:
-            project = uow.projects.get(project_id)
-            if project is None:
-                raise ProjectNotFoundError(project_id)
+            project = existing_project(uow, project_id)
             items = [self._keep_files(project_id, upload) for upload in accepted]
             for item in items:
                 uow.items.add(item)
@@ -128,7 +126,7 @@ class TrackImportService:
         if isinstance(stats, UnusableTrack):  # the parser already refuses these; never trust it silently
             raise TrackFilesRefusedError([f"{upload.file.name} has no usable track"])
         track_id = uuid.uuid4().hex
-        original_sha256 = hashlib.sha256(upload.file.content).hexdigest()
+        original_sha256 = _sha256(upload.file.content)
         canonical = canonical_points_file(upload.track.points)
         self._files.keep_original(original_sha256, upload.file.content)
         self._files.keep_canonical_points(track_id, FIRST_DIRECTION_VERSION, canonical)
@@ -138,13 +136,17 @@ class TrackImportService:
             name=upload.track.name,
             description=upload.track.description,
             original_sha256=original_sha256,
-            canonical_sha256=hashlib.sha256(canonical).hexdigest(),
+            canonical_sha256=_sha256(canonical),
             direction_version=FIRST_DIRECTION_VERSION,
             point_count=len(upload.track.points),
             entry=stats.entry.coordinate,
             exit=stats.exit.coordinate,
             length_m=stats.length_m,
         )
+
+
+def _sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
 
 
 def canonical_points_file(points: Sequence[TrackPoint]) -> bytes:

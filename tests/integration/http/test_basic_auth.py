@@ -7,8 +7,6 @@ the real one); the credential invariants live in tests/unit/adapters/http/test_b
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,6 +18,7 @@ from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.common.fakes import FakeClock
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WEB_ASSETS = REPO_ROOT / "web" / "dist" / "assets"
@@ -29,11 +28,8 @@ PROJECT = "Alpi Occidentali giugno 2027"
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
     """A workspace data folder, never the OS temp folder (ADR-011 D121)."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def test_with_the_password_on_everything_but_healthz_asks_to_log_in_and_the_password_is_never_logged(

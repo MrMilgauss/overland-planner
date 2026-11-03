@@ -10,10 +10,8 @@ at-head database gets no copy.
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import sqlite3
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -23,6 +21,7 @@ from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.application.ports.probe import ProbeResult
 from tests.common.fakes import FakeClock
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS = REPO_ROOT / "migrations"
@@ -45,11 +44,8 @@ def downgrade() -> None:
 
 @pytest.fixture
 def workspace() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12]
-    (folder / "data").mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder, ignore_errors=True)
+    with workspace_data_dir("integration") as data:
+        yield data.parent
 
 
 def _probe(data_dir: Path, migrations: Path = MIGRATIONS) -> ProbeResult:

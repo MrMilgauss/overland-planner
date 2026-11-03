@@ -12,13 +12,10 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import shutil
 import string
 import unicodedata
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,8 +29,8 @@ from overland_planner.adapters.logging.structlog_event_log import StructlogEvent
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to, unchanged
+from tests.common.workspace import workspace_data_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 UNIVERSE = {"projects.names", "project.items"}
 FIXED_PROJECT = "Alpi Occidentali giugno 2027"
 
@@ -45,13 +42,12 @@ passwords = st.text(_char, min_size=1, max_size=16)
 @pytest.fixture(scope="module")
 def planner() -> Iterator[tuple[FastAPI, str]]:
     """The real planner (auth off) on a workspace data folder (never the OS temp folder, ADR-011 D121)."""
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "unit"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    app = create_app({"DATA_DIR": str(folder), "ROUTING_PROVIDER": "mock"}, external=ExternalPorts(clock=FakeClock()))
-    project_id = TestClient(app).post("/api/projects", json={"name": FIXED_PROJECT}).json()["id"]
-    yield app, project_id
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("unit") as folder:
+        app = create_app(
+            {"DATA_DIR": str(folder), "ROUTING_PROVIDER": "mock"}, external=ExternalPorts(clock=FakeClock())
+        )
+        project_id = TestClient(app).post("/api/projects", json={"name": FIXED_PROJECT}).json()["id"]
+        yield app, project_id
 
 
 def marco_view(app: FastAPI, project_id: str) -> dict[str, Any]:

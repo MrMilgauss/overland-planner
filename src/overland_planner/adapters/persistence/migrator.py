@@ -92,6 +92,21 @@ class AlembicMigrator:
                 del self._config.attributes["connection"]
 
 
+_Checks = tuple[tuple[str, Callable[[], bool]], ...]
+
+
+def _first_failure(checks: _Checks) -> ProbeResult:
+    """Run the checks in order; the first one that fails or raises is fatal with its reason."""
+    for reason, check in checks:
+        try:
+            passed = check()
+        except Exception:  # any error of the check is its failure; the reason names the check
+            passed = False
+        if not passed:
+            return ProbeResult(outcome="fatal", reason=reason)
+    return ProbeResult(outcome="ok")
+
+
 class DatabaseStartup:
     def __init__(self, database: SqliteDatabase, migrator: AlembicMigrator, clock: Clock) -> None:
         self._database = database
@@ -99,12 +114,7 @@ class DatabaseStartup:
         self._clock = clock
 
     def probe(self) -> ProbeResult:
-        folder = self._database.file.parent
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return ProbeResult(outcome="fatal", reason="data_dir_not_writable")
-        if not os.access(folder, os.W_OK):
+        if not self._data_dir_writable():
             return ProbeResult(outcome="fatal", reason="data_dir_not_writable")
         try:
             stored = self._migrator.stored_revision()
@@ -113,7 +123,19 @@ class DatabaseStartup:
             return ProbeResult(outcome="fatal", reason="revision_unreadable")
         if action is MigrationAction.REFUSE_NEWER:
             return ProbeResult(outcome="fatal", reason="db_newer_than_app")
-        checks: tuple[tuple[str, Callable[[], bool]], ...] = (
+        return _first_failure(self._checks(action, stored))
+
+    def _data_dir_writable(self) -> bool:
+        folder = self._database.file.parent
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        return os.access(folder, os.W_OK)
+
+    def _checks(self, action: MigrationAction, stored: str | None) -> _Checks:
+        """Migrate as the policy says, then prove the database works; each check named by its failure reason."""
+        return (
             ("quick_check_failed", self._quick_check),
             (
                 "pre_migration_copy_failed",
@@ -126,14 +148,6 @@ class DatabaseStartup:
             ("round_trip_failed", self._round_trip),
             ("not_at_head", lambda: self._migrator.current() == self._migrator.head()),
         )
-        for reason, check in checks:
-            try:
-                passed = check()
-            except Exception:  # any error of the check is its failure; the reason names the check
-                passed = False
-            if not passed:
-                return ProbeResult(outcome="fatal", reason=reason)
-        return ProbeResult(outcome="ok")
 
     def _pragma(self, name: str) -> object:
         with self._database.engine.connect() as connection:

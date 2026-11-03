@@ -8,9 +8,7 @@ data folder. The refusal invariants live in tests/unit/bootstrap/test_startup_ga
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -22,6 +20,7 @@ from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.application.ports.probe import ProbeResult
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS = REPO_ROOT / "migrations"
@@ -29,12 +28,8 @@ MIGRATIONS = REPO_ROOT / "migrations"
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    folder.chmod(0o755)
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def _startup(data_dir: Path) -> tuple[SqliteDatabase, AlembicMigrator, DatabaseStartup]:

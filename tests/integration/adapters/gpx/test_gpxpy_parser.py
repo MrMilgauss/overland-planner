@@ -7,9 +7,6 @@ checked through `create_app`. The DISTILL import scenarios (03-05/03-07) drive t
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -29,6 +26,7 @@ from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from overland_planner.domain.catalog.track import TrackPoint
 from tests.common.fakes import FakeClock, FakeMountTable
+from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURES = REPO_ROOT / "tests" / "acceptance" / "overland_route_planner_mvp" / "fixtures" / "gpx"
@@ -48,11 +46,8 @@ def _gpx(body: str) -> bytes:
 
 @pytest.fixture
 def data_dir() -> Iterator[Path]:
-    root = Path(os.environ.get("PLANNER_TEST_WORKSPACE", REPO_ROOT / ".data")) / "integration"
-    folder = root / uuid.uuid4().hex[:12] / "data"
-    folder.mkdir(parents=True)
-    yield folder
-    shutil.rmtree(folder.parent, ignore_errors=True)
+    with workspace_data_dir("integration") as folder:
+        yield folder
 
 
 def test_renamed_text_file_is_invalid() -> None:
