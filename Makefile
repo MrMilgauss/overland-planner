@@ -1,5 +1,5 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint test test-web web-dist mutate run-local
+.PHONY: bootstrap lint test test-web web-dist mutate run-local e2e-local
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -38,8 +38,9 @@ run-local: web-dist ## The planner on http://$(HOST):$(PORT) with ./.data/dev an
 	mkdir -p .data/dev
 	DATA_DIR=./.data/dev ROUTING_PROVIDER=mock $(UVICORN) --host $(HOST) --port $(PORT)
 
-mutate: web-dist ## mutmut on domain/application files changed since BASE (default origin/main); fails below 80 % kill rate
-	@files="$$(git diff --name-only --diff-filter=d $$(git merge-base $(BASE) HEAD) -- $(MUTATE_SCOPE) | grep '\.py$$')"; \
+mutate: web-dist ## mutmut on domain/application files changed since BASE (default origin/main; BASE=all: every file); fails below 80 % kill rate
+	@if [ "$(BASE)" = all ]; then files="$$(git ls-files -- $(MUTATE_SCOPE) | grep '\.py$$')"; \
+	else files="$$(git diff --name-only --diff-filter=d $$(git merge-base $(BASE) HEAD) -- $(MUTATE_SCOPE) | grep '\.py$$')"; fi; \
 	if [ -z "$$files" ]; then echo "mutate: no domain/application file changed since $(BASE)"; exit 0; fi; \
 	globs="$$(echo "$$files" | sed -e 's|^src/||' -e 's|\.py$$||' -e 's|/__init__$$||' -e 's|/|.|g' -e 's|$$|.*|')"; \
 	echo "mutate: $$(echo $$files)"; \
@@ -51,3 +52,8 @@ mutate: web-dist ## mutmut on domain/application files changed since BASE (defau
 	rate = 100.0 * caught / scored if scored else 100.0; \
 	print(f"mutate: kill rate {rate:.1f}% ({caught}/{scored}); minimum $(KILL_RATE_MIN)%"); \
 	sys.exit(0 if rate >= $(KILL_RATE_MIN) else 1)'
+
+e2e-local: ## Playwright home-page check (chromium, webkit-iphone14) against `make run-local`, started for the run
+	cd web && if [ ! -d node_modules ]; then npm ci --no-audit --no-fund; fi
+	cd web && npx --no-install playwright install chromium webkit
+	cd web && NODE_PATH="$$PWD/node_modules" E2E_START_LOCAL=1 PLANNER_URL=http://$(HOST):$(PORT) npx --no-install playwright test

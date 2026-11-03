@@ -1,0 +1,160 @@
+# Weekly scans (slice 00a, step 01-09; D86, D170): Monday 05:00 UTC and on demand. Re-scans the image behind the
+# `main` tag, audits the dependencies, runs the deep Hypothesis profile and reports package and artifact storage.
+# Nothing waits for this workflow: deploys use release.json from ci.yml. ZAP baseline and the Playwright
+# firefox/webkit-desktop projects arrive at step 02-04 with the compose stack.
+name: weekly
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.11.16"
+  IMAGE: ghcr.io/mrmilgauss/overland-planner
+  TRIVY_VERSION: "0.76.1"
+  TRIVY_SHA256_X64: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+
+jobs:
+  rescan:
+    name: Trivy re-scan of main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install trivy (sha256-verified)
+        run: |
+          archive="$RUNNER_TEMP/trivy.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256_X64}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: trivy image of the current main digest (amd64 and arm64)
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE}:main" --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "### Trivy re-scan of ${IMAGE}:main (${digest})" >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          for platform in linux/amd64 linux/arm64; do
+            trivy image --platform "$platform" --scanners vuln,secret --severity HIGH,CRITICAL --no-progress \
+              --format table --output "$RUNNER_TEMP/trivy.txt" "${IMAGE}@${digest}"
+            { echo "#### ${platform}"; echo '```'; cat "$RUNNER_TEMP/trivy.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            trivy image --platform "$platform" --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+              --no-progress --quiet "${IMAGE}@${digest}" || status=1
+          done
+          exit "$status"
+
+  audit:
+    name: Dependency audits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+      - name: pip-audit (all locked Python dependencies)
+        run: |
+          uv export --frozen --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
+          status=0
+          uvx pip-audit==2.10.1 --strict --disable-pip -r "$RUNNER_TEMP/requirements.txt" \
+            > "$RUNNER_TEMP/pip-audit.txt" 2>&1 || status=$?
+          { echo "### pip-audit"; echo '```'; cat "$RUNNER_TEMP/pip-audit.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: npm audit --omit=dev (web runtime dependencies)
+        if: always()
+        working-directory: web
+        run: |
+          status=0
+          npm audit --omit=dev > "$RUNNER_TEMP/npm-audit.txt" 2>&1 || status=$?
+          { echo "### npm audit --omit=dev"; echo '```'; cat "$RUNNER_TEMP/npm-audit.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  deep-properties:
+    name: Deep property profile (random seeds, 10x examples)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      HYPOTHESIS_PROFILE: deep
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+      - name: Build the web page (D162)
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npx vite build
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: pytest with HYPOTHESIS_PROFILE=deep
+        run: uv run pytest -q -m "not real_provider and not pi and not walking_skeleton" --hypothesis-show-statistics
+
+  storage:
+    name: Package and artifact storage report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Storage report to the job summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type == 'Organization' && 'orgs' || 'users' }}
+        run: |
+          versions="$(gh api --paginate "/${OWNER_TYPE}/${OWNER}/packages/container/overland-planner/versions?per_page=100" \
+            --jq '.[] | "\(.name) \(.metadata.container.tags | join(","))"')"
+          {
+            echo "### GHCR overland-planner: $(printf '%s\n' "$versions" | grep -c .) versions"
+            echo '```'
+            printf '%s\n' "$versions"
+            echo '```'
+            echo "### Compressed size of main per platform"
+          } >> "$GITHUB_STEP_SUMMARY"
+          index="$(docker buildx imagetools inspect --raw "${IMAGE}:main")"
+          for child in $(jq -r '.manifests[] | select(.platform.os == "linux") | "\(.platform.architecture)=\(.digest)"' <<<"$index"); do
+            bytes="$(docker buildx imagetools inspect --raw "${IMAGE}@${child#*=}" | jq '[.config.size, .layers[].size] | add')"
+            echo "- ${child%%=*}: $((bytes / 1048576)) MiB" >> "$GITHUB_STEP_SUMMARY"
+          done
+          artifacts="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | .size_in_bytes' | awk '{s += $1} END {print s + 0}')"
+          cache="$(gh api "repos/${GITHUB_REPOSITORY}/actions/cache/usage" --jq '.active_caches_size_in_bytes')"
+          {
+            echo "### Actions storage"
+            echo "- artifacts: $((artifacts / 1048576)) MiB"
+            echo "- caches: $((cache / 1048576)) MiB"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,7 @@
 # Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169).
-# Step 01-08: jobs 5 image-amd64 and 6 image-arm64 on main pushes and manual runs only; jobs 7-9 (e2e, publish)
-# arrive at 01-09. Actions pinned by commit SHA (D85), runners pinned (D178).
+# Step 01-08: jobs 5 image-amd64 and 6 image-arm64 on main pushes and manual runs only. Step 01-09: job 7 e2e on the
+# loaded amd64 image, job 8 scoped mutation (main pushes touching domain/application), job 9 publish (D160).
+# Actions pinned by commit SHA (D85), runners pinned (D178). Weekly scans live in weekly.yml (never gate deploys).
 name: ci
 
 on:
@@ -35,6 +36,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docs: ${{ steps.filter.outputs.docs }}
+      core: ${{ steps.filter.outputs.core }} # domain/application changed: job 8 mutation
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,16 +58,20 @@ jobs:
             # Manual run, new branch or rewritten history: run everything.
             code=true
             docs=true
+            core=true
           else
             changed="$(git diff --name-only "$base" HEAD)"
             code=false
             docs=false
             if printf '%s\n' "$changed" | grep -qvE '^docs/|\.md$'; then code=true; fi
             if printf '%s\n' "$changed" | grep -qE '^docs/|\.md$'; then docs=true; fi
+            core=false
+            if printf '%s\n' "$changed" | grep -qE '^src/overland_planner/(domain|application)/'; then core=true; fi
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "docs=$docs" >> "$GITHUB_OUTPUT"
-          echo "code changed: $code, docs changed: $docs"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
+          echo "code changed: $code, docs changed: $docs, domain/application changed: $core"
 
   lint-docs:
     name: lint-docs (markdownlint)
@@ -267,7 +273,8 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (01-09) assembles the index
+      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (job 9) assembles the index
+      artifact-id: ${{ steps.image-artifact.outputs.artifact-id }} # e2e (job 7) deletes it after loading (D169)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,7 +335,8 @@ jobs:
           zstd -T0 -10 -q -f /tmp/planner-amd64.tar -o /tmp/planner-amd64.tar.zst
           size="$(stat -c %s /tmp/planner-amd64.tar.zst)"
           echo "Compressed amd64 image: $((size / 1048576)) MiB (${size} bytes)" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: image-artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: planner-image-amd64
           path: /tmp/planner-amd64.tar.zst
@@ -376,7 +384,7 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (01-09) assembles the index
+      digest: ${{ steps.push.outputs.digest }} # empty unless a main push; publish (job 9) assembles the index
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -474,3 +482,196 @@ jobs:
           subject-name: ghcr.io/mrmilgauss/overland-planner
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+  e2e:
+    name: "7 e2e"
+    needs: image-amd64
+    runs-on: ubuntu-24.04
+    # < 9 min target; the packaged-planner password check rebuilds the image with plain `docker build` (no gha cache
+    # on the docker driver), which dominates once slice 00b is enabled.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: write # delete the image artifact after loading it (D169)
+    env:
+      PLANNER_URL: http://127.0.0.1:8080
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: planner-image-amd64
+          path: ${{ runner.temp }}/image
+      - name: docker load the amd64 image (D163)
+        run: |
+          zstd -d -q --rm "$RUNNER_TEMP/image/planner-amd64.tar.zst" -o "$RUNNER_TEMP/image/planner-amd64.tar"
+          docker load -i "$RUNNER_TEMP/image/planner-amd64.tar"
+          rm -f "$RUNNER_TEMP/image/planner-amd64.tar"
+          docker tag overland-planner:ci-amd64 "overland-planner:ci-${GITHUB_SHA}"
+      - name: Delete the image artifact (D169, artifact storage)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.image-amd64.outputs.artifact-id }}
+        run: gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}"
+      - name: Start the planner image on loopback (named volume; compose replaces this at 02-04)
+        run: |
+          docker volume create overland-e2e
+          docker run --detach --name overland-e2e --init -p 127.0.0.1:8080:8080 -v overland-e2e:/data -e ROUTING_PROVIDER=mock "overland-planner:ci-${GITHUB_SHA}"
+          for _ in $(seq 1 60); do
+            if curl -fsS "${PLANNER_URL}/healthz" >/dev/null 2>&1; then echo "planner is up"; exit 0; fi
+            sleep 1
+          done
+          docker logs overland-e2e
+          exit 1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci and the Playwright browsers
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium webkit
+      - name: Playwright home page (chromium, webkit-iphone14)
+        working-directory: web
+        # tests/e2e lives outside web/: NODE_PATH lets the spec resolve @playwright/test from web/node_modules.
+        run: NODE_PATH="$PWD/node_modules" npx --no-install playwright test
+      - name: Planner logs on failure
+        if: failure()
+        run: docker logs overland-e2e || true
+      - name: Stop the planner image
+        if: always()
+        run: docker rm -f overland-e2e >/dev/null 2>&1 || true
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: pytest --run-external -m "compose or security" (D170)
+        env:
+          PLANNER_IMAGE: overland-planner:ci-${{ github.sha }}
+        run: .github/scripts/pytest-selection.sh "compose or security"
+
+  mutation:
+    name: "8 mutation"
+    needs: [changes, test-python]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the diff before..sha scopes the run
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the web page (mutmut copies web/dist)
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npx vite build
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: mutmut on the domain/application files changed in before..sha (kill rate >= 80 %)
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PUSH_BEFORE"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base=all # new branch or forced push: every domain/application file
+          fi
+          status=0
+          make mutate BASE="$base" 2>&1 | tee "$RUNNER_TEMP/mutate.log" || status=$?
+          {
+            echo "### Mutation (BASE=${base})"
+            grep '^mutate:' "$RUNNER_TEMP/mutate.log" || echo "no mutate summary line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  publish:
+    name: "9 publish"
+    needs: [image-amd64, image-arm64, e2e, mutation]
+    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: # D161
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: list
+        name: imagetools create the manifest list sha-<12> and main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/mrmilgauss/overland-planner
+          AMD64: ${{ needs.image-amd64.outputs.digest }}
+          ARM64: ${{ needs.image-arm64.outputs.digest }}
+        run: |
+          test -n "$AMD64" && test -n "$ARM64"
+          docker buildx imagetools create -t "${IMAGE}:sha-${GITHUB_SHA::12}" -t "${IMAGE}:main" "${IMAGE}@${AMD64}" "${IMAGE}@${ARM64}"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:sha-${GITHUB_SHA::12}" --format '{{json .Manifest}}' | jq -r .digest)"
+          test -n "$digest" && [ "$digest" != null ]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          subject-name: ghcr.io/mrmilgauss/overland-planner
+          subject-digest: ${{ steps.list.outputs.digest }}
+          push-to-registry: true
+      - name: release.json (make deploy downloads it, D171)
+        env:
+          DIGEST: ${{ steps.list.outputs.digest }}
+        run: |
+          # No migrations exist yet; the step that adds alembic switches this to the real head revision.
+          jq -n --arg git_sha "$GITHUB_SHA" --arg commit_ts "$(git log -1 --format=%cI)" --arg digest "$DIGEST" \
+            --arg alembic_head none --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{git_sha: $git_sha, commit_ts: $commit_ts, digest: $digest, alembic_head: $alembic_head, created: $created}' \
+            > "$RUNNER_TEMP/release.json"
+          {
+            echo "### Release ghcr.io/mrmilgauss/overland-planner:sha-${GITHUB_SHA::12}"
+            echo '```json'
+            cat "$RUNNER_TEMP/release.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release.json
+          path: ${{ runner.temp }}/release.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Prune GHCR to this release and the manifests it references (D169; skips when ambiguous)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.list.outputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type == 'Organization' && 'orgs' || 'users' }}
+        run: |
+          python3 .github/scripts/ghcr_prune.py --owner "$OWNER" --owner-type "$OWNER_TYPE" \
+            --package overland-planner --digest "$DIGEST"

@@ -73,4 +73,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 settings.register_profile("dev", max_examples=100)
 settings.register_profile("ci", max_examples=1_000, derandomize=True)
 settings.register_profile("mutation", max_examples=50, derandomize=True)
+# weekly.yml deep run (D86): ten times the CI examples with random seeds.
+settings.register_profile("deep", max_examples=10_000, derandomize=False)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))

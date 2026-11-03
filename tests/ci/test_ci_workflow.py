@@ -2,23 +2,34 @@
 
 `.github/workflows/ci.yml` and `.github/dependabot.yml` are parsed with PyYAML and checked against the DEVOPS CI
 table. Step 01-07 covers the commit stage (jobs 1 lint, 2 test-python, 4 test-web) plus the docs-only filter; step 01-08
-the image jobs 5 image-amd64 and 6 image-arm64 and `.github/scripts/image-smoke.sh`; step 01-09 extends
-`JOB_RUNNERS` again for the e2e and publish jobs.
+the image jobs 5 image-amd64 and 6 image-arm64 and `.github/scripts/image-smoke.sh`; step 01-09 the jobs 7 e2e,
+8 mutation and 9 publish, their scripts (`pytest-selection.sh`, `ghcr_prune.py`) and `.github/workflows/weekly.yml`.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import re
+import stat
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+import pytest
 import yaml
+from hypothesis import given
+from hypothesis import strategies as st
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
+WEEKLY = REPO_ROOT / ".github" / "workflows" / "weekly.yml"
 IMAGE_SMOKE = REPO_ROOT / ".github" / "scripts" / "image-smoke.sh"
+PYTEST_SELECTION = REPO_ROOT / ".github" / "scripts" / "pytest-selection.sh"
+GHCR_PRUNE = REPO_ROOT / ".github" / "scripts" / "ghcr_prune.py"
 
 RUNNER = "ubuntu-24.04"  # D178
 COMMIT_STAGE = ("lint", "test-python", "test-web")
@@ -31,7 +42,11 @@ JOB_RUNNERS = {
     **dict.fromkeys(COMMIT_STAGE, RUNNER),
     "image-amd64": RUNNER,
     "image-arm64": ARM64_RUNNER,
+    "e2e": RUNNER,
+    "mutation": RUNNER,
+    "publish": RUNNER,
 }
+REGISTRY_WRITERS = (*IMAGE_JOBS, "publish")  # D161
 MAIN_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
 IMAGE = "ghcr.io/mrmilgauss/overland-planner"
 USES = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>\S+)(?P<comment>.*)$", re.MULTILINE)
@@ -310,14 +325,237 @@ def test_arm64_smoke_checks_healthz_and_solver_probe() -> None:
 def test_image_jobs_have_job_level_package_permissions() -> None:
     workflow = _workflow()
 
-    assert workflow["permissions"] == {"contents": "read"}, "write scopes live on the image jobs only (D161)"
-    for name in IMAGE_JOBS:
+    assert workflow["permissions"] == {"contents": "read"}, "write scopes live on the image and publish jobs (D161)"
+    for name in REGISTRY_WRITERS:
         assert _job(workflow, name)["permissions"] == {
             "contents": "read",
             "packages": "write",
             "id-token": "write",
             "attestations": "write",
         }, f"{name} permissions"
+    # e2e deletes the image artifact it consumed (D169); that needs actions: write and nothing else.
+    assert _job(workflow, "e2e")["permissions"] == {"contents": "read", "actions": "write"}
     for name, job in workflow["jobs"].items():
-        if name not in IMAGE_JOBS:
+        if name not in (*REGISTRY_WRITERS, "e2e"):
             assert "permissions" not in job, f"{name} must inherit read-only permissions"
+
+
+# ------------------------------------------------------------------------------------------- step 01-09: jobs 7-9
+D160_PUBLISH_IF = (
+    f"always() && !cancelled() && {MAIN_PUSH}"
+    " && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success'"
+    " && needs.e2e.result == 'success'"
+    """ && contains(fromJSON('["success","skipped"]'), needs.mutation.result)"""
+)
+
+
+def _step_using(job: dict[str, Any], action: str) -> dict[str, Any]:
+    steps = _uses(job, action)
+    assert len(steps) == 1, f"expected exactly one {action} step"
+    return steps[0]
+
+
+def test_e2e_deletes_image_artifact_after_load() -> None:
+    workflow = _workflow()
+    job = _job(workflow, "e2e")
+    amd64 = _job(workflow, "image-amd64")
+    steps = job["steps"]
+
+    assert _needs(job) == {"image-amd64"}, "e2e needs only the amd64 image (job 5)"
+    download = _step_using(job, "actions/download-artifact")
+    assert download["with"]["name"] == "planner-image-amd64"
+    upload_id = _uses(amd64, "actions/upload-artifact")[0]["id"]
+    assert amd64["outputs"]["artifact-id"] == f"${{{{ steps.{upload_id}.outputs.artifact-id }}}}"
+
+    load, delete = _index(job, "docker load"), _index(job, "actions/artifacts/")
+    assert steps.index(download) < load < delete, "the artifact is deleted only after the image is loaded"
+    deletion = steps[delete]
+    assert "-X DELETE" in deletion["run"] and "needs.image-amd64.outputs.artifact-id" in str(deletion["env"])
+
+    start = _runs(job)[_index(job, "docker run")]
+    assert "-p 127.0.0.1:8080:8080" in start and "-v overland-e2e:/data" in start, "loopback port, named volume"
+    assert "ROUTING_PROVIDER=mock" in start and "/healthz" in start
+    playwright = _index(job, "playwright test")
+    assert delete < playwright and _index(job, "playwright install") < playwright
+    assert "chromium" in _runs(job)[_index(job, "playwright install")]
+    assert "webkit" in _runs(job)[_index(job, "playwright install")]
+
+
+def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
+    job = _job(_workflow(), "e2e")
+    selection = job["steps"][_index(job, "pytest-selection.sh")]
+
+    assert "'compose or security'" in selection["run"] or '"compose or security"' in selection["run"]
+    assert selection["env"]["PLANNER_IMAGE"] == "overland-planner:ci-${{ github.sha }}"
+    assert not selection.get("continue-on-error"), "the packaged-planner password check blocks publish"
+    script = PYTEST_SELECTION.read_text()
+    assert "--run-external" in script and "$PENDING_FLAGS" in script
+
+
+def _fake_uv(tmp_path: Path, exit_code: int) -> dict[str, str]:
+    fake = tmp_path / "bin" / "uv"
+    fake.parent.mkdir()
+    fake.write_text(f'#!/usr/bin/env bash\necho "fake pytest $*"\nexit {exit_code}\n')
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return {**os.environ, "PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    ("pending_flags", "pytest_exit", "expected_exit", "summary_fragment"),
+    [
+        ("", 5, 0, "empty by design"),  # no slice enabled yet: nothing to select is the expected state
+        ("--run-pending=slice-00b", 5, 5, "selected no test"),  # an enabled slice must select something
+        ("", 1, 1, "failed"),
+        ("--run-pending=slice-00b", 0, 0, "passed"),
+    ],
+)
+def test_empty_pytest_selection_passes_only_by_design(
+    tmp_path: Path, pending_flags: str, pytest_exit: int, expected_exit: int, summary_fragment: str
+) -> None:
+    summary = tmp_path / "summary.md"
+    env = {**_fake_uv(tmp_path, pytest_exit), "PENDING_FLAGS": pending_flags, "GITHUB_STEP_SUMMARY": str(summary)}
+
+    run = subprocess.run(
+        ["bash", str(PYTEST_SELECTION), "compose or security"], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert run.returncode == expected_exit, run.stdout + run.stderr
+    assert "--run-external" in run.stdout and "-m compose or security" in run.stdout
+    assert summary_fragment in summary.read_text()
+
+
+def test_mutation_job_runs_only_for_domain_or_application_changes() -> None:
+    workflow = _workflow()
+    job = _job(workflow, "mutation")
+    changes = _job(workflow, "changes")
+    filter_script = "\n".join(_runs(changes))
+
+    assert _needs(job) == {"changes", "test-python"}, "mutation needs job 2"
+    assert job["if"] == f"{MAIN_PUSH} && needs.changes.outputs.core == 'true'"
+    assert changes["outputs"]["core"] == "${{ steps.filter.outputs.core }}"
+    assert "^src/overland_planner/(domain|application)/" in filter_script
+    assert job["timeout-minutes"] == 30
+    assert _index(job, "vite build") < _index(job, "make mutate"), "mutmut copies web/dist (D162)"
+    mutate = job["steps"][_index(job, "make mutate")]
+    assert "BASE=" in mutate["run"] and "github.event.before" in str(mutate.get("env", {}))
+    assert "0000000000000000000000000000000000000000" in mutate["run"], "new branch or forced push mutates all"
+    assert "GITHUB_STEP_SUMMARY" in mutate["run"]
+    dry = subprocess.run(
+        ["make", "-n", "mutate", "BASE=all"], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+    assert "git ls-files -- src/overland_planner/domain src/overland_planner/application" in dry.stdout
+
+
+def test_publish_gating_matches_d160() -> None:
+    workflow = _workflow()
+    job = _job(workflow, "publish")
+
+    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "mutation"}
+    assert job["if"] == D160_PUBLISH_IF
+    assert _needs(_job(workflow, "mutation")) & {"image-amd64", "image-arm64", "e2e"} == set()
+
+
+def test_publish_creates_attested_manifest_list_and_release_json() -> None:
+    job = _job(_workflow(), "publish")
+    create = _runs(job)[_index(job, "imagetools create")]
+
+    assert "needs.image-amd64.outputs.digest" in str(job["steps"][_index(job, "imagetools create")]["env"])
+    assert "needs.image-arm64.outputs.digest" in str(job["steps"][_index(job, "imagetools create")]["env"])
+    assert ":sha-${GITHUB_SHA::12}" in create and ":main" in create
+    attest = _step_using(job, "actions/attest-build-provenance")["with"]
+    assert attest["subject-name"] == IMAGE and attest["push-to-registry"] is True
+    assert "outputs.digest" in attest["subject-digest"]
+
+    release = _runs(job)[_index(job, "release.json")]
+    for key in ("git_sha", "commit_ts", "digest", "alembic_head", "created"):
+        assert key in release, f"release.json lacks {key}"
+    assert "GITHUB_STEP_SUMMARY" in release
+    upload = _step_using(job, "actions/upload-artifact")["with"]
+    assert upload["name"] == "release.json"
+    prune = _index(job, "ghcr_prune.py")
+    assert (
+        _index(job, "imagetools create") < prune
+        and job["steps"].index(_step_using(job, "actions/upload-artifact")) < prune
+    )
+
+
+def _prune_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("ghcr_prune", GHCR_PRUNE)
+    assert spec and spec.loader, "ghcr_prune.py missing"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve their module through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+INDEX = "application/vnd.oci.image.index.v1+json"
+MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+digests = st.text("0123456789abcdef", min_size=8, max_size=8).map(lambda h: f"sha256:{h}")
+
+
+@given(release_children=st.lists(digests, min_size=1, max_size=4, unique=True), others=st.lists(digests, max_size=6))
+def test_prune_deletes_only_versions_outside_the_release(release_children: list[str], others: list[str]) -> None:
+    release, referrer = "sha256:release0", "sha256:referrer"
+    stale = [d for d in dict.fromkeys(others) if d not in {release, referrer, *release_children}]
+    manifests: dict[str, dict[str, Any]] = {
+        release: {"mediaType": INDEX, "manifests": [{"digest": d, "mediaType": MANIFEST} for d in release_children]},
+        referrer: {"mediaType": MANIFEST, "subject": {"digest": release}},  # the GitHub attestation of the list
+        **{d: {"mediaType": MANIFEST} for d in (*release_children, *stale)},
+    }
+    versions = [
+        {"id": n, "name": d, "metadata": {"container": {"tags": ["main", "sha-0123456789ab"] if d == release else []}}}
+        for n, d in enumerate([release, referrer, *release_children, *stale])
+    ]
+
+    plan = _prune_module().decide(versions, release, manifests.get)
+
+    assert plan.skip_reason is None
+    assert sorted(v["name"] for v in plan.delete) == sorted(stale)
+    assert {release, referrer, *release_children} <= plan.keep
+
+
+@pytest.mark.parametrize("ambiguity", ["release not listed", "manifest unreadable", "main tag elsewhere"])
+def test_prune_skips_everything_when_ambiguous(ambiguity: str) -> None:
+    release, child, old = "sha256:release0", "sha256:child000", "sha256:old00000"
+    manifests: dict[str, dict[str, Any]] = {
+        release: {"mediaType": INDEX, "manifests": [{"digest": child, "mediaType": MANIFEST}]},
+        child: {"mediaType": MANIFEST},
+        old: {"mediaType": MANIFEST},
+    }
+    tags = {release: ["main"], child: [], old: []}
+    if ambiguity == "manifest unreadable":
+        del manifests[old]
+    if ambiguity == "main tag elsewhere":
+        tags[old] = ["main"]
+    listed = [child, old] if ambiguity == "release not listed" else [release, child, old]
+    versions = [{"id": n, "name": d, "metadata": {"container": {"tags": tags[d]}}} for n, d in enumerate(listed)]
+
+    plan = _prune_module().decide(versions, release, manifests.get)
+
+    assert plan.delete == [] and plan.skip_reason
+
+
+def test_weekly_workflow_rescans_audits_and_reports_without_gating_deploys() -> None:
+    assert WEEKLY.is_file(), ".github/workflows/weekly.yml missing"
+    text = WEEKLY.read_text()
+    weekly = yaml.safe_load(text)
+    triggers = _triggers(weekly)
+
+    assert set(triggers) == {"schedule", "workflow_dispatch"}
+    assert triggers["schedule"] == [{"cron": "0 5 * * 1"}], "Monday 05:00 UTC"
+    assert weekly["permissions"] == {"contents": "read"}
+    scripts = "\n".join(s for job in weekly["jobs"].values() for s in _runs(job))
+    for fragment in (
+        "trivy image",
+        ":main",
+        "pip-audit",
+        "npm audit --omit=dev",
+        "packages/container/overland-planner/versions",
+        "GITHUB_STEP_SUMMARY",
+    ):
+        assert fragment in scripts, f"weekly.yml lacks {fragment!r}"
+    deep = [job for job in weekly["jobs"].values() if job.get("env", {}).get("HYPOTHESIS_PROFILE") == "deep"]
+    assert len(deep) == 1, "one job runs the deep property profile"
+    assert "workflow_run" not in _triggers(_workflow()), "ci.yml (and so publish) never waits for the weekly run"
+    refs = [(m["ref"], m["comment"]) for m in USES.finditer(text)]
+    assert [r for r, c in refs if not (PINNED.match(r) and TAG_COMMENT.search(c))] == []
