@@ -4,6 +4,7 @@ The only source is the mapping given to `Settings.from_environ`; the composition
 production. Keys are case-sensitive; keys the planner does not read are ignored. An invalid value is fatal.
 The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD, brief §12) is set as a pair or not at all; an
 empty value counts as unset (a `KEY=` line). The password is a `SecretStr`, so no repr or error message shows it.
+The upload caps (MAX_UPLOAD_FILE_MB, MAX_UPLOAD_REQUEST_MB in MiB, MAX_UPLOAD_FILES) must be positive (ADR-011 Am. 1).
 """
 
 from __future__ import annotations
@@ -44,6 +45,9 @@ class Settings(BaseSettings):
     planner_git_sha: Annotated[str, Field(validation_alias="PLANNER_GIT_SHA", min_length=1)] = "dev"
     web_dist_dir: Annotated[Path, Field(validation_alias="WEB_DIST_DIR")] = _REPO_WEB_DIST
     migrations_dir: Annotated[Path, Field(validation_alias="MIGRATIONS_DIR")] = _REPO_MIGRATIONS
+    max_upload_file_mb: Annotated[int, Field(validation_alias="MAX_UPLOAD_FILE_MB", gt=0)] = 25
+    max_upload_request_mb: Annotated[int, Field(validation_alias="MAX_UPLOAD_REQUEST_MB", gt=0)] = 100
+    max_upload_files: Annotated[int, Field(validation_alias="MAX_UPLOAD_FILES", gt=0)] = 50
     basic_auth_user: Annotated[str | None, Field(validation_alias="PLANNER_BASIC_AUTH_USER")] = None
     basic_auth_password: Annotated[SecretStr | None, Field(validation_alias="PLANNER_BASIC_AUTH_PASSWORD")] = None
 

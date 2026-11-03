@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException
 
+from overland_planner.adapters.http.upload_limits import UploadFormError, UploadTooLargeError
 from overland_planner.application.catalog.facade import ProjectNotFoundError, TrackFilesRefusedError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 
@@ -44,6 +45,16 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(TrackFilesRefusedError)
     async def on_refused_track_files(request: Request, error: TrackFilesRefusedError) -> Response:
+        if error.too_large:
+            return envelope(413, "upload_too_large", str(error))
+        return envelope(422, "validation_error", str(error))
+
+    @app.exception_handler(UploadTooLargeError)
+    async def on_upload_too_large(request: Request, error: UploadTooLargeError) -> Response:
+        return envelope(413, "upload_too_large", str(error))
+
+    @app.exception_handler(UploadFormError)
+    async def on_invalid_upload_form(request: Request, error: UploadFormError) -> Response:
         return envelope(422, "validation_error", str(error))
 
     @app.exception_handler(ProjectNotFoundError)

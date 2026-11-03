@@ -1,8 +1,9 @@
 """Track import use case (brief §4, §9 and §12, ADR-018, US-02a, D149): uploaded GPX files become track items.
 
 Several files in one request are all or nothing: every file is parsed first, and if any is refused nothing is
-written. For each accepted file the original is kept under its sha256 and the canonical points (direction
-version 1, recorded order, HC-1) are written before the one database commit that adds the track items and
+written. A file above the per-file upload cap (MAX_UPLOAD_FILE_MB, MB = MiB) is refused before anything is parsed.
+For each accepted file the original is kept under its sha256 and the canonical points (direction version 1,
+recorded order, HC-1) are written before the one database commit that adds the track items and
 increments the project revision once. Each imported track logs `import.track` after the commit.
 """
 
@@ -29,6 +30,7 @@ from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStatsCalculator, UnusableTrack
 
 FIRST_DIRECTION_VERSION = 1
+MIB = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -40,10 +42,14 @@ class TrackFile:
 
 
 class TrackFilesRefusedError(ValueError):
-    """At least one file of the import was refused; nothing was added. One message per refused file (D151)."""
+    """At least one file of the import was refused; nothing was added. One message per refused file (D151).
 
-    def __init__(self, messages: Sequence[str]) -> None:
+    `too_large` = refused for the size cap, before any file was parsed (brief §5: 413 `upload_too_large`).
+    """
+
+    def __init__(self, messages: Sequence[str], *, too_large: bool = False) -> None:
         self.messages = tuple(messages)
+        self.too_large = too_large
         super().__init__("; ".join(self.messages))
 
 
@@ -60,15 +66,19 @@ class TrackImportService:
         parser: TrackFileParser,
         files: FileStore,
         event_log: EventLog,
+        *,
+        file_limit_mb: int,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._parser = parser
         self._files = files
         self._event_log = event_log
         self._stats = TrackStatsCalculator()
+        self._file_limit_mb = file_limit_mb
 
     def import_files(self, project_id: str, uploads: Sequence[TrackFile]) -> list[TrackItem]:
         """Raises `ProjectNotFoundError` or `TrackFilesRefusedError`; in both cases nothing is added."""
+        self._refuse_oversized(uploads)
         accepted = self._parse_all(uploads)
         with self._unit_of_work() as uow:
             project = uow.projects.get(project_id)
@@ -89,6 +99,14 @@ class TrackImportService:
                 original_sha256=item.original_sha256,
             )
         return items
+
+    def _refuse_oversized(self, uploads: Sequence[TrackFile]) -> None:
+        limit = self._file_limit_mb * MIB
+        oversized = [
+            f"{u.name} is larger than the {self._file_limit_mb} MB limit" for u in uploads if len(u.content) > limit
+        ]
+        if oversized:
+            raise TrackFilesRefusedError(oversized, too_large=True)
 
     def _parse_all(self, uploads: Sequence[TrackFile]) -> list[_Accepted]:
         accepted: list[_Accepted] = []

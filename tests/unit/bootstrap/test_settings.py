@@ -2,6 +2,7 @@
 
 Universe = the settings the planner reads (brief section 12 keys + WEB_DIST_DIR + MIGRATIONS_DIR), named by their
 environment key. The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD) is set as a pair or not at all.
+The upload caps (MAX_UPLOAD_*) are positive integers; zero or negative refuses the start (ADR-011 Amendment 1).
 """
 
 from __future__ import annotations
@@ -26,7 +27,11 @@ KEYS = (
     "MIGRATIONS_DIR",
     "PLANNER_BASIC_AUTH_USER",
     "PLANNER_BASIC_AUTH_PASSWORD",
+    "MAX_UPLOAD_FILE_MB",
+    "MAX_UPLOAD_REQUEST_MB",
+    "MAX_UPLOAD_FILES",
 )
+UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")
 AUTH_PAIR = ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD")
 UNIVERSE = set(KEYS)
 
@@ -46,6 +51,7 @@ VALID: dict[str, st.SearchStrategy[tuple[str, Any]]] = {
     "MIGRATIONS_DIR": _path.map(lambda raw: (raw, Path(raw))),
     "PLANNER_BASIC_AUTH_USER": st.text(_secret_char.filter(lambda c: c != ":"), min_size=1).map(lambda raw: (raw, raw)),
     "PLANNER_BASIC_AUTH_PASSWORD": st.text(_secret_char, min_size=1).map(lambda raw: (raw, raw)),
+    **{cap: st.integers(min_value=1, max_value=10**4).map(lambda n: (str(n), n)) for cap in UPLOAD_CAPS},
 }
 
 INVALID: dict[str, st.SearchStrategy[str]] = {
@@ -58,6 +64,7 @@ INVALID: dict[str, st.SearchStrategy[str]] = {
     "MIGRATIONS_DIR": st.just(""),
     # RFC 7617: the user part of Basic credentials ends at the first colon, so such a user could never log in.
     "PLANNER_BASIC_AUTH_USER": st.tuples(st.text(max_size=5), st.text(max_size=5)).map(lambda p: f"{p[0]}:{p[1]}"),
+    **{cap: st.integers(max_value=0).map(str) | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True) for cap in UPLOAD_CAPS},
 }
 
 # Keys the planner does not read: other variables, and lower-case spellings of its own keys (keys are case-sensitive).
@@ -77,6 +84,9 @@ def observable(settings: Settings) -> dict[str, Any]:
         "PLANNER_BASIC_AUTH_PASSWORD": (
             settings.basic_auth_password.get_secret_value() if settings.basic_auth_password else None
         ),
+        "MAX_UPLOAD_FILE_MB": settings.max_upload_file_mb,
+        "MAX_UPLOAD_REQUEST_MB": settings.max_upload_request_mb,
+        "MAX_UPLOAD_FILES": settings.max_upload_files,
     }
 
 

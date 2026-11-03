@@ -37,6 +37,7 @@ from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, Basi
 from overland_planner.adapters.http.catalog_routes import catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.platform_routes import platform_routes
+from overland_planner.adapters.http.upload_limits import UploadLimits
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
 from overland_planner.adapters.persistence.database import SqliteDatabase
@@ -117,7 +118,10 @@ def create_app(
     app.include_router(
         catalog_routes(
             ProjectService(catalog_unit_of_work, clock),
-            TrackImportService(catalog_unit_of_work, gpx_parser, file_store, event_log),
+            TrackImportService(
+                catalog_unit_of_work, gpx_parser, file_store, event_log, file_limit_mb=settings.max_upload_file_mb
+            ),
+            UploadLimits(settings.max_upload_file_mb, settings.max_upload_request_mb, settings.max_upload_files),
         )
     )
     mount_web_page(app, settings.web_dist_dir)

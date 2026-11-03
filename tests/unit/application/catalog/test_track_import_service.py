@@ -4,10 +4,10 @@ Driving port: `TrackImportService` from the catalog facade (items read back thro
 `CatalogUnitOfWork` and `FileStore` (in-memory doubles in `tests/common/catalog_fakes.py`), `TrackFileParser`
 (scripted below: the GPX reading itself is the adapter's integration test), `EventLog` (recording double).
 Observable universe = what the driving ports and driven-port boundaries expose: the project list, the open project's
-items and revision, the files kept under `files/` and the logged events.
-Test Budget: 5 behaviors (import adds one track with its files and event; same bytes keep one original; a refused
-file adds nothing; an unknown project adds nothing; files are written before the commit, so a failed write commits
-nothing) x 2 = 10; 5 used.
+items and revision, the files kept under `files/`, the logged events and (for refusals) the files handed to the parser.
+Test Budget: 6 behaviors (import adds one track with its files and event; same bytes keep one original; a refused
+file adds nothing; a file above the upload cap is refused before any parsing; an unknown project adds nothing; files
+are written before the commit, so a failed write commits nothing) x 2 = 12; 6 used.
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, set_to
 
 UNIVERSE = {"projects.names", "project.items", "project.revision", "files.originals", "files.tracks", "events"}
+REFUSAL_UNIVERSE = UNIVERSE | {"parser.parsed"}
+FILE_LIMIT_MB = 1  # the production default is 25; 1 keeps generated files small
+MIB = 1024 * 1024
 
 POINT = st.builds(
     TrackPoint.at,
@@ -63,8 +66,10 @@ class ScriptedParser:
 
     def __init__(self, outcomes: dict[bytes, TrackFileOutcome]) -> None:
         self._outcomes = outcomes
+        self.parsed: list[str] = []
 
     def parse(self, content: bytes, file_name: str) -> TrackFileOutcome:
+        self.parsed.append(file_name)
         return self._outcomes[content]
 
     def probe(self) -> Any:
@@ -76,12 +81,15 @@ class Planner:
         catalog = InMemoryCatalog()
         self.files = InMemoryFileStore(failing=failing_files)
         self.events = RecordingEventLog()
+        self.parser = ScriptedParser(outcomes)
         self.projects = ProjectService(catalog.unit_of_work, FakeClock(datetime(2027, 6, 1, tzinfo=UTC)))
-        self.imports = TrackImportService(catalog.unit_of_work, ScriptedParser(outcomes), self.files, self.events)
+        self.imports = TrackImportService(
+            catalog.unit_of_work, self.parser, self.files, self.events, file_limit_mb=FILE_LIMIT_MB
+        )
         self.project_id = self.projects.create("Alpi Occidentali giugno 2027").id
 
-    def view(self) -> dict[str, Any]:
-        return {
+    def view(self, universe: set[str] = UNIVERSE) -> dict[str, Any]:
+        observed = {
             "projects.names": tuple(sorted(p.name.value for p in self.projects.list())),
             "project.items": tuple(
                 (i.type, i.name, i.included, i.anchor) for i in self.projects.items(self.project_id)
@@ -90,7 +98,9 @@ class Planner:
             "files.originals": tuple(sorted(p for p in self.files.files if p.startswith("originals/"))),
             "files.tracks": tuple(sorted(p for p in self.files.files if p.startswith("tracks/"))),
             "events": tuple((name, fields.get("track_id")) for name, fields in self.events.events),
+            "parser.parsed": tuple(self.parser.parsed),
         }
+        return {slot: observed[slot] for slot in universe}
 
 
 @given(track=TRACK, content=CONTENT, file_name=FILE_NAME)
@@ -183,6 +193,28 @@ def test_when_any_file_is_refused_nothing_is_added_and_each_refused_file_is_name
 
     assert raised.value.messages == (message,)
     assert_state_delta(before, planner.view(), UNIVERSE, {}, strict=True)
+
+
+@given(
+    track=TRACK,
+    over_by=st.integers(min_value=1, max_value=4096),
+    at_limit=st.integers(min_value=0, max_value=3),
+    position=st.integers(min_value=0, max_value=3),
+)
+def test_a_file_above_the_upload_cap_is_refused_before_any_file_is_parsed(
+    track: ParsedTrack, over_by: int, at_limit: int, position: int
+) -> None:
+    limit = FILE_LIMIT_MB * MIB
+    companions = [TrackFile(f"edge{n}.gpx", bytes([n]) * limit) for n in range(at_limit)]  # exactly at the cap: fine
+    uploads = [*companions[:position], TrackFile("huge.gpx", b"x" * (limit + over_by)), *companions[position:]]
+    planner = Planner({c.content: track for c in companions})
+    before = planner.view(REFUSAL_UNIVERSE)
+
+    with pytest.raises(TrackFilesRefusedError) as raised:
+        planner.imports.import_files(planner.project_id, uploads)
+
+    assert (raised.value.messages, raised.value.too_large) == (("huge.gpx is larger than the 1 MB limit",), True)
+    assert_state_delta(before, planner.view(REFUSAL_UNIVERSE), REFUSAL_UNIVERSE, {}, strict=True)
 
 
 @given(track=TRACK, content=CONTENT, unknown=st.uuids().map(lambda u: u.hex))

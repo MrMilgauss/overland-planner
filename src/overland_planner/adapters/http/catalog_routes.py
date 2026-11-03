@@ -2,15 +2,39 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from overland_planner.adapters.http.schemas import ERROR_RESPONSES, ItemResource, ProjectCreate, ProjectResource
-from overland_planner.application.catalog.facade import ProjectService, TrackFile, TrackImportService
+from overland_planner.adapters.http.upload_limits import FILES_FIELD, UploadLimits, read_track_files
+from overland_planner.application.catalog.facade import ProjectService, TrackImportService
+
+# The body is read by `read_track_files` (bounded, never spooled to disk), so the schema is declared here.
+_TRACK_UPLOAD_BODY: dict[str, Any] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": [FILES_FIELD],
+                    "properties": {
+                        FILES_FIELD: {
+                            "type": "array",
+                            "title": "Files",
+                            "items": {"type": "string", "contentMediaType": "application/octet-stream"},
+                        }
+                    },
+                }
+            }
+        },
+    }
+}
 
 
-def catalog_routes(catalog: ProjectService, imports: TrackImportService) -> APIRouter:
+def catalog_routes(catalog: ProjectService, imports: TrackImportService, limits: UploadLimits) -> APIRouter:
     router = APIRouter(prefix="/api/projects", responses=ERROR_RESPONSES)
 
     @router.post("", status_code=201)
@@ -25,11 +49,12 @@ def catalog_routes(catalog: ProjectService, imports: TrackImportService) -> APIR
     def open_project(project_id: str) -> ProjectResource:
         return ProjectResource.of(catalog.open(project_id))
 
-    @router.post("/{project_id}/tracks", status_code=201)
-    def import_tracks(project_id: str, files: Annotated[list[UploadFile], File()]) -> list[ItemResource]:
-        """All or nothing (D149): when any file is refused, 422 names each refused file and nothing is added."""
-        uploads = [TrackFile(upload.filename or "upload.gpx", upload.file.read()) for upload in files]
-        return [ItemResource.of(item) for item in imports.import_files(project_id, uploads)]
+    @router.post("/{project_id}/tracks", status_code=201, openapi_extra=_TRACK_UPLOAD_BODY)
+    async def import_tracks(project_id: str, request: Request) -> list[ItemResource]:
+        """All or nothing (D149): when any file is refused, 422 (or 413 for the caps) names it and nothing is added."""
+        uploads = await read_track_files(request, limits)
+        items = await run_in_threadpool(imports.import_files, project_id, uploads)
+        return [ItemResource.of(item) for item in items]
 
     @router.get("/{project_id}/items")
     def project_items(project_id: str) -> list[ItemResource]:
