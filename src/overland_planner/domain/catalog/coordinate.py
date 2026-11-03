@@ -1,6 +1,7 @@
 """A point on the Earth's surface in WGS84 degrees, shared by track points and POIs (03-08). Pure domain.
 
-Range rule: latitude -90..90 and longitude -180..180, both inclusive; anything else (including NaN) is refused.
+Range rule: latitude -90..90 and longitude -180..180, both inclusive; anything else (including NaN) is refused with
+the D151 reason, latitude checked first when both are wrong.
 Distances use the haversine great-circle formula on a sphere of the IUGG mean Earth radius R1 = 6 371 008.8 m.
 The spherical model differs from the WGS84 ellipsoid by at most about 0.5 %, well inside the 1 % import check
 (US-02a S1), so the radius choice is not critical; the mean radius minimises the average error.
@@ -17,8 +18,8 @@ MEAN_EARTH_RADIUS_M = 6_371_008.8
 class CoordinateOutOfRangeError(ValueError):
     """A latitude outside -90..90 or a longitude outside -180..180 degrees."""
 
-    def __init__(self, latitude: float, longitude: float) -> None:
-        super().__init__(f"Coordinate out of range: latitude {latitude}, longitude {longitude}")
+    LATITUDE = "Latitude must be between -90 and 90"
+    LONGITUDE = "Longitude must be between -180 and 180"
 
 
 @dataclass(frozen=True)
@@ -29,8 +30,10 @@ class Coordinate:
     longitude: float
 
     def __post_init__(self) -> None:
-        if not (-90.0 <= self.latitude <= 90.0 and -180.0 <= self.longitude <= 180.0):
-            raise CoordinateOutOfRangeError(self.latitude, self.longitude)
+        if not -90.0 <= self.latitude <= 90.0:
+            raise CoordinateOutOfRangeError(CoordinateOutOfRangeError.LATITUDE)
+        if not -180.0 <= self.longitude <= 180.0:
+            raise CoordinateOutOfRangeError(CoordinateOutOfRangeError.LONGITUDE)
 
     def great_circle_distance_m(self, other: Coordinate) -> float:
         """Haversine distance in metres along the sphere's surface."""

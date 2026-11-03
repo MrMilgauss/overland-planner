@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from overland_planner.application.ports.unit_of_work import UnitOfWork
-from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.catalog.item import CatalogItem
 from overland_planner.domain.catalog.project import Project
 
 
@@ -24,9 +24,9 @@ class ProjectRepository(Protocol):
 
 
 class ItemRepository(Protocol):
-    def add(self, item: TrackItem) -> None: ...
+    def add(self, item: CatalogItem) -> None: ...
 
-    def list(self, project_id: str) -> list[TrackItem]:
+    def list(self, project_id: str) -> list[CatalogItem]:
         """The project's items in the order they were added."""
         ...
 

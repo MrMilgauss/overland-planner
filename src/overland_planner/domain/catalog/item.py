@@ -1,4 +1,4 @@
-"""Catalog items of a trip project (brief §3, §5 D107): imported tracks now, POIs at 03-08. Pure domain.
+"""Catalog items of a trip project (brief §3, §5 D107): imported tracks and POIs (`poi.py`). Pure domain.
 
 A track keeps its points in recorded order (HC-1): entry is the first recorded point, exit the last. Its full
 resolution points live in a version-addressed file (`canonical.v{direction_version}.json`, ADR-018); the item holds
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.catalog.poi import PoiItem
 
 ItemType = Literal["track", "poi"]
 
@@ -36,3 +37,6 @@ class TrackItem:
     @property
     def type(self) -> ItemType:
         return "track"
+
+
+CatalogItem = TrackItem | PoiItem

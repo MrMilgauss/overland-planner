@@ -26,8 +26,8 @@ from tests.common.fakes import FakeClock
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS = REPO_ROOT / "migrations"
-HEAD = "0002"  # this planner's Alembic head
-LATER = "0003"
+HEAD = "0003"  # this planner's Alembic head
+LATER = "9999"  # a no-op revision above any real head
 STUB = """revision = "{revision}"
 down_revision = "{down}"
 branch_labels = None

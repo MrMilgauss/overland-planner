@@ -1,4 +1,4 @@
-"""`ItemRepository` on SQLAlchemy Core: catalog items (`items`) with their track details (`tracks`)."""
+"""`ItemRepository` on SQLAlchemy Core: catalog items (`items`) with their track (`tracks`) or POI (`pois`) details."""
 
 from __future__ import annotations
 
@@ -6,16 +6,17 @@ from typing import Any
 
 from sqlalchemy import Connection, func, select
 
-from overland_planner.adapters.persistence.tables import items, tracks
+from overland_planner.adapters.persistence.tables import items, pois, tracks
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.catalog.poi import PoiItem
 
 
 class SqlAlchemyItemRepository:
     def __init__(self, connection: Connection) -> None:
         self._connection = connection
 
-    def add(self, item: TrackItem) -> None:
+    def add(self, item: CatalogItem) -> None:
         last = self._connection.execute(
             select(func.max(items.c.position)).where(items.c.project_id == item.project_id)
         ).scalar_one()
@@ -29,6 +30,14 @@ class SqlAlchemyItemRepository:
                 position=(last or 0) + 1,
             )
         )
+        if isinstance(item, PoiItem):
+            self._connection.execute(
+                pois.insert().values(item_id=item.id, lat=item.location.latitude, lon=item.location.longitude)
+            )
+        else:
+            self._add_track(item)
+
+    def _add_track(self, item: TrackItem) -> None:
         self._connection.execute(
             tracks.insert().values(
                 item_id=item.id,
@@ -45,17 +54,26 @@ class SqlAlchemyItemRepository:
             )
         )
 
-    def list(self, project_id: str) -> list[TrackItem]:
+    def list(self, project_id: str) -> list[CatalogItem]:
         query = (
-            select(items, tracks)
-            .join(tracks, tracks.c.item_id == items.c.id)
+            select(items, tracks, pois.c.lat, pois.c.lon)
+            .outerjoin(tracks, tracks.c.item_id == items.c.id)
+            .outerjoin(pois, pois.c.item_id == items.c.id)
             .where(items.c.project_id == project_id)
             .order_by(items.c.position)
         )
-        return [_track(row) for row in self._connection.execute(query).mappings()]
+        return [_item(row) for row in self._connection.execute(query).mappings()]
 
 
-def _track(row: Any) -> TrackItem:
+def _item(row: Any) -> CatalogItem:
+    if row["type"] == "poi":
+        return PoiItem(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            location=Coordinate(row["lat"], row["lon"]),
+            included=row["included"],
+        )
     return TrackItem(
         id=row["id"],
         project_id=row["project_id"],

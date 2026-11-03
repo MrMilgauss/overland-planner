@@ -110,6 +110,30 @@
         "title": "ItemResource",
         "type": "object"
       },
+      "PoiCreate": {
+        "description": "A place by decimal degrees. The ranges are the domain's rule (D151 reasons), so they are not checked here.",
+        "properties": {
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "lat",
+          "lon"
+        ],
+        "title": "PoiCreate",
+        "type": "object"
+      },
       "PointResource": {
         "properties": {
           "lat": {
@@ -380,6 +404,66 @@
           }
         },
         "summary": "Project Items"
+      }
+    },
+    "/api/projects/{project_id}/pois": {
+      "post": {
+        "description": "Out-of-range coordinates or a blank name answer 422 `validation_error` with the reason; nothing is added.",
+        "operationId": "add_poi_api_projects__project_id__pois_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoiCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Add Poi"
       }
     },
     "/api/projects/{project_id}/tracks": {

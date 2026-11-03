@@ -14,6 +14,8 @@ from starlette.exceptions import HTTPException
 
 from overland_planner.adapters.http.upload_limits import UploadFormError, UploadTooLargeError
 from overland_planner.application.catalog.facade import ProjectNotFoundError, TrackFilesRefusedError
+from overland_planner.domain.catalog.coordinate import CoordinateOutOfRangeError
+from overland_planner.domain.catalog.poi import PoiNameRequiredError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 
 _CODES = {401: "unauthorized", 404: "not_found", 413: "upload_too_large", 422: "validation_error"}
@@ -40,7 +42,9 @@ def install_error_handlers(app: FastAPI) -> None:
         return envelope(422, "validation_error", f"Invalid request - {problems}")
 
     @app.exception_handler(ProjectNameRequiredError)
-    async def on_unnamed_project(request: Request, error: ProjectNameRequiredError) -> Response:
+    @app.exception_handler(PoiNameRequiredError)
+    @app.exception_handler(CoordinateOutOfRangeError)
+    async def on_refused_value(request: Request, error: ValueError) -> Response:
         return envelope(422, "validation_error", str(error))
 
     @app.exception_handler(TrackFilesRefusedError)

@@ -20,7 +20,7 @@ from alembic.script import ScriptDirectory
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
-HEAD_TABLES = {"projects", "items", "tracks"}
+HEAD_TABLES = {"projects", "items", "tracks", "pois"}
 
 
 @pytest.fixture
@@ -103,7 +103,37 @@ def test_downgrading_0002_drops_items_and_tracks_and_keeps_the_projects(data_dir
     kept.close()
 
     command.upgrade(config, "0002")
-    assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0002"])
+    assert (_tables(file), _revision(file)) == ({"projects", "items", "tracks"}, ["0002"])
+
+
+def test_downgrading_0003_drops_the_pois_and_keeps_projects_and_tracks(data_dir: Path) -> None:
+    file = data_dir / "db" / "planner.sqlite"
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0003")
+    with sqlite3.connect(file) as seeded:
+        seeded.execute(
+            "INSERT INTO projects (id, name, objective, settings, revision, created_at) "
+            "VALUES ('p1', 'Alpi', 'distance', '{}', 3, '2026-11-03 08:00:00')"
+        )
+        seeded.execute(
+            "INSERT INTO items (id, project_id, type, name, included, position) VALUES "
+            "('i1', 'p1', 'track', 'Assietta', 1, 1), ('i2', 'p1', 'poi', 'Briancon', 1, 2)"
+        )
+        seeded.execute(
+            "INSERT INTO tracks (item_id, original_sha256, direction_version, canonical_sha256, point_count, "
+            "entry_lat, entry_lon, exit_lat, exit_lon, length_m) VALUES ('i1', 'a', 1, 'b', 2, 45, 7, 45, 7, 1)"
+        )
+        seeded.execute("INSERT INTO pois (item_id, lat, lon) VALUES ('i2', 44.899, 6.643)")
+    seeded.close()
+
+    command.downgrade(config, "0002")
+    assert (_tables(file), _revision(file)) == ({"projects", "items", "tracks"}, ["0002"])
+    with sqlite3.connect(file) as kept:
+        assert kept.execute("SELECT id, type FROM items").fetchall() == [("i1", "track")]
+    kept.close()
+
+    command.upgrade(config, "0003")
+    assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0003"])
 
 
 def test_an_external_url_and_extra_version_locations_are_honoured(data_dir: Path, tmp_path: Path) -> None:

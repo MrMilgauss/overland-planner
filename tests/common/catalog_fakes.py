@@ -12,14 +12,14 @@ from types import TracebackType
 from typing import Self
 
 from overland_planner.application.ports.probe import ProbeResult
-from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.catalog.item import CatalogItem
 from overland_planner.domain.catalog.project import Project
 
 
 @dataclass
 class InMemoryCatalog:
     projects: dict[str, Project] = field(default_factory=dict)
-    items: list[TrackItem] = field(default_factory=list)
+    items: list[CatalogItem] = field(default_factory=list)
     commits: int = 0
 
     def unit_of_work(self) -> InMemoryCatalogUnitOfWork:
@@ -44,13 +44,13 @@ class _Projects:
 
 
 class _Items:
-    def __init__(self, rows: list[TrackItem]) -> None:
+    def __init__(self, rows: list[CatalogItem]) -> None:
         self._rows = rows
 
-    def add(self, item: TrackItem) -> None:
+    def add(self, item: CatalogItem) -> None:
         self._rows.append(item)
 
-    def list(self, project_id: str) -> list[TrackItem]:
+    def list(self, project_id: str) -> list[CatalogItem]:
         return [item for item in self._rows if item.project_id == project_id]
 
 
@@ -58,7 +58,7 @@ class InMemoryCatalogUnitOfWork:
     def __init__(self, catalog: InMemoryCatalog) -> None:
         self._catalog = catalog
         self._projects: dict[str, Project] = {}
-        self._items: list[TrackItem] = []
+        self._items: list[CatalogItem] = []
         self.projects = _Projects(self._projects)
         self.items = _Items(self._items)
 

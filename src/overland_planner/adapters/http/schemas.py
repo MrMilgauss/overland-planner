@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.catalog.item import ItemType, TrackItem
+from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.project import Project
 
 
@@ -20,6 +20,14 @@ class ErrorEnvelope(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str
+
+
+class PoiCreate(BaseModel):
+    """A place by decimal degrees. The ranges are the domain's rule (D151 reasons), so they are not checked here."""
+
+    name: str
+    lat: float
+    lon: float
 
 
 class ProjectResource(BaseModel):
@@ -55,7 +63,19 @@ class ItemResource(BaseModel):
     length_m: float | None
 
     @classmethod
-    def of(cls, item: TrackItem) -> ItemResource:
+    def of(cls, item: CatalogItem) -> ItemResource:
+        if not isinstance(item, TrackItem):
+            return cls(
+                id=item.id,
+                type=item.type,
+                name=item.name,
+                included=item.included,
+                anchor=item.anchor,
+                location=PointResource.of(item.location),
+                entry=None,
+                exit=None,
+                length_m=None,
+            )
         return cls(
             id=item.id,
             type=item.type,

@@ -168,7 +168,10 @@ def test_out_of_range_point_is_refused(
     assert_state_delta(before, _point_outcome(*valid), universe, {"point": set_to(valid)}, strict=True)
     with pytest.raises(CoordinateOutOfRangeError) as refusal:  # a domain refusal, never a silently clamped point
         TrackPoint.at(*coordinates)
-    assert str(refusal.value) == f"Coordinate out of range: latitude {coordinates[0]}, longitude {coordinates[1]}"
+    latitude_ok = -90.0 <= coordinates[0] <= 90.0  # D151 reasons, latitude first (03-08)
+    assert str(refusal.value) == (
+        "Longitude must be between -180 and 180" if latitude_ok else "Latitude must be between -90 and 90"
+    )
 
 
 @given(points=st.lists(ALPINE_POINT, max_size=1))

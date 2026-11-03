@@ -52,3 +52,12 @@ tracks = Table(
     Column("elevation_gain_m", Float, nullable=True),
     Column("elevation_loss_m", Float, nullable=True),
 )
+
+# The location of a `poi` item (brief §9), decimal degrees as added (US-02c).
+pois = Table(
+    "pois",
+    metadata,
+    Column("item_id", Text, ForeignKey("items.id", ondelete="CASCADE"), primary_key=True),
+    Column("lat", Float, nullable=False),
+    Column("lon", Float, nullable=False),
+)
