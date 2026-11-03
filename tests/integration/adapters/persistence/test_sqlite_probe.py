@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from sqlalchemy import event
 
+from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.application.ports.probe import ProbeResult
@@ -39,7 +40,7 @@ def data_dir() -> Iterator[Path]:
 def _startup(data_dir: Path) -> tuple[SqliteDatabase, AlembicMigrator, DatabaseStartup]:
     database = SqliteDatabase(data_dir)
     migrator = AlembicMigrator(database, MIGRATIONS)
-    return database, migrator, DatabaseStartup(database, migrator)
+    return database, migrator, DatabaseStartup(database, migrator, SystemClock())
 
 
 def test_a_fresh_data_folder_gets_a_database_at_head_with_wal_foreign_keys_and_busy_timeout(data_dir: Path) -> None:

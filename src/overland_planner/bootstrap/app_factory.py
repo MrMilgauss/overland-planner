@@ -84,7 +84,7 @@ def create_app(
     registry = ProbeRegistry()
     registry.register("clock", clock)
     registry.register("event_log", event_log)
-    registry.register("database", DatabaseStartup(database, migrator))
+    registry.register("database", DatabaseStartup(database, migrator, clock))
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = gate.probe_in_order(registry.components())
     for name, result in health.detail().components.items():
