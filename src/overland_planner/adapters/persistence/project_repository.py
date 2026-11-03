@@ -6,9 +6,7 @@ from typing import Any
 
 from sqlalchemy import Connection, select
 
-from overland_planner.adapters.persistence.item_repository import SqlAlchemyItemRepository
 from overland_planner.adapters.persistence.tables import projects
-from overland_planner.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from overland_planner.domain.catalog.anchors import Anchors
 from overland_planner.domain.catalog.project import Project, ProjectName
 
@@ -50,18 +48,6 @@ class SqlAlchemyProjectRepository:
                 end_item_id=project.anchors.end_item_id,
             )
         )
-
-
-class SqlAlchemyCatalogUnitOfWork(SqlAlchemyUnitOfWork):
-    """The unit of work with the catalog repositories bound to its transaction."""
-
-    @property
-    def projects(self) -> SqlAlchemyProjectRepository:
-        return SqlAlchemyProjectRepository(self.connection)
-
-    @property
-    def items(self) -> SqlAlchemyItemRepository:
-        return SqlAlchemyItemRepository(self.connection)
 
 
 def _project(row: Any) -> Project:

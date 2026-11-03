@@ -40,9 +40,9 @@ from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.upload_limits import UploadLimits
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
+from overland_planner.adapters.persistence.catalog_unit_of_work import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
-from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.application.platform.facade import DataDirPersistence, HealthService, log_reason
