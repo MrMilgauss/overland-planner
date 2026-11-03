@@ -43,7 +43,7 @@ from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
-from overland_planner.application.catalog.facade import ProjectService
+from overland_planner.application.catalog.facade import ProjectService, TrackImportService
 from overland_planner.application.platform.facade import DataDirPersistence, log_reason
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
@@ -92,12 +92,14 @@ def create_app(
     registry.register("clock", clock)
     registry.register("event_log", event_log)
     registry.register("database", DatabaseStartup(database, migrator, clock))
-    registry.register("file_store", LocalFileStore(settings.data_dir))
+    file_store = LocalFileStore(settings.data_dir)
+    registry.register("file_store", file_store)
     mount_table = ports.mount_table or ProcMountTable()
     registry.register("mount_table", mount_table)
     # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
     registry.register("data_dir", DataDirPersistence(PurePosixPath(settings.data_dir.resolve()), mount_table))
-    registry.register("gpx_parser", GpxpyParser())  # parse() gets its caller with the track import (03-05)
+    gpx_parser = GpxpyParser()
+    registry.register("gpx_parser", gpx_parser)
     registry.register("tour_solver", ports.tour_solver or OrToolsTourSolver())
     health = gate.probe_in_order(registry.components())
     for name, result in health.detail().components.items():
@@ -108,7 +110,16 @@ def create_app(
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)
     install_error_handlers(app)  # the {code, message} envelope for every non-2xx answer under /api (brief §5)
     app.include_router(platform_routes(health))
-    app.include_router(catalog_routes(ProjectService(lambda: SqlAlchemyCatalogUnitOfWork(database), clock)))
+
+    def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
+        return SqlAlchemyCatalogUnitOfWork(database)
+
+    app.include_router(
+        catalog_routes(
+            ProjectService(catalog_unit_of_work, clock),
+            TrackImportService(catalog_unit_of_work, gpx_parser, file_store, event_log),
+        )
+    )
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = settings.basic_auth_user is not None and settings.basic_auth_password is not None
     if auth_enabled and settings.basic_auth_user and settings.basic_auth_password:

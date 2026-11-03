@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 
@@ -38,3 +38,7 @@ class Project:
     @classmethod
     def create(cls, project_id: str, name: ProjectName, created_at: datetime) -> Project:
         return cls(id=project_id, name=name, revision=1, created_at=created_at)
+
+    def revised(self) -> Project:
+        """The project after one more catalog change (brief §3: each change increments the revision)."""
+        return replace(self, revision=self.revision + 1)

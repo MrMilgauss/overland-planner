@@ -20,6 +20,7 @@ from alembic.script import ScriptDirectory
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
+HEAD_TABLES = {"projects", "items", "tracks"}
 
 
 @pytest.fixture
@@ -67,13 +68,42 @@ def test_upgrade_downgrade_to_base_and_upgrade_again_on_a_seeded_database(data_d
             "VALUES ('p1', 'Dolomiti 2028', 'balanced', '{}', 1, '2026-11-03 08:00:00')"
         )
     seeded.close()
-    assert (_tables(file), _revision(file)) == ({"projects"}, [head])
+    assert (_tables(file), _revision(file)) == (HEAD_TABLES, [head])
 
     command.downgrade(config, "base")
     assert (_tables(file), _revision(file)) == (set(), [])
 
     command.upgrade(config, "head")
-    assert (_tables(file), _revision(file)) == ({"projects"}, [head])
+    assert (_tables(file), _revision(file)) == (HEAD_TABLES, [head])
+
+
+def test_downgrading_0002_drops_items_and_tracks_and_keeps_the_projects(data_dir: Path) -> None:
+    file = data_dir / "db" / "planner.sqlite"
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0002")
+    with sqlite3.connect(file) as seeded:
+        seeded.execute(
+            "INSERT INTO projects (id, name, objective, settings, revision, created_at) "
+            "VALUES ('p1', 'Alpi', 'distance', '{}', 2, '2026-11-03 08:00:00')"
+        )
+        seeded.execute(
+            "INSERT INTO items (id, project_id, type, name, included, position) "
+            "VALUES ('i1', 'p1', 'track', 'Assietta', 1, 1)"
+        )
+        seeded.execute(
+            "INSERT INTO tracks (item_id, original_sha256, direction_version, canonical_sha256, point_count, "
+            "entry_lat, entry_lon, exit_lat, exit_lon, length_m) VALUES ('i1', 'a', 1, 'b', 2, 45, 7, 45, 7, 1)"
+        )
+    seeded.close()
+
+    command.downgrade(config, "0001")
+    assert (_tables(file), _revision(file)) == ({"projects"}, ["0001"])
+    with sqlite3.connect(file) as kept:
+        assert kept.execute("SELECT id, name FROM projects").fetchall() == [("p1", "Alpi")]
+    kept.close()
+
+    command.upgrade(config, "0002")
+    assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0002"])
 
 
 def test_an_external_url_and_extra_version_locations_are_honoured(data_dir: Path, tmp_path: Path) -> None:
@@ -96,4 +126,4 @@ def test_without_a_url_alembic_uses_the_database_under_data_dir(
 
     command.upgrade(_config(), "head")
 
-    assert _tables(data_dir / "db" / "planner.sqlite") == {"projects"}
+    assert _tables(data_dir / "db" / "planner.sqlite") == HEAD_TABLES

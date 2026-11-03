@@ -26,6 +26,8 @@ from tests.common.fakes import FakeClock
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS = REPO_ROOT / "migrations"
+HEAD = "0002"  # this planner's Alembic head
+LATER = "0003"
 STUB = """revision = "{revision}"
 down_revision = "{down}"
 branch_labels = None
@@ -62,7 +64,7 @@ def _migrations_with_a_later_revision(workspace: Path, revision: str) -> Path:
     """The planner's migrations plus a no-op revision on top of head: 'the planner one version later'."""
     later = workspace / "later_migrations"
     shutil.copytree(MIGRATIONS, later, ignore=shutil.ignore_patterns("__pycache__"))
-    (later / "versions" / f"{revision}_later.py").write_text(STUB.format(revision=revision, down="0001"))
+    (later / "versions" / f"{revision}_later.py").write_text(STUB.format(revision=revision, down=HEAD))
     return later
 
 
@@ -98,16 +100,16 @@ def test_an_older_database_is_copied_then_upgraded_and_only_the_newest_three_cop
     assert _probe(data_dir) == ProbeResult(outcome="ok")
     backups = data_dir / "db" / "backups"
     backups.mkdir()
-    old_copies = [f"planner-0001-2026010{day}T000000000000Z.sqlite" for day in (1, 2, 3)]
+    old_copies = [f"planner-{HEAD}-2026010{day}T000000000000Z.sqlite" for day in (1, 2, 3)]
     for name in old_copies:
         (backups / name).write_bytes(b"")
 
-    assert _probe(data_dir, _migrations_with_a_later_revision(workspace, "0002")) == ProbeResult(outcome="ok")
+    assert _probe(data_dir, _migrations_with_a_later_revision(workspace, LATER)) == ProbeResult(outcome="ok")
 
-    new_copy = "planner-0001-20261102T193000000000Z.sqlite"  # FakeClock: 2026-11-02 19:30 UTC
+    new_copy = f"planner-{HEAD}-20261102T193000000000Z.sqlite"  # FakeClock: 2026-11-02 19:30 UTC
     assert sorted(path.name for path in backups.iterdir()) == sorted([*old_copies[1:], new_copy])
-    assert _stored_revision(backups / new_copy) == "0001"
-    assert _stored_revision(data_dir / "db" / "planner.sqlite") == "0002"
+    assert _stored_revision(backups / new_copy) == HEAD
+    assert _stored_revision(data_dir / "db" / "planner.sqlite") == LATER
 
 
 def test_a_fresh_database_and_one_at_head_get_no_copy(workspace: Path) -> None:
@@ -117,4 +119,4 @@ def test_a_fresh_database_and_one_at_head_get_no_copy(workspace: Path) -> None:
     assert _probe(data_dir) == ProbeResult(outcome="ok")
 
     assert not (data_dir / "db" / "backups").exists()
-    assert _stored_revision(data_dir / "db" / "planner.sqlite") == "0001"
+    assert _stored_revision(data_dir / "db" / "planner.sqlite") == HEAD

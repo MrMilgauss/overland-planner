@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
+from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.project import Project, ProjectName
 
 
@@ -39,7 +40,9 @@ class ProjectService:
             raise ProjectNotFoundError(project_id)
         return project
 
-    def items(self, project_id: str) -> Sequence[object]:
-        """The open project's items (tracks and POIs arrive at step 03-05); empty for a new project."""
-        self.open(project_id)
-        return ()
+    def items(self, project_id: str) -> Sequence[TrackItem]:
+        """The open project's items in the order they were added; empty for a new project."""
+        with self._unit_of_work() as uow:
+            if uow.projects.get(project_id) is None:
+                raise ProjectNotFoundError(project_id)
+            return uow.items.list(project_id)

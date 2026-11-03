@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException
 
-from overland_planner.application.catalog.facade import ProjectNotFoundError
+from overland_planner.application.catalog.facade import ProjectNotFoundError, TrackFilesRefusedError
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 
 _CODES = {401: "unauthorized", 404: "not_found", 413: "upload_too_large", 422: "validation_error"}
@@ -40,6 +40,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ProjectNameRequiredError)
     async def on_unnamed_project(request: Request, error: ProjectNameRequiredError) -> Response:
+        return envelope(422, "validation_error", str(error))
+
+    @app.exception_handler(TrackFilesRefusedError)
+    async def on_refused_track_files(request: Request, error: TrackFilesRefusedError) -> Response:
         return envelope(422, "validation_error", str(error))
 
     @app.exception_handler(ProjectNotFoundError)

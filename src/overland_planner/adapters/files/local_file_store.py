@@ -2,6 +2,9 @@
 
 Start-up probe: write `DATA_DIR/tmp/probe-<uuid>.part`, fsync it, rename it to `probe-<uuid>`, fsync the folder,
 read it back and delete it. Any failure is fatal; the reason names the step that failed.
+
+Writes (ADR-018): every file is written and fsynced as `DATA_DIR/tmp/<uuid>.part` (the same filesystem as
+`DATA_DIR/files`), renamed into place with `os.replace` and its folder fsynced, so a reader never sees half a file.
 """
 
 from __future__ import annotations
@@ -18,6 +21,25 @@ from overland_planner.application.ports.probe import ProbeResult
 class LocalFileStore:
     def __init__(self, data_dir: Path) -> None:
         self._scratch = data_dir / "tmp"
+        self._files = data_dir / "files"
+
+    def keep_original(self, sha256: str, content: bytes) -> None:
+        target = self._files / "originals" / f"{sha256}.gpx"
+        if not target.exists():
+            self._write_atomically(target, content)
+
+    def keep_canonical_points(self, track_id: str, direction_version: int, content: bytes) -> None:
+        self._write_atomically(self._files / "tracks" / track_id / f"canonical.v{direction_version}.json", content)
+
+    def _write_atomically(self, target: Path, content: bytes) -> None:
+        written = self._scratch / f"{uuid.uuid4().hex}.part"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._write_synced(written, content)
+            os.replace(written, target)
+            _fsync_folder(target.parent)
+        finally:
+            written.unlink(missing_ok=True)
 
     def probe(self) -> ProbeResult:
         name = f"probe-{uuid.uuid4().hex}"
@@ -52,9 +74,13 @@ class LocalFileStore:
 
     def _rename_synced(self, source: Path, target: Path) -> bool:
         os.replace(source, target)
-        folder = os.open(self._scratch, os.O_RDONLY)
-        try:
-            os.fsync(folder)
-        finally:
-            os.close(folder)
+        _fsync_folder(self._scratch)
         return True
+
+
+def _fsync_folder(path: Path) -> None:
+    folder = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)

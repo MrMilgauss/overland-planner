@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import Connection, select
 
+from overland_planner.adapters.persistence.item_repository import SqlAlchemyItemRepository
 from overland_planner.adapters.persistence.tables import projects
 from overland_planner.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from overland_planner.domain.catalog.project import Project, ProjectName
@@ -38,6 +39,9 @@ class SqlAlchemyProjectRepository:
         rows = self._connection.execute(select(projects).order_by(projects.c.created_at, projects.c.id)).mappings()
         return [_project(row) for row in rows]
 
+    def update(self, project: Project) -> None:
+        self._connection.execute(projects.update().where(projects.c.id == project.id).values(revision=project.revision))
+
 
 class SqlAlchemyCatalogUnitOfWork(SqlAlchemyUnitOfWork):
     """The unit of work with the catalog repositories bound to its transaction."""
@@ -45,6 +49,10 @@ class SqlAlchemyCatalogUnitOfWork(SqlAlchemyUnitOfWork):
     @property
     def projects(self) -> SqlAlchemyProjectRepository:
         return SqlAlchemyProjectRepository(self.connection)
+
+    @property
+    def items(self) -> SqlAlchemyItemRepository:
+        return SqlAlchemyItemRepository(self.connection)
 
 
 def _project(row: Any) -> Project:

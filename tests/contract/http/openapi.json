@@ -1,6 +1,23 @@
 {
   "components": {
     "schemas": {
+      "Body_import_tracks_api_projects__project_id__tracks_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "contentMediaType": "application/octet-stream",
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_import_tracks_api_projects__project_id__tracks_post",
+        "type": "object"
+      },
       "ErrorEnvelope": {
         "description": "Every non-2xx answer under /api (D183).",
         "properties": {
@@ -18,6 +35,114 @@
           "message"
         ],
         "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "ItemResource": {
+        "description": "A catalog item (D107): `location` for a POI; `entry`, `exit` and `length_m` for a track; others null.",
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor"
+          },
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "included": {
+            "title": "Included",
+            "type": "boolean"
+          },
+          "length_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length M"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "track",
+              "poi"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "name",
+          "included",
+          "anchor",
+          "location",
+          "entry",
+          "exit",
+          "length_m"
+        ],
+        "title": "ItemResource",
+        "type": "object"
+      },
+      "PointResource": {
+        "properties": {
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "PointResource",
         "type": "object"
       },
       "ProjectCreate": {
@@ -240,7 +365,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {},
+                  "items": {
+                    "$ref": "#/components/schemas/ItemResource"
+                  },
                   "title": "Response Project Items Api Projects  Project Id  Items Get",
                   "type": "array"
                 }
@@ -270,6 +397,70 @@
           }
         },
         "summary": "Project Items"
+      }
+    },
+    "/api/projects/{project_id}/tracks": {
+      "post": {
+        "description": "All or nothing (D149): when any file is refused, 422 names each refused file and nothing is added.",
+        "operationId": "import_tracks_api_projects__project_id__tracks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_tracks_api_projects__project_id__tracks_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ItemResource"
+                  },
+                  "title": "Response Import Tracks Api Projects  Project Id  Tracks Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Import Tracks"
       }
     },
     "/healthz": {
