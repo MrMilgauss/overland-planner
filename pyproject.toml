@@ -204,6 +204,21 @@ ignore_imports = ["overland_planner.application.** -> overland_planner.applicati
 unmatched_ignore_imports_alerting = "none"
 
 [[tool.importlinter.contracts]]
+id = "facade-catalog"
+name = "Application facades: other modules reach catalog only through its facade"
+type = "forbidden"
+source_modules = [
+    "overland_planner.application.export",
+    "overland_planner.application.planning",
+    "overland_planner.application.platform",
+    "overland_planner.application.routing",
+    "overland_planner.adapters",
+    "overland_planner.bootstrap",
+]
+forbidden_modules = ["overland_planner.application.catalog"]
+ignore_imports = ["overland_planner.** -> overland_planner.application.catalog.facade"]
+
+[[tool.importlinter.contracts]]
 id = "ortools-solver-only"
 name = "ortools only in adapters.solver"
 type = "forbidden"

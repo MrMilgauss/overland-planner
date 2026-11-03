@@ -1,5 +1,5 @@
 # Developer entry points (Mac and Pi).
-.PHONY: bootstrap lint lint-ci test test-web web-dist mutate run-local e2e-local
+.PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local
 
 PYTEST_FAST := -m "not slow and not solver_child and not walking_skeleton"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -51,6 +51,9 @@ test-web: ## Reproducible web build from package-lock.json: npm ci, svelte-check
 	cd web && npx vitest run
 	cd web && npx vite build
 
+openapi-snapshot: ## Regenerate tests/contract/http/openapi.json on purpose after an API change (commit it with the change)
+	uv run python -m tests.contract.http.test_openapi_snapshot
+
 run-local: web-dist ## The planner on http://$(HOST):$(PORT) with ./.data/dev and the offline mock road map
 	mkdir -p .data/dev
 	DATA_DIR=./.data/dev ROUTING_PROVIDER=mock $(UVICORN) --host $(HOST) --port $(PORT)
@@ -66,7 +69,8 @@ mutate: web-dist ## mutmut on domain/application files changed since BASE (defau
 	uv run mutmut export-cicd-stats >/dev/null || exit 1; \
 	uv run python -c 'import json, sys; s = json.load(open("mutants/mutmut-cicd-stats.json")); \
 	caught = s["killed"] + s["timeout"]; scored = caught + s["survived"] + s["no_tests"]; \
-	rate = 100.0 * caught / scored if scored else 100.0; \
+	scored or (print("mutate: no mutants in scope"), sys.exit(0)); \
+	rate = 100.0 * caught / scored; \
 	print(f"mutate: kill rate {rate:.1f}% ({caught}/{scored}); minimum $(KILL_RATE_MIN)%"); \
 	sys.exit(0 if rate >= $(KILL_RATE_MIN) else 1)'
 

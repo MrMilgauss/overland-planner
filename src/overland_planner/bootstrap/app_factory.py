@@ -25,12 +25,16 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from overland_planner.adapters.clock.system_clock import SystemClock
+from overland_planner.adapters.http.catalog_routes import catalog_routes
+from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
+from overland_planner.adapters.persistence.project_repository import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
+from overland_planner.application.catalog.facade import ProjectService
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
@@ -82,13 +86,15 @@ def create_app(
 
     logging.getLogger("uvicorn.access").disabled = True
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)
+    install_error_handlers(app)  # the {code, message} envelope for every non-2xx answer under /api (brief §5)
     app.include_router(platform_routes(health))
+    app.include_router(catalog_routes(ProjectService(lambda: SqlAlchemyCatalogUnitOfWork(database), clock)))
     mount_web_page(app, settings.web_dist_dir)
     event_log.info(
         "app.started",
         routing_provider=settings.routing_provider,
         solver_budget=settings.solver_budget,
         python_version=platform.python_version(),
-        alembic_head=migrator.head(),
+        alembic_revision=migrator.head(),
     )
     return app

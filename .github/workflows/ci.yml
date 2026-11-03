@@ -219,6 +219,8 @@ jobs:
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
           uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not walking_skeleton" \
             --cov=overland_planner --cov-report=term --cov-fail-under=80
+      - name: Domain coverage (>= 90 %)
+        run: uv run coverage report --include='*/overland_planner/domain/*' --fail-under=90
       - name: Walking skeleton (non-blocking until step 03-06)
         id: walking_skeleton
         continue-on-error: true

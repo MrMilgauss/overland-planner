@@ -136,6 +136,9 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     assert "not real_provider and not pi and not walking_skeleton" in command
     assert "--cov-fail-under=80" in command
     assert not pytest_step.get("continue-on-error")
+    domain_gate = job["steps"][job["steps"].index(pytest_step) + 1]
+    assert "--include='*/overland_planner/domain/*' --fail-under=90" in domain_gate["run"]
+    assert not domain_gate.get("continue-on-error")
 
 
 def test_walking_skeleton_step_is_non_blocking_until_slice_01a() -> None:
