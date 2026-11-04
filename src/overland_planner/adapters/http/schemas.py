@@ -6,11 +6,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from overland_planner.application.planning.facade import PlanJobState, PlanJobView
+from overland_planner.application.ports.plan_run_repository import PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
-from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
+from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, StopKind
 
 
 class ErrorEnvelope(BaseModel):
@@ -112,6 +114,64 @@ class PlanRunResource(BaseModel):
     @classmethod
     def of(cls, run: PlanRun) -> PlanRunResource:
         return cls(id=run.id, number=run.number, status=run.status)
+
+
+class PlanJobAccepted(BaseModel):
+    job_id: str
+
+
+class PlanJobResource(BaseModel):
+    """The poll payload (brief §5): the subset slice 01b fills; later fields are additive."""
+
+    state: PlanJobState
+    reason: str | None
+    message: str | None
+    plan_run_id: str | None
+    elapsed_s: float
+
+    @classmethod
+    def of(cls, job: PlanJobView) -> PlanJobResource:
+        return cls(
+            state=job.state,
+            reason=job.reason,
+            message=job.message,
+            plan_run_id=job.plan_run_id,
+            elapsed_s=job.elapsed_s,
+        )
+
+
+class PlanStopResource(BaseModel):
+    """One stop of the itinerary: the first stop has no road leg."""
+
+    name: str
+    type: StopKind
+    leg_km: float | None
+
+    @classmethod
+    def of(cls, stop: PlanStop) -> PlanStopResource:
+        return cls(name=stop.name, type=stop.kind, leg_km=stop.leg_km)
+
+
+class PlanRunDetailResource(BaseModel):
+    """A plan run with its ordered stops; a Failed run has none and names its `failure_reason`."""
+
+    id: str
+    project_id: str
+    number: int
+    status: PlanRunStatus
+    failure_reason: str | None
+    stops: list[PlanStopResource]
+
+    @classmethod
+    def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
+        return cls(
+            id=run.id,
+            project_id=run.project_id,
+            number=run.number,
+            status=run.status,
+            failure_reason=run.failure_reason,
+            stops=[PlanStopResource.of(stop) for stop in run.stops],
+        )
 
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

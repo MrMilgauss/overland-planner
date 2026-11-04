@@ -2,7 +2,7 @@
 
 A refused request creates no job and no plan run and logs one `plan.job.refused` line. The optimizer's readiness is the
 start-up probe outcome of the component `tour_solver`; nothing probes it again. A request that passes every pre-check
-has no job to start until step 04-04, so it fails as an internal error.
+starts a plan job and answers at once with its id.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import ClassVar
 
+from overland_planner.application.planning.plan_job_registry import PlanJobRegistry
 from overland_planner.application.planning.plan_run_queries import existing_snapshot
 from overland_planner.application.platform.facade import HealthService
 from overland_planner.application.ports.event_log import EventLog
@@ -44,19 +45,24 @@ class OptimizerUnavailableError(PlanRefusedError):
 
 class PlanRequestService:
     def __init__(
-        self, unit_of_work: Callable[[], PlanningUnitOfWork], health: HealthService, event_log: EventLog
+        self,
+        unit_of_work: Callable[[], PlanningUnitOfWork],
+        health: HealthService,
+        event_log: EventLog,
+        jobs: PlanJobRegistry,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._health = health
         self._event_log = event_log
+        self._jobs = jobs
 
-    def request(self, project_id: str) -> None:
-        """Raises `ProjectNotFoundError` or the `PlanRefusedError` of the first failing pre-check."""
+    def request(self, project_id: str) -> str:
+        """The started job's id. Raises `ProjectNotFoundError` or the `PlanRefusedError` of the failed pre-check."""
         with self._unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
         refusal = self._first_refusal(snapshot)
         if refusal is None:
-            raise NotImplementedError("plan jobs arrive with step 04-04")
+            return self._jobs.start(project_id)
         self._event_log.info(
             "plan.job.refused", project_id=project_id, http_status=refusal.http_status, reason=refusal.reason
         )

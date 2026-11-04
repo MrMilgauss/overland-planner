@@ -2,17 +2,57 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
-from overland_planner.domain.planning.plan_run import PlanRun
+from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop
+
+
+@dataclass(frozen=True)
+class PlanRunDetail:
+    """A stored plan run with its itinerary; a Failed run has no stops."""
+
+    id: str
+    project_id: str
+    number: int
+    status: PlanRunStatus
+    failure_reason: str | None
+    stops: tuple[PlanStop, ...]
+
+
+@dataclass(frozen=True)
+class NewPlanRun:
+    """The row a finished plan writes: its number comes from the same transaction (brief section 8)."""
+
+    id: str
+    project_id: str
+    number: int
+    status: PlanRunStatus
+    failure_reason: str | None
+    created_at: datetime
+    revision: int
+    provider_id: str
+    objective: str
+    inputs: Mapping[str, object]
+    stops: tuple[PlanStop, ...]
 
 
 class PlanRunRepository(Protocol):
     def list(self, project_id: str) -> list[PlanRun]:
         """The project's plan runs, ordered by number."""
         ...
+
+    def get(self, plan_run_id: str) -> PlanRunDetail | None: ...
+
+    def next_number(self, project_id: str) -> int:
+        """The number the project's next plan run gets: the first is 1."""
+        ...
+
+    def add(self, run: NewPlanRun) -> None: ...
 
 
 class PlanningUnitOfWork(UnitOfWork, Protocol):

@@ -9,22 +9,28 @@ the list shows the project's runs) x 2 = 6; 3 used.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import TracebackType
-from typing import Any, Self, get_args
+from typing import Any, get_args
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.application.catalog.facade import ProjectNotFoundError
-from overland_planner.application.planning.facade import PlanRefusedError, PlanRequestService, PlanRunQueries
+from overland_planner.application.planning.facade import (
+    PlanJobProgress,
+    PlanJobRegistry,
+    PlanRefusedError,
+    PlanRequestService,
+    PlanRunQueries,
+    StoredRun,
+)
 from overland_planner.application.platform.facade import HealthService
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
-from overland_planner.domain.planning.plan_run import PlanRun
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import RecordingEventLog
+from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
+from tests.unit.application.planning.planning_doubles import InMemoryPlanning
 
 UNIVERSE = {"plan_runs", "jobs", "refusals_logged"}
 PROJECT = "project-1"
@@ -33,48 +39,26 @@ ANCHOR = st.none() | st.just("poi-1")
 RUN_NUMBERS = st.sets(st.integers(min_value=1, max_value=50), max_size=5)
 
 
-@dataclass
-class InMemoryPlanning:
-    """Stands for the database: a read-only view of the projects and the plan runs of each project."""
-
-    snapshots: dict[str, ProjectSnapshot] = field(default_factory=dict)
-    runs: dict[str, list[PlanRun]] = field(default_factory=dict)
-
-    def unit_of_work(self) -> InMemoryPlanningUnitOfWork:
-        return InMemoryPlanningUnitOfWork(self)
-
-    def read(self, project_id: str) -> ProjectSnapshot | None:
-        return self.snapshots.get(project_id)
-
-    def list(self, project_id: str) -> list[PlanRun]:
-        return sorted(self.runs.get(project_id, []), key=lambda run: run.number)
-
-
-class InMemoryPlanningUnitOfWork:
-    def __init__(self, planning: InMemoryPlanning) -> None:
-        self.plan_runs = self.project_snapshots = planning
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
-    ) -> None:
-        pass
-
-    def commit(self) -> None:
-        raise AssertionError("a pre-check or a query has nothing to commit")
-
-
 def _planning(numbers: set[int], start: str | None = None, end: str | None = None) -> InMemoryPlanning:
-    runs = [PlanRun(id=f"run-{number}", number=number, status="ready") for number in numbers]
-    return InMemoryPlanning({PROJECT: ProjectSnapshot(start, end)}, {PROJECT: runs})
+    planning = InMemoryPlanning()
+    planning.add_project(PROJECT, ProjectSnapshot(start, end))
+    for number in numbers:
+        planning.seed_run(PROJECT, number)
+    return planning
+
+
+class _NoWork:
+    """Calculate's pre-checks are under test here; the plan job itself is in test_plan_job_registry.py."""
+
+    def run(self, project_id: str, progress: PlanJobProgress) -> StoredRun:
+        return StoredRun(plan_run_id="not-stored", reason=None)
 
 
 def _service(planning: InMemoryPlanning, solver: ProbeOutcome, other: ProbeOutcome = "ok") -> Any:
     health = HealthService({"tour_solver": ProbeResult(solver), "data_dir": ProbeResult(other)})
     log = RecordingEventLog()
-    return PlanRequestService(planning.unit_of_work, health, log), log
+    jobs = PlanJobRegistry(FakeClock(), _NoWork(), RecordingEventLog())
+    return PlanRequestService(planning.unit_of_work, health, log, jobs), log
 
 
 def _view(planning: InMemoryPlanning, log: RecordingEventLog, jobs: tuple[Any, ...] = ()) -> dict[str, Any]:
@@ -92,8 +76,6 @@ def _press_calculate(service: PlanRequestService) -> tuple[tuple[Any, ...], Plan
         return (service.request(PROJECT),), None
     except PlanRefusedError as refused:
         return (), refused
-    except NotImplementedError:  # every pre-check passed: no job until the plan job exists (step 04-04)
-        return (), None
 
 
 def _first_failing_pre_check(start: str | None, end: str | None, solver: ProbeOutcome) -> tuple[str, int, str] | None:
@@ -119,9 +101,17 @@ def test_a_refusal_is_the_first_failing_pre_check_in_brief_order_and_changes_not
     expected = _first_failing_pre_check(start, end, solver)
     seen = None if refused is None else (refused.reason, refused.http_status, str(refused))
     assert seen == expected
-    logged = () if expected is None else (("plan.job.refused", _refusal_fields(expected)),)
-    delta = {"refusals_logged": set_to(logged)}
-    assert_state_delta(before, _view(planning, log, jobs), UNIVERSE, delta, strict=True)
+    if expected is None:
+        assert_state_delta(before, _view(planning, log, jobs), UNIVERSE, {"jobs": _one_job_handed_out}, strict=True)
+    else:
+        logged = (("plan.job.refused", _refusal_fields(expected)),)
+        delta = {"refusals_logged": set_to(logged)}
+        assert_state_delta(before, _view(planning, log, jobs), UNIVERSE, delta, strict=True)
+
+
+def _one_job_handed_out(_old: tuple[Any, ...], new: tuple[Any, ...]) -> bool:
+    (job_id,) = new
+    return isinstance(job_id, str) and job_id != ""
 
 
 def _refusal_fields(refusal: tuple[str, int, str]) -> dict[str, object]:
@@ -150,8 +140,9 @@ def test_the_list_shows_the_runs_of_that_project_only_and_changes_nothing(
     numbers: set[int], other_numbers: set[int]
 ) -> None:
     planning = _planning(numbers)
-    planning.snapshots["project-2"] = ProjectSnapshot()
-    planning.runs["project-2"] = [PlanRun(id=f"other-{n}", number=n, status="failed") for n in other_numbers]
+    planning.add_project("project-2", ProjectSnapshot())
+    for number in other_numbers:
+        planning.seed_run("project-2", number, "failed")
     _, log = _service(planning, "ok")
     before = _view(planning, log)
 

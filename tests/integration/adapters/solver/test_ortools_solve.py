@@ -9,6 +9,7 @@ The faulty child entry points are module-level so the spawn context can import t
 
 from __future__ import annotations
 
+import errno
 import itertools
 import multiprocessing
 import os
@@ -18,6 +19,7 @@ import sys
 import time
 from collections.abc import Callable
 from multiprocessing.connection import Connection
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 
 import pytest
@@ -341,3 +343,14 @@ def test_importing_the_app_factory_leaves_ortools_out(tmp_path: Path) -> None:
         "solved: TourFound(order=('s', 'e'))",
         "after solve: []",
     ]
+
+
+def test_a_child_that_could_not_start_is_a_child_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Out of memory on the Pi, for example; only the start of the process is made to fail."""
+
+    def out_of_memory(_child: BaseProcess) -> None:
+        raise OSError(errno.ENOMEM, "Cannot allocate memory")
+
+    monkeypatch.setattr(BaseProcess, "start", out_of_memory)
+
+    assert OrToolsTourSolver().solve(ROUND_TRIP, ENOUGH_BUDGET) == TourOptimizerFailed(exit_code=None, signal=None)

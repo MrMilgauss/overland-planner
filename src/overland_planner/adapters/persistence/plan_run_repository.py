@@ -1,11 +1,18 @@
-"""`PlanRunRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`."""
+"""`PlanRunRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`.
+
+The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary (SQL NULL).
+"""
 
 from __future__ import annotations
 
-from sqlalchemy import Connection, select
+from typing import Any
+
+from sqlalchemy import Connection, func, null, select
 
 from overland_planner.adapters.persistence.tables import plan_runs
-from overland_planner.domain.planning.plan_run import PlanRun
+from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
+from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.planning.plan_run import PlanRun, PlanStop
 
 
 class SqlAlchemyPlanRunRepository:
@@ -20,3 +27,80 @@ class SqlAlchemyPlanRunRepository:
         )
         rows = self._connection.execute(query).mappings()
         return [PlanRun(id=row["id"], number=row["number"], status=row["status"]) for row in rows]
+
+    def get(self, plan_run_id: str) -> PlanRunDetail | None:
+        query = select(plan_runs).where(plan_runs.c.id == plan_run_id)
+        row = self._connection.execute(query).mappings().first()
+        if row is None:
+            return None
+        return PlanRunDetail(
+            id=row["id"],
+            project_id=row["project_id"],
+            number=row["number"],
+            status=row["status"],
+            failure_reason=row["failure_reason"],
+            stops=_stops(row["itinerary"]),
+        )
+
+    def next_number(self, project_id: str) -> int:
+        query = select(func.max(plan_runs.c.number)).where(plan_runs.c.project_id == project_id)
+        return (self._connection.execute(query).scalar_one() or 0) + 1
+
+    def add(self, run: NewPlanRun) -> None:
+        self._connection.execute(
+            plan_runs.insert().values(
+                id=run.id,
+                project_id=run.project_id,
+                number=run.number,
+                status=run.status,
+                failure_reason=run.failure_reason,
+                created_at=run.created_at,
+                revision=run.revision,
+                provider_id=run.provider_id,
+                objective=run.objective,
+                inputs=dict(run.inputs),
+                itinerary={"stops": [_stop_json(stop) for stop in run.stops]} if run.stops else null(),
+            )
+        )
+
+
+def _stop_json(stop: PlanStop) -> dict[str, Any]:
+    return {
+        "item_id": stop.item_id,
+        "name": stop.name,
+        "kind": stop.kind,
+        "leg_km": stop.leg_km,
+        "location": _point_json(stop.location),
+        "entry": _point_json(stop.entry),
+        "exit": _point_json(stop.exit),
+        "direction_version": stop.direction_version,
+        "point_count": stop.point_count,
+        "canonical_sha256": stop.canonical_sha256,
+    }
+
+
+def _point_json(point: Coordinate | None) -> dict[str, float] | None:
+    return None if point is None else {"lat": point.latitude, "lon": point.longitude}
+
+
+def _stops(itinerary: dict[str, Any] | None) -> tuple[PlanStop, ...]:
+    return () if itinerary is None else tuple(_stop(stop) for stop in itinerary["stops"])
+
+
+def _stop(stop: dict[str, Any]) -> PlanStop:
+    return PlanStop(
+        item_id=stop["item_id"],
+        name=stop["name"],
+        kind=stop["kind"],
+        leg_km=stop["leg_km"],
+        location=_point(stop["location"]),
+        entry=_point(stop["entry"]),
+        exit=_point(stop["exit"]),
+        direction_version=stop["direction_version"],
+        point_count=stop["point_count"],
+        canonical_sha256=stop["canonical_sha256"],
+    )
+
+
+def _point(point: dict[str, float] | None) -> Coordinate | None:
+    return None if point is None else Coordinate(point["lat"], point["lon"])

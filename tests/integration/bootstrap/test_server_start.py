@@ -7,21 +7,31 @@ the aggregation invariants live in tests/unit/application/platform/test_health_s
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from overland_planner.adapters.persistence.database import SqliteDatabase
+from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.tour_solver import TourNoRoute
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
+from tests.acceptance.overland_route_planner_mvp.steps.places import trail_file_bytes
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.common.fakes import FakeClock, FakeMountTable
 from tests.common.workspace import workspace_data_dir
+from tests.unit.application.planning.scripted_tour_solver import Script, ScriptedTourSolver
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILT_WEB_PAGE = REPO_ROOT / "web" / "dist" / "index.html"
 NOT_PERSISTENT = "Data directory is not persistent - projects would be lost on restart"
+PLAN_DEADLINE_S = 30.0
+ASSIETTA = "Strada dell'Assietta"
 
 
 @pytest.fixture
@@ -91,6 +101,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
                 "file_store": {"outcome": "ok", "reason": None},
                 "gpx_parser": {"outcome": "ok", "reason": None},
                 "mount_table": {"outcome": "ok", "reason": None},
+                "routing_provider": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},
             },
             "banners": [],
@@ -137,3 +148,110 @@ def test_a_refused_start_exits_non_zero_after_one_refusal_line_and_answers_nothi
     ], record.tail()
     assert "ROUTING_PROVIDER" in record.json_lines()[0]["reason"]
     assert len(record.stdout) == 1, "stdout must hold only the refusal line"
+
+
+def _project_with_a_trail_between_two_places(client: TestClient) -> tuple[str, dict[str, str]]:
+    """Added in the order Briancon, the Assietta, Casa Marco; Casa Marco is Start and End."""
+    project_id = client.post("/api/projects", json={"name": "Stored plan"}).json()["id"]
+    places = f"/api/projects/{project_id}/pois"
+    client.post(places, json={"name": "Briancon", "lat": 44.8986, "lon": 6.6419}).raise_for_status()
+    files = [("files", ("assietta.gpx", trail_file_bytes("assietta.gpx"), "application/gpx+xml"))]
+    client.post(f"/api/projects/{project_id}/tracks", files=files).raise_for_status()
+    home = client.post(places, json={"name": "Casa Marco", "lat": 45.0703, "lon": 7.6869}).json()["id"]
+    anchors = {"start_item_id": home, "end_item_id": home}
+    client.put(f"/api/projects/{project_id}/anchors", json=anchors).raise_for_status()
+    items = client.get(f"/api/projects/{project_id}/items").json()
+    return project_id, {item["name"]: item["id"] for item in items}
+
+
+def _plan(client: TestClient, project_id: str) -> dict[str, object]:
+    accepted = client.post(f"/api/projects/{project_id}/plan-runs")
+    assert accepted.status_code == 202, accepted.text
+    assert set(accepted.json()) == {"job_id"}
+    deadline = time.monotonic() + PLAN_DEADLINE_S
+    while True:
+        job = client.get(f"/api/plan-jobs/{accepted.json()['job_id']}").json()
+        if job["state"] in {"done", "failed"}:
+            return dict(job)
+        assert time.monotonic() < deadline, f"the job did not end: {job}"
+        time.sleep(0.01)
+
+
+def _planner_with(data_dir: Path, script: Script) -> TestClient:
+    solver = ScriptedTourSolver(script)
+    return _client({"DATA_DIR": str(data_dir)}, ExternalPorts(FakeClock(), FakeMountTable(), solver))
+
+
+def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contract(data_dir: Path) -> None:
+    client = _planner_with(data_dir, None)  # the scripted tour visits the nodes in the order the snapshot lists them
+    project_id, item_ids = _project_with_a_trail_between_two_places(client)
+
+    job = _plan(client, project_id)
+
+    assert set(job) == {"state", "reason", "message", "plan_run_id", "elapsed_s"}
+    assert (job["state"], job["reason"], job["message"]) == ("done", None, None)
+    shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
+    assert set(shown) == {"id", "project_id", "number", "status", "failure_reason", "stops"}
+    assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)
+    assert (shown["status"], shown["failure_reason"]) == ("ready", None)
+    assert [(stop["name"], stop["type"]) for stop in shown["stops"]] == [
+        ("Casa Marco", "poi"),
+        ("Briancon", "poi"),
+        (ASSIETTA, "track"),
+        ("Casa Marco", "poi"),
+    ]
+    assert all(set(stop) == {"name", "type", "leg_km"} for stop in shown["stops"])
+    assert shown["stops"][0]["leg_km"] is None
+
+    database = SqliteDatabase(data_dir)
+    with SqlAlchemyPlanningUnitOfWork(database) as uow:
+        stored = uow.plan_runs.get(str(job["plan_run_id"]))
+        items = uow.project_snapshots.read(project_id)
+        row = uow.connection.execute(select(plan_runs)).mappings().one()
+    assert stored is not None and items is not None
+    assert [item.name for item in items.items] == ["Briancon", ASSIETTA, "Casa Marco"]
+    home, briancon, trail, back = stored.stops
+    assert trail == type(trail).of(items.item(item_ids[ASSIETTA]), trail.leg_km)
+    assert briancon == type(briancon).of(items.item(item_ids["Briancon"]), briancon.leg_km)
+    assert (home.leg_km, home.location, back.location) == (None, items.start().location, items.start().location)
+    assert [stop.leg_km for stop in stored.stops[1:]] == [stop["leg_km"] for stop in shown["stops"][1:]]
+    assert (row["revision"], row["objective"]) == (
+        client.get(f"/api/projects/{project_id}").json()["revision"],
+        "distance",
+    )
+    assert row["provider_id"] == "mock:straight_line_x1.3"
+    assert row["inputs"]["included_item_ids"] == [item_ids["Briancon"], item_ids[ASSIETTA]]
+
+
+def test_a_failed_run_is_stored_without_stops_and_named_by_the_job(data_dir: Path) -> None:
+    client = _planner_with(data_dir, TourNoRoute())
+    project_id, _ = _project_with_a_trail_between_two_places(client)
+
+    job = _plan(client, project_id)
+
+    assert (job["state"], job["reason"]) == ("done", "no_valid_route_found")
+    shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
+    assert (shown["status"], shown["failure_reason"], shown["stops"]) == ("failed", "no_valid_route_found", [])
+    assert client.get(f"/api/projects/{project_id}/plan-runs").json() == [
+        {"id": shown["id"], "number": 1, "status": "failed"}
+    ]
+
+
+def test_a_job_that_raises_ends_failed_and_stores_nothing(data_dir: Path) -> None:
+    client = _planner_with(data_dir, RuntimeError("the solver broke"))
+    project_id, _ = _project_with_a_trail_between_two_places(client)
+
+    job = _plan(client, project_id)
+
+    assert (job["state"], job["reason"], job["plan_run_id"]) == ("failed", None, None)
+    assert job["message"] == "The plan could not be calculated - nothing was changed"
+    assert client.get(f"/api/projects/{project_id}/plan-runs").json() == []
+
+
+def test_an_unknown_job_or_plan_run_is_not_found(data_dir: Path) -> None:
+    client = _client({"DATA_DIR": str(data_dir)})
+
+    for path in ("/api/plan-jobs/nope", "/api/plan-runs/nope"):
+        answer = client.get(path)
+        assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+        assert "nope" not in answer.json()["message"]

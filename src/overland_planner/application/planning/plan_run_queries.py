@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from overland_planner.application.catalog.facade import ProjectNotFoundError
-from overland_planner.application.ports.plan_run_repository import PlanningUnitOfWork
+from overland_planner.application.ports.plan_run_repository import PlanningUnitOfWork, PlanRunDetail
 from overland_planner.domain.planning.plan_run import PlanRun
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 
@@ -27,3 +27,8 @@ class PlanRunQueries:
         with self._unit_of_work() as uow:
             existing_snapshot(uow, project_id)
             return uow.plan_runs.list(project_id)
+
+    def get(self, plan_run_id: str) -> PlanRunDetail | None:
+        """The stored run with its itinerary, or `None` for an unknown id."""
+        with self._unit_of_work() as uow:
+            return uow.plan_runs.get(plan_run_id)

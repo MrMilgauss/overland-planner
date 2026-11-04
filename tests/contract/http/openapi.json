@@ -134,6 +134,135 @@
         "title": "ItemResource",
         "type": "object"
       },
+      "PlanJobAccepted": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "PlanJobAccepted",
+        "type": "object"
+      },
+      "PlanJobResource": {
+        "description": "The poll payload (brief \u00a75): the subset slice 01b fills; later fields are additive.",
+        "properties": {
+          "elapsed_s": {
+            "title": "Elapsed S",
+            "type": "number"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "plan_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Run Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "computing_legs",
+              "solving",
+              "finalising",
+              "done",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reason",
+          "message",
+          "plan_run_id",
+          "elapsed_s"
+        ],
+        "title": "PlanJobResource",
+        "type": "object"
+      },
+      "PlanRunDetailResource": {
+        "description": "A plan run with its ordered stops; a Failed run has none and names its `failure_reason`.",
+        "properties": {
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stops": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStopResource"
+            },
+            "title": "Stops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "number",
+          "status",
+          "failure_reason",
+          "stops"
+        ],
+        "title": "PlanRunDetailResource",
+        "type": "object"
+      },
       "PlanRunResource": {
         "description": "A numbered plan run; a job still running has none.",
         "properties": {
@@ -160,6 +289,41 @@
           "status"
         ],
         "title": "PlanRunResource",
+        "type": "object"
+      },
+      "PlanStopResource": {
+        "description": "One stop of the itinerary: the first stop has no road leg.",
+        "properties": {
+          "leg_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg Km"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "poi",
+              "track"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "leg_km"
+        ],
+        "title": "PlanStopResource",
         "type": "object"
       },
       "PoiCreate": {
@@ -266,6 +430,105 @@
           }
         },
         "summary": "Api Health"
+      }
+    },
+    "/api/plan-jobs/{job_id}": {
+      "get": {
+        "description": "`plan_run_id` stays null until the run is stored. 404 `not_found` for an unknown or expired id.",
+        "operationId": "plan_job_api_plan_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanJobResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Plan Job"
+      }
+    },
+    "/api/plan-runs/{plan_run_id}": {
+      "get": {
+        "operationId": "plan_run_api_plan_runs__plan_run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_run_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRunDetailResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Plan Run"
       }
     },
     "/api/projects": {
@@ -571,7 +834,7 @@
         "summary": "Project Plan Runs"
       },
       "post": {
-        "description": "Refused with 422 `missing_anchor` or 503 `optimizer_unavailable`: no job and no plan run.",
+        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor` or 503 `optimizer_unavailable`:\nno job and no plan run.",
         "operationId": "calculate_api_projects__project_id__plan_runs_post",
         "parameters": [
           {
@@ -588,7 +851,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanJobAccepted"
+                }
               }
             },
             "description": "Successful Response"

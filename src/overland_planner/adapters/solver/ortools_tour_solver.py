@@ -107,7 +107,12 @@ class OrToolsTourSolver:
         receiver, sender = context.Pipe(duplex=False)
         arguments = (self._tour_child_main, sender, model, budget)
         child = context.Process(target=tour_child_entry, args=arguments, name="tour-solver-solve", daemon=True)
-        child.start()
+        try:
+            child.start()
+        except OSError:  # for example out of memory on the Pi: a process that could not start is a child failure
+            receiver.close()
+            sender.close()
+            return TourChildObservation(exit_code=None, message=None, overran=False)
         sender.close()
         message: Any = None
         overran = False
