@@ -130,8 +130,11 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
        | 413 | `upload_too_large` (file size, request size or file count cap) |
        | 401 | `unauthorized` (+ `WWW-Authenticate: Basic`) |
        | 404 | `not_found` (unknown project, item, run or job id; added for completeness) |
+       | 500 | `internal_error` |
 
        A `RequestValidationError` handler maps FastAPI's default `{"detail": [...]}` body to the envelope with `validation_error`. New codes are added only through this table.
+
+       A Failed run's export and an inconsistent track file both answer 422 `validation_error` (D203).
      - Item `anchor` enum: `start` | `end` | `start_end` | `null`. Item resource per D107: `id`, `type` (`track` | `poi`), `name`, `included`, `anchor`, `location {lat, lon}` (POI), `entry {lat, lon}`, `exit {lat, lon}`, `length_m` (track).
      - **One field-name table** for the poll payload (`GET /api/plan-jobs/{job_id}`) and `plan_job_log`: `state`, `reason`, `legs_new`, `legs_cached`, `legs_total`, `points_new`, `second_pass_pairs`, `retried`, `memo_hit`, `ignore_memo`, `elapsed_s`, `solver_wait_s`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message` (ADR-015 amendment).
      - `POST /api/plan-jobs/{job_id}/stop` is idempotent: always 200 with the current payload (D136).
@@ -146,7 +149,7 @@ Every driven port extends `Probeable`.
 | Port | Contract (behavioural) | Adapters | Probe and fault catalogue |
 |---|---|---|---|
 | `RoutingProvider` | `provider_id`, `profile`, `display_name`; `locate(points) -> snap results`; `matrix(sources, targets, mode=legal\|permissive)` with `None` cells; `route_many(pairs, mode)`; typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderQuotaExceeded` (for future hosted adapters), `ProviderRejected` | `ValhallaRoutingProvider` (MVP real), `MockRoutingProvider` (tests/dev), `CountingRoutingProvider` (wrapper) | `/status` + 2x2 Torino <-> Susa matrix. Catalogue: connect refused, timeout, 5xx then success (retry), 5xx persistent, error 171 for one location, error 442, null cells, wrong shape, zero distance for distinct points, `/status` version not `VALHALLA_EXPECTED_VERSION` (`routing_engine_version_mismatch`, D128). Degraded-healthy; re-probed every 60 s and before each job. `provider_id` = `valhalla:<version>:<tileset_last_modified>`; all Valhalla calls share one process-wide semaphore of 2 (D133) |
-| `TourSolver` | `solve(model, budget, limits, stop_signal) -> stream of incumbents + final` | `OrToolsTourSolver` (child process); `HeuristicTourSolver` (fallback, only if built); `ScriptedTourSolver` (tests) | Fixed 6-node asymmetric instance with one track node and one forbidden arc, solved twice: known optimum, identical orders. Failure -> degraded, unhealthy (`optimizer_unavailable`) |
+| `TourSolver` | `solve(model, budget, limits, stop_signal) -> stream of incumbents + final`. Slice 01b declares the subset `solve(model, budget) -> typed outcome`; `limits`, `stop_signal` and incumbents arrive at slice 03 | `OrToolsTourSolver` (child process); `HeuristicTourSolver` (fallback, only if built); `ScriptedTourSolver` (tests) | Fixed 6-node asymmetric instance with one track node and one forbidden arc, solved twice: known optimum, identical orders. Failure -> degraded, unhealthy (`optimizer_unavailable`) |
 | Repositories + `UnitOfWork` + `ProjectSnapshotReader` | One transaction per use case; run + number + snapshot (incl. leg snapshot, track versions) atomic; single writer lock | SQLAlchemy 2 / SQLite | Round-trip row, WAL active, busy_timeout set, quick_check, Alembic head. Fatal |
 | `FileStore` | Originals by sha256; versioned canonical/display points; atomic writes; sweep-only deletion (ADR-018 Rev 2, D65); orphan sweep | `LocalFileStore` | Write-fsync-rename-read round trip (fatal); filesystem type holding `DATA_DIR` (longest-prefix mount entry, via `MountTable`) is overlay/tmpfs/ramfs -> degraded, unhealthy; other -> ok; non-Linux -> not_applicable (ADR-011 amendment D121) |
 | `MountTable` (external, non-deterministic; D105) | `entries() -> [(mount_point, fstype)]`, or unavailable | `ProcMountTable` (`/proc/self/mountinfo`), `FakeMountTable` (tests, via `ExternalPorts` on `create_app`, D106) | Readable and parsable, has an entry for `/`; parse failure on Linux -> degraded (`data_dir_persistence_unknown`) |
@@ -208,6 +211,8 @@ POST plan-runs -> pre-checks (anchors, active job, engine ready, optimizer ready
  -> PlanRunAssembler -> one transaction (run number, snapshots incl. leg snapshot, results, flags)
  -> UI polls, shows itinerary, then requests geometry (lazy)
 ```
+
+Pins are deferred past slice 01b (D204): the job takes the snapshot without pinning track versions. Pins must land before or with the orphan sweep (ADR-018).
 
 Required pair set (ADR-013; one definition, D131): k = Included non-anchor items.
 - one-way and round trip: k² + k (Start -> items, items -> End, item -> item; a round-trip S/E counts as both). Run #4 (9 items + S/E) gives 90 pairs. **60 items = 62 nodes = 3,660 pairs** (as measured by the spikes).
@@ -314,6 +319,7 @@ Contracts in `pyproject.toml`, run in pre-commit and CI:
 5. **Domain module rules**:
    - `domain.catalog` must not import `domain.planning`, `domain.export` or `domain.routing`;
    - `domain.routing` must not import `domain.planning` or `domain.export`;
+   - `domain.planning` must not import `domain.export`;
    - `domain.export` may import `domain.planning` (read-only value objects).
 6. **Application facades**: for each module X, a forbidden contract stops other application modules from importing `application.X`, with `ignore_imports` allowing only `application.X.facade`.
 7. `ortools` only in `adapters.solver`.
