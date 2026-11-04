@@ -76,6 +76,22 @@ class PlannerSession:
             json={"start_item_id": start_item_id, "end_item_id": end_item_id},
         )
 
+    # --- planning -------------------------------------------------------------------------------------
+    def calculate(self, project_id: str) -> httpx.Response:
+        return self._request("POST", f"/api/projects/{project_id}/plan-runs")
+
+    def plan_job(self, job_id: str) -> httpx.Response:
+        return self._request("GET", f"/api/plan-jobs/{job_id}")
+
+    def plan_runs(self, project_id: str) -> httpx.Response:
+        return self._request("GET", f"/api/projects/{project_id}/plan-runs")
+
+    def plan_run(self, plan_run_id: str) -> httpx.Response:
+        return self._request("GET", f"/api/plan-runs/{plan_run_id}")
+
+    def export_gpx(self, plan_run_id: str) -> httpx.Response:
+        return self._request("GET", f"/api/plan-runs/{plan_run_id}/export.gpx")
+
 
 class InProcessPlanner:
     """The production app built in-process; a restart builds a new app on the same data folder."""

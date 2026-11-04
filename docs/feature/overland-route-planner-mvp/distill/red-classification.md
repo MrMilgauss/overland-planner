@@ -49,4 +49,28 @@ Why the in-process cases fail in a Given: they build the planner through the pro
 
 Static binding check (scratch script): every step line of `walking-skeleton.feature`, `slice-00b-planner-on-the-pi.feature` and `slice-01a-skeleton-items-on-pi.feature`, outlines expanded, matches exactly one step definition (0 unbound, 0 ambiguous), including the 5 skipped `@requires_external` scenarios.
 
-Later slices (01b-11) and the routing-port contract suite (steps module arrives at slice 06a, D194): 186 cases collected and skipped as `pending: slice_NN not enabled yet` (3 `@manual`). No step definitions yet by design; do not run them with `--run-pending`.
+Later slices (02-11) and the routing-port contract suite (steps module arrives at slice 06a, D194): collected and skipped as `pending: slice_NN not enabled yet`. No step definitions yet by design; do not run them with `--run-pending`.
+
+## Slice 01b (DISTILL of 2026-11-04)
+
+Host: dev-mac. Steps: `steps/plan_steps.py`, `steps/browser.py`, `tests/e2e/first-plan.spec.ts`. No RED scaffold: everything goes through HTTP or the browser, and the plan routes answer 404 until DELIVER builds them.
+
+```
+uv run pytest -q tests/acceptance/overland_route_planner_mvp --run-pending=slice-01b -k test_slice_01b
+  -> 9 failed, 1 skipped (@manual), 196 deselected, 0 errors
+```
+
+| # | Scenario | Result | Class | Where it fails and why |
+|---|---|---|---|---|
+| 1 | Marco gets a first ordered itinerary | FAIL | MISSING_FUNCTIONALITY | When "presses Calculate": `the plan runs did not open: 404 {"code":"not_found","message":"Not Found"}` |
+| 2 | Even the first plan drives the trail the way it was recorded | FAIL | MISSING_FUNCTIONALITY | Given "has pressed Calculate": same 404 |
+| 3 | Marco downloads the first plan as a standard GPX file | FAIL | MISSING_FUNCTIONALITY | Given "plan run #1 ... exists": same 404 |
+| 4 | The first plan opens in OsmAnd | SKIPPED | n/a (`@manual`) | Evidence by hand (docs/demo/) |
+| 5 | A one-way trip ends at its End | FAIL | MISSING_FUNCTIONALITY | When "presses Calculate": same 404 |
+| 6 | A trail that starts at the Start place is reached by a zero-length leg | FAIL | MISSING_FUNCTIONALITY | When "presses Calculate": same 404 |
+| 7 | A plan still being worked out cannot be exported yet | FAIL | MISSING_FUNCTIONALITY | Given "still being worked out": same 404 |
+| 8 | Plans are refused while the optimizer cannot start | FAIL | MISSING_FUNCTIONALITY | When "presses Calculate": same 404 |
+| 9 | A second Calculate while a plan is being worked out is refused | FAIL | MISSING_FUNCTIONALITY | Given "still being worked out": same 404 |
+| 10 | Marco plans the Assietta day trip in his browser | FAIL | MISSING_FUNCTIONALITY | When "presses Export GPX": Playwright `locator.click: Timeout 15000ms exceeded` waiting for the button "Calculate", which the page does not have yet |
+
+Every failure is an `AssertionError`; the Givens that use only slice 01a behaviour pass. Because RED stops at the first missing route, the Then steps were also run once against a throwaway stand-in for the plan routes (not committed): scenarios 1-3 and 5-9 passed against a correct stand-in, and failed on the expected assertion for a reversed trail, a wrong order, a missing refusal, a second job, an early plan run id, GPX extensions and a wrong file name. The Then steps of scenario 10 have not run yet.

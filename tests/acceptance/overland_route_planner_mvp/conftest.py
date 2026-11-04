@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import *  # noqa: F403
+from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.platform_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
 from tests.common.fakes import FakeClock, FakeMountTable

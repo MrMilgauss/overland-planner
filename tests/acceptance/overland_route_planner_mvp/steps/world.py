@@ -3,6 +3,7 @@
 Universe names are what Marco can observe through the driving ports (DISTILL D115), never internal fields:
 - `projects.names`  -> the project list on the home page (GET /api/projects)
 - `project.items`   -> the item list of the open project: (type, name, included, anchor badge)
+- `project.plan_runs` -> the plan runs of the open project: (number, status)
 (The earlier `saved_data.database` file fingerprint was removed: review H-07, DISTILL D185.)
 
 Error responses follow the HTTP contract (brief §5, D130): `{"code", "message"}` with an enumerated code per status.
@@ -16,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from overland_planner.application.ports.tour_solver import TourSolver
 from overland_planner.bootstrap.app_factory import ExternalPorts
 from tests.acceptance.overland_route_planner_mvp.steps.planner import (
     Auth,
@@ -25,8 +27,10 @@ from tests.acceptance.overland_route_planner_mvp.steps.planner import (
     StartRecord,
 )
 from tests.common.fakes import FakeClock, FakeMountTable
+from tests.common.solver_fakes import HoldingTourSolver
 
 CATALOG_UNIVERSE = {"projects.names", "project.items"}
+PLANNING_UNIVERSE = CATALOG_UNIVERSE | {"project.plan_runs"}
 
 ERROR_CODES = {  # brief §5 "HTTP contract" (D130)
     401: {"unauthorized"},
@@ -37,6 +41,10 @@ ERROR_CODES = {  # brief §5 "HTTP contract" (D130)
     503: {"routing_engine_not_ready", "optimizer_unavailable"},
 }
 BADGE_TO_ANCHOR = {"S/E": "start_end", "Start": "start", "End": "end"}
+REFUSALS = {  # what Marco reads -> the status and code of that refusal (brief §5, §8; D183)
+    "Optimizer unavailable - nothing was changed": (503, "optimizer_unavailable"),
+    "A plan is already being calculated for this project": (409, "job_active"),
+}
 
 
 @dataclass
@@ -46,6 +54,7 @@ class PlannerWorld:
     environ: dict[str, str]
     clock: FakeClock
     mount_table: FakeMountTable
+    tour_solver: TourSolver | None = None  # None = the real optimizer; doubles only under waivers W1/W2
     planner: InProcessPlanner | ServerPlanner | None = None
     marco_auth: Auth = None
     project_id: str | None = None
@@ -64,7 +73,8 @@ class PlannerWorld:
     def ensure_planner(self) -> None:
         if self.planner is None:
             self.planner = InProcessPlanner(
-                self.environ, ExternalPorts(clock=self.clock, mount_table=self.mount_table)
+                self.environ,
+                ExternalPorts(clock=self.clock, mount_table=self.mount_table, tour_solver=self.tour_solver),
             )
             self.planner.start()
 
@@ -73,6 +83,8 @@ class PlannerWorld:
         return self.planner.session(self.marco_auth)
 
     def shutdown(self) -> None:
+        if isinstance(self.tour_solver, HoldingTourSolver):
+            self.tour_solver.abandon()
         if self.planner is not None:
             self.planner.stop()
 
@@ -97,6 +109,13 @@ class PlannerWorld:
         else:
             view["project.items"] = ()
         return view
+
+    def planning_view(self) -> dict[str, Any]:
+        assert self.project_id is not None, "no project is open"
+        runs = self.marco().plan_runs(self.project_id)
+        assert runs.status_code == 200, f"the plan runs did not open: {runs.status_code} {runs.text[:300]}"
+        rows = tuple(sorted((run["number"], run["status"]) for run in runs.json()))
+        return {**self.catalog_view(), "project.plan_runs": rows}
 
     def items(self) -> list[dict[str, Any]]:
         assert self.project_id is not None, "no project is open"

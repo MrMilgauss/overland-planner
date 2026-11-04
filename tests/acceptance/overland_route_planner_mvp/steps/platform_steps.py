@@ -29,7 +29,7 @@ import yaml
 from pytest_bdd import given, parsers, then, when
 
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
-from tests.acceptance.overland_route_planner_mvp.steps.world import CATALOG_UNIVERSE, PlannerWorld, assert_error_envelope
+from tests.acceptance.overland_route_planner_mvp.steps.world import CATALOG_UNIVERSE, REFUSALS, PlannerWorld, assert_error_envelope
 from tests.common.fakes import FakeMountTable
 from tests.common.state_delta import assert_state_delta
 
@@ -259,6 +259,10 @@ def then_he_sees(world: PlannerWorld, message: str) -> None:
     assert message in world.seen_messages, f"{message!r} not shown; Marco saw {world.seen_messages}"
     if world.response is not None and world.response.status_code >= 400:
         assert_error_envelope(world.response)
+    if message in REFUSALS:
+        answer = world.response
+        assert answer is not None
+        assert (answer.status_code, answer.json()["code"]) == REFUSALS[message], f"{answer.status_code} {answer.text}"
     world.scratch["last_message"] = message
 
 
@@ -573,6 +577,13 @@ def when_marco_asks_whether_healthy(world: PlannerWorld) -> None:
         _run(["docker", "rm", "-f", world.scratch["container_id"]])
     assert response is not None, "the planner container never answered"
     world.scratch["container_health"] = response
+
+
+@then(parsers.re(r'the health check reports unhealthy with reason "(?P<reason>[^"]+)"'))
+def then_health_unhealthy_with_reason(world: PlannerWorld, reason: str) -> None:
+    health = world.marco().health()
+    expected = {"status": "unhealthy", "reason": reason}
+    assert (health.status_code, health.json()) == (503, expected), f"{health.status_code} {health.text}"
 
 
 @then(parsers.re(r'the health check reports unhealthy with "(?P<reason>.+)"'))

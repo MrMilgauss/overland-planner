@@ -21,7 +21,7 @@ Bootstrapped by DISTILL of `overland-route-planner-mvp` (2026-11-02) with the us
 | `FileStore` (versioned track files, originals) | Real `LocalFileStore` in the same data folder | |
 | Leg cache / point cache | Real (same SQLite) | Counted through the real `CountingRoutingProvider` wrapper |
 | `TourSolver` (OR-Tools child process) | Real `OrToolsTourSolver` child, small deterministic `SOLVER_BUDGET` for speed | Waivers W1/W2 below |
-| `TrackFileParser` / `GpxWriter` (gpxpy + defusedxml) | Real | GPX output validated with xmlschema against the vendored GPX 1.1 XSD |
+| `TrackFileParser` / `GpxWriter` (gpxpy + defusedxml) | Real | GPX output validated with xmlschema against the vendored GPX 1.1 XSD (`tests/acceptance/overland_route_planner_mvp/fixtures/schemas/gpx-1.1.xsd`) |
 | `EventLog` (structlog JSON to stdout) | Real; read from the uvicorn process stdout (or `capfd` in-process) | |
 
 ## Driven external / non-deterministic (fake)
@@ -38,6 +38,6 @@ Bootstrapped by DISTILL of `overland-route-planner-mvp` (2026-11-02) with the us
 ## Waivers (driven-internal port substituted; recorded per nw-distill)
 | ID | Port | Substitute | Scope | Why |
 |---|---|---|---|---|
-| W1 | `TourSolver` | `ScriptedTourSolver` (scripted incumbents, delays, no valid route, abnormal exit, an invalid order) via `ExternalPorts(tour_solver=...)` | Stop / optimisation-limit / feasibility-limit / optimizer-crash / waiting-for-optimizer scenarios (slice 03) and the "plan that would break a hard rule" guard scenario (slice 02) | Solver wall-clock timing is non-deterministic, and a real solver cannot be made to emit a rule-breaking order. Sanctioned by ADR-015 "Gold tests" and brief §6 |
-| W2 | `TourSolver` probe | A solver that fails its start-up probe, via `ExternalPorts(tour_solver=...)` | Only "plans are refused while the optimizer cannot start" (slice 01b) | The aarch64 wheel failure cannot be reproduced on the Mac |
+| W1 | `TourSolver` | `ScriptedTourSolver` (scripted incumbents, delays, no valid route, abnormal exit, an invalid order) via `ExternalPorts(tour_solver=...)` | Stop / optimisation-limit / feasibility-limit / optimizer-crash / waiting-for-optimizer scenarios (slice 03), the "plan that would break a hard rule" guard scenario (slice 02), and the two slice 01b scenarios where a plan is "still being worked out" (`HoldingTourSolver` in `tests/common/solver_fakes.py`: holds the solve, then hands it to the real solver) | Solver wall-clock timing is non-deterministic, and a real solver cannot be made to emit a rule-breaking order. Sanctioned by ADR-015 "Gold tests" and brief §6 |
+| W2 | `TourSolver` probe | A solver that fails its start-up probe (`UnavailableTourSolver` in `tests/common/solver_fakes.py`), via `ExternalPorts(tour_solver=...)` | Only "plans are refused while the optimizer cannot start" (slice 01b) | The aarch64 wheel failure cannot be reproduced on the Mac |
 | W3 | Database revision | A data folder created by the real planner, then marked "newer" by an Alembic no-op stub revision on top of the planner's own head (Alembic `stamp`); going back to the newer version = stamping back | Only "an older planner refuses data saved by a newer version" (slice 01a) | A real newer planner build does not exist in the test run. Replaces the hand-written schema and the database-file fingerprint (review H-07, D185) |
