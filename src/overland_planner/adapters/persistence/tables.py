@@ -5,7 +5,19 @@ Each schema change ships as its own Alembic revision with a tested downgrade (DV
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, MetaData, Table, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 
 metadata = MetaData()
 
@@ -63,4 +75,22 @@ pois = Table(
     Column("item_id", Text, ForeignKey("items.id", ondelete="CASCADE"), primary_key=True),
     Column("lat", Float, nullable=False),
     Column("lon", Float, nullable=False),
+)
+
+# One row per numbered plan run (brief §9); a job still running has none. Later slices add the columns they fill.
+plan_runs = Table(
+    "plan_runs",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    Column("number", Integer, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("failure_reason", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("provider_id", Text, nullable=False),
+    Column("objective", Text, nullable=False),
+    Column("inputs", JSON, nullable=False),
+    Column("itinerary", JSON, nullable=True),
+    UniqueConstraint("project_id", "number", name="uq_plan_runs_project_id_number"),
 )

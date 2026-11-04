@@ -124,7 +124,8 @@ module = ["pytest_bdd.*", "gpxpy.*", "defusedxml.*", "xmlschema.*", "nwave_ai.*"
 ignore_missing_imports = true
 
 # Brief section 11 layer and module contracts. Contract 6 (application facades) is added per module when its
-# facade.py first appears (platform at 01-04, catalog at 02-02): ignore_imports that match nothing are errors.
+# facade.py first appears (platform at 01-04, catalog at 02-02, planning at 04-01): ignore_imports that match nothing
+# are errors.
 [tool.importlinter]
 root_package = "overland_planner"
 include_external_packages = true
@@ -191,6 +192,13 @@ source_modules = ["overland_planner.domain.routing"]
 forbidden_modules = ["overland_planner.domain.planning", "overland_planner.domain.export"]
 
 [[tool.importlinter.contracts]]
+id = "domain-planning"
+name = "Domain planning does not import export"
+type = "forbidden"
+source_modules = ["overland_planner.domain.planning"]
+forbidden_modules = ["overland_planner.domain.export"]
+
+[[tool.importlinter.contracts]]
 id = "facade-platform"
 name = "Application facades: other modules reach platform only through its facade"
 type = "forbidden"
@@ -219,6 +227,21 @@ source_modules = [
 ]
 forbidden_modules = ["overland_planner.application.catalog"]
 ignore_imports = ["overland_planner.** -> overland_planner.application.catalog.facade"]
+
+[[tool.importlinter.contracts]]
+id = "facade-planning"
+name = "Application facades: other modules reach planning only through its facade"
+type = "forbidden"
+source_modules = [
+    "overland_planner.application.catalog",
+    "overland_planner.application.export",
+    "overland_planner.application.platform",
+    "overland_planner.application.routing",
+    "overland_planner.adapters",
+    "overland_planner.bootstrap",
+]
+forbidden_modules = ["overland_planner.application.planning"]
+ignore_imports = ["overland_planner.** -> overland_planner.application.planning.facade"]
 
 [[tool.importlinter.contracts]]
 id = "ortools-solver-only"

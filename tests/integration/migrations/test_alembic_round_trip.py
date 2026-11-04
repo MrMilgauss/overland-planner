@@ -22,7 +22,7 @@ from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
-HEAD_TABLES = {"projects", "items", "tracks", "pois"}
+HEAD_TABLES = {"projects", "items", "tracks", "pois", "plan_runs"}
 
 
 @pytest.fixture
@@ -172,6 +172,12 @@ def test_downgrading_0004_drops_the_anchor_columns_and_keeps_projects_and_items(
     assert ({"start_item_id", "end_item_id"} <= _project_columns(file), _revision(file)) == (True, ["0004"])
 
 
+_INSERT_PLAN_RUN = (
+    "INSERT INTO plan_runs (id, project_id, number, status, created_at, revision, provider_id, objective, inputs) "
+    "VALUES (?, ?, ?, 'ready', '2026-11-04 08:00:00', 4, 'mock', 'distance', '{}')"
+)
+
+
 def _seed_trip_at_head(file: Path) -> None:
     with sqlite3.connect(file) as seeded:
         seeded.execute(
@@ -188,6 +194,7 @@ def _seed_trip_at_head(file: Path) -> None:
         )
         seeded.execute("INSERT INTO pois (item_id, lat, lon) VALUES ('i2', 45.0703, 7.6869)")
         seeded.execute("UPDATE projects SET start_item_id = 'i2', end_item_id = 'i2' WHERE id = 'p1'")
+        seeded.execute(_INSERT_PLAN_RUN, ("r1", "p1", 1))
     seeded.close()
 
 
@@ -204,20 +211,25 @@ def _trip(file: Path) -> dict[str, list[tuple[str, ...]]]:
 SEEDED_TRIP = {"projects": [("p1",)], "items": [("i1", "track"), ("i2", "poi")], "tracks": [("i1",)], "pois": [("i2",)]}
 
 
-def _downgrade_through_the_operator_path(config: Config, data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # `docker compose run --rm planner alembic downgrade 0003` (D90): no URL on the Config, the database under DATA_DIR.
+def _downgrade_through_the_operator_path(
+    config: Config, data_dir: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    # `docker compose run --rm planner alembic downgrade <target>` (D90): no URL on the Config, the database under
+    # DATA_DIR.
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    command.downgrade(_config(), "0003")
+    command.downgrade(_config(), target)
 
 
-def _downgrade_on_a_connection_with_foreign_keys_on(config: Config, data_dir: Path, _mp: pytest.MonkeyPatch) -> None:
+def _downgrade_on_a_connection_with_foreign_keys_on(
+    config: Config, data_dir: Path, _mp: pytest.MonkeyPatch, target: str
+) -> None:
     # The planner's own connection (WAL, foreign_keys=ON), handed over to env.py as at start-up.
     database = SqliteDatabase(data_dir)
     try:
         with database.engine.connect() as connection:
             assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
             config.attributes["connection"] = connection
-            command.downgrade(config, "0003")
+            command.downgrade(config, target)
             connection.commit()
             assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1, "enforcement is restored"
     finally:
@@ -225,11 +237,14 @@ def _downgrade_on_a_connection_with_foreign_keys_on(config: Config, data_dir: Pa
         database.engine.dispose()
 
 
-@pytest.mark.parametrize(
+BOTH_DOWNGRADE_PATHS = pytest.mark.parametrize(
     "downgrade",
     [_downgrade_through_the_operator_path, _downgrade_on_a_connection_with_foreign_keys_on],
     ids=["operator-path", "foreign-keys-on"],
 )
+
+
+@BOTH_DOWNGRADE_PATHS
 def test_downgrading_0004_never_cascades_to_the_items_of_a_project_with_anchors(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
 ) -> None:
@@ -238,14 +253,50 @@ def test_downgrading_0004_never_cascades_to_the_items_of_a_project_with_anchors(
     file = database_file(data_dir)
     config = _config(f"sqlite:///{file}")
     command.upgrade(config, "head")
+    assert _tables(file) == HEAD_TABLES
     _seed_trip_at_head(file)
 
-    downgrade(config, data_dir, monkeypatch)
+    downgrade(config, data_dir, monkeypatch, "0003")
 
     assert (_trip(file), _revision(file)) == (SEEDED_TRIP, ["0003"])
     assert {"start_item_id", "end_item_id"} & _project_columns(file) == set()
     with sqlite3.connect(file) as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_downgrading_0005_drops_the_plan_runs_and_keeps_every_project_and_item(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "head")
+    assert _tables(file) == HEAD_TABLES
+    _seed_trip_at_head(file)
+
+    downgrade(config, data_dir, monkeypatch, "0004")
+
+    assert (_trip(file), _revision(file)) == (SEEDED_TRIP, ["0004"])
+    assert _tables(file) == HEAD_TABLES - {"plan_runs"}
+    assert {"start_item_id", "end_item_id"} <= _project_columns(file), "the anchors stay at 0004"
+
+    command.upgrade(config, "0005")
+    assert (_trip(file), _tables(file), _revision(file)) == (SEEDED_TRIP, HEAD_TABLES, ["0005"])
+
+
+def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:
+    file = database_file(data_dir)
+    command.upgrade(_config(f"sqlite:///{file}"), "head")
+    assert _tables(file) == HEAD_TABLES
+    _seed_trip_at_head(file)
+
+    with sqlite3.connect(file) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError, match=r"plan_runs\.project_id, plan_runs\.number"):
+            connection.execute(_INSERT_PLAN_RUN, ("r2", "p1", 1))
+        connection.execute("DELETE FROM projects WHERE id = 'p1'")
+        assert connection.execute("SELECT count(*) FROM plan_runs").fetchone() == (0,)
     connection.close()
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sqlite3
 import subprocess
 import sys
 import time
@@ -17,10 +18,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from overland_planner.adapters.persistence.database import database_file
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.fakes import FakeClock
+from tests.common.solver_fakes import UnavailableTourSolver
 from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -122,4 +126,73 @@ def test_each_start_logs_one_app_started_line(data_dir: Path) -> None:
         assert started[0]["app_version"] == "0123456789ab"
         assert started[0]["routing_provider"] == "mock"
         assert started[0]["python_version"] == platform.python_version()
-        assert started[0]["alembic_revision"] == "0004"
+        assert started[0]["alembic_revision"] == "0005"
+
+
+def _planner(data_dir: Path) -> TestClient:
+    return TestClient(
+        create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=UnavailableTourSolver()))
+    )
+
+
+def _project_with_a_place(client: TestClient) -> tuple[str, str]:
+    project_id = client.post("/api/projects", json={"name": "Alpi"}).json()["id"]
+    place = client.post(f"/api/projects/{project_id}/pois", json={"name": "Casa", "lat": 45.07, "lon": 7.68})
+    return project_id, place.json()["id"]
+
+
+def _sql(data_dir: Path, statement: str, *parameters: str) -> None:
+    connection = sqlite3.connect(database_file(data_dir))
+    with connection:
+        connection.execute(statement, parameters)
+    connection.close()
+
+
+def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    assert client.get(f"/api/projects/{project_id}/plan-runs").json() == []
+
+    for run_id, number, status in (("r10", "10", "failed"), ("r2", "2", "ready")):
+        _sql(
+            data_dir,
+            "INSERT INTO plan_runs (id, project_id, number, status, created_at, revision, provider_id, objective, "
+            "inputs) VALUES (?, ?, ?, ?, '2026-11-04 08:00:00', 1, 'mock', 'distance', '{}')",
+            run_id,
+            project_id,
+            number,
+            status,
+        )
+
+    answer = client.get(f"/api/projects/{project_id}/plan-runs")
+    assert (answer.status_code, answer.json()) == (
+        200,
+        [{"id": "r2", "number": 2, "status": "ready"}, {"id": "r10", "number": 10, "status": "failed"}],
+    )
+
+
+def _refusal(client: TestClient, calculate: str) -> tuple[int, dict[str, str]]:
+    answer = client.post(calculate)
+    return answer.status_code, answer.json()
+
+
+def test_calculate_answers_the_missing_anchor_read_from_the_database(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, place_id = _project_with_a_place(client)
+    calculate = f"/api/projects/{project_id}/plan-runs"
+    start_message = {"code": "missing_anchor", "message": "Set the Start before calculating"}
+    end_message = {"code": "missing_anchor", "message": "Set the End before calculating"}
+
+    assert _refusal(client, calculate) == (422, start_message)
+
+    _sql(data_dir, "UPDATE projects SET start_item_id = ?", place_id)
+    assert _refusal(client, calculate) == (422, end_message)
+
+    _sql(data_dir, "UPDATE projects SET start_item_id = NULL, end_item_id = ?", place_id)
+    assert _refusal(client, calculate) == (422, start_message)
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_the_plan_runs_of_an_unknown_project_are_not_found(data_dir: Path, method: str) -> None:
+    answer = _planner(data_dir).request(method, f"/api/projects/{'0' * 32}/plan-runs")
+    assert (answer.status_code, answer.json()["code"]) == (404, "not_found")

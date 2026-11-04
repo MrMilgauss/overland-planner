@@ -4,7 +4,8 @@ Codes are enumerated per status; FastAPI's request validation body becomes `vali
 (and methods) and unknown ids answer 404 `not_found`. Any other `HTTPException` answers `internal_error` (5xx) or
 `validation_error` (4xx). An exception no handler expected answers 500 `internal_error` with a fixed neutral message
 that never echoes the exception (D197) and records one `http.unhandled_error` event naming only its class.
-Paths outside /api (/healthz, the web page) keep their bodies.
+A refused Calculate answers the status and code of its pre-check: the table's 422 `missing_anchor` or 503
+`optimizer_unavailable`. Paths outside /api (/healthz, the web page) keep their bodies.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from starlette.exceptions import HTTPException
 
 from overland_planner.adapters.http.upload_limits import UploadFormError, UploadTooLargeError
 from overland_planner.application.catalog.facade import ItemNotFoundError, ProjectNotFoundError, TrackFilesRefusedError
+from overland_planner.application.planning.facade import PlanRefusedError
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.domain.catalog.anchors import AnchorNotAPlaceError
 from overland_planner.domain.catalog.coordinate import CoordinateOutOfRangeError
@@ -88,6 +90,10 @@ def install_error_handlers(app: FastAPI, event_log: EventLog) -> None:
     @app.exception_handler(TrackFilesRefusedError)
     async def on_refused_track_files(request: Request, error: TrackFilesRefusedError) -> Response:
         return _coded(_TOO_LARGE if error.too_large else _INVALID, str(error))
+
+    @app.exception_handler(PlanRefusedError)
+    async def on_refused_plan(request: Request, error: PlanRefusedError) -> Response:
+        return envelope(error.http_status, error.reason, str(error))
 
     async def on_refusal(request: Request, error: Exception) -> Response:
         return _coded(_registered(_REFUSED_WITH_REASON, error), str(error))

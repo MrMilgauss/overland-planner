@@ -134,6 +134,34 @@
         "title": "ItemResource",
         "type": "object"
       },
+      "PlanRunResource": {
+        "description": "A numbered plan run; a job still running has none.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "status"
+        ],
+        "title": "PlanRunResource",
+        "type": "object"
+      },
       "PoiCreate": {
         "description": "A place by decimal degrees. The ranges are the domain's rule (D151 reasons), so they are not checked here.",
         "properties": {
@@ -488,6 +516,115 @@
           }
         },
         "summary": "Project Items"
+      }
+    },
+    "/api/projects/{project_id}/plan-runs": {
+      "get": {
+        "operationId": "project_plan_runs_api_projects__project_id__plan_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlanRunResource"
+                  },
+                  "title": "Response Project Plan Runs Api Projects  Project Id  Plan Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Project Plan Runs"
+      },
+      "post": {
+        "description": "Refused with 422 `missing_anchor` or 503 `optimizer_unavailable`: no job and no plan run.",
+        "operationId": "calculate_api_projects__project_id__plan_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "missing_anchor"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "optimizer_unavailable"
+          }
+        },
+        "summary": "Calculate"
       }
     },
     "/api/projects/{project_id}/pois": {

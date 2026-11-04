@@ -10,6 +10,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
+from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 
 
 class ErrorEnvelope(BaseModel):
@@ -101,7 +102,24 @@ class ItemResource(BaseModel):
         )
 
 
+class PlanRunResource(BaseModel):
+    """A numbered plan run; a job still running has none."""
+
+    id: str
+    number: int
+    status: PlanRunStatus
+
+    @classmethod
+    def of(cls, run: PlanRun) -> PlanRunResource:
+        return cls(id=run.id, number=run.number, status=run.status)
+
+
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorEnvelope, "description": "not_found"},
     422: {"model": ErrorEnvelope, "description": "validation_error"},
+}
+CALCULATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **ERROR_RESPONSES,
+    422: {"model": ErrorEnvelope, "description": "missing_anchor"},
+    503: {"model": ErrorEnvelope, "description": "optimizer_unavailable"},
 }

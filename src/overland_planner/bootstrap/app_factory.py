@@ -36,6 +36,7 @@ from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
+from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.upload_limits import UploadLimits
 from overland_planner.adapters.http.web_page import mount_web_page
@@ -43,8 +44,10 @@ from overland_planner.adapters.logging.structlog_event_log import StructlogEvent
 from overland_planner.adapters.persistence.catalog_unit_of_work import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
+from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
+from overland_planner.application.planning.facade import PlanRequestService, PlanRunQueries
 from overland_planner.application.platform.facade import DataDirPersistence, HealthService, log_reason
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
@@ -119,6 +122,17 @@ class _Wiring:
         )
         return catalog_routes(use_cases, self._upload_limits)
 
+    def planning_router(self, health: HealthService) -> APIRouter:
+        def planning_unit_of_work() -> SqlAlchemyPlanningUnitOfWork:
+            return SqlAlchemyPlanningUnitOfWork(self._database)
+
+        return planning_routes(
+            PlanningUseCases(
+                requests=PlanRequestService(planning_unit_of_work, health, self._event_log),
+                runs=PlanRunQueries(planning_unit_of_work),
+            )
+        )
+
 
 def create_app(
     environ: Mapping[str, str] | None = None,
@@ -146,6 +160,7 @@ def create_app(
     app.include_router(platform_routes(health))
 
     app.include_router(wiring.catalog_router())
+    app.include_router(wiring.planning_router(health))
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
     event_log.info(
