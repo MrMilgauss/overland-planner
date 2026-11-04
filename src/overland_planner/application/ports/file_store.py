@@ -11,9 +11,15 @@ fatal (component `file_store`). Production adapter: `adapters/files/local_file_s
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from overland_planner.application.ports.probe import Probeable
+
+
+@dataclass(frozen=True)
+class CanonicalPointsMissing:
+    """The canonical points file of a track version is not there: an outcome the guard judges, not a crash."""
 
 
 class FileStore(Probeable, Protocol):
@@ -23,4 +29,8 @@ class FileStore(Probeable, Protocol):
 
     def keep_canonical_points(self, track_id: str, direction_version: int, content: bytes) -> None:
         """Keep a track's canonical points file of the given direction version."""
+        ...
+
+    def read_canonical_points(self, track_id: str, direction_version: int) -> bytes | CanonicalPointsMissing:
+        """The bytes of a track's canonical points file of the given direction version, exactly as stored."""
         ...

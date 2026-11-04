@@ -39,7 +39,7 @@ from overland_planner.application.ports.tour_solver import (
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
-from tests.common.catalog_fakes import RecordingEventLog
+from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
 from tests.common.solver_fakes import SolveAbandonedError
@@ -166,7 +166,9 @@ def _planner(trip: Trip, script: Script = None, *, held_at: str | None = None) -
     solver = ScriptedTourSolver(script, gate=gates["solving"])
     clock = FakeClock()
     log = RecordingEventLog()
-    job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log)
+    files = InMemoryFileStore()
+    trip.seed_canonical_files(files)
+    job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
     registry = PlanJobRegistry(clock, job, log)
     health = HealthService({"tour_solver": ProbeResult("ok")})
     service = PlanRequestService(planning.unit_of_work, health, log, registry)
@@ -368,7 +370,8 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     )
     assert completed[0]["failure_reason"] == stored.failure_reason
     assert completed[0]["project_items"] == len(plan.trip.snapshot.items)
-    assert (completed[0]["report_items"], completed[0]["invariants"]) == (None, None)
+    assert completed[0]["report_items"] is None
+    assert completed[0]["invariants"] == ("ok" if stored.status == "ready" else None)
 
 
 def _distinct_pairs(trip: Trip) -> set[Any]:

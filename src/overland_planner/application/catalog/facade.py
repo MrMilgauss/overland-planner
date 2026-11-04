@@ -5,14 +5,18 @@ from overland_planner.application.catalog.poi_service import PoiService
 from overland_planner.application.catalog.project_service import ProjectNotFoundError, ProjectService
 from overland_planner.application.catalog.track_import_service import (
     MIB,
+    InvalidCanonicalPointsFileError,
     TrackFile,
     TrackFilesRefusedError,
     TrackImportService,
+    canonical_points_file,
+    parse_canonical_points_file,
 )
 
 __all__ = [
     "MIB",
     "AnchorService",
+    "InvalidCanonicalPointsFileError",
     "ItemNotFoundError",
     "PoiService",
     "ProjectNotFoundError",
@@ -20,4 +24,6 @@ __all__ = [
     "TrackFile",
     "TrackFilesRefusedError",
     "TrackImportService",
+    "canonical_points_file",
+    "parse_canonical_points_file",
 ]

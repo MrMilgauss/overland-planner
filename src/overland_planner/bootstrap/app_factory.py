@@ -142,6 +142,7 @@ class _Wiring:
             self._settings.solver_budget,
             self._clock,
             self._event_log,
+            self._file_store,
         )
         jobs = PlanJobRegistry(self._clock, job, self._event_log)
         return planning_routes(

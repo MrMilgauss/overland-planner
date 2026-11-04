@@ -14,6 +14,7 @@ import os
 import uuid
 from pathlib import Path
 
+from overland_planner.application.ports.file_store import CanonicalPointsMissing
 from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
 
 
@@ -29,6 +30,12 @@ class LocalFileStore:
 
     def keep_canonical_points(self, track_id: str, direction_version: int, content: bytes) -> None:
         self._write_atomically(self._files / "tracks" / track_id / f"canonical.v{direction_version}.json", content)
+
+    def read_canonical_points(self, track_id: str, direction_version: int) -> bytes | CanonicalPointsMissing:
+        try:
+            return (self._files / "tracks" / track_id / f"canonical.v{direction_version}.json").read_bytes()
+        except FileNotFoundError:
+            return CanonicalPointsMissing()
 
     def _write_atomically(self, target: Path, content: bytes) -> None:
         written = self._scratch / f"{uuid.uuid4().hex}.part"

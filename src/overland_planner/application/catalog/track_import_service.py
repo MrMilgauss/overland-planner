@@ -149,6 +149,18 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+class InvalidCanonicalPointsFileError(ValueError):
+    """The bytes are not a canonical points file."""
+
+
+def parse_canonical_points_file(content: bytes) -> tuple[TrackPoint, ...]:
+    """The points `canonical_points_file` wrote, in the same order. Raises `InvalidCanonicalPointsFileError`."""
+    try:
+        return tuple(TrackPoint.at(lat, lon, elevation_m) for lat, lon, elevation_m in json.loads(content)["points"])
+    except (ValueError, KeyError, TypeError) as error:
+        raise InvalidCanonicalPointsFileError(str(error)) from error
+
+
 def canonical_points_file(points: Sequence[TrackPoint]) -> bytes:
     """`{"points": [[lat, lon, elevation_m|null], ...]}` in recorded order, compact UTF-8 JSON."""
     rows = [[p.coordinate.latitude, p.coordinate.longitude, p.elevation_m] for p in points]

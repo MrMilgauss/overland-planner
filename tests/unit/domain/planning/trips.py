@@ -7,16 +7,20 @@ out of the table on purpose: no router answers them.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from itertools import permutations
 
 from hypothesis import strategies as st
 
+from overland_planner.application.catalog.facade import canonical_points_file
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
+from tests.common.catalog_fakes import InMemoryFileStore
 
 PROJECT = "p"
 POINTS = tuple(Coordinate(45.0 + i / 10, 7.0 + i / 10) for i in range(5))
@@ -40,6 +44,16 @@ class Trip:
         """The road between two points: nothing to drive between identical points."""
         return 0 if origin == destination else self.leg_m[origin, destination]
 
+    def tracks(self) -> tuple[TrackItem, ...]:
+        """The Included tracks to place, the ones a plan must drive."""
+        return tuple(item for item in self.items if isinstance(item, TrackItem))
+
+    def seed_canonical_files(self, store: InMemoryFileStore) -> None:
+        """The canonical points files as the import wrote them, for every track of the project."""
+        for item in self.snapshot.items:
+            if isinstance(item, TrackItem):
+                store.keep_canonical_points(item.id, item.direction_version, canonical_file_of(item))
+
 
 def reached_at(item: CatalogItem) -> Coordinate:
     return item.entry if isinstance(item, TrackItem) else item.location
@@ -49,22 +63,34 @@ def left_at(item: CatalogItem) -> Coordinate:
     return item.exit if isinstance(item, TrackItem) else item.location
 
 
+def track_points(entry: Coordinate, exit_: Coordinate, point_count: int) -> tuple[TrackPoint, ...]:
+    """A recorded sequence from entry to exit; the points between are made up, their identity is all that matters."""
+    between = (TrackPoint.at(45.9, 7.9 + i / 1000, 1000.0 + i) for i in range(point_count - 2))
+    return (TrackPoint(entry), *between, TrackPoint(exit_))
+
+
+def canonical_file_of(track: TrackItem) -> bytes:
+    return canonical_points_file(track_points(track.entry, track.exit, track.point_count))
+
+
 def _poi(draw: st.DrawFn, item_id: str, included: bool = True) -> PoiItem:
     return PoiItem(id=item_id, project_id=PROJECT, name=draw(names), location=draw(points), included=included)
 
 
 def _track(draw: st.DrawFn, item_id: str, included: bool = True) -> TrackItem:
+    entry, exit_, point_count = draw(points), draw(points), draw(st.integers(2, 20))
+    canonical = canonical_points_file(track_points(entry, exit_, point_count))
     return TrackItem(
         id=item_id,
         project_id=PROJECT,
         name=draw(names),
         description=None,
         original_sha256="original",
-        canonical_sha256=f"sha-{item_id}",
+        canonical_sha256=hashlib.sha256(canonical).hexdigest(),
         direction_version=draw(st.integers(1, 9)),
-        point_count=draw(st.integers(2, 5000)),
-        entry=draw(points),
-        exit=draw(points),
+        point_count=point_count,
+        entry=entry,
+        exit=exit_,
         length_m=1000.0,
         included=included,
     )

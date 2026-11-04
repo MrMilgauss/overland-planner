@@ -292,8 +292,28 @@
         "type": "object"
       },
       "PlanStopResource": {
-        "description": "One stop of the itinerary: the first stop has no road leg.",
+        "description": "One stop of the itinerary: the first has no road leg; a track shows its entry and exit (HC-1), a POI none.",
         "properties": {
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "leg_km": {
             "anyOf": [
               {
@@ -321,7 +341,9 @@
         "required": [
           "name",
           "type",
-          "leg_km"
+          "leg_km",
+          "entry",
+          "exit"
         ],
         "title": "PlanStopResource",
         "type": "object"
@@ -484,6 +506,7 @@
     },
     "/api/plan-runs/{plan_run_id}": {
       "get": {
+        "description": "The stops in order, track stops with their entry and exit; a Failed run has no stops and names its reason.",
         "operationId": "plan_run_api_plan_runs__plan_run_id__get",
         "parameters": [
           {

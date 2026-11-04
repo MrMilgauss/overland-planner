@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Self
 
+from overland_planner.application.ports.file_store import CanonicalPointsMissing
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.domain.catalog.item import CatalogItem
 from overland_planner.domain.catalog.project import Project
@@ -91,7 +92,21 @@ class InMemoryFileStore:
         self._write(f"originals/{sha256}.gpx", content, keep_existing=True)
 
     def keep_canonical_points(self, track_id: str, direction_version: int, content: bytes) -> None:
-        self._write(f"tracks/{track_id}/canonical.v{direction_version}.json", content, keep_existing=False)
+        self._write(self._canonical_path(track_id, direction_version), content, keep_existing=False)
+
+    def read_canonical_points(self, track_id: str, direction_version: int) -> bytes | CanonicalPointsMissing:
+        assert track_id, "a track id names the folder of its canonical files"
+        assert direction_version >= 1, "direction versions are numbered from 1"
+        content = self.files.get(self._canonical_path(track_id, direction_version))
+        return CanonicalPointsMissing() if content is None else content
+
+    def lose_canonical_points(self, track_id: str, direction_version: int) -> None:
+        """The file vanishes behind the planner's back."""
+        del self.files[self._canonical_path(track_id, direction_version)]
+
+    @staticmethod
+    def _canonical_path(track_id: str, direction_version: int) -> str:
+        return f"tracks/{track_id}/canonical.v{direction_version}.json"
 
     def _write(self, path: str, content: bytes, *, keep_existing: bool) -> None:
         if self._failing:

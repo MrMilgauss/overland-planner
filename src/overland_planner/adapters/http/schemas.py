@@ -141,15 +141,19 @@ class PlanJobResource(BaseModel):
 
 
 class PlanStopResource(BaseModel):
-    """One stop of the itinerary: the first stop has no road leg."""
+    """One stop of the itinerary: the first has no road leg; a track shows its entry and exit (HC-1), a POI none."""
 
     name: str
     type: StopKind
     leg_km: float | None
+    entry: PointResource | None
+    exit: PointResource | None
 
     @classmethod
     def of(cls, stop: PlanStop) -> PlanStopResource:
-        return cls(name=stop.name, type=stop.kind, leg_km=stop.leg_km)
+        entry = None if stop.entry is None else PointResource.of(stop.entry)
+        exit_ = None if stop.exit is None else PointResource.of(stop.exit)
+        return cls(name=stop.name, type=stop.kind, leg_km=stop.leg_km, entry=entry, exit=exit_)
 
 
 class PlanRunDetailResource(BaseModel):

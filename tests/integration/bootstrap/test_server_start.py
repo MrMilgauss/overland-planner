@@ -200,7 +200,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
         (ASSIETTA, "track"),
         ("Casa Marco", "poi"),
     ]
-    assert all(set(stop) == {"name", "type", "leg_km"} for stop in shown["stops"])
+    assert all(set(stop) == {"name", "type", "leg_km", "entry", "exit"} for stop in shown["stops"])
     assert shown["stops"][0]["leg_km"] is None
 
     database = SqliteDatabase(data_dir)

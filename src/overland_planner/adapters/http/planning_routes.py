@@ -52,6 +52,7 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
 
     @router.get("/plan-runs/{plan_run_id}", responses=ERROR_RESPONSES)
     def plan_run(plan_run_id: str) -> PlanRunDetailResource:
+        """The stops in order, track stops with their entry and exit; a Failed run has no stops and names its reason."""
         run = runs.get(plan_run_id)
         if run is None:
             raise HTTPException(_NOT_FOUND, "Plan run not found")
