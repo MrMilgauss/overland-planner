@@ -1086,6 +1086,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-03T20:12:12Z"
+    },
+    {
+      "sid": "04-01",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T21:45:19Z"
+    },
+    {
+      "sid": "04-01",
+      "p": "RED_ACCEPTANCE",
+      "s": "EXECUTED",
+      "d": "RED: AssertionError: the plan runs did not open: 404 {\"code\":\"not_found\",\"message\":\"Not Found\"} (test_plans_are_refused_while_the_optimizer_cannot_start, 1 failed, collected 1, no collection errors)",
+      "t": "2026-11-04T21:46:43Z"
+    },
+    {
+      "sid": "04-01",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "RED: unit AssertionError: assert None == ('missing_anchor', 422, 'Set the Start before calculating'); Failed: DID NOT RAISE ProjectNotFoundError; AssertionError: assert [] == [1]. Migration AssertionError: alembic tables {items,pois,projects,tracks} lack 'plan_runs' (HEAD_TABLES). 17 failed, 13 passed; minimal signatures, no collection errors",
+      "t": "2026-11-04T21:48:23Z"
+    },
+    {
+      "sid": "04-01",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T21:50:17Z"
+    },
+    {
+      "sid": "04-01",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T21:50:20Z"
     }
   ]
 }
