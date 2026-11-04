@@ -35,7 +35,7 @@ Marco's real `assietta.gpx` (Strada dell'Assietta, Pian dell'Alpe -> Sestriere, 
 
 ## Dogfood moment and demo DoD
 
-Marco loads the Assietta on his own Pi, restarts the planner and finds it still there. **Precondition of the demo (D158, DEMO-1):** Marco's real `assietta.gpx` replaces the synthetic DISTILL stand-in (D112, UI-14) in the fixtures before the demo; the demo is not done on the synthetic file.
+Marco loads the Assietta on his own Pi, restarts the planner and finds it still there. **Precondition of the demo (D158, DEMO-1):** Marco's real `assietta.gpx` replaces the synthetic DISTILL stand-in (D112, UI-14) in the fixtures before the demo; the demo is not done on the synthetic file. **Amended by D198:** the demo runs on the supplied real file on the Pi, which is not committed; the synthetic fixture stays for the tests.
 
 ## Dependencies
 
