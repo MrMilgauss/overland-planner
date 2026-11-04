@@ -2,7 +2,7 @@
   "roadmap": {
     "project_id": "overland-route-planner-mvp",
     "created_at": "2026-11-02T19:53:04Z",
-    "total_steps": 26
+    "total_steps": 37
   },
   "phases": [
     {
@@ -867,6 +867,373 @@
           "implementation_notes": "Slice 01a (user decision 2026-11-02: proceed with this step). NON-SSOT: the browser journey in tests/e2e/workspace.spec.ts is NOT in any DISTILL feature file and does not count as SSOT acceptance coverage; it is a UI regression check added because every 01a scenario drives the HTTP API while the slice demo has Marco working in a browser. Banners per D108 from GET /api/health. Desktop and iPhone 390 x 844 layouts must both work (Giulia). No map (slice 09). Remove the feature-level @pending from slice-01a-skeleton-items-on-pi.feature (the only allowed feature-file edit) and add `--run-pending=slice-01a` to PENDING_FLAGS (D170); run the full local suite incl. `make mutate BASE=<slice-01a start>` (>= 80%). Commit: 'feat(web): workspace for projects, trails and places'. LAST STEP OF SLICE 01a: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push to origin main; verify CI green (incl. the CI-gated @compose scenario 'The packaged planner started without its data storage...' in job 7 and the workspace journey) and publish. Then, with the user at a start time the user names: make deploy to the Pi, the rollback drill with a real migration (DEVOPS rollback table 'slice 01a drill'), and the demo. Demo precondition (D158): Marco provides his real assietta.gpx for the demo; the tests keep the synthetic stand-in (D112, user decision).\n\nEXEMPT FROM PARADIGM: single-shot UI flows in TypeScript (no Hypothesis in the web stack) and a single-example browser journey. Compensate with property-based test at unit level on adjacent slot (Coordinate ranges and anchor assignment, steps 03-08 and 03-09)."
         }
       ]
+    },
+    {
+      "id": "04",
+      "name": "Slice 01b: first ordered plan and GPX",
+      "description": "US-02b. Calculate with the offline road map, ordered stops with road leg km, track rows entry to exit, HC-1 guard, minimal GPX 1.1 export, job lifecycle, and browser Calculate, Itinerary and Export GPX. Ends with every 01b scenario blocking in CI.",
+      "steps": [
+        {
+          "id": "04-01",
+          "name": "Refuse Calculate without anchors or optimizer; list plan runs",
+          "description": "Migration 0005 adds plan_runs. GET plan-runs lists a project's runs; POST plan-runs refuses with 422 missing_anchor or 503 optimizer_unavailable, creating no job and no run. First cut of the planning module, its facade and its read-only view of the catalog.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "03-10"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "With the optimizer unavailable, Calculate answers 503 optimizer_unavailable with 'Optimizer unavailable - nothing was changed', no job and no plan run; /healthz stays 503 with that reason.",
+            "A project without Start or End answers 422 missing_anchor naming what is missing; an unknown project answers 404 not_found.",
+            "A project's plan run list is an empty array until a run exists, and is ordered by number afterwards.",
+            "Alembic upgrades to 0005 and downgrades to 0004 keeping every project and item, through the operator path and with foreign keys on.",
+            "lint-imports enforces the planning facade: other modules reach application.planning only through it."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "Plans are refused while the optimizer cannot start | tests/unit/application/planning/test_plan_request_refusals.py | tests/integration/migrations/test_alembic_round_trip.py",
+          "files_to_modify": [
+            "migrations/versions/0005_plan_runs.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/adapters/persistence/planning_unit_of_work.py",
+            "src/overland_planner/adapters/persistence/project_snapshot_reader.py",
+            "src/overland_planner/application/ports/plan_run_repository.py",
+            "src/overland_planner/application/ports/project_snapshot_reader.py",
+            "src/overland_planner/domain/planning/project_snapshot.py",
+            "src/overland_planner/domain/planning/plan_run.py",
+            "src/overland_planner/application/planning/plan_request_service.py",
+            "src/overland_planner/application/planning/plan_run_queries.py",
+            "src/overland_planner/application/planning/facade.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/adapters/http/errors.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "pyproject.toml",
+            "tests/unit/application/planning/test_plan_request_refusals.py",
+            "tests/integration/migrations/test_alembic_round_trip.py",
+            "tests/integration/bootstrap/test_composition_root.py",
+            "tests/integration/adapters/persistence/test_migrator.py",
+            "tests/integration/adapters/persistence/test_sqlite_probe.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01b, US-02b; brief sections 5, 8, 9, 11; D130, D183, D90, DV-5; ADR-015 transport. New files are expected and named above, all in the DESIGN component paths (brief section 4). MIGRATION 0005_plan_runs: plan_runs (id, project_id FK ON DELETE CASCADE, number, status, failure_reason, created_at, revision, provider_id, objective, inputs JSON, itinerary JSON; UNIQUE project_id + number). Only these columns: fingerprint, run flags, counts, solver stats, totals and report arrive with the slices that fill them, each in its own revision. plan_job_log (ADR-015 DV-2) is not in 0005. The downgrade drops plan_runs and must leave projects and items intact; extend test_alembic_round_trip.py with a seeded run on both downgrade paths already there (operator path D90 and foreign_keys=ON, the 03-09 regression). The Alembic head pins in test_composition_root.py, test_migrator.py and test_sqlite_probe.py move to 0005. CONTRACT: GET /api/projects/{id}/plan-runs answers an array of {id, number, status}; status is ready or failed, and a job still running has no row. Pre-check order per brief section 8: anchors, active job (added at 04-09), optimizer. Optimizer readiness is the start-up probe outcome of component tour_solver, read through the platform facade; no re-probe. MESSAGES: 'Optimizer unavailable - nothing was changed' verbatim. No 01b scenario covers 422: use 'Set the Start before calculating' from slice-02 line 90 and propose 'Set the End before calculating' for the End, flag for the product owner. errors.py maps one code per status, so these refusals need explicit codes (missing_anchor, optimizer_unavailable) through the existing table, no new codes. Each refusal logs plan.job.refused {project_id, http_status, reason}. Until 04-04, a request that passes every pre-check answers 500 internal_error: transient on this branch, no scenario relies on it. IMPORT-LINTER (brief section 11, contract 6; pyproject comment: add when the facade first exists, an ignore_imports that matches nothing is an error): add facade-planning following facade-catalog, and domain-planning forbidding domain.planning from importing domain.export. PRE-PUSH SPEED, TAG ISSUE (user to ratify, see phase hand-off): only the first feature scenario is tagged @solver_child, yet scenarios 2, 3, 5, 6, 7, 9 and 10 also run real OR-Tools solves or a browser, and pre-push runs without --run-pending, so once @pending goes at 04-11 they would run in pre-push. The feature file stays untouched: add `pytestmark = pytest.mark.solver_child` to test_slice_01b.py now. pytest-bdd puts the generated tests in that module, so all 01b scenarios leave `-m 'not slow and not solver_child'` and stay selected by CI job 2. Pre-push keeps HC-1 coverage through the guard's unit properties (04-05). Verify with `uv run pytest --collect-only -q -m 'not slow and not solver_child' tests/acceptance/overland_route_planner_mvp/test_slice_01b.py`, which must select 0 tests, and report it. Run `make openapi-snapshot` and commit the snapshot. Local check: `uv run pytest -q tests/acceptance/overland_route_planner_mvp/test_slice_01b.py --run-pending=slice-01b -k optimizer_cannot_start`. Commit: 'feat(planning): refuse Calculate and list plan runs'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any combination of missing anchors and optimizer state, the refusal is the first failing pre-check in brief order, and the universe {plan_runs, jobs} is unchanged."
+        },
+        {
+          "id": "04-02",
+          "name": "Solver model and plan assembly in the planning domain",
+          "description": "Pure domain: a project snapshot and a road leg table become a tour model with Start, End and one node per Included item, and a chosen order becomes ordered stops with road leg km. A track is reached at its entry and left at its exit.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-01"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "The model has one node per Included non-anchor item plus explicit Start and End; a round trip uses the same place at both ends.",
+            "The arc cost from one item to the next runs from where the first is left to where the second is reached: a track's exit, then its entry.",
+            "An assembled plan has Start first, End last and every Included item exactly once.",
+            "Each stop after the first carries its road leg in km; the first has none; a leg between identical points is 0.0 km."
+          ],
+          "test_file": "tests/unit/domain/planning/test_solver_model_builder.py",
+          "scenario_name": "test_model_has_one_node_per_included_item | test_arcs_run_from_exit_to_entry | test_assembled_plan_keeps_start_first_end_last_each_item_once | test_leg_km_follows_the_leg_table",
+          "files_to_modify": [
+            "src/overland_planner/domain/routing/road_leg.py",
+            "src/overland_planner/domain/planning/project_snapshot.py",
+            "src/overland_planner/domain/planning/solver_model_builder.py",
+            "src/overland_planner/domain/planning/plan_run.py",
+            "src/overland_planner/domain/planning/plan_run_assembler.py",
+            "tests/unit/domain/planning/test_solver_model_builder.py",
+            "tests/unit/domain/planning/test_plan_run_assembler.py"
+          ],
+          "implementation_notes": "Slice 01b, US-02b; brief section 4 (SolverModelBuilder, PlanRunAssembler); required pair set per brief section 8 (k squared + k, single Start to End pair when k = 0). HC-1: no reversed variant of a track exists in the model. Arc costs are integer metres. No lexicographic weights, forbidden arcs or retrace arcs yet: the model carries plain distances, and those arrive with 06b and 03b without changing who builds it. No totals (slice 02). The stop type holds name, kind (poi or track), leg distance and, for tracks, entry, exit, track id, direction_version, point_count and canonical_sha256: HTTP shows a subset, the guard and the export read the rest. domain.planning may read domain.catalog and domain.routing value objects; domain.routing may use the existing Coordinate. Pure domain, no scenario turns GREEN here. Commit: 'feat(planning): solver model and plan assembly'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any generated snapshot with k >= 0 items and any permutation as the chosen order, the assembled plan has k + 2 stops with Start first and End last, each item once; every arc equals the leg table entry exit(i) -> entry(j)."
+        },
+        {
+          "id": "04-03",
+          "name": "OR-Tools solves a tour model in a child process",
+          "description": "TourSolver gains solve. OrToolsTourSolver spawns one child per solve, returns the order or a typed outcome for no route and crash, kills a child that overruns a safety bound, and the child dies with its parent.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-02"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "Solving a small tour model returns an order with Start first, End last and each item once, stopped by SOLVER_BUDGET rather than wall-clock.",
+            "A child that crashes reports optimizer_failed; a child finishing without a route reports no_valid_route_found; neither takes the server down.",
+            "A child still running past the safety bound is killed and reported as optimizer_failed.",
+            "Killing the parent during a solve leaves no child alive within 3 s.",
+            "OR-Tools is never imported in the server process, so idle memory is unchanged."
+          ],
+          "test_file": "tests/integration/adapters/solver/test_ortools_solve.py",
+          "scenario_name": "test_solves_a_small_round_trip | test_solves_a_small_one_way_trip | test_crashed_child_is_optimizer_failed | test_no_route_is_reported | test_overrunning_child_is_killed | test_child_dies_with_its_parent",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/tour_solver.py",
+            "src/overland_planner/adapters/solver/ortools_tour_solver.py",
+            "src/overland_planner/adapters/solver/tour_child.py",
+            "tests/integration/adapters/solver/test_ortools_solve.py",
+            "tests/unit/adapters/solver/test_tour_outcome.py"
+          ],
+          "implementation_notes": "Slice 01b; ADR-014 section on the budget (PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH, solution_limit = SOLVER_BUDGET, single phase until 06b), ADR-015 solver child, D122 reason codes. PORT DESIGN: brief section 6 says solve(model, budget, limits, stop_signal) -> stream of incumbents + final. Limits and Stop are OUT of this slice, so 01b declares the subset solve(model, budget) -> typed outcome and the child sends one final message; slice 03 adds limits, stop_signal and incumbents. HoldingTourSolver fits: it takes any arguments, blocks on the calling thread and then returns whatever the real solver returns, and it builds OrToolsTourSolver() with no arguments, so the constructor must stay callable that way and the budget comes through solve. UnavailableTourSolver is never asked. Do not change tests/common/solver_fakes.py. EARNED TRUST: the docstring of ortools_tour_solver.py promises PR_SET_PDEATHSIG (Linux) and the pipe-EOF watchdog (also macOS) for long-running children with this slice, ADR-015. SAFETY BOUND (design decision, flag it): a fixed adapter constant of 600 s, the FEASIBILITY_LIMIT_S default, is not the configurable limits of slice 03. Without it a hung child would hold the project in 409 until a restart. A round trip gets explicit start and end nodes. Mark these tests `pytest.mark.solver_child` like test_ortools_probe.py, so mutation runs and pre-push leave them out. The probe stays as it is. Commit: 'feat(solver): solve a tour in a child process'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. This step is an adapter: its child-process tests are integration tests and stay single-example per the mandate. PBT target at unit level: for any exit code and any child message, including malformed ones, the outcome is exactly one of found, no route or failed."
+        },
+        {
+          "id": "04-04",
+          "name": "Calculate gives a first ordered itinerary",
+          "description": "The mock road map (straight line x 1.3), a minimal leg resolver, the plan job on its own thread with polling, and the persisted run: POST answers 202, the job ends done with a plan run, and GET plan-run shows the ordered stops with road leg km.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-03"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "Calculate answers 202 with a job id at once; polling shows the job's state, and plan_run_id stays null until the run is stored.",
+            "The Assietta day trip lists Casa Marco, Strada dell'Assietta, Briancon, Casa Marco, each stop after the first with its road leg in km.",
+            "A one-way trip lists its Start first and its End last.",
+            "Road legs equal the straight line x 1.3; the road map's start-up probe proves this on a known pair.",
+            "The first plan is number 1 and only adds that plan run; items and projects are unchanged; a job that raises ends failed with no run."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "Marco gets a first ordered itinerary | A one-way trip ends at its End | tests/unit/application/planning/test_plan_job_registry.py | tests/unit/application/routing/test_leg_resolver.py | tests/integration/adapters/routing/test_mock_routing_provider.py",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/routing_provider.py",
+            "src/overland_planner/adapters/routing/mock_routing_provider.py",
+            "src/overland_planner/application/routing/leg_resolver.py",
+            "src/overland_planner/application/routing/facade.py",
+            "src/overland_planner/application/planning/plan_job_registry.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/application/planning/plan_request_service.py",
+            "src/overland_planner/application/planning/plan_run_queries.py",
+            "src/overland_planner/application/planning/facade.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "pyproject.toml",
+            "tests/unit/application/planning/scripted_tour_solver.py",
+            "tests/unit/application/planning/test_plan_job_registry.py",
+            "tests/unit/application/routing/test_leg_resolver.py",
+            "tests/integration/adapters/routing/test_mock_routing_provider.py",
+            "tests/integration/bootstrap/test_server_start.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01b, US-02b; brief sections 5, 6, 8; ADR-015. Scope limits: no confidence ladder, leg cache, snapping, memo, Stop or limits. CONTRACT, adopting the designer's proposal with corrections. GET /api/plan-runs/{id} answers {id, project_id, number, status, failure_reason, stops}; a stop is {name, type, leg_km}, type poi or track, leg_km null on the first stop (entry and exit are added at 04-05). GET /api/plan-jobs/{id} answers the brief's names, subset {state, reason, message, plan_run_id, elapsed_s}; plan_run_id null until ready; 404 not_found for an unknown or expired id. Later fields are additive. States used here: queued, computing_legs, solving, finalising, done, failed. CORRECTION, flag it: ADR-015 has no job state failed (a solver-side failure ends done with a Failed run), and plan_steps.py cites ADR-015 for the set that includes it. Used here only for an unexpected exception in the job, with no run and one logged event. refused, cancelled and timed_out stay unreachable until Stop and the limits exist. Solver outcomes follow D122: no route gives done with a Failed run no_valid_route_found, child failure gives done with a Failed run optimizer_failed. HOLDING SOLVER: solve runs only on the job's own thread, never the request's; SolveAbandonedError ends the job failed without writing anything, because the data folder may be going away; a running job never blocks process exit. Finished jobs are kept for 10 minutes (ADR-015) in memory, using the Clock port; FakeClock does not advance, so no logic waits on it. Run number and row commit in one transaction under the write lock. Snapshot under the write lock (D123); no file pins, since nothing can delete a version file until ADR-018's sweep exists. ROAD MAP: RoutingProvider port, the subset matrix(sources, targets) -> distances plus provider_id, extended by 06a; MockRoutingProvider with detour_factor 1.3 and straight lines, no MOCK_PLAN faults yet; probe on a known pair and zero for identical points, component routing_provider, added to the component list pinned in test_server_start.py. LegResolver is the seam for the ladder and cache (05, 06b): today it asks for the required pairs of brief section 8. IMPORT-LINTER: add facade-routing with its first facade. Unit tests for job states use tests/unit/application/planning/scripted_tour_solver.py, because mutation runs select unit and integration tests without solver_child; the waivers W1/W2 stay acceptance-only. Events: plan.job.finished and plan.run.completed with the kpi-contracts field names, fields owned by later slices left null. `make openapi-snapshot`. S1 and S5 are together because the order logic is shared: record RED for both at the start of this step (500 internal_error from 04-01, reached from the Calculate When). Local check: `--run-pending=slice-01b -k 'first_ordered_itinerary or ends_at_its_end'`. Commit: 'feat(planning): first ordered itinerary'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any scripted solver outcome, the job reaches exactly one terminal state, plan_run_id is set iff a run was stored, and the universe {plan_runs, items, projects} gains at most one row; the leg resolver asks each required pair exactly once."
+        },
+        {
+          "id": "04-05",
+          "name": "HC-1 guard on every plan, shown entry to exit",
+          "description": "InvariantGuard checks each candidate plan before it is stored, against the stored canonical points. A violation stores a Failed run and no itinerary. Track stops show entry and exit, and a trail starting at the Start place is reached by a zero-length leg.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-04"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Each track stop shows its imported entry and exit; a trail starting at the Start place has a 0.0 km leg and is still driven entry to exit.",
+            "A plan with a wrong first or last stop, a missing or repeated item, or swapped entry and exit stores a Failed run with reason internal_invariant_violation and no itinerary.",
+            "A track whose canonical points file changed or vanished fails the guard, whichever point differs.",
+            "A passing plan logs plan.run.completed with invariants ok; a violation logs invariant.violation naming the check.",
+            "The guard passes a 23,295-point, 224.8 km track and catches one altered point in it."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "A trail that starts at the Start place is reached by a zero-length leg | tests/unit/domain/planning/test_invariant_guard.py | tests/unit/application/planning/test_plan_request_job_guard.py | tests/integration/adapters/files/test_local_file_store_reads.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/planning/invariant_guard.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/application/ports/file_store.py",
+            "src/overland_planner/adapters/files/local_file_store.py",
+            "src/overland_planner/application/catalog/track_import_service.py",
+            "src/overland_planner/application/catalog/facade.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "tests/unit/domain/planning/test_invariant_guard.py",
+            "tests/unit/application/planning/test_plan_request_job_guard.py",
+            "tests/integration/adapters/files/test_local_file_store_reads.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01b, HC-1 guard from day 1; ADR-009 + Amendments 1 and 2. In 01b the guard runs check 1 (HC-2), check 2 without the report part (slice 04), check 3 (HC-1), check 4 by full-sequence hash (point count, first and last point, canonical_sha256 of the snapshot's direction_version) and check 5 against the leg table of this job. Not yet: track length against totals (slice 02), Unconfirmed and retrace rules (06b, 03b). The guard is pure and returns a result; the job reads the file through FileStore, verifies the hash and hands the evidence over, and logs through EventLog. Reason code internal_invariant_violation (ADR-015 amendment), text 'internal invariant violation (<rule>)' (ADR-009). A Failed run is numbered, as ADR-015 says. FileStore gains a read of the canonical points of a track version; a missing file is a typed outcome, not a crash. Decode next to the encoder: canonical_points_file lives in application/catalog/track_import_service.py, so the matching parser goes there and is exported through the catalog facade; no second copy of the format. SIZE: D198's real assietta.gpx has 23,295 points and 224.8 km and stays out of the fixtures (third party's recording). Tests generate a same-sized sequence at run time. ADR-009 Amendment 3 keeps the 40 x 20,000 hash re-measure at slice 03; no latency claim is added here. HTTP: a track stop adds entry and exit as {lat, lon}. Elevator pitch shows place names 'Pian dell'Alpe -> Sestriere', but the planner stores only coordinates (no geocoder until Phase 2, tests check coordinates per D109), so the API returns coordinates: see 04-10. `make openapi-snapshot`. Local check: `--run-pending=slice-01b -k reached_by_a`. Commit: 'feat(planning): HC-1 guard on every plan'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: every plan from the assembler passes; any single mutation of a passing plan (reorder anchors, drop, duplicate, swap entry and exit, alter any point) fails and names its rule; a failing plan changes only the slot plan_runs, with one Failed row."
+        },
+        {
+          "id": "04-06",
+          "name": "GPX writer port and GpxpyWriter with fatal probe",
+          "description": "The GpxWriter port takes a plain GPX document (waypoints, tracks in order) and returns GPX 1.1 bytes. GpxpyWriter proves at start-up, by writing and re-parsing, that it keeps order, names and precision; a failing probe refuses the start.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-02"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "The written bytes validate against the GPX 1.1 XSD and hold no extensions and no foreign elements.",
+            "Track points come back 1:1 in the given order at 6 decimals, including coordinates near zero and a 23,295-point track.",
+            "Names with apostrophes, ampersands, accents or XML control characters still give a well-formed file.",
+            "A writer that fails its write and re-parse round trip refuses start-up with one health.startup.refused line for component gpx_writer."
+          ],
+          "test_file": "tests/integration/adapters/gpx/test_gpxpy_writer.py",
+          "scenario_name": "test_output_validates_against_gpx_1_1_xsd | test_points_come_back_in_order_at_six_decimals | test_large_track_is_written_whole | test_names_stay_well_formed | test_failing_probe_refuses_start",
+          "files_to_modify": [
+            "src/overland_planner/domain/export/gpx_document.py",
+            "src/overland_planner/application/ports/gpx_writer.py",
+            "src/overland_planner/adapters/gpx/gpxpy_writer.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/integration/adapters/gpx/test_gpxpy_writer.py",
+            "tests/integration/bootstrap/test_server_start.py"
+          ],
+          "implementation_notes": "Slice 01b; brief section 6 (GpxWriter: GPX 1.1 bytes, no extensions; probe write + re-parse, fatal), section 7 (fatal path), ADR-010 element order and field use. Probe through the existing first_failure helper in application/ports/probe.py, like GpxpyParser. WHAT IF THE ENVIRONMENT LIES (Earned Trust): gpxpy formats floats itself, and an XSD decimal rejects scientific notation; the embedded probe sample therefore has a near-zero coordinate, a name with & ' and an accent, and asserts 1:1 order at 6 decimals on re-parse with defusedxml. Fault catalogue in tests: a writer that reorders, one that drops a point, one that emits an invalid number: each gives fatal. POI names are not restricted at import, so characters XML 1.0 forbids must not break the file: drop them from the written name and flag this. HC-1: the writer never sorts, simplifies or thins points; simplification (display.v{n}.json) does not exist and is never an input here. Elevation is written when present. Time cannot be kept: the canonical format stores [lat, lon, elevation] only, against ADR-010's 'ele/time kept when present'; flag it. Set a fixed creator; no metadata time, so the same input gives the same bytes. Component gpx_writer joins the list pinned in test_server_start.py. xmlschema stays a dev dependency, so XSD validation is test-only; use the vendored schema at tests/acceptance/overland_route_planner_mvp/schemas/gpx-1.1.xsd. Commit: 'feat(gpx): GPX writer with start-up probe'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. This step is an adapter: its tests are integration tests and stay single-example per the mandate. Worthwhile PBT here, as at 03-04: for any generated name and any Alpine-box point list, the file is well-formed and the points round-trip 1:1 at 6 decimals."
+        },
+        {
+          "id": "04-07",
+          "name": "Export keeps the trail's stored points in order",
+          "description": "GET export.gpx answers a GPX download holding each track of the run, read by the run's snapshot version from the canonical points and verified by hash first. Exporting changes nothing in the planner.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-05",
+            "04-06"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "The exported track holds the imported points 1:1 in stored order at 6 decimals, first point at entry and last at exit.",
+            "Export reads the run's snapshot direction_version from canonical points, never simplified ones.",
+            "A canonical file whose hash differs from the run's refuses the export with 'Track data for this run is inconsistent - recalculate' and logs invariant.violation.",
+            "Exporting changes nothing: projects, items and plan runs are unchanged, and an unknown run answers 404 not_found.",
+            "A 23,295-point track exports whole, with every point in order."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "Even the first plan drives the trail the way it was recorded | tests/unit/application/export/test_gpx_export_service.py",
+          "files_to_modify": [
+            "src/overland_planner/application/export/gpx_export_service.py",
+            "src/overland_planner/application/export/facade.py",
+            "src/overland_planner/adapters/http/export_routes.py",
+            "src/overland_planner/adapters/http/errors.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "pyproject.toml",
+            "tests/unit/application/export/test_gpx_export_service.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01b, HC-1; ADR-009 Amendment 2 (recompute and verify before emitting), ADR-010 Amendment 1 (read by snapshot direction_version). HC-1 ORACLE: plan_steps.py compares the file 1:1 with the imported fixture at 6 decimals, so only the canonical points can pass. Points come from FileStore plus the catalog facade's parser added at 04-05. Status for the inconsistent file: brief section 5 has no row, use 422 validation_error with the ADR-009 message; a new code would need the brief's table. IMPORT-LINTER: add facade-export with its first facade. Streaming is not needed: 23,295 points are about 1.5 MB of XML, and the route is a sync handler so the event loop stays free. Tests generate the size at unit level with a fake FileStore and the real writer test at 04-06, so mutation runs stay fast; the real file is measured at the orchestrator gate after 04-11. Run `make openapi-snapshot`. Filename, waypoints, road legs and Failed runs come at 04-08: here the header is only `attachment`. Local check: `--run-pending=slice-01b -k way_it_was_recorded`. Commit: 'feat(export): GPX keeps the stored track order'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any generated point list the document's track equals it exactly in order; any change to the stored bytes refuses the export; the universe is unchanged in every case."
+        },
+        {
+          "id": "04-08",
+          "name": "First plan downloads as a standard named GPX",
+          "description": "The export is complete for this slice: file name from the project and run number, one waypoint per POI, S/E naming for a round-trip anchor, straight mock road legs as named tracks. A Failed run is not exported.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-07"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Plan run 1 of Alpi Occidentali giugno 2027 downloads as alpi-occidentali-giugno-2027-run1.gpx, offered as an attachment.",
+            "The file is valid GPX 1.1, has track Strada dell'Assietta and exactly the waypoints 'Casa Marco, Torino (S/E)' and 'Briancon'.",
+            "A one-way trip gives one waypoint per POI, named exactly as the item.",
+            "Each road leg is a straight two-point track named 'Leg k: A -> B', never a route element and never mixed into a trail's points.",
+            "Exporting a Failed run answers 422 with 'This plan run failed'; any project name gives a safe ASCII file name."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "Marco downloads the first plan as a standard GPX file | tests/unit/domain/export/test_gpx_document_builder.py | tests/unit/domain/export/test_run_file_name.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/export/gpx_document_builder.py",
+            "src/overland_planner/domain/export/run_file_name.py",
+            "src/overland_planner/application/export/gpx_export_service.py",
+            "src/overland_planner/adapters/http/export_routes.py",
+            "src/overland_planner/adapters/http/errors.py",
+            "tests/unit/domain/export/test_gpx_document_builder.py",
+            "tests/unit/domain/export/test_run_file_name.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 01b, US-02b, D10; ADR-010 (structure, 'Leg k: A -> B', trk number and type road or offroad, Failed runs refused). OUT, slice 11: consideration report in metadata desc, stale label, stop position in waypoint desc, device checks, real geometry. Metadata name 'Plan run #N'. HEADER: `Content-Disposition: attachment; filename=\"alpi-occidentali-giugno-2027-run1.gpx\"`, media type application/gpx+xml. File name rule: accents folded to ASCII, lowercase, runs of anything else become one hyphen; an empty result falls back to plan; a header cannot be injected through a project name. Legs come from the stored itinerary, no provider call. Domain export may read domain.planning value objects (brief section 11, rule 5). Status of a refused Failed run: slice-11 line 72 gives the text but no status, use 422 validation_error. Log export.gpx with the kpi-contracts fields; stale is false until slice 04. `make openapi-snapshot` if the schema changes. Local check: `--run-pending=slice-01b -k standard_gpx_file`. Commit: 'feat(export): named GPX with waypoints and road legs'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any plan, waypoints = distinct POI items with only a round-trip anchor suffixed (S/E), and road tracks = stops - 1; for any project name and run number, the file name matches [a-z0-9-]+-runN.gpx."
+        },
+        {
+          "id": "04-09",
+          "name": "One plan at a time, nothing exportable until ready",
+          "description": "A project has one active plan job: a second Calculate answers 409 job_active and changes nothing. Only one solver child runs across projects. While a plan is being worked out no run exists, so nothing can be exported.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-08"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A second Calculate during an active job answers 409 job_active with 'A plan is already being calculated for this project', and only one plan run results.",
+            "Calculate is accepted again once the job has ended, whatever its outcome.",
+            "While a plan is being worked out, the job has no plan_run_id and no ready run is listed; once ready, the export downloads.",
+            "Another project can calculate meanwhile; only one solver child runs at a time and the waiting job shows waiting_for_optimizer."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "A second Calculate while a plan is being worked out is refused | A plan still being worked out cannot be exported yet | tests/unit/application/planning/test_plan_job_registry.py",
+          "files_to_modify": [
+            "src/overland_planner/application/planning/plan_job_registry.py",
+            "src/overland_planner/application/planning/plan_request_service.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/adapters/http/errors.py",
+            "tests/unit/application/planning/test_plan_job_registry.py"
+          ],
+          "implementation_notes": "Slice 01b; ADR-015 ownership and amendment D133 (max 1 job per project, max 2 overall, one solver child at a time), brief section 8 pre-check order. No Stop and no limits here. The 409 check and job registration are atomic, or two fast presses could both pass. Scenario doubles: HoldingTourSolver through ExternalPorts, waiver W1. RED, BE HONEST: the second-Calculate scenario has a true RED here (202 instead of 409). The not-exportable scenario needs no new production code once 04-04 and 04-08 are done, so it may already pass when this step starts. If it does, record that, do not invent a RED. Its DISTILL RED is in distill/red-classification.md; prove it can fail by temporarily exposing plan_run_id early, restore, and report the observed failure message in the hand-off. Local check: `--run-pending=slice-01b -k 'second_calculate or cannot_be_exported_yet'`. Commit: 'feat(planning): one plan at a time per project'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT target: for any sequence of presses and job endings over several projects (stateful Hypothesis), each project has at most one active job, at most one job holds the solver slot, and each accepted press ends in one terminal state."
+        },
+        {
+          "id": "04-10",
+          "name": "Calculate, Itinerary and Export GPX in the browser",
+          "description": "The workspace gets a Calculate button, polling every 500 ms, an Itinerary list with road leg km and track entry to exit, and an Export GPX link shown only when a run is ready. Refusals appear verbatim.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-09"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "In the browser Marco presses Calculate and sees the stops in order; each row after the first shows its name and road leg as N.N km.",
+            "Export GPX appears only when a run is ready, and downloads alpi-occidentali-giugno-2027-run1.gpx.",
+            "A track row shows its entry and exit; a refusal or a failed plan shows the planner's own message.",
+            "Reopening a project shows its latest ready plan.",
+            "The Playwright scenario has really run: it reports passed, not skipped."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "Marco plans the Assietta day trip in his browser | web/src/lib/PlanPanel.test.ts | web/src/lib/Itinerary.test.ts",
+          "gated_scenarios": [
+            {
+              "title": "Marco plans the Assietta day trip in his browser",
+              "gate": null
+            }
+          ],
+          "files_to_modify": [
+            "web/src/lib/api.ts",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/Itinerary.svelte",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/PlanPanel.test.ts",
+            "web/src/lib/Itinerary.test.ts"
+          ],
+          "implementation_notes": "Slice 01b, US-02b; D156 vocabulary (Calculate). ROLES fixed by tests/e2e/first-plan.spec.ts: button named Calculate; list named Itinerary (an ol with aria-label) holding one listitem per stop and no other list items; Export GPX as a link or button. A plain anchor to /api/plan-runs/{id}/export.gpx is enough to raise the browser's download, and works behind the household password. Row text uses leg_km with one decimal (`N.N km`); Python and JavaScript agree on the same float. No first-stop leg. TRACK ROW: the slice brief asks for 'entry -> exit', and the story's example shows place names, but the planner stores only coordinates, so rows show coordinates. Flag for the product owner; no name lookup is built. Desktop and iPhone 390 x 844 layouts both work. No map, no toggles, no Stale, no totals, no Stop. FIRST RUN OF THESE THEN STEPS: red-classification.md says the Then steps of scenario 10 have never run, so a failure may be a binding defect. If so, report it; the feature text is not edited. BEFORE RUNNING: the server serves web/dist, so run `npx vite build` in web first, and `npx --no-install playwright install chromium` once. steps/browser.py skips silently without web/node_modules/@playwright/test, so use `-rs` and report the scenario as PASSED: `uv run pytest -q -rs tests/acceptance/overland_route_planner_mvp/test_slice_01b.py --run-pending=slice-01b -k in_his_browser`. Commit: 'feat(web): calculate, itinerary and GPX export'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nEXEMPT FROM PARADIGM: single-shot UI flows in TypeScript (no Hypothesis in the web stack) and a single-example browser journey. Compensating tests: the property-based tests on adjacent slots, the assembled itinerary (04-02) and the job's states (04-04, 04-09), plus vitest component tests here for each job state. Acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks."
+        },
+        {
+          "id": "04-11",
+          "name": "Every 01b scenario blocking in CI; slice 01b ends",
+          "description": "Removes @pending from the 01b feature, adds slice-01b to PENDING_FLAGS, and makes CI job 2 run the browser scenario with chromium so it cannot pass by skipping. The OsmAnd check is manual, at the orchestrator gate.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-01",
+            "04-10"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Every automated slice-01b scenario passes without --run-pending and is blocking in CI: @pending removed, the rest of the feature text byte-identical, slice-01b in PENDING_FLAGS.",
+            "CI job 2 installs chromium before pytest and runs the browser scenario.",
+            "In CI, a missing Playwright fails the browser scenario instead of skipping it; outside CI it still skips with a reason.",
+            "Pre-push selects no 01b scenario, so its time budget stays under five minutes.",
+            "The mutation kill rate on the slice's domain and application files is at least 80 %."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+          "scenario_name": "The first plan opens in OsmAnd | tests/ci/test_ci_workflow.py | tests/ci/test_first_plan_journey_gate.py",
+          "gated_scenarios": [
+            {
+              "title": "The first plan opens in OsmAnd",
+              "gate": "orchestrator"
+            }
+          ],
+          "files_to_modify": [
+            "tests/acceptance/overland_route_planner_mvp/slice-01b-skeleton-plan-and-gpx.feature",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/browser.py",
+            ".github/workflows/ci.yml",
+            "tests/ci/test_ci_workflow.py",
+            "tests/ci/test_first_plan_journey_gate.py"
+          ],
+          "implementation_notes": "Slice 01b; D170, D190. FEATURE: remove only `@pending` from the feature-level tag line (the only allowed feature-file edit); check with `git diff` that nothing else moved. PENDING_FLAGS in ci.yml becomes `--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b`, with its comment; update the pin at tests/ci/test_ci_workflow.py line 128. WHICH JOB RUNS THE BROWSER SCENARIO: CI job 2 (test-python), not job 7. Job 2's `-m 'not real_provider and not pi'` selects it, and it already has `npm ci` and the web/dist the scenario's real server needs. Job 7 lacks that web/dist, its pytest selects only `compose or security`, and its Playwright run skips first-plan.spec.ts by design because the settings are absent. Job 2 lacks the browser, so add `npx --no-install playwright install --with-deps chromium` (working-directory web) after npm ci and before pytest. Without this the scenario would fail in job 2, not skip, because the package is there. CANNOT PASS BY SKIPPING: steps/browser.py skips when web/node_modules/@playwright/test is missing; change it to fail when the CI environment variable is set. tests/ci/test_first_plan_journey_gate.py proves that behaviour, and test_ci_workflow.py proves the install step order. Check job 2's 20-minute timeout on the first green run and report the duration. TAG ISSUE: the pytestmark from 04-01 stays; re-verify 0 scenarios selected under pre-push's marker expression, now that @pending is gone. Run the full local suite and `make mutate BASE=<slice-01b start>` (>= 80 %). Also add a short comment in the test module saying why the whole module is solver_child. Commit: 'test(acceptance): slice 01b blocking in CI'. LAST STEP OF SLICE 01b: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push and verify CI green, and read job 2's summary to confirm the browser scenario PASSED and is not in the skip list. Then, at a start time the user names: make deploy to the Pi (Alembic 0004 -> 0005 with the automatic pre-migration copy) and the demo on the supplied real assietta.gpx (D198: it stays out of git), recording plan and export time for its 23,295 points and checking 1:1 point order. A person performs 'The first plan opens in OsmAnd' on the tablet and logs evidence in docs/demo/. Note for rollback: a release at 0004 refuses a 0005 database (db_newer_than_app), so rolling back needs the snapshot and `alembic downgrade 0004` first (D90).\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nEXEMPT FROM PARADIGM: workflow and test-gate configuration with one observable outcome each, and a manual scenario with no automated test. Compensating tests: the single-example CI contract tests named above, and the property-based tests of 04-02, 04-05 and 04-09 on the behaviour these scenarios guard. Acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks."
+        }
+      ]
     }
   ],
   "implementation_scope": {
@@ -897,8 +1264,15 @@
     ]
   },
   "validation": {
-    "status": "approved",
-    "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
-    "approved_at": "2026-11-02"
+    "status": "pending",
+    "scope": "phase 04 (slice 01b), awaiting reviewer",
+    "reviewer": null,
+    "approved_at": null,
+    "previous_approval": {
+      "status": "approved",
+      "scope": "phases 01-03",
+      "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
+      "approved_at": "2026-11-02"
+    }
   }
 }
