@@ -5,6 +5,11 @@ assignment together with its `plan_run_id`: a poll never sees a run before the j
 `done` with a Failed run (D122). `failed` is only an unexpected exception: no run, reason null (ADR-015 fixes the codes
 and none covers it) and a fixed message. `refused`, `cancelled` and `timed_out` arrive with Stop and the limits.
 
+A project has one active job: `start` checks and registers under one lock. One solver child runs at a time (D133): a job
+that reaches the solve stage while the slot is busy shows `waiting_for_optimizer`, holding neither a lock of this
+registry nor the writer lock, and every ending of a solve frees the slot. "Max 2 jobs overall" is not enforced: ADR-015
+names no answer for a third project, so its job is accepted and waits for the slot like the second.
+
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
 fields owned by later slices are null. A failed job names only the exception's class (D197).
@@ -14,13 +19,15 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 
-PlanJobState = Literal["queued", "computing_legs", "solving", "finalising", "done", "failed"]
+PlanJobState = Literal["queued", "computing_legs", "waiting_for_optimizer", "solving", "finalising", "done", "failed"]
 
 KEEP_FINISHED_S = 600.0
 FAILED_MESSAGE = "The plan could not be calculated - nothing was changed"
@@ -75,6 +82,10 @@ class PlanJobProgress(Protocol):
         """Facts for the job's `plan.job.finished` line."""
         ...
 
+    def solver_slot(self) -> AbstractContextManager[None]:
+        """Holds the one solver slot while in `solving`, waiting for it first if another job has it."""
+        ...
+
 
 class PlanWork(Protocol):
     def run(self, project_id: str, progress: PlanJobProgress) -> StoredRun: ...
@@ -90,10 +101,11 @@ class _Ending:
 
 
 class _Job:
-    def __init__(self, job_id: str, project_id: str, started_s: float) -> None:
+    def __init__(self, job_id: str, project_id: str, started_s: float, slot: threading.Lock) -> None:
         self.id = job_id
         self.project_id = project_id
         self.started_s = started_s
+        self._slot = slot
         self.facts: dict[str, object] = {}
         self.ending: _Ending | None = None
         self._state: PlanJobState = "queued"
@@ -103,6 +115,20 @@ class _Job:
 
     def note(self, **facts: object) -> None:
         self.facts.update(facts)
+
+    @contextmanager
+    def solver_slot(self) -> Iterator[None]:
+        if not self._slot.acquire(blocking=False):
+            self.enter("waiting_for_optimizer")
+            self._slot.acquire()
+        try:
+            self.enter("solving")
+            yield
+        finally:
+            self._slot.release()
+
+    def is_active(self) -> bool:
+        return self.ending is None
 
     def is_expired(self, now_s: float) -> bool:
         ending = self.ending
@@ -125,13 +151,20 @@ class PlanJobRegistry:
         self._event_log = event_log
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
+        self._solver_slot = threading.Lock()
 
-    def start(self, project_id: str) -> str:
-        """Start the job on its own thread and answer at once with its id."""
-        job = _Job(uuid.uuid4().hex, project_id, self._clock.monotonic())
-        threading.Thread(target=self._run, args=(job,), name=f"plan-job-{job.id}", daemon=True).start()
+    def has_active_job(self, project_id: str) -> bool:
         with self._lock:
+            return self._active_in(project_id)
+
+    def start(self, project_id: str) -> str | None:
+        """Start the job on its own thread and answer at once with its id; `None` if the project has an active job."""
+        job = _Job(uuid.uuid4().hex, project_id, self._clock.monotonic(), self._solver_slot)
+        with self._lock:
+            if self._active_in(project_id):
+                return None
             self._forget_expired()
+            threading.Thread(target=self._run, args=(job,), name=f"plan-job-{job.id}", daemon=True).start()
             self._jobs[job.id] = job
         return job.id
 
@@ -141,6 +174,9 @@ class PlanJobRegistry:
             self._forget_expired()
             job = self._jobs.get(job_id)
         return None if job is None else job.view(self._clock.monotonic())
+
+    def _active_in(self, project_id: str) -> bool:
+        return any(job.project_id == project_id and job.is_active() for job in self._jobs.values())
 
     def _forget_expired(self) -> None:
         now_s = self._clock.monotonic()

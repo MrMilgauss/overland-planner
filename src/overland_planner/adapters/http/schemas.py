@@ -184,6 +184,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 CALCULATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     **ERROR_RESPONSES,
+    409: {"model": ErrorEnvelope, "description": "job_active"},
     422: {"model": ErrorEnvelope, "description": "missing_anchor"},
     503: {"model": ErrorEnvelope, "description": "optimizer_unavailable"},
 }

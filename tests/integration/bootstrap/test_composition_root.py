@@ -26,8 +26,9 @@ from overland_planner.adapters.persistence.database import database_file
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.fakes import FakeClock
-from tests.common.solver_fakes import UnavailableTourSolver
+from tests.common.solver_fakes import HoldingTourSolver, UnavailableTourSolver
 from tests.common.workspace import workspace_data_dir
+from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FACTORY = "overland_planner.bootstrap.app_factory:create_app"
@@ -252,3 +253,27 @@ def test_calculate_answers_the_missing_anchor_read_from_the_database(data_dir: P
 def test_the_plan_runs_of_an_unknown_project_are_not_found(data_dir: Path, method: str) -> None:
     answer = _planner(data_dir).request(method, f"/api/projects/{'0' * 32}/plan-runs")
     assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+
+
+def test_a_second_calculate_is_refused_until_the_job_has_ended_even_when_it_failed(data_dir: Path) -> None:
+    solver = HoldingTourSolver(ScriptedTourSolver())
+    client = TestClient(create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=solver)))
+    project_id, place_id = _project_with_a_place(client)
+    client.put(f"/api/projects/{project_id}/anchors", json={"start_item_id": place_id, "end_item_id": place_id})
+    calculate = f"/api/projects/{project_id}/plan-runs"
+    first = client.post(calculate)
+    assert first.status_code == 202
+    assert solver.wait_until_asked(30)
+
+    assert _refusal(client, calculate) == (
+        409,
+        {"code": "job_active", "message": "A plan is already being calculated for this project"},
+    )
+
+    solver.abandon()
+    job_id = first.json()["job_id"]
+    deadline = time.monotonic() + 30
+    while (job := client.get(f"/api/plan-jobs/{job_id}").json())["state"] != "failed":
+        assert time.monotonic() < deadline, f"the job did not fail: {job}"
+    assert job["plan_run_id"] is None
+    assert client.post(calculate).status_code == 202

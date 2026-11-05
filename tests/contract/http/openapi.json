@@ -191,6 +191,7 @@
             "enum": [
               "queued",
               "computing_legs",
+              "waiting_for_optimizer",
               "solving",
               "finalising",
               "done",
@@ -903,7 +904,7 @@
         "summary": "Project Plan Runs"
       },
       "post": {
-        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor` or 503 `optimizer_unavailable`:\nno job and no plan run.",
+        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503\n`optimizer_unavailable`: no job and no plan run.",
         "operationId": "calculate_api_projects__project_id__plan_runs_post",
         "parameters": [
           {
@@ -936,6 +937,16 @@
               }
             },
             "description": "not_found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "job_active"
           },
           "422": {
             "content": {

@@ -1,8 +1,9 @@
-"""Plan request use case (US-02b, brief §8): the pre-checks of Calculate, in brief order: anchors, then optimizer.
+"""Plan request use case (US-02b, brief §8): Calculate's pre-checks, in brief order: anchors, active job, optimizer.
 
 A refused request creates no job and no plan run and logs one `plan.job.refused` line. The optimizer's readiness is the
 start-up probe outcome of the component `tour_solver`; nothing probes it again. A request that passes every pre-check
-starts a plan job and answers at once with its id.
+starts a plan job and answers at once with its id. The registry decides the active job check again as it starts the job,
+atomically, so of two fast presses that both passed the pre-checks only one gets a job.
 """
 
 from __future__ import annotations
@@ -35,6 +36,14 @@ class MissingAnchorError(PlanRefusedError):
         super().__init__(f"Set the {anchor} before calculating")
 
 
+class JobActiveError(PlanRefusedError):
+    reason = "job_active"
+    http_status = 409
+
+    def __init__(self) -> None:
+        super().__init__("A plan is already being calculated for this project")
+
+
 class OptimizerUnavailableError(PlanRefusedError):
     reason = "optimizer_unavailable"
     http_status = 503
@@ -60,18 +69,23 @@ class PlanRequestService:
         """The started job's id. Raises `ProjectNotFoundError` or the `PlanRefusedError` of the failed pre-check."""
         with self._unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
-        refusal = self._first_refusal(snapshot)
+        refusal = self._first_refusal(project_id, snapshot)
         if refusal is None:
-            return self._jobs.start(project_id)
+            job_id = self._jobs.start(project_id)
+            if job_id is not None:
+                return job_id
+            refusal = JobActiveError()
         self._event_log.info(
             "plan.job.refused", project_id=project_id, http_status=refusal.http_status, reason=refusal.reason
         )
         raise refusal
 
-    def _first_refusal(self, snapshot: ProjectSnapshot) -> PlanRefusedError | None:
+    def _first_refusal(self, project_id: str, snapshot: ProjectSnapshot) -> PlanRefusedError | None:
         anchor = snapshot.missing_anchor()
         if anchor is not None:
             return MissingAnchorError(anchor)
+        if self._jobs.has_active_job(project_id):
+            return JobActiveError()
         if self._health.detail().components[_OPTIMIZER_COMPONENT].outcome != "ok":
             return OptimizerUnavailableError()
         return None

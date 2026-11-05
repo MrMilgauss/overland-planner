@@ -3,48 +3,69 @@
 Driving ports: `PlanRequestService`, `PlanJobRegistry` (polling) and `PlanRunQueries` from the planning facade, over the
 real `PlanRequestJob` and `LegResolver`. Driven ports: `PlanningUnitOfWork`, `RoutingProvider`, `TourSolver` (scripted),
 `Clock` (`FakeClock`, which never moves by itself) and `EventLog`.
-Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them.
-Test Budget: 4 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
+Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them; for
+several projects (`PlanDesk`) `plan_runs`, `jobs` as polled and `refusals_logged`.
+Test Budget: 7 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
-always; each job logs its events) x 2 = 8; 5 used.
+always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
+by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 9 used.
 """
 
 from __future__ import annotations
 
 import itertools
+import queue
 import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
+from hypothesis.stateful import (
+    RuleBasedStateMachine,
+    initialize,
+    invariant,
+    precondition,
+    rule,
+    run_state_machine_as_test,
+)
 
 from overland_planner.application.planning.facade import (
     PlanJobRegistry,
     PlanJobView,
+    PlanRefusedError,
     PlanRequestJob,
     PlanRequestService,
     PlanRunQueries,
 )
-from overland_planner.application.platform.facade import HealthService
+from overland_planner.application.platform.facade import HealthDetail, HealthService
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
-from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 from overland_planner.application.ports.tour_solver import (
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
+    TourOutcome,
     TourTimedOut,
 )
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
-from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
+from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
 from tests.common.solver_fakes import SolveAbandonedError
-from tests.common.state_delta import assert_state_delta
-from tests.unit.application.planning.planning_doubles import DEFAULT_STAMP, Gate, InMemoryPlanning, RecordingRoadMap
+from tests.common.state_delta import assert_state_delta, set_to
+from tests.unit.application.planning.planning_doubles import (
+    DEFAULT_STAMP,
+    MAX_WAIT_S,
+    Gate,
+    InMemoryPlanning,
+    RecordingRoadMap,
+)
 from tests.unit.application.planning.scripted_tour_solver import Script, ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, left_at, reached_at, trips
 
@@ -376,3 +397,338 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
 
 def _distinct_pairs(trip: Trip) -> set[Any]:
     return set(SolverModelBuilder(trip.snapshot).required_pairs())
+
+
+# ------------------------------------------------------------------------ one plan at a time (ADR-015, D133)
+PROJECTS = ("project-1", "project-2", "project-3")  # three: D133 does not refuse the third, it waits for the slot
+DESK_UNIVERSE = {"plan_runs", "jobs", "refusals_logged"}
+JOB_ACTIVE = ("job_active", 409, "A plan is already being calculated for this project")
+WORKING_STATES = {"solving", "waiting_for_optimizer"}
+
+
+class SolverOnCue:
+    """Each solve waits for its cue, then answers like `ScriptedTourSolver` with the cued script; no child process."""
+
+    def __init__(self) -> None:
+        self.solving = 0
+        self.most_at_once = 0
+        self.solves = 0
+        self._cues: queue.SimpleQueue[Script] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
+
+    def cue(self, script: Script) -> None:
+        self._cues.put(script)
+
+    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+        with self._lock:
+            self.solves += 1
+            self.solving += 1
+            self.most_at_once = max(self.most_at_once, self.solving)
+        try:
+            return ScriptedTourSolver(self._cues.get(timeout=MAX_WAIT_S)).solve(model, budget)
+        finally:
+            with self._lock:
+                self.solving -= 1
+
+
+def _until(reached: Callable[[], bool], what: str) -> None:
+    """Waits for a job's thread by yielding to it, with no fixed pause; the deadline only stops a hung test."""
+    deadline = time.monotonic() + WAIT_S
+    while not reached():
+        assert time.monotonic() < deadline, f"never happened: {what}"
+        time.sleep(0)
+
+
+def _optimizer(outcome: ProbeOutcome = "ok") -> HealthService:
+    return HealthService({"tour_solver": ProbeResult(outcome)})
+
+
+@dataclass
+class PlanDesk:
+    """The real services over the doubles, with several projects open; `accepted` is every press that got a job."""
+
+    planning: InMemoryPlanning
+    solver: SolverOnCue
+    log: RecordingEventLog
+    registry: PlanJobRegistry
+    service: PlanRequestService
+    queries: PlanRunQueries
+    accepted: list[tuple[str, str]] = field(default_factory=list)
+
+    def service_with(self, health: HealthService) -> PlanRequestService:
+        return PlanRequestService(self.planning.unit_of_work, health, self.log, self.registry)
+
+    def press(self, project_id: str, service: PlanRequestService | None = None) -> str | PlanRefusedError:
+        try:
+            job_id = (service or self.service).request(project_id)
+        except PlanRefusedError as refused:
+            return refused
+        self.accepted.append((job_id, project_id))
+        return job_id
+
+    def poll(self, job_id: str) -> PlanJobView:
+        job = self.registry.get(job_id)
+        assert job is not None, f"job {job_id} is not known"
+        return job
+
+    def state(self, job_id: str) -> str:
+        return self.poll(job_id).state
+
+    def jobs_in(self, *states: str) -> list[str]:
+        return [job_id for job_id, _ in self.accepted if self.state(job_id) in states]
+
+    def still_working(self) -> list[str]:
+        return [job_id for job_id, _ in self.accepted if self.state(job_id) not in TERMINAL_STATES]
+
+    def until_state(self, job_id: str, state: str) -> None:
+        _until(lambda: self.state(job_id) == state, f"job in {state}, it is {self.poll(job_id)}")
+
+    def until_ended(self, job_id: str) -> PlanJobView:
+        _until(lambda: self.state(job_id) in TERMINAL_STATES, f"job ended, it is {self.poll(job_id)}")
+        return self.poll(job_id)
+
+    def until_settled(self) -> None:
+        """Every working job either is the one solve under way or waits for it."""
+
+        def settled() -> bool:
+            assert self.solver.most_at_once <= 1, "two solver children ran at once"
+            working = self.still_working()
+            solving = self.jobs_in("solving")
+            return (
+                all(self.state(job_id) in WORKING_STATES for job_id in working)
+                and len(solving) == (1 if working else 0)
+                and self.solver.solving == len(solving)
+            )
+
+        _until(settled, f"the jobs settled, they are {[self.poll(job_id) for job_id, _ in self.accepted]}")
+
+    def view(self) -> dict[str, Any]:
+        refusals = (fields for event, fields in self.log.events if event == "plan.job.refused")
+        return {
+            "plan_runs": tuple((r.project_id, r.number, r.status, r.failure_reason) for r in self.planning.runs),
+            "jobs": tuple(
+                (job_id, project_id, self.state(job_id), self.poll(job_id).plan_run_id)
+                for job_id, project_id in self.accepted
+            ),
+            "refusals_logged": tuple((f["project_id"], f["http_status"], f["reason"]) for f in refusals),
+        }
+
+
+def _plan_desk(trip: Trip, health: HealthService | None = None) -> PlanDesk:
+    planning = InMemoryPlanning()
+    for project_id in PROJECTS:
+        planning.add_project(project_id, trip.snapshot)
+    solver = SolverOnCue()
+    clock = FakeClock()
+    log = RecordingEventLog()
+    files = InMemoryFileStore()
+    trip.seed_canonical_files(files)
+    road_map = RecordingRoadMap(trip.leg_m)
+    job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
+    registry = PlanJobRegistry(clock, job, log)
+    service = PlanRequestService(planning.unit_of_work, health or _optimizer(), log, registry)
+    return PlanDesk(planning, solver, log, registry, service, PlanRunQueries(planning.unit_of_work))
+
+
+def _endings() -> st.SearchStrategy[Script]:
+    return st.none() | _failures()
+
+
+def _ending_of(script: Script) -> tuple[str, str | None, bool]:
+    """Terminal state, failure reason of the run, and whether a run is stored (D122; a raising job stores nothing)."""
+    if isinstance(script, Exception):
+        return "failed", None, False
+    if script is None or isinstance(script, TourFound):
+        return "done", None, True
+    return "done", script.reason, True
+
+
+def _refusal_of(refused: PlanRefusedError) -> tuple[str, int, str]:
+    return refused.reason, refused.http_status, str(refused)
+
+
+class OnePlanAtATime(RuleBasedStateMachine):
+    """Any sequence of presses and solver answers over several projects, with the model of who is working."""
+
+    desk: PlanDesk
+    working_project_of: dict[str, str]
+
+    @initialize(trip=trips())
+    def open_the_projects(self, trip: Trip) -> None:
+        self.desk = _plan_desk(trip)
+        self.working_project_of = {}
+
+    @rule(project_id=st.sampled_from(PROJECTS))
+    def press_calculate(self, project_id: str) -> None:
+        before = self.desk.view()
+        answer = self.desk.press(project_id)
+        if isinstance(answer, PlanRefusedError):
+            assert project_id in self.working_project_of.values(), f"refused with nothing active: {answer}"
+            assert _refusal_of(answer) == JOB_ACTIVE
+            logged = (*before["refusals_logged"], (project_id, JOB_ACTIVE[1], JOB_ACTIVE[0]))
+            assert_state_delta(
+                before, self.desk.view(), DESK_UNIVERSE, {"refusals_logged": set_to(logged)}, strict=True
+            )
+            return
+        assert project_id not in self.working_project_of.values(), "a second job started for the project"
+        expected_state = "waiting_for_optimizer" if self.working_project_of else "solving"
+        self.working_project_of[answer] = project_id
+        self.desk.until_settled()
+        jobs = (*before["jobs"], (answer, project_id, expected_state, None))
+        assert_state_delta(before, self.desk.view(), DESK_UNIVERSE, {"jobs": set_to(jobs)}, strict=True)
+
+    @precondition(lambda self: bool(self.working_project_of))
+    @rule(script=_endings())
+    def the_solver_answers(self, script: Script) -> None:
+        before = self.desk.view()
+        (job_id,) = self.desk.jobs_in("solving")
+        project_id = self.working_project_of[job_id]
+        self.desk.solver.cue(script)
+
+        ended = self.desk.until_ended(job_id)
+        del self.working_project_of[job_id]
+        self.desk.until_settled()
+
+        state, reason, stored = _ending_of(script)
+        assert (ended.state, ended.reason) == (state, reason)
+        assert (ended.plan_run_id is not None) == stored
+        delta: dict[str, Any] = {"jobs": _one_ended_and_the_next_solving(job_id, state)}
+        if stored:
+            number = sum(run.project_id == project_id for run in self.desk.planning.runs)
+            status = "ready" if reason is None else "failed"
+            delta["plan_runs"] = gained((project_id, number, status, reason))
+            assert self.desk.planning.runs[-1].id == ended.plan_run_id
+        assert_state_delta(before, self.desk.view(), DESK_UNIVERSE, delta, strict=True)
+
+    @invariant()
+    def one_job_per_project_and_one_in_the_solver(self) -> None:
+        working = self.desk.still_working()
+        assert set(working) == set(self.working_project_of), "the model and the polls disagree on who is working"
+        projects = list(self.working_project_of.values())
+        assert len(projects) == len(set(projects)), f"a project has two active jobs: {projects}"
+        assert len(self.desk.jobs_in("solving")) == (1 if working else 0)
+        assert self.desk.solver.most_at_once <= 1, "two solver children ran at once"
+        assert all(self.desk.poll(job_id).plan_run_id is None for job_id in working), "a working job names a run"
+
+    def teardown(self) -> None:
+        if not hasattr(self, "desk"):
+            return
+        for job_id in self.desk.still_working():
+            self.desk.solver.cue(None)
+            self.desk.until_ended(job_id)
+        finished = [fields["job_id"] for event, fields in self.desk.log.events if event == "plan.job.finished"]
+        assert sorted(finished) == sorted(job_id for job_id, _ in self.desk.accepted), "a press without one ending"
+
+
+def _one_ended_and_the_next_solving(ended_job_id: str, terminal_state: str) -> Callable[[Any, Any], bool]:
+    def predicate(old: tuple[tuple[Any, ...], ...], new: tuple[tuple[Any, ...], ...]) -> bool:
+        before = {row[0]: row for row in old}
+        if set(before) != {row[0] for row in new}:
+            return False
+        return all(_moved_as_expected(before[row[0]], row, ended_job_id, terminal_state) for row in new)
+
+    return predicate
+
+
+def _moved_as_expected(old: tuple[Any, ...], new: tuple[Any, ...], ended_job_id: str, terminal_state: str) -> bool:
+    if new[0] == ended_job_id:
+        return new[1] == old[1] and new[2] == terminal_state
+    return new == old or (new == (*old[:2], "solving", None) and old[2] == "waiting_for_optimizer")
+
+
+def test_any_presses_and_endings_keep_one_job_per_project_and_one_in_the_solver() -> None:
+    run_state_machine_as_test(OnePlanAtATime, settings=settings(max_examples=25, stateful_step_count=12, deadline=None))
+
+
+@settings(deadline=None)
+@given(trip=trips(), ending=_endings())
+def test_another_project_waits_for_the_solver_slot(trip: Trip, ending: Script) -> None:
+    desk = _plan_desk(trip)
+    first = desk.press("project-1")
+    assert isinstance(first, str)
+    desk.until_settled()
+    before = desk.view()
+
+    second = desk.press("project-2")
+    assert isinstance(second, str)
+    desk.until_state(second, "waiting_for_optimizer")
+
+    jobs = (*before["jobs"], (second, "project-2", "waiting_for_optimizer", None))
+    assert_state_delta(before, desk.view(), DESK_UNIVERSE, {"jobs": set_to(jobs)}, strict=True)
+    assert desk.solver.solves == 1, "the waiting job reached the solver"
+    assert desk.queries.list("project-2") == [], "the waiting job has a run, or keeps the project unreadable"
+
+    desk.solver.cue(ending)
+    ended = desk.until_ended(first)  # the waiting job must not stop the other from finishing, whatever its ending
+
+    assert ended.state == _ending_of(ending)[0]
+    desk.until_state(second, "solving")  # and every ending frees the slot
+    desk.solver.cue(None)
+    assert desk.until_ended(second).state == "done"
+    assert [run.status for run in desk.queries.list("project-2")] == ["ready"]
+    assert desk.solver.most_at_once == 1
+
+
+@settings(deadline=None)
+@given(trip=trips(), anchors_set=st.booleans(), optimizer=st.sampled_from(["ok", "degraded-unhealthy"]))
+def test_the_active_job_check_comes_after_the_anchors_and_before_the_optimizer(
+    trip: Trip, anchors_set: bool, optimizer: ProbeOutcome
+) -> None:
+    desk = _plan_desk(trip)
+    first = desk.press("project-1")
+    assert isinstance(first, str)
+    desk.until_settled()
+    if not anchors_set:
+        desk.planning.snapshots["project-1"] = ProjectSnapshot()
+    before = desk.view()
+
+    refused = desk.press("project-1", desk.service_with(_optimizer(optimizer)))
+
+    assert isinstance(refused, PlanRefusedError), "a press started a second job"
+    expected = JOB_ACTIVE if anchors_set else ("missing_anchor", 422, "Set the Start before calculating")
+    assert _refusal_of(refused) == expected
+    logged = (("project-1", expected[1], expected[0]),)
+    assert_state_delta(before, desk.view(), DESK_UNIVERSE, {"refusals_logged": set_to(logged)}, strict=True)
+    desk.solver.cue(None)
+    desk.until_ended(first)
+
+
+class _APressSlipsIn(HealthService):
+    """A second fast press lands between the first press's pre-checks and the start of its job."""
+
+    def __init__(self) -> None:
+        super().__init__({"tour_solver": ProbeResult("ok")})
+        self.press: Callable[[], object] | None = None
+
+    def detail(self) -> HealthDetail:
+        press, self.press = self.press, None
+        if press is not None:
+            press()
+        return super().detail()
+
+
+@settings(deadline=None)
+@given(trip=trips())
+def test_two_fast_presses_start_one_job(trip: Trip) -> None:
+    health = _APressSlipsIn()
+    desk = _plan_desk(trip, health)
+    health.press = lambda: desk.press("project-1")
+    before = desk.view()
+
+    refused = desk.press("project-1")
+
+    assert isinstance(refused, PlanRefusedError), f"both presses started a job: {desk.accepted}"
+    assert _refusal_of(refused) == JOB_ACTIVE
+    desk.until_settled()
+    ((job_id, _),) = desk.accepted
+    jobs = ((job_id, "project-1", "solving", None),)
+    logged = (("project-1", JOB_ACTIVE[1], JOB_ACTIVE[0]),)
+    assert_state_delta(
+        before, desk.view(), DESK_UNIVERSE, {"jobs": set_to(jobs), "refusals_logged": set_to(logged)}, strict=True
+    )
+    desk.solver.cue(None)
+    desk.until_ended(job_id)
+    assert desk.solver.solves == 1

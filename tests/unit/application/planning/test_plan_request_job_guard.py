@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cache
 from itertools import permutations
@@ -59,6 +61,10 @@ class _Progress:
 
     def note(self, **facts: object) -> None:
         self.facts.update(facts)
+
+    @contextmanager
+    def solver_slot(self) -> Iterator[None]:
+        yield
 
 
 @dataclass

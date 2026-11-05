@@ -4,8 +4,9 @@ Runs on the job's own thread, never the request's. The snapshot is read under th
 (D204). The lock is not held while the road map or the solver works. Run number and row commit in one transaction.
 Solver-side outcomes all store a run (D122); an exception stores nothing, because the data folder may be going away.
 Before anything is stored the guard judges the solver's order, then the assembled plan against the canonical files
-(ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). Later slices add
-the snapping, ladder, memo, Stop and limits to this sequence.
+(ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). The solve runs
+holding the job's solver slot (D133) and no unit of work. Later slices add the snapping, ladder, memo, Stop and limits
+to this sequence.
 """
 
 from __future__ import annotations
@@ -70,8 +71,8 @@ class PlanRequestJob:
         project = self._read(project_id)
         progress.enter("computing_legs")
         legs = self._resolve_legs(project.snapshot, progress)
-        progress.enter("solving")
-        outcome = self._solve(project.snapshot, legs, progress)
+        with progress.solver_slot():
+            outcome = self._solve(project.snapshot, legs, progress)
         progress.enter("finalising")
         stored = self._finish(project, legs, outcome)
         if stored.reason is not None:
