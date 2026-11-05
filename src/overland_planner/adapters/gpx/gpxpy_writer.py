@@ -31,7 +31,7 @@ from overland_planner.domain.export.gpx_document import GpxDocument, GpxTrack, G
 CREATOR = "overland-planner"
 DECIMAL_PLACES = 6
 
-_FORBIDDEN_IN_XML = re.compile("[^\t\n\r\x20-퟿-�\U00010000-\U0010ffff]")
+_FORBIDDEN_IN_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 _NS = "{http://www.topografix.com/GPX/1/1}"
 _WRITTEN_ELEMENTS = frozenset(

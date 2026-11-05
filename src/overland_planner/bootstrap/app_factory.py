@@ -142,13 +142,13 @@ class _Wiring:
 
     def planning_router(self, health: HealthService) -> APIRouter:
         job = PlanRequestJob(
-            self._planning_unit_of_work,
-            LegResolver(self._routing_provider),
-            self._tour_solver,
-            self._settings.solver_budget,
-            self._clock,
-            self._event_log,
-            self._file_store,
+            unit_of_work=self._planning_unit_of_work,
+            legs=LegResolver(self._routing_provider),
+            solver=self._tour_solver,
+            budget=self._settings.solver_budget,
+            clock=self._clock,
+            event_log=self._event_log,
+            files=self._file_store,
         )
         jobs = PlanJobRegistry(self._clock, job, self._event_log)
         return planning_routes(

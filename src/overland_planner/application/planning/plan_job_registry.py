@@ -137,10 +137,23 @@ class _Job:
     def view(self, now_s: float) -> PlanJobView:
         ending = self.ending
         if ending is None:
-            return PlanJobView(self.id, self.project_id, self._state, None, None, None, now_s - self.started_s)
-        elapsed_s = ending.ended_s - self.started_s
+            return PlanJobView(
+                id=self.id,
+                project_id=self.project_id,
+                state=self._state,
+                reason=None,
+                message=None,
+                plan_run_id=None,
+                elapsed_s=now_s - self.started_s,
+            )
         return PlanJobView(
-            self.id, self.project_id, ending.state, ending.reason, ending.message, ending.plan_run_id, elapsed_s
+            id=self.id,
+            project_id=self.project_id,
+            state=ending.state,
+            reason=ending.reason,
+            message=ending.message,
+            plan_run_id=ending.plan_run_id,
+            elapsed_s=ending.ended_s - self.started_s,
         )
 
 
