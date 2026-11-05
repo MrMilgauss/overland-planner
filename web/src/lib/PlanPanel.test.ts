@@ -10,6 +10,7 @@ import PlanPanel from './PlanPanel.svelte';
 
 type Reply = { status: number; body: unknown } | 'network down';
 type Routes = Record<string, Reply | Reply[]>;
+type PlannerStub = (url: string, init?: RequestInit) => Promise<Response>;
 
 const RUNS = '/api/projects/p1/plan-runs';
 const JOB = '/api/plan-jobs/j1';
@@ -309,6 +310,144 @@ describe('Plan panel: refusals and failures', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     await tick(2000);
     expect(count(calls, `GET ${JOB}`)).toBe(1);
+  });
+});
+
+describe('Plan panel: Export GPX during a recalculation', () => {
+  const FIRST_RUN_READ = { 'GET /api/plan-runs/r1': readyRun('r1', 1) };
+
+  function showsTheOldRunWithoutExport(state: string): void {
+    expect(screen.getByRole('status')).toHaveTextContent(state);
+    expect(exportLink()).not.toBeInTheDocument();
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
+  }
+
+  /** Holds back the planner's answers to `url` until the returned function is called. */
+  function holdAnswersTo(url: string): () => void {
+    const planner = vi.mocked(fetch);
+    const answer = planner.getMockImplementation() as unknown as PlannerStub;
+    let arrive = (): void => {};
+    const arrived = new Promise<void>((done) => {
+      arrive = done;
+    });
+    const held: PlannerStub = async (asked, init) => {
+      if (asked === url) await arrived;
+      return answer(asked, init);
+    };
+    planner.mockImplementation(held as unknown as typeof fetch);
+    return arrive;
+  }
+
+  it('offers no export while a job runs, keeps the itinerary on show, then offers the new run', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: [listed(['r1', 1, 'ready']), listed(['r1', 1, 'ready'], ['r2', 2, 'ready'])],
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: [job('queued'), job('solving'), job('done', { plan_run_id: 'r2' })],
+      ...FIRST_RUN_READ,
+      'GET /api/plan-runs/r2': readyRun('r2', 2, 'Aosta'),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+
+    await pressCalculate();
+    showsTheOldRunWithoutExport('Queued');
+    await tick();
+    showsTheOldRunWithoutExport('Queued');
+    await tick();
+    showsTheOldRunWithoutExport('Solving');
+    await tick();
+
+    expect(screen.getByText('Run 2')).toBeInTheDocument();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r2/export.gpx');
+  });
+
+  it('does not offer the old run while the new one is being read', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: [listed(['r1', 1, 'ready']), listed(['r1', 1, 'ready'], ['r2', 2, 'ready'])],
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('done', { plan_run_id: 'r2' }),
+      ...FIRST_RUN_READ,
+      'GET /api/plan-runs/r2': readyRun('r2', 2),
+    });
+    const arrive = holdAnswersTo('/api/plan-runs/r2');
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    await tick();
+    expect(exportLink()).not.toBeInTheDocument();
+
+    arrive();
+    await settled();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r2/export.gpx');
+  });
+
+  it.each<[string, Reply | Reply[], Routes]>([
+    [
+      'a job in state failed',
+      job('failed', { message: 'The plan could not be calculated - nothing was changed' }),
+      {},
+    ],
+    [
+      'a job that ended with a Failed run',
+      job('done', { reason: 'no_valid_route_found', plan_run_id: 'r2' }),
+      {
+        [`GET ${RUNS}`]: [
+          listed(['r1', 1, 'ready']),
+          listed(['r1', 1, 'ready'], ['r2', 2, 'failed']),
+        ],
+        'GET /api/plan-runs/r2': failedRun('r2', 2, 'no_valid_route_found'),
+      },
+    ],
+    ['a job that has expired', { status: 404, body: { code: 'not_found', message: 'No job' } }, {}],
+  ])('offers the older ready run again after %s', async (_ending, jobReply, routes) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: jobReply,
+      ...FIRST_RUN_READ,
+      ...routes,
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    expect(exportLink()).not.toBeInTheDocument();
+    await tick();
+
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+  });
+
+  it('offers no export through a lost connection: the job may well still run', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: 'network down',
+      ...FIRST_RUN_READ,
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    await tick();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load the plan.');
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument();
+  });
+
+  it('offers the older ready run again when Calculate is refused', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      [`POST ${RUNS}`]: { status: 409, body: { code: 'job_active', message: 'Already running' } },
+      ...FIRST_RUN_READ,
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Already running');
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 });
 

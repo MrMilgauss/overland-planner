@@ -1,6 +1,10 @@
 <script lang="ts">
   // The plan of a project: Calculate, the running job's state (polled every 500 ms), then the latest ready run with
   // its Itinerary and Export GPX. Every refusal shows the planner's own message, verbatim.
+  //
+  // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
+  // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
+  // a page reload during a job it offers the latest ready run's export, since nothing on the page says a job runs.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import {
@@ -40,6 +44,7 @@
   let gone = false;
 
   const calculating = $derived(pressing || (watchedJobId !== undefined && pollProblem === ''));
+  const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
 
   function highestNumbered(runs: PlanRun[]): PlanRun | undefined {
     return runs.reduce<PlanRun | undefined>(
@@ -86,8 +91,8 @@
       stopWatching();
       problem = job.message ?? failureText(undefined);
     } else if (job.state === 'done') {
+      await showLatestRuns(); // still watching, so that the earlier run's export does not come back meanwhile
       stopWatching();
-      await showLatestRuns();
     } else {
       pollSoon(jobId);
     }
@@ -154,7 +159,9 @@
 {#if readyRun}
   <p class="run">Run {readyRun.number}</p>
   <Itinerary stops={readyRun.stops} />
-  <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+  {#if !jobActive}
+    <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+  {/if}
 {/if}
 
 <style>
