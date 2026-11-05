@@ -8,6 +8,7 @@ router answers. A `Gate` holds a double at one point of the job until the test r
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -15,6 +16,7 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Self
 
+from overland_planner.application.planning.facade import PlanJobRegistry, PlanJobView
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
@@ -23,7 +25,25 @@ from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 
 MAX_WAIT_S = 30.0
+POLL_S = 0.0005
 DEFAULT_STAMP = ProjectStamp(revision=3, objective="distance")
+TERMINAL_STATES = {"done", "failed", "refused", "cancelled", "timed_out"}
+
+
+def known_job(registry: PlanJobRegistry, job_id: str) -> PlanJobView:
+    job = registry.get(job_id)
+    assert job is not None, f"job {job_id} is not known"
+    return job
+
+
+def job_when_ended(registry: PlanJobRegistry, job_id: str) -> PlanJobView:
+    deadline = time.monotonic() + MAX_WAIT_S
+    job = known_job(registry, job_id)
+    while job.state not in TERMINAL_STATES:
+        assert time.monotonic() < deadline, f"the job did not end: {job}"
+        time.sleep(POLL_S)
+        job = known_job(registry, job_id)
+    return job
 
 
 class Gate:

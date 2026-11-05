@@ -62,9 +62,12 @@ from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.application.planning.planning_doubles import (
     DEFAULT_STAMP,
     MAX_WAIT_S,
+    TERMINAL_STATES,
     Gate,
     InMemoryPlanning,
     RecordingRoadMap,
+    job_when_ended,
+    known_job,
 )
 from tests.unit.application.planning.scripted_tour_solver import Script, ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, left_at, reached_at, trips
@@ -72,10 +75,7 @@ from tests.unit.domain.planning.trips import PROJECT, Trip, left_at, reached_at,
 UNIVERSE = {"plan_runs", "items", "projects"}
 BUDGET = 500
 KEPT_FOR_S = 600.0
-WAIT_S = 30.0
-POLL_S = 0.0005
 FAILED_MESSAGE = "The plan could not be calculated - nothing was changed"
-TERMINAL_STATES = {"done", "failed", "refused", "cancelled", "timed_out"}
 KPI_FIELDS = {  # docs/product/kpi-contracts.yaml, plan.job.finished
     "job_id",
     "project_id",
@@ -144,21 +144,13 @@ class Planner:
         }
 
     def poll(self, job_id: str) -> PlanJobView:
-        job = self.registry.get(job_id)
-        assert job is not None, f"job {job_id} is not known"
-        return job
+        return known_job(self.registry, job_id)
 
     def wait_until_ended(self, job_id: str) -> PlanJobView:
-        deadline = time.monotonic() + WAIT_S
-        job = self.poll(job_id)
-        while job.state not in TERMINAL_STATES:
-            assert time.monotonic() < deadline, f"the job did not end: {job}"
-            time.sleep(POLL_S)
-            job = self.poll(job_id)
-        return job
+        return job_when_ended(self.registry, job_id)
 
     def wait_until_held(self) -> None:
-        assert self.held.reached.wait(WAIT_S), "the job never reached the gate"
+        assert self.held.reached.wait(MAX_WAIT_S), "the job never reached the gate"
 
 
 class _HeldBehindThePreCheck(Gate):
@@ -436,7 +428,7 @@ class SolverOnCue:
 
 def _until(reached: Callable[[], bool], what: str) -> None:
     """Waits for a job's thread by yielding to it, with no fixed pause; the deadline only stops a hung test."""
-    deadline = time.monotonic() + WAIT_S
+    deadline = time.monotonic() + MAX_WAIT_S
     while not reached():
         assert time.monotonic() < deadline, f"never happened: {what}"
         time.sleep(0)
@@ -470,9 +462,7 @@ class PlanDesk:
         return job_id
 
     def poll(self, job_id: str) -> PlanJobView:
-        job = self.registry.get(job_id)
-        assert job is not None, f"job {job_id} is not known"
-        return job
+        return known_job(self.registry, job_id)
 
     def state(self, job_id: str) -> str:
         return self.poll(job_id).state
@@ -506,7 +496,7 @@ class PlanDesk:
         _until(settled, f"the jobs settled, they are {[self.poll(job_id) for job_id, _ in self.accepted]}")
 
     def view(self) -> dict[str, Any]:
-        refusals = (fields for event, fields in self.log.events if event == "plan.job.refused")
+        refusals = self.log.fields_of("plan.job.refused")
         return {
             "plan_runs": tuple((r.project_id, r.number, r.status, r.failure_reason) for r in self.planning.runs),
             "jobs": tuple(
@@ -619,7 +609,7 @@ class OnePlanAtATime(RuleBasedStateMachine):
         for job_id in self.desk.still_working():
             self.desk.solver.cue(None)
             self.desk.until_ended(job_id)
-        finished = [fields["job_id"] for event, fields in self.desk.log.events if event == "plan.job.finished"]
+        finished = [fields["job_id"] for fields in self.desk.log.fields_of("plan.job.finished")]
         assert sorted(finished) == sorted(job_id for job_id, _ in self.desk.accepted), "a press without one ending"
 
 

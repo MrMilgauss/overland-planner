@@ -11,7 +11,6 @@ solver's broken order ends the same way, job done; the size of a real track; can
 from __future__ import annotations
 
 import hashlib
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -23,7 +22,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.catalog.facade import canonical_points_file, parse_canonical_points_file
-from overland_planner.application.planning.facade import PlanJobRegistry, PlanJobView, PlanRequestJob, StoredRun
+from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, StoredRun
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.tour_solver import TourFound, TourOutcome
 from overland_planner.application.routing.facade import LegResolver
@@ -37,15 +36,13 @@ from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta
-from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap
+from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, track_points, trips
 
 UNIVERSE = {"plan_runs", "items", "projects", "files"}
 REASON = "internal_invariant_violation"
 BUDGET = 500
-WAIT_S = 30.0
-POLL_S = 0.0005
 VIOLATION_FIELDS = {"plan_run_id", "check", "detail"}
 BIG_TRACK_POINTS = 23_295
 BIG_TRACK_M = 224_800.0
@@ -89,9 +86,6 @@ class Harness:
     def run(self) -> StoredRun:
         return self.job.run(PROJECT, _Progress())
 
-    def events(self, name: str) -> list[dict[str, object]]:
-        return [fields for event, fields in self.log.events if event == name]
-
 
 def _row(run: NewPlanRun) -> tuple[Any, ...]:
     return (run.number, run.status, run.failure_reason, tuple(stop.item_id for stop in run.stops))
@@ -121,12 +115,12 @@ def _assert_one_failed_run_only(harness: Harness, before: dict[str, Any], stored
     """A failing plan changes only `plan_runs`, with one Failed row, and the log names the broken rule."""
     assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained((1, "failed", REASON, ()))}, strict=True)
     assert stored == StoredRun(harness.planning.runs[-1].id, REASON)
-    violations = harness.events("invariant.violation")
+    violations = harness.log.fields_of("invariant.violation")
     assert len(violations) == 1
     assert set(violations[0]) == VIOLATION_FIELDS
     assert (violations[0]["plan_run_id"], violations[0]["check"]) == (stored.plan_run_id, check)
     assert violations[0]["detail"], "the event says what is wrong"
-    completed = harness.events("plan.run.completed")
+    completed = harness.log.fields_of("plan.run.completed")
     assert [(c["status"], c["failure_reason"], c["invariants"]) for c in completed] == [("failed", REASON, "violated")]
 
 
@@ -142,8 +136,8 @@ def test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok(trip: Trip
     row = (1, "ready", None, (trip.start.id, *visited, trip.end.id))
     assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
     assert stored.reason is None
-    assert harness.events("invariant.violation") == []
-    assert [c["invariants"] for c in harness.events("plan.run.completed")] == ["ok"]
+    assert harness.log.fields_of("invariant.violation") == []
+    assert [c["invariants"] for c in harness.log.fields_of("plan.run.completed")] == ["ok"]
 
 
 def _damages(track: TrackItem) -> st.SearchStrategy[bytes | None]:
@@ -187,7 +181,7 @@ def test_a_track_whose_file_changed_or_vanished_stores_one_failed_run_and_no_iti
     stored = harness.run()
 
     _assert_one_failed_run_only(harness, before, stored, "HC-5")
-    assert track.id in str(harness.events("invariant.violation")[0]["detail"])
+    assert track.id in str(harness.log.fields_of("invariant.violation")[0]["detail"])
 
 
 def _orders_the_solver_should_not_give(trip: Trip) -> st.SearchStrategy[tuple[tuple[str, ...], str]]:
@@ -205,17 +199,6 @@ def _orders_the_solver_should_not_give(trip: Trip) -> st.SearchStrategy[tuple[tu
     return st.sampled_from(orders)
 
 
-def _ended(registry: PlanJobRegistry, job_id: str) -> PlanJobView:
-    deadline = time.monotonic() + WAIT_S
-    while True:
-        job = registry.get(job_id)
-        assert job is not None
-        if job.state in {"done", "failed"}:
-            return job
-        assert time.monotonic() < deadline, f"the job did not end: {job}"
-        time.sleep(POLL_S)
-
-
 @settings(deadline=None)
 @given(trip=trips(), data=st.data())
 def test_a_broken_order_from_the_solver_ends_the_job_done_with_a_failed_run_never_a_failed_job(
@@ -226,12 +209,14 @@ def test_a_broken_order_from_the_solver_ends_the_job_done_with_a_failed_run_neve
     before = harness.view()
     registry = PlanJobRegistry(harness.clock, harness.job, harness.log)
 
-    job = _ended(registry, registry.start(PROJECT))
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    job = job_when_ended(registry, job_id)
 
     assert (job.state, job.reason, job.message) == ("done", REASON, None)
     assert job.plan_run_id is not None
     _assert_one_failed_run_only(harness, before, StoredRun(job.plan_run_id, REASON), check)
-    finished = harness.events("plan.job.finished")
+    finished = harness.log.fields_of("plan.job.finished")
     assert [(f["terminal_state"], f["reason"], f["plan_run_id"]) for f in finished] == [
         ("done", REASON, job.plan_run_id)
     ]
