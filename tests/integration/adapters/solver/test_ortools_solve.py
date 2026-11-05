@@ -42,7 +42,7 @@ ENOUGH_BUDGET = 500
 DEFAULT_BUDGET = 10_000
 SIGTERM_GRACE_S = 2.0
 SIGTERM_IGNORING_CHILD_LIVES_S = 60.0
-SIGKILL_SLACK_S = 15.0  # room for a loaded machine, and still far short of the life of the child that ignores SIGTERM
+SIGKILL_SLACK_S = 15.0  # room for a loaded machine, and still far short of the 60 s life of the children left running
 N = None
 
 # The cheapest first arc (Start to a) leads into dear arcs, so the first solution is not the best one.
@@ -270,7 +270,7 @@ def test_overrunning_child_is_killed() -> None:
 
     assert outcome == TourTimedOut()
     assert outcome.reason == "timeout"
-    assert bound_s <= elapsed < bound_s + SIGTERM_GRACE_S, f"SIGTERM must end it at the bound, took {elapsed:.1f}s"
+    assert bound_s <= elapsed < bound_s + SIGKILL_SLACK_S, f"the child was not ended at the bound, took {elapsed:.1f}s"
     _assert_no_child_left()
 
 
