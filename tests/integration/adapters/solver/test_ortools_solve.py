@@ -41,6 +41,8 @@ PID_FILE_VARIABLE = "TOUR_CHILD_TEST_PID_FILE"
 ENOUGH_BUDGET = 500
 DEFAULT_BUDGET = 10_000
 SIGTERM_GRACE_S = 2.0
+SIGTERM_IGNORING_CHILD_LIVES_S = 60.0
+SIGKILL_SLACK_S = 15.0  # room for a loaded machine, and still far short of the life of the child that ignores SIGTERM
 N = None
 
 # The cheapest first arc (Start to a) leads into dear arcs, so the first solution is not the best one.
@@ -136,15 +138,36 @@ def _final_then_hanging_child(answer: Connection, model: TourModel, _budget: int
 
 def _sigterm_ignoring_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    time.sleep(60)
+    Path(os.environ[PID_FILE_VARIABLE]).touch()  # from here on SIGTERM cannot end this child
+    time.sleep(SIGTERM_IGNORING_CHILD_LIVES_S)
 
 
 def _real_child_reporting_its_pid(answer: Connection, model: TourModel, budget: int) -> None:
-    """The real solve, after importing OR-Tools, so the test can kill the parent while the solve is running."""
-    import ortools.constraint_solver.pywrapcp  # noqa: F401
+    """The real solve, reporting its pid at the search's first solution, so the test kills the parent mid-search.
 
-    Path(os.environ[PID_FILE_VARIABLE]).write_text(str(os.getpid()))
+    The report rides on the solve's own callback, the only one there is: it adds no other handover of the GIL, and a
+    solve without that callback never reports.
+    """
+    from ortools.constraint_solver import pywrapcp
+
+    add_callback = pywrapcp.RoutingModel.AddAtSolutionCallback
+
+    def add_reporting(routing: pywrapcp.RoutingModel, callback: Callable[[], None]) -> None:
+        def report_then_call() -> None:
+            _report_pid_once(Path(os.environ[PID_FILE_VARIABLE]))
+            callback()
+
+        add_callback(routing, report_then_call)
+
+    pywrapcp.RoutingModel.AddAtSolutionCallback = add_reporting
     run_tour_child(answer, model, budget)
+
+
+def _report_pid_once(pid_file: Path) -> None:
+    if not pid_file.exists():
+        whole = pid_file.with_suffix(".writing")
+        whole.write_text(str(os.getpid()))
+        whole.replace(pid_file)
 
 
 def _child_reporting_its_death_signal(_answer: Connection, _model: TourModel, _budget: int) -> None:
@@ -251,18 +274,24 @@ def test_overrunning_child_is_killed() -> None:
     _assert_no_child_left()
 
 
-def test_child_ignoring_sigterm_gets_sigkill_after_the_grace() -> None:
-    # Long enough for the child to import this module and ignore SIGTERM before the bound, even on a loaded machine.
-    bound_s = 5.0
-    solver = OrToolsTourSolver(tour_child_main=_sigterm_ignoring_child, safety_bound_s=bound_s)
+def test_child_ignoring_sigterm_gets_sigkill_after_the_grace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ignoring = tmp_path / "ignoring-sigterm"
+    monkeypatch.setenv(PID_FILE_VARIABLE, str(ignoring))
+    # SIGTERM kills a child that has not reached SIG_IGN yet, and that run proves nothing: only then a longer bound.
+    for bound_s in (5.0, 10.0, 20.0):
+        solver = OrToolsTourSolver(tour_child_main=_sigterm_ignoring_child, safety_bound_s=bound_s)
 
-    started = time.monotonic()
-    outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET)
-    elapsed = time.monotonic() - started
+        started = time.monotonic()
+        outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET)
+        elapsed = time.monotonic() - started
 
-    assert outcome == TourTimedOut()
+        assert outcome == TourTimedOut()
+        if ignoring.exists():
+            break
+
+    assert ignoring.exists(), "the child never got to ignore SIGTERM before the bound"
     assert elapsed >= bound_s + SIGTERM_GRACE_S - 0.1, f"SIGKILL came before the grace ended, took {elapsed:.1f}s"
-    assert elapsed < bound_s + SIGTERM_GRACE_S + 3.0, f"the child outlived SIGKILL, took {elapsed:.1f}s"
+    assert elapsed < bound_s + SIGTERM_GRACE_S + SIGKILL_SLACK_S, f"the child outlived SIGKILL, took {elapsed:.1f}s"
     _assert_no_child_left()
 
 
@@ -302,17 +331,15 @@ def test_child_dies_with_its_parent(tmp_path: Path) -> None:
     parent = subprocess.Popen([sys.executable, str(script)], cwd=REPO_ROOT, env=environ)
     child_pid = None
     try:
-        assert _wait_until(pid_file.exists, 30.0), "the parent never reached a running solve child"
-        assert _wait_until(lambda: pid_file.read_text() != "", 1.0)
+        assert _wait_until(pid_file.exists, 60.0), "the parent never reached a search with a solution"
         child_pid = int(pid_file.read_text())
-        time.sleep(1.0)  # the model is built and the search under way
         assert _is_alive(child_pid), "the solve ended before the parent was killed"
 
         parent.kill()
         parent.wait()
 
-        gone = _wait_until(lambda: not _is_alive(child_pid), 3.0)
-        assert gone, f"child {child_pid} still alive 3 s after its parent was killed"
+        gone = _wait_until(lambda: not _is_alive(child_pid), 15.0)  # its budget would keep it searching far longer
+        assert gone, f"child {child_pid} still alive 15 s after its parent was killed"
     finally:
         parent.kill()
         parent.wait()
