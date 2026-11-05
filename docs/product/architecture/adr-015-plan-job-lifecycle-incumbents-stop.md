@@ -94,4 +94,6 @@ solving  -- child exits abnormally WITH a valid incumbent
 - `plan_job_log` records `solver_wait_s`; such jobs **count** in K5 (UD-3) and are reported separately.
 Reason: the planner container is capped at 1 CPU (OD-9) and OR-Tools is single-threaded, so two children would each run at half speed and break the 55 s solve row; one child (55–59 MB measured) also closes F-6 (two children vs the 1g `mem_limit`).
 
+**Amendment D209 (2026-11-05, user decision).** The "max 2 jobs overall" above is not enforced: there is no refusal for a further job. Each project still has at most one active job, and one solver child runs at a time; any other job waits in `waiting_for_optimizer`.
+
 **Poll payload field names (D130).** One field-name table serves the poll payload and `plan_job_log`: `legs_new`, `legs_cached`, `legs_total`, `points_new` (replaces `new_legs`, `cached_legs`, `points_located` in the list above), plus `state`, `elapsed_s`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message`, `reason` (on terminal states). `incumbent.objective` is the reported objective (road + retrace km or time, without `RETRACE_PENALTY`; ADR-017 amendment). States in the payload are the snake_case names above, plus `waiting_for_optimizer`.
