@@ -32,7 +32,8 @@ events:
   plan.job.finished: [job_id, project_id, terminal_state, plan_run_id, items_included, legs_total, legs_new,
                       legs_cached, points_located, points_new, second_pass_pairs, retried, memo_hit, ignore_memo,
                       stage_ms, solver_solutions, incumbents, reproducible, not_fully_optimised_reason,
-                      unconfirmed_legs, retraces, provider_id, elapsed_ms]   # NEW (DV-6); one line per job, mirrors plan_job_log
+                      unconfirmed_legs, retraces, provider_id, elapsed_ms,
+                      error_class, reason, exit_code, signal]   # NEW (DV-6); one line per job, mirrors plan_job_log; the last four appear only on the endings they describe
   plan.run.completed: [plan_run_id, number, status, failure_reason, report_items, project_items, invariants]   # brief s12
   plan.run.geometry_served: [plan_run_id, legs, geometry_ms, e2e_server_ms]   # NEW (DV-6); first geometry fetch per run
   invariant.violation: [plan_run_id, check, detail]

@@ -76,7 +76,7 @@ UNIVERSE = {"plan_runs", "items", "projects"}
 BUDGET = 500
 KEPT_FOR_S = 600.0
 FAILED_MESSAGE = "The plan could not be calculated - nothing was changed"
-KPI_FIELDS = {  # docs/product/kpi-contracts.yaml, plan.job.finished
+KPI_FIELDS = {  # docs/product/kpi-contracts.yaml, plan.job.finished, without those of `_fields_of_the_ending`
     "job_id",
     "project_id",
     "terminal_state",
@@ -377,7 +377,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     completed = [fields for event, fields in events if event == "plan.run.completed"]
     assert len(finished) == 1
     fields = finished[0]
-    assert set(fields) >= KPI_FIELDS
+    assert set(fields) == KPI_FIELDS | _fields_of_the_ending(plan.script)
     assert (fields["job_id"], fields["project_id"], fields["terminal_state"], fields["plan_run_id"]) == (
         job_id,
         PROJECT,
@@ -409,6 +409,15 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     assert completed[0]["project_items"] == len(plan.trip.snapshot.items)
     assert completed[0]["report_items"] is None
     assert completed[0]["invariants"] == ("ok" if stored.status == "ready" else None)
+
+
+def _fields_of_the_ending(script: Script) -> set[str]:
+    """The fields of the contract that are logged only on the endings they describe."""
+    if isinstance(script, Exception):
+        return {"error_class"}
+    if isinstance(script, TourOptimizerFailed):
+        return {"reason", "exit_code", "signal"}
+    return set() if isinstance(script, TourFound) else {"reason"}
 
 
 def _distinct_pairs(trip: Trip) -> set[Any]:
