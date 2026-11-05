@@ -103,6 +103,7 @@ class InvariantGuard:
             yield GuardViolation("HC-5", f"track {item.id}: canonical file v{item.direction_version} has changed")
 
     def _leg_violations(self, stops: tuple[PlanStop, ...]) -> Iterator[GuardViolation]:
+        # A consistency check between the stops and this job's leg table; it does not prove the table right.
         if stops[0].leg_km is not None:
             yield GuardViolation("leg_consistency", f"the first stop {stops[0].item_id} has a road leg")
         for previous, stop in pairwise(stops):
