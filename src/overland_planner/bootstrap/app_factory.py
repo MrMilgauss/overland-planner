@@ -38,6 +38,7 @@ from overland_planner.adapters.gpx.gpxpy_writer import GpxpyWriter
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
+from overland_planner.adapters.http.export_routes import export_routes
 from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.upload_limits import UploadLimits
@@ -50,6 +51,7 @@ from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlche
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
+from overland_planner.application.export.facade import GpxExportService
 from overland_planner.application.planning.facade import (
     PlanJobRegistry,
     PlanRequestJob,
@@ -135,12 +137,12 @@ class _Wiring:
         )
         return catalog_routes(use_cases, self._upload_limits)
 
-    def planning_router(self, health: HealthService) -> APIRouter:
-        def planning_unit_of_work() -> SqlAlchemyPlanningUnitOfWork:
-            return SqlAlchemyPlanningUnitOfWork(self._database)
+    def _planning_unit_of_work(self) -> SqlAlchemyPlanningUnitOfWork:
+        return SqlAlchemyPlanningUnitOfWork(self._database)
 
+    def planning_router(self, health: HealthService) -> APIRouter:
         job = PlanRequestJob(
-            planning_unit_of_work,
+            self._planning_unit_of_work,
             LegResolver(self._routing_provider),
             self._tour_solver,
             self._settings.solver_budget,
@@ -151,11 +153,15 @@ class _Wiring:
         jobs = PlanJobRegistry(self._clock, job, self._event_log)
         return planning_routes(
             PlanningUseCases(
-                requests=PlanRequestService(planning_unit_of_work, health, self._event_log, jobs),
+                requests=PlanRequestService(self._planning_unit_of_work, health, self._event_log, jobs),
                 jobs=jobs,
-                runs=PlanRunQueries(planning_unit_of_work),
+                runs=PlanRunQueries(self._planning_unit_of_work),
             )
         )
+
+    def export_router(self) -> APIRouter:
+        runs = PlanRunQueries(self._planning_unit_of_work)
+        return export_routes(GpxExportService(runs, self._file_store, self._gpx_writer, self._event_log))
 
 
 def create_app(
@@ -185,6 +191,7 @@ def create_app(
 
     app.include_router(wiring.catalog_router())
     app.include_router(wiring.planning_router(health))
+    app.include_router(wiring.export_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
     event_log.info(
