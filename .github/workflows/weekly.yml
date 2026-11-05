@@ -122,7 +122,7 @@ jobs:
       - name: uv sync --frozen
         run: uv sync --frozen
       - name: pytest with HYPOTHESIS_PROFILE=deep
-        run: uv run pytest -q -m "not real_provider and not pi and not walking_skeleton" --hypothesis-show-statistics
+        run: uv run pytest -q -m "not real_provider and not pi and not walking_skeleton and not ui" --hypothesis-show-statistics
 
   compose-stack:
     name: ZAP baseline and Playwright firefox/webkit-desktop on the compose stack

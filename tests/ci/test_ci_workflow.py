@@ -823,3 +823,17 @@ def test_pre_push_selects_no_slice_01b_scenario() -> None:
 
     assert collected.returncode == 5, collected.stdout + collected.stderr  # pytest: nothing selected
     assert "deselected" in collected.stdout, "the module must have collected scenarios to deselect"
+
+
+def test_weekly_deep_properties_selects_the_solves_but_not_the_browser_scenario() -> None:
+    """The job installs no browser, so the @ui scenario would fail in it; job 2 is where that scenario runs."""
+    job = yaml.safe_load(WEEKLY.read_text())["jobs"]["deep-properties"]
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', _runs(job)[_index(job, "pytest")])
+    assert expression is not None
+
+    collected = _collect("-m", expression["expression"])
+
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert "test_marco_plans_the_assietta_day_trip_in_his_browser" not in collected.stdout
+    assert "test_marco_gets_a_first_ordered_itinerary" in collected.stdout
+    assert not any("playwright install" in script for script in _runs(job)), "with a browser, select the scenario again"
