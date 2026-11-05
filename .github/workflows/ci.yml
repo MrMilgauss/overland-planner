@@ -595,7 +595,7 @@ jobs:
     needs: [changes, test-python]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.core == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75 # D213: a whole slice in one push took about 55 min
     env:
       PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
       DATA_DIR: ${{ github.workspace }}/.data/ci/data

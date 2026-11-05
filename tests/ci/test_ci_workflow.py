@@ -489,7 +489,7 @@ def test_mutation_job_runs_only_for_domain_or_application_changes() -> None:
     assert job["if"] == f"{MAIN_PUSH} && needs.changes.outputs.core == 'true'"
     assert changes["outputs"]["core"] == "${{ steps.filter.outputs.core }}"
     assert "^src/overland_planner/(domain|application)/" in filter_script
-    assert job["timeout-minutes"] == 30
+    assert job["timeout-minutes"] == 75  # D213
     assert _index(job, "vite build") < _index(job, "make mutate"), "mutmut copies web/dist (D162)"
     mutate = job["steps"][_index(job, "make mutate")]
     assert "BASE=" in mutate["run"] and "github.event.before" in str(mutate.get("env", {}))
