@@ -2,8 +2,10 @@
 
 A job moves `queued -> computing_legs -> solving -> finalising` and ends in exactly one terminal state, published in one
 assignment together with its `plan_run_id`: a poll never sees a run before the job is done. Solver-side outcomes end
-`done` with a Failed run (D122). `failed` is only an unexpected exception: no run, reason null (ADR-015 fixes the codes
-and none covers it) and a fixed message. `refused`, `cancelled` and `timed_out` arrive with Stop and the limits.
+`done` with a Failed run (D122). `failed` is anything else the work raises, SystemExit too, since a job without an
+ending would hold its project in 409 until a restart: no run, reason null (ADR-015 fixes the codes and none covers it)
+and a fixed message. It is logged and the thread then ends. `refused`, `cancelled` and `timed_out` arrive with Stop and
+the limits.
 
 A project has one active job: `start` checks and registers under one lock. One solver child runs at a time (D133): a job
 that reaches the solve stage while the slot is busy shows `waiting_for_optimizer`, holding neither a lock of this
@@ -196,7 +198,7 @@ class PlanJobRegistry:
     def _ending_of(self, job: _Job) -> _Ending:
         try:
             stored = self._work.run(job.project_id, job)
-        except Exception as error:
+        except BaseException as error:
             job.note(error_class=type(error).__name__)
             return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic())
         return _Ending("done", stored.reason, None, stored.plan_run_id, self._clock.monotonic())

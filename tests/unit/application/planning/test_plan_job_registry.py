@@ -8,7 +8,7 @@ several projects (`PlanDesk`) `plan_runs`, `jobs` as polled and `refusals_logged
 Test Budget: 7 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
 always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
-by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 9 used.
+by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 10 used.
 """
 
 from __future__ import annotations
@@ -275,6 +275,30 @@ def test_any_solver_outcome_ends_in_one_terminal_state_with_a_run_named_iff_one_
     assert planner.poll(job_id) == job, "a terminal state does not change"
     assert planner.queries.get("no-such-run") is None
     assert planner.solver.budgets == [BUDGET]
+
+
+@settings(deadline=None)
+@given(trip=trips(), fatal=st.sampled_from([SystemExit(3), KeyboardInterrupt(), GeneratorExit()]))
+def test_whatever_the_work_raises_the_job_ends_failed_and_calculate_is_accepted_again(
+    trip: Trip, fatal: BaseException
+) -> None:
+    planner = _planner(trip, fatal)
+    before = planner.view()
+
+    first = planner.service.request(PROJECT)
+    job = planner.wait_until_ended(first)
+
+    assert (job.state, job.reason, job.message, job.plan_run_id) == ("failed", None, FAILED_MESSAGE, None)
+    finished = planner.log.fields_of("plan.job.finished")
+    assert [(fields["job_id"], fields["terminal_state"], fields["error_class"]) for fields in finished] == [
+        (first, "failed", type(fatal).__name__)
+    ]
+    assert_state_delta(before, planner.view(), UNIVERSE, {}, strict=True)
+
+    second = planner.service.request(PROJECT)  # the project is not held in 409, and the ending freed the solver slot
+    assert second != first
+    assert planner.wait_until_ended(second).state == "failed"
+    assert planner.solver.budgets == [BUDGET, BUDGET]
 
 
 @settings(deadline=None)

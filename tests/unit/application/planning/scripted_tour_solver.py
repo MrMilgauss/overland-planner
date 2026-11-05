@@ -15,7 +15,7 @@ from overland_planner.application.ports.tour_solver import TourFound, TourOutcom
 from overland_planner.domain.planning.solver_model_builder import TourModel
 from tests.unit.application.planning.planning_doubles import Gate
 
-Script = TourOutcome | Exception | None
+Script = TourOutcome | BaseException | None
 
 
 class ScriptedTourSolver:
@@ -36,6 +36,6 @@ class ScriptedTourSolver:
         self.budgets.append(budget)
         self.threads.append(threading.current_thread())
         self.gate.passing()
-        if isinstance(self._script, Exception):
+        if isinstance(self._script, BaseException):
             raise self._script
         return self._script if self._script is not None else TourFound(order=model.node_item_ids)
