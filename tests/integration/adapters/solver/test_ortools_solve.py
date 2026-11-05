@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
-from overland_planner.adapters.solver.tour_child import run_tour_child
+from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
 from overland_planner.application.ports.tour_solver import (
     TourFound,
     TourNoRoute,
@@ -123,6 +123,17 @@ def _hanging_child(_answer: Connection, _model: TourModel, _budget: int) -> None
     time.sleep(60)
 
 
+def _final_then_crashing_child(answer: Connection, model: TourModel, _budget: int) -> None:
+    answer.send((FINAL, tuple(range(len(model.node_item_ids)))))
+    os._exit(3)
+
+
+def _final_then_hanging_child(answer: Connection, model: TourModel, _budget: int) -> None:
+    """A complete answer, then an interpreter teardown that does not finish in time, as on a loaded Pi."""
+    answer.send((FINAL, tuple(range(len(model.node_item_ids)))))
+    time.sleep(60)
+
+
 def _sigterm_ignoring_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     time.sleep(60)
@@ -196,8 +207,9 @@ def test_tiny_trips_finish_on_the_full_budget(item_count: int) -> None:
         (_raising_child, TourOptimizerFailed(exit_code=1, signal=None)),
         (_silent_child, TourOptimizerFailed(exit_code=0, signal=None)),
         (_garbling_child, TourOptimizerFailed(exit_code=0, signal=None)),
+        (_final_then_crashing_child, TourOptimizerFailed(exit_code=3, signal=None)),
     ],
-    ids=["exit-code", "sigkill", "exception", "no-message", "garbled-message"],
+    ids=["exit-code", "sigkill", "exception", "no-message", "garbled-message", "exit-code-after-the-final"],
 )
 def test_crashed_child_is_optimizer_failed(child: object, expected: TourOptimizerFailed) -> None:
     outcome = OrToolsTourSolver(tour_child_main=child).solve(ROUND_TRIP, ENOUGH_BUDGET)  # type: ignore[arg-type]
@@ -216,6 +228,13 @@ def test_no_route_is_reported(model: TourModel) -> None:
 
 def _assert_no_child_left() -> None:
     assert multiprocessing.active_children() == []
+
+
+def test_a_valid_final_counts_when_the_child_does_not_exit_in_time() -> None:
+    outcome = OrToolsTourSolver(tour_child_main=_final_then_hanging_child).solve(ROUND_TRIP, ENOUGH_BUDGET)
+
+    assert outcome == TourFound(order=ROUND_TRIP.node_item_ids)
+    _assert_no_child_left()
 
 
 def test_overrunning_child_is_killed() -> None:

@@ -107,14 +107,42 @@ def child_ends(draw: st.DrawFn) -> tuple[TourChildObservation, TourModel, dict[s
     final_tour = ("final", tour)
     any_message = draw(st.one_of(st.just(final_tour), st.just(("final", None)), anything))
     any_exit = draw(st.one_of(st.none(), st.just(0), abnormal_exits))
-    kind = draw(st.sampled_from(["found", "no_route", "overrun", "abnormal_exit", "never_exited", "bad_message"]))
+    outlived = draw(st.booleans())
+    kind = draw(
+        st.sampled_from(
+            [
+                "found",
+                "no_route",
+                "overrun",
+                "abnormal_exit",
+                "never_exited",
+                "bad_message",
+                "found_then_lingered",
+                "no_route_then_lingered",
+                "bad_message_then_lingered",
+            ]
+        )
+    )
     if kind == "found":
         ids = tuple(model.node_item_ids[node] for node in tour)
         return TourChildObservation(0, final_tour, False), model, _expected(order=ids, visited=ids[1:-1])
     if kind == "no_route":
         return TourChildObservation(0, ("final", None), False), model, _expected(reason="no_valid_route_found")
     if kind == "overrun":
-        return TourChildObservation(any_exit, any_message, True), model, _expected(reason="timeout")
+        return TourChildObservation(any_exit, any_message, True, outlived), model, _expected(reason="timeout")
+    if kind == "found_then_lingered":
+        ids = tuple(model.node_item_ids[node] for node in tour)
+        return TourChildObservation(any_exit, final_tour, False, True), model, _expected(order=ids, visited=ids[1:-1])
+    if kind == "no_route_then_lingered":
+        return (
+            TourChildObservation(any_exit, ("final", None), False, True),
+            model,
+            _expected(reason="no_valid_route_found"),
+        )
+    if kind == "bad_message_then_lingered":
+        ended_by_the_parent = draw(st.sampled_from([-15, -9]))
+        lingering = TourChildObservation(ended_by_the_parent, ("incumbent", tour), False, True)
+        return lingering, model, _failure_expected(ended_by_the_parent)
     if kind == "abnormal_exit":
         exit_code = draw(abnormal_exits)
         return TourChildObservation(exit_code, any_message, False), model, _failure_expected(exit_code)

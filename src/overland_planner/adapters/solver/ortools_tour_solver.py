@@ -7,10 +7,13 @@ The probe child solves the fixed probe instance twice and sends both answers thr
 most `timeout_s`, then kills it.
 
 A solve spawns one child (`tour_child`) that sends its final message and exits; `tour_outcome` says what its end means.
-It dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past `safety_bound_s`
-the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the project in 409
-until a restart. The bound is the FEASIBILITY_LIMIT_S default, not the configurable limits of slice 03, and the normal
-stop is the budget, never the clock.
+A child still running when the reap wait after its message ends (interpreter teardown can be slow on a loaded Pi) is
+ended like any other, and its message counts: the exit code then only shows the parent's signal.
+
+The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past
+`safety_bound_s` the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the
+project in 409 until a restart. The bound is the FEASIBILITY_LIMIT_S default, not the configurable limits of slice 03,
+and the normal stop is the budget, never the clock.
 """
 
 from __future__ import annotations
@@ -116,15 +119,17 @@ class OrToolsTourSolver:
         sender.close()
         message: Any = None
         overran = False
+        outlived_reap_wait = False
         try:
             overran = not receiver.poll(self._safety_bound_s)
             if not overran:
                 message = _read_message(receiver)
                 child.join(_REAP_TIMEOUT_S)
+                outlived_reap_wait = child.is_alive()
         finally:
             receiver.close()
             _end_if_running(child)
-        return TourChildObservation(exit_code=child.exitcode, message=message, overran=overran)
+        return TourChildObservation(child.exitcode, message, overran, outlived_reap_wait)
 
     def _observe_probe_child(self) -> ProbeObservation:
         context = multiprocessing.get_context("spawn")
@@ -146,18 +151,20 @@ class OrToolsTourSolver:
 
 @dataclass(frozen=True)
 class TourChildObservation:
-    """What the parent saw of a solve child."""
+    """What the parent saw of a solve child. `outlived_reap_wait` is read before the parent ends the child."""
 
     exit_code: int | None
     message: Any
     overran: bool
+    outlived_reap_wait: bool = False
 
 
 def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOutcome:
     if observation.overran:
         return TourTimedOut()
     message = observation.message
-    if observation.exit_code != 0 or not _is_final(message):
+    exited_abnormally = observation.exit_code != 0 and not observation.outlived_reap_wait
+    if exited_abnormally or not _is_final(message):
         return _failed(observation.exit_code)
     nodes = message[1]
     if nodes is None:
