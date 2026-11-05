@@ -100,6 +100,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
                 "event_log": {"outcome": "ok", "reason": None},
                 "file_store": {"outcome": "ok", "reason": None},
                 "gpx_parser": {"outcome": "ok", "reason": None},
+                "gpx_writer": {"outcome": "ok", "reason": None},
                 "mount_table": {"outcome": "ok", "reason": None},
                 "routing_provider": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},

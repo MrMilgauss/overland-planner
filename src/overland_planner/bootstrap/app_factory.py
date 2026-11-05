@@ -5,7 +5,8 @@ Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the sa
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> wire -> probe every registered component in wiring order (the database probe migrates it to head
 first; then the file store round trip, the mount table, the `DATA_DIR` persistence verdict (D121), the GPX
-parser's embedded-sample and billion-laughs check and the road map's known pair) -> mount routes
+parser's embedded-sample and billion-laughs check, the GPX writer's write and re-parse and the road map's known pair)
+-> mount routes
 (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
@@ -33,6 +34,7 @@ from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.files.local_file_store import LocalFileStore
 from overland_planner.adapters.files.proc_mount_table import ProcMountTable
 from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
+from overland_planner.adapters.gpx.gpxpy_writer import GpxpyWriter
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catalog_routes
 from overland_planner.adapters.http.errors import install_error_handlers
@@ -89,6 +91,7 @@ class _Wiring:
         self._file_store = LocalFileStore(settings.data_dir)
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
+        self._gpx_writer = GpxpyWriter()
         self._routing_provider = MockRoutingProvider()  # the only ROUTING_PROVIDER value until slice 06a
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
@@ -109,6 +112,7 @@ class _Wiring:
         data_dir = PurePosixPath(self._settings.data_dir.resolve())
         registry.register("data_dir", DataDirPersistence(data_dir, self._mount_table))
         registry.register("gpx_parser", self._gpx_parser)
+        registry.register("gpx_writer", self._gpx_writer)
         registry.register("routing_provider", self._routing_provider)
         registry.register("tour_solver", self._tour_solver)
         return registry
