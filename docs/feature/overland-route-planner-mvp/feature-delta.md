@@ -4562,6 +4562,7 @@ Unchanged from the first pass: `nwave-ai outcomes register` fails on this machin
 | D209 | 2026-11-05 | ADR-015 'max 2 jobs overall' (D133) | ADR-015 names no answer for a third job. The code queues it in `waiting_for_optimizer`, with one solver child at a time. | **User decision (2026-11-05):** amend ADR-015; a further job waits for the slot. No cap is enforced. |
 | D210 | 2026-11-05 | GpxpyParser (slice 01a), slice 08 | The parser accepts `<ele>NaN</ele>` and `<ele>inf</ele>`, so such a value can reach the catalog; the GPX writer leaves it out, so that point loses its elevation on export. | **User decision (2026-11-05):** parked for slice 08 (input data hygiene). |
 | D211 | 2026-11-05 | ADR-010 lines 16 and 19; ADR-015 job states and line 83; brief section 7; review F9, F12 | Deviations made in slice 01b and reported to the user without objection: no `<time>` on GPX points (the canonical format stores lat, lon, elevation only) and none in metadata, so the same input gives the same bytes; job state `failed` for an unexpected exception, reason null, message 'The plan could not be calculated - nothing was changed', and a Failed run showing 'This plan run failed (<reason code>)' until product wording arrives; a failing mock road-map probe is fatal, while Valhalla stays degraded-healthy at 06a. | **Orchestrator decisions, reported to the user.** Review F9 (`http_status` in the application layer, needed by the `plan.job.refused` event) and F12 (path check on uuid4 ids) declined. |
+| D212 | 2026-11-05 | Mutation gate, Hypothesis `mutation` profile | Five survivors at 95.4 % were checks that tests already asserted but never reached: a test drawing one mutation per example got no draw of some mutations under the profile's fixed seed, and the draws changed with which tests were collected. So a kill rate can depend on collection scope. Closed for the guard (every applicable mutation runs on every plan), the road-map row shape, the log level and the child's signal. | **Reported to the user.** Open survivors judged worth a later pin: `elapsed_ms` scale in `plan.job.finished`, stored `inputs` key names, `id` and `project_id` in the poll view, the parser's file name argument. Other single-draw tests may share the blind spot. |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 
@@ -4601,3 +4602,16 @@ Release `4b0b18b` (`sha256:a3f033e1…`, CI run 41740185532), schema 0001 -> 000
 | Reboot, container recreate | | not run |
 
 Accepted risk stated at the demo (D91): no backups; the trip data lives only in the `overland_planner-data` volume on the Pi's NVMe. The demo project stays on the Pi.
+
+### Slice 01b quality gates (2026-11-05, before push)
+
+| Gate | Result |
+|---|---|
+| Roadmap review | NEEDS_REVISION, then APPROVED on the second pass (`a39aa85`, `fea3c6c`) |
+| Steps | 04-01 to 04-11 committed, `3685bfc` the last |
+| Refactor L1-L6 | Done, HEAD `c3f11ec` then; OpenAPI snapshot unchanged |
+| Adversarial review | NEEDS_REVISION; F1, F2, F4-F8, F10, F11 fixed; F3 kept by the user (D208); F9, F12 declined (D211) |
+| Mutation | 96.8 % (1085/1121), minimum 80 %, 26 domain and application files |
+| Integrity | `des-verify-integrity` exit 0, all 37 steps traced. It checks phases, not data: see D207 |
+| Suite | 494 passed, 185 skipped; vitest 62 passed; 9 of 9 automated 01b scenarios |
+| Not yet run | CI, deploy, demo on the real file, OsmAnd on the tablet |
