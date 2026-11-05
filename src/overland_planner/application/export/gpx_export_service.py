@@ -9,12 +9,12 @@ with no provider call. Exporting reads only: no project, item or plan run change
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 
 from overland_planner.application.catalog.facade import (
     InvalidCanonicalPointsFileError,
     ProjectService,
+    canonical_file_sha256,
     parse_canonical_points_file,
 )
 from overland_planner.application.planning.facade import PlanRunQueries
@@ -103,7 +103,7 @@ class GpxExportService:
         file = f"track {stop.item_id}: canonical file v{version}"
         if isinstance(content, CanonicalPointsMissing):
             raise self._refusal(plan_run_id, f"{file} is missing")
-        if hashlib.sha256(content).hexdigest() != stop.canonical_sha256:
+        if canonical_file_sha256(content) != stop.canonical_sha256:
             raise self._refusal(plan_run_id, f"{file} has changed")
         try:
             return parse_canonical_points_file(content)

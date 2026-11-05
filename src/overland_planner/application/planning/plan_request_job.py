@@ -11,12 +11,15 @@ to this sequence.
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from overland_planner.application.catalog.facade import InvalidCanonicalPointsFileError, parse_canonical_points_file
+from overland_planner.application.catalog.facade import (
+    InvalidCanonicalPointsFileError,
+    canonical_file_sha256,
+    parse_canonical_points_file,
+)
 from overland_planner.application.planning.plan_job_registry import PlanJobProgress, StoredRun
 from overland_planner.application.planning.plan_run_queries import existing_snapshot
 from overland_planner.application.ports.clock import Clock
@@ -173,7 +176,7 @@ class PlanRequestJob:
 
 
 def _evidence_of(content: bytes) -> CanonicalFileEvidence:
-    sha256 = hashlib.sha256(content).hexdigest()
+    sha256 = canonical_file_sha256(content)
     try:
         points = parse_canonical_points_file(content)
     except InvalidCanonicalPointsFileError:

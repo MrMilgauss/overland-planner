@@ -9,6 +9,7 @@ from overland_planner.application.catalog.track_import_service import (
     TrackFile,
     TrackFilesRefusedError,
     TrackImportService,
+    canonical_file_sha256,
     canonical_points_file,
     parse_canonical_points_file,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "TrackFile",
     "TrackFilesRefusedError",
     "TrackImportService",
+    "canonical_file_sha256",
     "canonical_points_file",
     "parse_canonical_points_file",
 ]

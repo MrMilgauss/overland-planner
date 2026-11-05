@@ -136,7 +136,7 @@ class TrackImportService:
             name=upload.track.name,
             description=upload.track.description,
             original_sha256=original_sha256,
-            canonical_sha256=_sha256(canonical),
+            canonical_sha256=canonical_file_sha256(canonical),
             direction_version=FIRST_DIRECTION_VERSION,
             point_count=len(upload.track.points),
             entry=stats.entry.coordinate,
@@ -147,6 +147,11 @@ class TrackImportService:
 
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def canonical_file_sha256(content: bytes) -> str:
+    """The hash a track item and a plan stop record of a canonical points file, and the one it is proven against."""
+    return _sha256(content)
 
 
 class InvalidCanonicalPointsFileError(ValueError):
