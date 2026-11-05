@@ -1,11 +1,12 @@
 """`GpxWriter` adapter (brief §6, ADR-010): a plain document becomes GPX 1.1 bytes through gpxpy.
 
-Everything stays in the given order and no point is sorted, simplified or thinned (HC-1). Coordinates and elevations
-are written at 6 decimals; an elevation that is not a finite number is left out, because `xsd:decimal` has no such
-value. POI names are not restricted at import, so characters XML 1.0 forbids are dropped from the written text; the
-stored name is unchanged (D205). Text with nothing left is not written at all: gpxpy would skip an empty `<metadata>`
-but keep an empty `<name>` elsewhere. The creator is fixed and there is no metadata time, so the same document gives
-the same bytes.
+Everything stays in the given order and no point is sorted, simplified or thinned (HC-1): written points are 1:1 with
+the given ones in count and order. Coordinates and elevations are rounded to 6 decimals, about 0.1 m, so consecutive
+points can become identical and are all kept; an elevation that is not a finite number is left out, because
+`xsd:decimal` has no such value. POI names are not restricted at import, so characters XML 1.0 forbids are dropped from
+the written text; the stored name is unchanged (D205). Text with nothing left is not written at all: gpxpy would skip an
+empty `<metadata>` but keep an empty `<name>` elsewhere. The creator is fixed and there is no metadata time, so the same
+document gives the same bytes.
 
 Start-up probe (fatal, component `gpx_writer`): gpxpy formats floats itself and `xsd:decimal` rejects scientific
 notation, so an embedded document with near-zero coordinates and names with `&`, `'` and accents is written and

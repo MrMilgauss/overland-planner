@@ -171,6 +171,22 @@ def test_points_come_back_in_order_at_six_decimals() -> None:
     assert _xsd_problems(written) == []
 
 
+def test_rounding_changes_values_only_and_points_that_become_identical_are_all_kept() -> None:
+    document = _track_of(
+        TrackPoint.at(45.0560004, 7.0410006, 1650.1234567),
+        TrackPoint.at(45.1234564, 7.1234564),
+        TrackPoint.at(45.1234561, 7.1234561),  # 0.3 millionths of a degree away: the same point at 6 decimals
+        TrackPoint.at(44.958, 6.879),
+    )
+
+    assert _as_decimals(_points(_read(WRITER.write(document)))) == [
+        (Decimal("45.056"), Decimal("7.041001"), Decimal("1650.123457")),
+        (Decimal("45.123456"), Decimal("7.123456"), None),
+        (Decimal("45.123456"), Decimal("7.123456"), None),
+        (Decimal("44.958"), Decimal("6.879"), None),
+    ]
+
+
 @pytest.mark.parametrize("not_a_number", [math.nan, math.inf, -math.inf])
 def test_elevation_that_is_not_a_number_is_left_out(not_a_number: float) -> None:
     written = WRITER.write(_track_of(TrackPoint.at(45.0, 7.0, not_a_number), TrackPoint.at(45.1, 7.1, 1200.0)))
