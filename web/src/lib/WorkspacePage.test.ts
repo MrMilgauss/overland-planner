@@ -43,7 +43,8 @@ function stubPlanner(items: Item[][], replies: Record<string, Reply> = {}): Call
       else if (key === 'GET /api/projects/p1/items') {
         reply = { status: 200, body: items[Math.min(itemReads, items.length - 1)] };
         itemReads += 1;
-      } else reply = { status: 404, body: { code: 'not_found', message: `unexpected ${key}` } };
+      } else if (key === 'GET /api/projects/p1/plan-runs') reply = { status: 200, body: [] };
+      else reply = { status: 404, body: { code: 'not_found', message: `unexpected ${key}` } };
       return new Response(JSON.stringify(reply.body), { status: reply.status });
     }),
   );

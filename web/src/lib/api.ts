@@ -32,10 +32,62 @@ export interface NewPlace {
   lon: number;
 }
 
-export class PlannerError extends Error {}
+export interface PlanStop {
+  name: string;
+  type: 'track' | 'poi';
+  leg_km: number | null;
+  entry: Point | null;
+  exit: Point | null;
+}
+
+export interface PlanRun {
+  id: string;
+  number: number;
+  status: 'ready' | 'failed';
+}
+
+/** A plan run with its stops; a Failed run has none and names its `failure_reason`. */
+export interface PlanRunDetail extends PlanRun {
+  project_id: string;
+  failure_reason: string | null;
+  stops: PlanStop[];
+}
+
+export type PlanJobState =
+  | 'queued'
+  | 'computing_legs'
+  | 'waiting_for_optimizer'
+  | 'solving'
+  | 'finalising'
+  | 'done'
+  | 'failed';
+
+export interface PlanJob {
+  state: PlanJobState;
+  reason: string | null;
+  message: string | null;
+  plan_run_id: string | null;
+  elapsed_s: number;
+}
+
+/** `status` is the HTTP status of the planner's refusal; none when the planner could not be reached. */
+export class PlannerError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
 
 const GENERIC_FAILURE = 'Could not load projects. Please try again.';
 const GENERIC_WRITE_FAILURE = 'The planner could not do this. Please try again.';
+const PLAN_READ_FAILURE = 'Could not load the plan.';
+
+/** What Marco reads about a failed call: the planner's own message when it gave one. */
+export function failureText(error: unknown): string {
+  return error instanceof PlannerError ? error.message : GENERIC_WRITE_FAILURE;
+}
 
 function messageFrom(body: unknown): string | undefined {
   if (typeof body === 'object' && body !== null && 'message' in body) {
@@ -61,7 +113,7 @@ async function call<T>(url: string, init: RequestInit, failure: string): Promise
     throw new PlannerError(failure);
   }
   const body: unknown = await response.json().catch(() => undefined);
-  if (!response.ok) throw new PlannerError(messageFrom(body) ?? failure);
+  if (!response.ok) throw new PlannerError(messageFrom(body) ?? failure, response.status);
   if (body === undefined) throw new PlannerError(failure);
   return body as T;
 }
@@ -119,6 +171,31 @@ export function setAnchors(
     json('PUT', { start_item_id: startItemId, end_item_id: endItemId }),
     GENERIC_WRITE_FAILURE,
   );
+}
+
+export function startPlan(projectId: string): Promise<{ job_id: string }> {
+  return call(
+    `/api/projects/${encodeURIComponent(projectId)}/plan-runs`,
+    { method: 'POST' },
+    GENERIC_WRITE_FAILURE,
+  );
+}
+
+export function readPlanJob(jobId: string): Promise<PlanJob> {
+  return call(`/api/plan-jobs/${encodeURIComponent(jobId)}`, {}, PLAN_READ_FAILURE);
+}
+
+export function listPlanRuns(projectId: string): Promise<PlanRun[]> {
+  return call(`/api/projects/${encodeURIComponent(projectId)}/plan-runs`, {}, PLAN_READ_FAILURE);
+}
+
+export function readPlanRun(planRunId: string): Promise<PlanRunDetail> {
+  return call(`/api/plan-runs/${encodeURIComponent(planRunId)}`, {}, PLAN_READ_FAILURE);
+}
+
+/** The file of a ready plan run; the planner's answer names it. */
+export function planRunExportUrl(planRunId: string): string {
+  return `/api/plan-runs/${encodeURIComponent(planRunId)}/export.gpx`;
 }
 
 /** The banners of GET /api/health (D108), whatever its status; none when the planner cannot be asked (the page

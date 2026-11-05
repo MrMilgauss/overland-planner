@@ -2,12 +2,13 @@
   // Workspace of one project: import trails (GPX), add places by decimal degrees, set the trip's Start and End.
   // Every refusal of the planner is shown with its own message, verbatim.
   import ItemList from './ItemList.svelte';
+  import PlanPanel from './PlanPanel.svelte';
   import {
     addPlace,
+    failureText,
     importTracks,
     listItems,
     openProject,
-    PlannerError,
     setAnchors,
     type Item,
     type Project,
@@ -27,12 +28,6 @@
 
   const places = $derived(items.filter((item) => item.type === 'poi'));
 
-  function describe(error: unknown): string {
-    return error instanceof PlannerError
-      ? error.message
-      : 'The planner could not do this. Please try again.';
-  }
-
   async function refresh(): Promise<void> {
     items = await listItems(projectId);
     startId = items.find((i) => i.anchor === 'start' || i.anchor === 'start_end')?.id ?? startId;
@@ -46,7 +41,7 @@
       await refresh();
       return true;
     } catch (error) {
-      problem = describe(error);
+      problem = failureText(error);
       return false;
     }
   }
@@ -56,7 +51,7 @@
       project = await openProject(projectId);
       await refresh();
     } catch (error) {
-      problem = describe(error);
+      problem = failureText(error);
     }
   }
 
@@ -140,6 +135,11 @@
         </select>
         <button type="submit">Set Start and End</button>
       </form>
+    </section>
+
+    <section aria-labelledby="plan-heading">
+      <h2 id="plan-heading">Plan</h2>
+      <PlanPanel {projectId} />
     </section>
   {/if}
 </main>
