@@ -142,6 +142,18 @@ def _sigterm_ignoring_child(_answer: Connection, _model: TourModel, _budget: int
     time.sleep(SIGTERM_IGNORING_CHILD_LIVES_S)
 
 
+def _sigterm_recording_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+    listening = Path(os.environ[PID_FILE_VARIABLE])
+
+    def record_and_exit(_signal_number: int, _frame: object) -> None:
+        listening.with_suffix(".received").touch()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, record_and_exit)
+    listening.touch()  # from here on SIGTERM reaches the handler
+    time.sleep(60)
+
+
 def _real_child_reporting_its_pid(answer: Connection, model: TourModel, budget: int) -> None:
     """The real solve, reporting its pid at the search's first solution, so the test kills the parent mid-search.
 
@@ -271,6 +283,22 @@ def test_overrunning_child_is_killed() -> None:
     assert outcome == TourTimedOut()
     assert outcome.reason == "timeout"
     assert bound_s <= elapsed < bound_s + SIGKILL_SLACK_S, f"the child was not ended at the bound, took {elapsed:.1f}s"
+    _assert_no_child_left()
+
+
+def test_overrunning_child_gets_sigterm_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    listening = tmp_path / "listening"
+    monkeypatch.setenv(PID_FILE_VARIABLE, str(listening))
+    # SIGTERM kills a child that has no handler yet, and that run proves nothing: only then a longer bound.
+    for bound_s in (2.0, 5.0, 20.0):
+        solver = OrToolsTourSolver(tour_child_main=_sigterm_recording_child, safety_bound_s=bound_s)
+
+        assert solver.solve(ROUND_TRIP, ENOUGH_BUDGET) == TourTimedOut()
+        if listening.exists():
+            break
+
+    assert listening.exists(), "the child never got to install its handler before the bound"
+    assert listening.with_suffix(".received").exists(), "the child was ended without SIGTERM"
     _assert_no_child_left()
 
 
