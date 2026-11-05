@@ -4604,6 +4604,26 @@ Release `4b0b18b` (`sha256:a3f033e1…`, CI run 41740185532), schema 0001 -> 000
 
 Accepted risk stated at the demo (D91): no backups; the trip data lives only in the `overland_planner-data` volume on the Pi's NVMe. The demo project stays on the Pi.
 
+### Slice 01b demo on pi-host (2026-11-05, user start "you can start now"; orchestrator-run through the API)
+
+Release `0b78730` (`sha256:fa5f7469…`, CI run 42016266514, attempt 2), schema 0004 -> 0005, deployed with `make deploy` from a clean worktree at the full SHA. Data: the supplied real `assietta.gpx` (D198), already on the Pi from slice 01a.
+
+| Check | Action | Result |
+|---|---|---|
+| Deploy | `make deploy SHA=0b78730…` | ok; `releases.log` result ok, alembic head 0005, predeploy snapshot taken |
+| Health | `/api/health` | all 10 components ok, including `tour_solver` natively on arm64 and `gpx_writer` |
+| US-02b Calculate | POST plan-runs on "Alpi Occidentali giugno 2027" | job done in 1.70 s, run ready, `invariants: ok`; Casa Marco -> Aosta -> Briancon -> trail -> Casa Marco, road legs in km. Aosta is Included; the UI cannot exclude it until slice 04 |
+| HC-1 on the real file | exported track against the supplied file | 23,295 points 1:1 in stored order at 6 decimals; entry 45.068983, 6.689721; exit 45.134639, 7.174399 |
+| Export | GET export.gpx, by IP, 3 runs | 0.71-0.82 s, 2,043,036 bytes, `application/gpx+xml`, `alpi-occidentali-giugno-2027-run1.gpx`; GPX 1.1, no extensions, no route elements; waypoints Casa Marco, Torino (S/E), Aosta, Briancon |
+| Project data | items before and after | unchanged. **The demo script's second press landed after the first job had ended, so it created run 2 in the user's project**; no delete exists |
+| Memory | `docker stats` | 70.9 MiB after deploy, 82.4 MiB after planning, of 1 GiB |
+| **US-02b "The first plan opens in OsmAnd"** | manual | **NOT RUN: the user has no tablet and no phone to hand (2026-11-05). K6 and the slice's learning hypothesis stay unproven until someone runs it.** The GPX has not been opened in any navigation app |
+| 409 on the Pi | second Calculate during a job | not observed; covered by the acceptance scenario in CI |
+| Browser page on the Pi | manual | not run; the browser journey passes in CI and locally |
+| `PR_SET_PDEATHSIG` | CI job 2 | inferred passed: 496 passed and 174 skipped match local counts only if it ran; `-q` lists no test names |
+
+Noted: `.local` lookups from the Mac add about 5 s per request (`/healthz` 5.04 s by name, 0.016 s by IP). CI job 6's arm64 smoke failed once on the 30 s solver probe under QEMU and passed on re-run of the same code.
+
 ### Slice 01b quality gates (2026-11-05, before push)
 
 | Gate | Result |
