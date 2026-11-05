@@ -1,5 +1,8 @@
 """plan runs
 
+Downgrading this revision deletes all plan runs; projects and items stay. A release at 0004 refuses a database at 0005
+(`db_newer_than_app`), so rolling back to one needs the snapshot and `alembic downgrade 0004` first.
+
 Revision ID: 0005
 Revises: 0004
 Create Date: 2026-11-04
@@ -38,5 +41,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Every revision has a CI-tested downgrade (DV-5). Nothing references `plan_runs`, so projects and items stay."""
+    """Every revision has a CI-tested downgrade (DV-5). All plan runs are deleted; nothing references `plan_runs`, so
+    projects and items stay.
+    """
     op.drop_table("plan_runs")

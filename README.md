@@ -77,6 +77,11 @@ on the Pi.
 Losing the device or the disk loses the data; the only copies are the short-lived predeploy/prerollback snapshots
 next to it (the newest two of each), which exist for rollback, not for recovery. This is stated to Marco at the demo.
 
+**Rolling back past schema 0005 deletes the plan runs.** Downgrading 0005 deletes all plan runs; projects and items
+stay. A release at 0004 refuses a database at 0005 (`db_newer_than_app`), so going back to such a release needs the
+snapshot and `alembic downgrade 0004` first. `make rollback` does both when the two images' schema heads differ; by
+hand, follow the steps below with `0004` as `<head>`.
+
 **Manual schema downgrade: snapshot first.** `make rollback` snapshots the volume before it runs `alembic downgrade`.
 Running the downgrade by hand (`docker compose run --rm planner alembic downgrade <head>`, D90) takes no snapshot,
 and a downgrade can commit part of its work before it fails (0004 commits mid-migration to switch
