@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from hypothesis import given
+from hypothesis import given, note
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.item import TrackItem
@@ -268,19 +268,22 @@ def test_every_plan_the_assembler_makes_passes(plan: Plan) -> None:
 
 @given(plan=plans(), data=st.data())
 def test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule(plan: Plan, data: st.DataObject) -> None:
-    breaking = data.draw(st.sampled_from(_breakings(plan)), label="mutation")
-    broken = breaking(plan, data.draw)
-    before = _judged(plan, broken.stops, None)
+    # Every mutation on every plan: one sampled per plan left some undrawn in all 50 fixed examples of the mutation
+    # profile, so the guard's stop-against-snapshot and tampered-leg checks ran in no mutation run.
+    for breaking in _breakings(plan):
+        note(f"mutation: {breaking.__name__}")
+        broken = breaking(plan, data.draw)
+        before = _judged(plan, broken.stops, None)
 
-    guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
-    violation = guard.check_plan(broken.stops, broken.files)
+        guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
+        violation = guard.check_plan(broken.stops, broken.files)
 
-    expected = {"guard.check": set_to(broken.rule)}
-    assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
-    assert violation is not None
-    assert violation.detail, "a violation says what is wrong"
-    if broken.item_id is not None:
-        assert broken.item_id in violation.detail, f"the detail names no item: {violation.detail}"
+        expected = {"guard.check": set_to(broken.rule)}
+        assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
+        assert violation is not None
+        assert violation.detail, "a violation says what is wrong"
+        if broken.item_id is not None:
+            assert broken.item_id in violation.detail, f"the detail names no item: {violation.detail}"
 
 
 def _order_of(plan: Plan) -> tuple[str, ...]:

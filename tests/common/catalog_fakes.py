@@ -121,16 +121,23 @@ class InMemoryFileStore:
 class RecordingEventLog:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
+        self._levels: list[tuple[str, str]] = []
 
     def info(self, event: str, **fields: object) -> None:
         self.events.append((event, fields))
+        self._levels.append((event, "info"))
 
     def warning(self, event: str, **fields: object) -> None:
         self.events.append((event, fields))
+        self._levels.append((event, "warning"))
 
     def fields_of(self, event: str) -> list[dict[str, object]]:
         """The fields of every line logged as `event`, in order."""
         return [fields for logged, fields in self.events if logged == event]
+
+    def levels_of(self, event: str) -> list[str]:
+        """The level of every line logged as `event`, in order."""
+        return [level for logged, level in self._levels if logged == event]
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")

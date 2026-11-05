@@ -8,7 +8,7 @@ several projects (`PlanDesk`) `plan_runs`, `jobs` as polled and `refusals_logged
 Test Budget: 7 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
 always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
-by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 10 used.
+by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 12 used.
 """
 
 from __future__ import annotations
@@ -409,6 +409,37 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     assert completed[0]["project_items"] == len(plan.trip.snapshot.items)
     assert completed[0]["report_items"] is None
     assert completed[0]["invariants"] == ("ok" if stored.status == "ready" else None)
+
+
+@settings(deadline=None)
+@given(
+    trip=trips(),
+    raised=st.sampled_from([RuntimeError("the solver broke"), SystemExit(3)]),
+    stored=st.sampled_from([None, TourNoRoute(), TourTimedOut(), TourOptimizerFailed(exit_code=1, signal=None)]),
+)
+def test_a_failed_job_logs_its_end_at_warning_and_a_done_job_at_info(
+    trip: Trip, raised: BaseException, stored: Script
+) -> None:
+    for script, state, level in ((raised, "failed", "warning"), (stored, "done", "info")):
+        planner = _planner(trip, script)
+
+        job = planner.wait_until_ended(planner.service.request(PROJECT))
+
+        assert job.state == state
+        assert planner.log.levels_of("plan.job.finished") == [level]
+
+
+@settings(deadline=None)
+@given(trip=trips(), exit_code=st.integers(32, 255), signal=st.integers(1, 31))
+def test_an_optimizer_failure_logs_both_the_exit_code_and_the_signal_of_the_child(
+    trip: Trip, exit_code: int, signal: int
+) -> None:
+    planner = _planner(trip, TourOptimizerFailed(exit_code=exit_code, signal=signal))
+
+    planner.wait_until_ended(planner.service.request(PROJECT))
+
+    (fields,) = planner.log.fields_of("plan.job.finished")
+    assert (fields["reason"], fields["exit_code"], fields["signal"]) == ("optimizer_failed", exit_code, signal)
 
 
 def _fields_of_the_ending(script: Script) -> set[str]:
