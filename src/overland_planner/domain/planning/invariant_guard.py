@@ -22,7 +22,6 @@ from overland_planner.domain.routing.road_leg import LegTable
 
 INVARIANT_VIOLATION_REASON = "internal_invariant_violation"  # the reason code of ADR-015
 GuardCheck = Literal["HC-1", "HC-2", "HC-3", "HC-5", "leg_consistency"]
-_METRES_PER_KM = 1000
 
 
 @dataclass(frozen=True)
@@ -41,23 +40,20 @@ class GuardViolation:
     detail: str
 
 
-@dataclass(frozen=True)
-class GuardResult:
-    violation: GuardViolation | None = None
-
-
 class InvariantGuard:
     def __init__(self, snapshot: ProjectSnapshot, legs: LegTable) -> None:
         self._snapshot = snapshot
         self._legs = legs
 
-    def check_order(self, order: Sequence[str]) -> GuardResult:
+    def check_order(self, order: Sequence[str]) -> GuardViolation | None:
         """The solver's chosen order, Start to End, before any stop is made of it: unknown ids are named, not raised."""
-        return GuardResult(next(self._order_violations(tuple(order)), None))
+        return next(self._order_violations(tuple(order)), None)
 
-    def check_plan(self, stops: Sequence[PlanStop], files: Mapping[str, CanonicalFileEvidence]) -> GuardResult:
+    def check_plan(
+        self, stops: Sequence[PlanStop], files: Mapping[str, CanonicalFileEvidence]
+    ) -> GuardViolation | None:
         """The plan about to be stored. `files` holds the evidence by track id; a vanished file has none."""
-        return GuardResult(next(self._plan_violations(tuple(stops), files), None))
+        return next(self._plan_violations(tuple(stops), files), None)
 
     def _order_violations(self, order: tuple[str, ...]) -> Iterator[GuardViolation]:
         start, end = self._snapshot.start_item_id, self._snapshot.end_item_id
@@ -118,7 +114,7 @@ class InvariantGuard:
         origin = left_at(self._snapshot.item(previous.item_id))
         destination = reached_at(self._snapshot.item(stop.item_id))
         try:
-            return self._legs.distance_m(origin, destination) / _METRES_PER_KM
+            return self._legs.distance_km(origin, destination)
         except KeyError:
             return None
 

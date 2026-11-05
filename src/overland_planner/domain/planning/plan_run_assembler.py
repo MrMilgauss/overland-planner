@@ -10,12 +10,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import pairwise
 
-from overland_planner.domain.catalog.item import CatalogItem
 from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, left_at, reached_at
 from overland_planner.domain.routing.road_leg import LegTable
-
-_METRES_PER_KM = 1000
 
 
 class PlanRunAssembler:
@@ -23,11 +20,10 @@ class PlanRunAssembler:
         self._snapshot = snapshot
         self._legs = legs
 
-    def assemble(self, order: Sequence[str]) -> tuple[PlanStop, ...]:
-        """`order` holds the ids of the Included non-anchor items, without Start and End."""
-        trip = (self._snapshot.start(), *map(self._snapshot.item, order), self._snapshot.end())
-        later_stops = (PlanStop.of(item, self._leg_km(previous, item)) for previous, item in pairwise(trip))
+    def assemble(self, visited_item_ids: Sequence[str]) -> tuple[PlanStop, ...]:
+        trip = (self._snapshot.start(), *map(self._snapshot.item, visited_item_ids), self._snapshot.end())
+        later_stops = (
+            PlanStop.of(item, self._legs.distance_km(left_at(previous), reached_at(item)))
+            for previous, item in pairwise(trip)
+        )
         return (PlanStop.of(trip[0], None), *later_stops)
-
-    def _leg_km(self, previous: CatalogItem, item: CatalogItem) -> float:
-        return self._legs.distance_m(left_at(previous), reached_at(item)) / _METRES_PER_KM

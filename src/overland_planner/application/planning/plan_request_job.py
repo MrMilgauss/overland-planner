@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from overland_planner.application.catalog.facade import (
     InvalidCanonicalPointsFileError,
@@ -54,10 +54,10 @@ class _PlannedProject:
 class _Finding:
     """The run a finished plan stores. `invariants` is what the guard said, `None` when no plan reached it."""
 
-    plan_run_id: str
-    stops: tuple[PlanStop, ...]
-    failure_reason: str | None
-    invariants: str | None
+    stops: tuple[PlanStop, ...] = ()
+    failure_reason: str | None = None
+    invariants: str | None = None
+    plan_run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
 @dataclass(frozen=True)
@@ -85,25 +85,25 @@ class PlanRequestJob:
     def _finish(self, project: _PlannedProject, legs: LegTable, outcome: TourOutcome) -> StoredRun:
         if isinstance(outcome, TourFound):
             return self._finish_found(project, legs, outcome)
-        return self._store(project, _Finding(uuid.uuid4().hex, (), outcome.reason, None))
+        return self._store(project, _Finding(failure_reason=outcome.reason))
 
     def _finish_found(self, project: _PlannedProject, legs: LegTable, tour: TourFound) -> StoredRun:
         guard = InvariantGuard(project.snapshot, legs)
-        chosen = guard.check_order(tour.order)  # first: the assembler takes any order and raises on an unknown id
-        if chosen.violation is not None:
-            return self._store_violation(project, chosen.violation)
+        broken_order = guard.check_order(tour.order)  # first: the assembler raises on an unknown id
+        if broken_order is not None:
+            return self._store_violation(project, broken_order)
         stops = PlanRunAssembler(project.snapshot, legs).assemble(tour.visited_item_ids)
-        plan = guard.check_plan(stops, self._canonical_files(project.snapshot))
-        if plan.violation is not None:
-            return self._store_violation(project, plan.violation)
-        return self._store(project, _Finding(uuid.uuid4().hex, stops, None, "ok"))
+        broken_plan = guard.check_plan(stops, self._canonical_files(project.snapshot))
+        if broken_plan is not None:
+            return self._store_violation(project, broken_plan)
+        return self._store(project, _Finding(stops=stops, invariants="ok"))
 
     def _store_violation(self, project: _PlannedProject, violation: GuardViolation) -> StoredRun:
-        plan_run_id = uuid.uuid4().hex
+        finding = _Finding(failure_reason=INVARIANT_VIOLATION_REASON, invariants="violated")
         self.event_log.warning(
-            "invariant.violation", plan_run_id=plan_run_id, check=violation.check, detail=violation.detail
+            "invariant.violation", plan_run_id=finding.plan_run_id, check=violation.check, detail=violation.detail
         )
-        return self._store(project, _Finding(plan_run_id, (), INVARIANT_VIOLATION_REASON, "violated"))
+        return self._store(project, finding)
 
     def _canonical_files(self, snapshot: ProjectSnapshot) -> dict[str, CanonicalFileEvidence]:
         """What is stored for each track, read by the snapshot's direction version (ADR-009 Amendment 1)."""
@@ -180,7 +180,7 @@ def _evidence_of(content: bytes) -> CanonicalFileEvidence:
     try:
         points = parse_canonical_points_file(content)
     except InvalidCanonicalPointsFileError:
-        return CanonicalFileEvidence(sha256, 0, None, None)
+        points = ()
     if not points:
         return CanonicalFileEvidence(sha256, 0, None, None)
     return CanonicalFileEvidence(sha256, len(points), points[0].coordinate, points[-1].coordinate)

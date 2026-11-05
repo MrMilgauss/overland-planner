@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from overland_planner.domain.catalog.coordinate import Coordinate
 
 RoadPair = tuple[Coordinate, Coordinate]
+_METRES_PER_KM = 1000
 
 
 @dataclass(frozen=True)
@@ -29,3 +30,6 @@ class LegTable:
         if origin == destination:
             return 0
         return self._distance_m[origin, destination]
+
+    def distance_km(self, origin: Coordinate, destination: Coordinate) -> float:
+        return self.distance_m(origin, destination) / _METRES_PER_KM

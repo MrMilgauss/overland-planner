@@ -19,7 +19,7 @@ from hypothesis import strategies as st
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.planning.invariant_guard import (
     CanonicalFileEvidence,
-    GuardResult,
+    GuardViolation,
     InvariantGuard,
 )
 from overland_planner.domain.planning.plan_run import PlanStop
@@ -72,8 +72,8 @@ def plans(draw: st.DrawFn) -> Plan:
     return Plan(trip, stops, {track.id: _evidence_of(track) for track in trip.tracks()})
 
 
-def _judged(plan: Plan, stops: tuple[PlanStop, ...], result: GuardResult) -> dict[str, Any]:
-    check = None if result.violation is None else result.violation.check
+def _judged(plan: Plan, stops: tuple[PlanStop, ...], violation: GuardViolation | None) -> dict[str, Any]:
+    check = None if violation is None else violation.check
     return {"guard.check": check, "plan.stops": stops, "snapshot.read": plan.trip.snapshot}
 
 
@@ -256,32 +256,31 @@ def _breakings(plan: Plan) -> list[Breaking]:
 
 @given(plan=plans())
 def test_every_plan_the_assembler_makes_passes(plan: Plan) -> None:
-    before = _judged(plan, plan.stops, GuardResult())
+    before = _judged(plan, plan.stops, None)
 
-    result = plan.guard().check_plan(plan.stops, plan.files)
+    violation = plan.guard().check_plan(plan.stops, plan.files)
 
-    assert_state_delta(before, _judged(plan, plan.stops, result), UNIVERSE, {}, strict=True)
-    assert result.violation is None
-    assert plan.guard().check_order((plan.trip.start.id, *(s.item_id for s in plan.stops[1:-1]), plan.trip.end.id)) == (
-        GuardResult()
-    )
+    assert_state_delta(before, _judged(plan, plan.stops, violation), UNIVERSE, {}, strict=True)
+    assert violation is None
+    order = (plan.trip.start.id, *(s.item_id for s in plan.stops[1:-1]), plan.trip.end.id)
+    assert plan.guard().check_order(order) is None
 
 
 @given(plan=plans(), data=st.data())
 def test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule(plan: Plan, data: st.DataObject) -> None:
     breaking = data.draw(st.sampled_from(_breakings(plan)), label="mutation")
     broken = breaking(plan, data.draw)
-    before = _judged(plan, broken.stops, GuardResult())
+    before = _judged(plan, broken.stops, None)
 
     guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
-    result = guard.check_plan(broken.stops, broken.files)
+    violation = guard.check_plan(broken.stops, broken.files)
 
     expected = {"guard.check": set_to(broken.rule)}
-    assert_state_delta(before, _judged(plan, broken.stops, result), UNIVERSE, expected, strict=True)
-    assert result.violation is not None
-    assert result.violation.detail, "a violation says what is wrong"
+    assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
+    assert violation is not None
+    assert violation.detail, "a violation says what is wrong"
     if broken.item_id is not None:
-        assert broken.item_id in result.violation.detail, f"the detail names no item: {result.violation.detail}"
+        assert broken.item_id in violation.detail, f"the detail names no item: {violation.detail}"
 
 
 def _order_of(plan: Plan) -> tuple[str, ...]:
@@ -314,8 +313,10 @@ def _broken_orders(plan: Plan) -> list[tuple[tuple[str, ...], str]]:
 @given(plan=plans(), data=st.data())
 def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan: Plan, data: st.DataObject) -> None:
     order, rule = data.draw(st.sampled_from(_broken_orders(plan)), label="order")
-    before = _judged(plan, plan.stops, GuardResult())
+    before = _judged(plan, plan.stops, None)
 
-    result = plan.guard().check_order(order)
+    violation = plan.guard().check_order(order)
 
-    assert_state_delta(before, _judged(plan, plan.stops, result), UNIVERSE, {"guard.check": set_to(rule)}, strict=True)
+    assert_state_delta(
+        before, _judged(plan, plan.stops, violation), UNIVERSE, {"guard.check": set_to(rule)}, strict=True
+    )
