@@ -67,7 +67,7 @@ kpis:
       ci: property tests (A-1, A-2, HC-5, A-7 over 1,000 generated projects incl. sparse/retrace), blocking
       runtime_event: invariant.violation
       diagnostics_field: k2.invariant_violations
-      definition: count of plan_runs with status=failed AND failure_reason='internal invariant violation' (all time and last 30 days)
+      definition: count of plan_runs with status=failed AND failure_reason='internal_invariant_violation' (all time and last 30 days)
     thresholds: {green: 0, red: ">= 1"}
     alert: red badge on /diagnostics and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate)
 

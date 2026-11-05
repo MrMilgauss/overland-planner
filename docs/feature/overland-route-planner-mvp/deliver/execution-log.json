@@ -1233,6 +1233,41 @@
       "s": "EXECUTED",
       "d": "PASS: commit 316cf6a. Corrects the COMMIT entry of 22:38:29Z, which was written before the commit landed: the ruff hook had refused that attempt",
       "t": "2026-11-04T22:38:47Z"
+    },
+    {
+      "sid": "04-05",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T22:44:49Z"
+    },
+    {
+      "sid": "04-05",
+      "p": "RED_ACCEPTANCE",
+      "s": "EXECUTED",
+      "d": "RED: KeyError: 'entry' at plan_steps.py:166 in assert_driven_from_to (the stop has no entry and exit yet); 1 failed, 9 deselected with --run-pending=slice-01b -k reached_by_a",
+      "t": "2026-11-04T22:44:52Z"
+    },
+    {
+      "sid": "04-05",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "RED: 9 failed, 11 passed over signature stubs (guard always passes, read always missing, parser empty; job takes files but never reads them). AssertionError assert_state_delta 1 violation on guard.check (mutation and order PBT) and plan_runs (changed-file and real-size PBT); AssertionError assert [None] == ['ok'] and assert None == 'ok' (invariants on plan.run.completed, new test and registry test); AssertionError assert ('failed', None, 'The plan could not be calculated - nothing was changed') == ('done', 'internal_invariant_violation', None) (carry-over a, unknown id); parser round trip and file store read assertion failures",
+      "t": "2026-11-04T22:51:10Z"
+    },
+    {
+      "sid": "04-05",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T23:01:44Z"
+    },
+    {
+      "sid": "04-05",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-04T23:01:53Z"
     }
   ]
 }
