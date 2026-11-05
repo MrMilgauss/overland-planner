@@ -3,7 +3,7 @@
 # (straight line x 1.3) unless a scenario says otherwise. Action vocabulary: Calculate / Recalculate (D156).
 # Steps + scaffolds are written when DELIVER reaches 01b. @technical = outside the UAT band (D141).
 
-@slice-01b @pending
+@slice-01b
 Feature: First ordered plan and GPX
   As Marco, I want my first trail and places put in a sensible order between home and home,
   and handed to my tablet as one GPX file, so that I can drive an Assietta day trip tonight.

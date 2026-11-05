@@ -124,8 +124,8 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     env = {**workflow.get("env", {}), **job.get("env", {})}
     pytest_step = _main_pytest(job)
 
-    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10).
-    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b --run-pending=slice-01a"
+    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11).
+    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b"
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
     assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]  # root of every test data folder
@@ -765,3 +765,61 @@ def test_job_7_selection_runs_the_enabled_slices_compose_and_security_checks() -
     assert "test_container_hardening.py::test_planner_container_writes_only_data_and_tmp_without_privileges" in (
         collected.stdout
     )
+
+
+FEATURE_01B = "tests/acceptance/overland_route_planner_mvp/slice-01b-skeleton-plan-and-gpx.feature"
+MODULE_01B = "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py"
+
+
+def _collect(*selection: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", *selection, MODULE_01B],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_slice_01b_scenarios_run_without_being_enabled() -> None:
+    """Step 04-11: the feature-level tags are what conftest reads to skip a slice; `@pending` must be gone from them."""
+    lines = (REPO_ROOT / FEATURE_01B).read_text().splitlines()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-01b"]
+
+
+def test_job_2_installs_chromium_after_npm_ci_and_before_pytest() -> None:
+    """D170: without the browser the @ui scenario would fail in job 2; the package alone comes from npm ci."""
+    job = _job(_workflow(), "test-python")
+    install = _index(job, "playwright install")
+    step = job["steps"][install]
+
+    assert _index(job, "npm ci") < install < job["steps"].index(_main_pytest(job))
+    assert step["run"] == "npx --no-install playwright install --with-deps chromium"
+    assert step["working-directory"] == "web"
+    assert not step.get("continue-on-error")
+
+
+def test_job_2_selection_includes_the_browser_scenario() -> None:
+    """Job 2, not job 7: only job 2 has the web/dist the scenario's real server serves."""
+    command = _main_pytest(_job(_workflow(), "test-python"))["run"]
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', command)
+    assert expression is not None
+
+    collected = _collect("-m", expression["expression"])
+
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert "test_marco_plans_the_assietta_day_trip_in_his_browser" in collected.stdout
+
+
+def test_pre_push_selects_no_slice_01b_scenario() -> None:
+    """D199: pre-push stays under five minutes; the 01b scenarios are real solves and a browser."""
+    hooks = {h["id"]: h for repo in yaml.safe_load(PRE_COMMIT.read_text())["repos"] for h in repo["hooks"]}
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', hooks["pytest-fast"]["entry"])
+    assert expression is not None
+
+    collected = _collect("-m", expression["expression"])
+
+    assert collected.returncode == 5, collected.stdout + collected.stderr  # pytest: nothing selected
+    assert "deselected" in collected.stdout, "the module must have collected scenarios to deselect"

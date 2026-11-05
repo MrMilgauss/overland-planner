@@ -18,9 +18,9 @@ permissions:
   contents: read
 
 env:
-  # D170, user decision 2026-11-02: started empty; 02-07 added --run-pending=slice-00b, 03-10 adds
-  # --run-pending=slice-01a, in the commit that turns the slice GREEN.
-  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a"
+  # D170, user decision 2026-11-02: started empty; 02-07 added --run-pending=slice-00b, 03-10 --run-pending=slice-01a,
+  # 04-11 --run-pending=slice-01b, each in the commit that turns the slice GREEN.
+  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b"
   UV_VERSION: "0.11.16"
   # Trivy as a sha256-verified binary (like the lint binaries) rather than aquasecurity/trivy-action, whose tags were
   # rewritten in the March 2026 supply-chain incident.
@@ -215,6 +215,9 @@ jobs:
       - name: Build the web page (D162)
         working-directory: web
         run: npm ci --no-audit --no-fund && npx vite build
+      - name: Chromium for the browser scenario of slice 01b (a missing browser fails it, D170)
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
       - name: uv sync --frozen
         run: uv sync --frozen
       - name: Filesystem type of the test data folders, walking skeleton included (D168)

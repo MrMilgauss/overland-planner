@@ -3,6 +3,10 @@ real planner server and reads back what the browser showed.
 
 Playwright is TypeScript here (`tests/e2e/`), so one run covers the scenario's browser actions; the step definitions
 record the actions and assert on what comes back. CI job 7 and `make e2e-local` skip the spec, it needs these settings.
+
+CI job 2 runs the scenario (D170), so there a missing Playwright is a failure; elsewhere it is a skip with the reason.
+The real server serves whatever web/dist holds, so a missing or out-of-date build fails here rather than giving a
+verdict on old code.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WEB_DIR = REPO_ROOT / "web"
 RUN_TIMEOUT_S = 240.0
+WEB_BUILD_FILES = ("index.html", "package-lock.json", "svelte.config.js", "vite.config.ts")
+PLAYWRIGHT_MISSING = "Playwright is not installed here (npm ci in web/)"
 
 
 @dataclass(frozen=True)
@@ -30,14 +36,32 @@ class BrowserRun:
     downloaded_file: Path
 
 
+def _require_playwright() -> None:
+    if (WEB_DIR / "node_modules" / "@playwright" / "test").is_dir():
+        return
+    if os.environ.get("CI"):
+        pytest.fail(PLAYWRIGHT_MISSING)
+    pytest.skip(PLAYWRIGHT_MISSING)
+
+
+def _require_current_web_page() -> None:
+    page = WEB_DIR / "dist" / "index.html"
+    if not page.is_file():
+        pytest.fail("web/dist is missing: run `npx vite build` in web/")
+    sources = [WEB_DIR / name for name in WEB_BUILD_FILES] + list((WEB_DIR / "src").rglob("*"))
+    newest = max((source.stat().st_mtime for source in sources if source.is_file()), default=0.0)
+    if page.stat().st_mtime < newest:
+        pytest.fail("web/dist is older than the web sources: run `npx vite build` in web/")
+
+
 class FirstPlanJourney:
     def __init__(self, project_id: str, workdir: Path) -> None:
         self._project_id = project_id
         self._workdir = workdir
 
     def run(self, planner_url: str) -> BrowserRun:
-        if not (WEB_DIR / "node_modules" / "@playwright" / "test").is_dir():
-            pytest.skip("Playwright is not installed here (npm ci in web/)")
+        _require_playwright()
+        _require_current_web_page()
         self._workdir.mkdir(parents=True, exist_ok=True)
         env = {k: v for k, v in os.environ.items() if k != "E2E_START_LOCAL"}
         env.update(
