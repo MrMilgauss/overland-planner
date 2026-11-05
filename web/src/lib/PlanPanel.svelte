@@ -11,6 +11,7 @@
     readPlanJob,
     readPlanRun,
     startPlan,
+    type PlanJob,
     type PlanJobState,
     type PlanRun,
     type PlanRunDetail,
@@ -78,30 +79,36 @@
     pollSoon(jobId);
   }
 
+  async function showJob(jobId: string, job: PlanJob): Promise<void> {
+    pollProblem = '';
+    jobState = job.state;
+    if (job.state === 'failed') {
+      stopWatching();
+      problem = job.message ?? failureText(undefined);
+    } else if (job.state === 'done') {
+      stopWatching();
+      await showLatestRuns();
+    } else {
+      pollSoon(jobId);
+    }
+  }
+
+  function showPollFailure(jobId: string, error: unknown): void {
+    if (error instanceof PlannerError && error.status === 404) {
+      stopWatching();
+      problem = failureText(error);
+    } else {
+      pollProblem = failureText(error);
+      pollSoon(jobId);
+    }
+  }
+
   async function poll(jobId: string): Promise<void> {
     try {
       const job = await readPlanJob(jobId);
-      if (jobId !== watchedJobId) return;
-      pollProblem = '';
-      jobState = job.state;
-      if (job.state === 'failed') {
-        stopWatching();
-        problem = job.message ?? failureText(undefined);
-      } else if (job.state === 'done') {
-        stopWatching();
-        await showLatestRuns();
-      } else {
-        pollSoon(jobId);
-      }
+      if (jobId === watchedJobId) await showJob(jobId, job);
     } catch (error) {
-      if (jobId !== watchedJobId) return;
-      if (error instanceof PlannerError && error.status === 404) {
-        stopWatching();
-        problem = failureText(error);
-      } else {
-        pollProblem = failureText(error);
-        pollSoon(jobId);
-      }
+      if (jobId === watchedJobId) showPollFailure(jobId, error);
     }
   }
 
