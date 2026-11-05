@@ -17,7 +17,7 @@ from overland_planner.application.catalog.facade import (
     canonical_file_sha256,
     parse_canonical_points_file,
 )
-from overland_planner.application.planning.facade import PlanRunQueries
+from overland_planner.application.planning.facade import PlanRunNotFoundError, PlanRunQueries
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.file_store import CanonicalPointsMissing, FileStore
 from overland_planner.application.ports.gpx_writer import GpxWriter
@@ -31,10 +31,6 @@ from overland_planner.domain.planning.plan_run import PlanStop
 _INCONSISTENT_MESSAGE = "Track data for this run is inconsistent - recalculate"
 _FAILED_MESSAGE = "This plan run failed"
 _CHECK = "HC-5"  # the guard's rule for a track's full-sequence hash
-
-
-class PlanRunNotFoundError(LookupError):
-    """No plan run has this id."""
 
 
 class TrackDataInconsistentError(ValueError):

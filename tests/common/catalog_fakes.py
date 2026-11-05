@@ -128,5 +128,9 @@ class RecordingEventLog:
     def warning(self, event: str, **fields: object) -> None:
         self.events.append((event, fields))
 
+    def fields_of(self, event: str) -> list[dict[str, object]]:
+        """The fields of every line logged as `event`, in order."""
+        return [fields for logged, fields in self.events if logged == event]
+
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")

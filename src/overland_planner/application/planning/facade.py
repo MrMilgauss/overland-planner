@@ -14,7 +14,7 @@ from overland_planner.application.planning.plan_request_service import (
     PlanRefusedError,
     PlanRequestService,
 )
-from overland_planner.application.planning.plan_run_queries import PlanRunQueries
+from overland_planner.application.planning.plan_run_queries import PlanRunNotFoundError, PlanRunQueries
 
 __all__ = [
     "MissingAnchorError",
@@ -26,6 +26,7 @@ __all__ = [
     "PlanRefusedError",
     "PlanRequestJob",
     "PlanRequestService",
+    "PlanRunNotFoundError",
     "PlanRunQueries",
     "StoredRun",
 ]

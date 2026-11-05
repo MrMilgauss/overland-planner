@@ -3,8 +3,7 @@
 from overland_planner.application.export.gpx_export_service import (
     FailedRunExportError,
     GpxExportService,
-    PlanRunNotFoundError,
     TrackDataInconsistentError,
 )
 
-__all__ = ["FailedRunExportError", "GpxExportService", "PlanRunNotFoundError", "TrackDataInconsistentError"]
+__all__ = ["FailedRunExportError", "GpxExportService", "TrackDataInconsistentError"]

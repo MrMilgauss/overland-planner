@@ -10,6 +10,10 @@ from overland_planner.domain.planning.plan_run import PlanRun
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 
 
+class PlanRunNotFoundError(LookupError):
+    """No plan run has this id."""
+
+
 def existing_snapshot(uow: PlanningUnitOfWork, project_id: str) -> ProjectSnapshot:
     """The project as planning sees it in this unit of work; raises `ProjectNotFoundError` when there is none."""
     snapshot = uow.project_snapshots.read(project_id)

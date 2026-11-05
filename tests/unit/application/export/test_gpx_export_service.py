@@ -28,12 +28,8 @@ from hypothesis import strategies as st
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.export_routes import export_routes
 from overland_planner.application.catalog.facade import ProjectService, canonical_points_file
-from overland_planner.application.export.facade import (
-    GpxExportService,
-    PlanRunNotFoundError,
-    TrackDataInconsistentError,
-)
-from overland_planner.application.planning.facade import PlanRunQueries
+from overland_planner.application.export.facade import GpxExportService, TrackDataInconsistentError
+from overland_planner.application.planning.facade import PlanRunNotFoundError, PlanRunQueries
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -203,7 +199,7 @@ class _Harness:
             self.files.keep_canonical_points(track.item_id, track.run_version, spoiled(track.file))
 
     def violations(self) -> list[dict[str, object]]:
-        return [fields for event, fields in self.log.events if event == "invariant.violation"]
+        return self.log.fields_of("invariant.violation")
 
 
 def _tracks_of(document: GpxDocument) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:

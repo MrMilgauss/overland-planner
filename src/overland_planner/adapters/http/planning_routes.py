@@ -14,7 +14,12 @@ from overland_planner.adapters.http.schemas import (
     PlanRunDetailResource,
     PlanRunResource,
 )
-from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestService, PlanRunQueries
+from overland_planner.application.planning.facade import (
+    PlanJobRegistry,
+    PlanRequestService,
+    PlanRunNotFoundError,
+    PlanRunQueries,
+)
 
 _NOT_FOUND = 404
 
@@ -55,7 +60,7 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
         """The stops in order, track stops with their entry and exit; a Failed run has no stops and names its reason."""
         run = runs.get(plan_run_id)
         if run is None:
-            raise HTTPException(_NOT_FOUND, "Plan run not found")
+            raise PlanRunNotFoundError(plan_run_id)
         return PlanRunDetailResource.of(run)
 
     return router
