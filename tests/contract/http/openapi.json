@@ -556,7 +556,7 @@
     },
     "/api/plan-runs/{plan_run_id}/export.gpx": {
       "get": {
-        "description": "Changes nothing. 404 `not_found` for an unknown run; 422 `validation_error` when a track's stored points are\nnot the ones the run recorded. A sync handler, so a big track never holds up the event loop.",
+        "description": "Changes nothing. 404 `not_found` for an unknown run; 422 `validation_error` for a Failed run or when a\ntrack's stored points are not the ones the run recorded. A sync handler, so a big track never holds up the\nevent loop. The file name is safe to quote: `run_file_name` answers only `[a-z0-9-]`, a run number and `.gpx`.",
         "operationId": "export_gpx_api_plan_runs__plan_run_id__export_gpx_get",
         "parameters": [
           {

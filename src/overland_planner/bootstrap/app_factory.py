@@ -119,21 +119,21 @@ class _Wiring:
         registry.register("tour_solver", self._tour_solver)
         return registry
 
-    def catalog_router(self) -> APIRouter:
-        def catalog_unit_of_work() -> SqlAlchemyCatalogUnitOfWork:
-            return SqlAlchemyCatalogUnitOfWork(self._database)
+    def _catalog_unit_of_work(self) -> SqlAlchemyCatalogUnitOfWork:
+        return SqlAlchemyCatalogUnitOfWork(self._database)
 
+    def catalog_router(self) -> APIRouter:
         use_cases = CatalogUseCases(
-            projects=ProjectService(catalog_unit_of_work, self._clock),
+            projects=ProjectService(self._catalog_unit_of_work, self._clock),
             imports=TrackImportService(
-                catalog_unit_of_work,
+                self._catalog_unit_of_work,
                 self._gpx_parser,
                 self._file_store,
                 self._event_log,
                 file_limit_mb=self._upload_limits.file_mb,
             ),
-            places=PoiService(catalog_unit_of_work),
-            anchors=AnchorService(catalog_unit_of_work),
+            places=PoiService(self._catalog_unit_of_work),
+            anchors=AnchorService(self._catalog_unit_of_work),
         )
         return catalog_routes(use_cases, self._upload_limits)
 
@@ -161,7 +161,8 @@ class _Wiring:
 
     def export_router(self) -> APIRouter:
         runs = PlanRunQueries(self._planning_unit_of_work)
-        return export_routes(GpxExportService(runs, self._file_store, self._gpx_writer, self._event_log))
+        projects = ProjectService(self._catalog_unit_of_work, self._clock)
+        return export_routes(GpxExportService(runs, projects, self._file_store, self._gpx_writer, self._event_log))
 
 
 def create_app(

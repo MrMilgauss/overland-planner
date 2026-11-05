@@ -56,6 +56,7 @@ def client(tmp_path: Path) -> TestClient:
         ("DELETE", "/api/projects", None, 404, "not_found"),
         ("GET", f"/api/projects/{UNKNOWN_ID}", None, 404, "not_found"),
         ("GET", f"/api/projects/{UNKNOWN_ID}/items", None, 404, "not_found"),
+        ("GET", f"/api/plan-runs/{UNKNOWN_ID}/export.gpx", None, 404, "not_found"),
         ("POST", "/api/projects", {}, 422, "validation_error"),
         ("POST", "/api/projects", {"name": " "}, 422, "validation_error"),
     ],

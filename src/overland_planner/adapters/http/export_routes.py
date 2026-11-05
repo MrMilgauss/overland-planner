@@ -19,12 +19,15 @@ def export_routes(exports: GpxExportService) -> APIRouter:
         responses={200: {"content": {_GPX_MEDIA_TYPE: {}}, "description": "The GPX file"}, **ERROR_RESPONSES},
     )
     def export_gpx(plan_run_id: str) -> Response:
-        """Changes nothing. 404 `not_found` for an unknown run; 422 `validation_error` when a track's stored points are
-        not the ones the run recorded. A sync handler, so a big track never holds up the event loop."""
+        """Changes nothing. 404 `not_found` for an unknown run; 422 `validation_error` for a Failed run or when a
+        track's stored points are not the ones the run recorded. A sync handler, so a big track never holds up the
+        event loop. The file name is safe to quote: `run_file_name` answers only `[a-z0-9-]`, a run number and `.gpx`.
+        """
+        file = exports.export(plan_run_id)
         return Response(
-            exports.export(plan_run_id),
+            file.content,
             media_type=_GPX_MEDIA_TYPE,
-            headers={"Content-Disposition": "attachment"},
+            headers={"Content-Disposition": f'attachment; filename="{file.file_name}"'},
         )
 
     return router

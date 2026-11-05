@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from overland_planner.adapters.files.local_file_store import LocalFileStore
 from overland_planner.adapters.persistence.database import database_file
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
@@ -141,7 +143,7 @@ def _project_with_a_place(client: TestClient) -> tuple[str, str]:
     return project_id, place.json()["id"]
 
 
-def _sql(data_dir: Path, statement: str, *parameters: str) -> None:
+def _sql(data_dir: Path, statement: str, *parameters: str | None) -> None:
     connection = sqlite3.connect(database_file(data_dir))
     with connection:
         connection.execute(statement, parameters)
@@ -168,6 +170,60 @@ def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(da
     assert (answer.status_code, answer.json()) == (
         200,
         [{"id": "r2", "number": 2, "status": "ready"}, {"id": "r10", "number": 10, "status": "failed"}],
+    )
+
+
+def _stored_run(data_dir: Path, project_id: str, status: str, itinerary: str | None = None) -> str:
+    run_id = uuid.uuid4().hex
+    _sql(
+        data_dir,
+        "INSERT INTO plan_runs (id, project_id, number, status, created_at, revision, provider_id, objective, "
+        "inputs, itinerary) VALUES (?, ?, '1', ?, '2026-11-04 08:00:00', 1, 'mock', 'distance', '{}', ?)",
+        run_id,
+        project_id,
+        status,
+        itinerary,
+    )
+    return run_id
+
+
+def test_exporting_a_failed_run_answers_422_with_its_message(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    run_id = _stored_run(data_dir, project_id, "failed")
+
+    answer = client.get(f"/api/plan-runs/{run_id}/export.gpx")
+
+    assert (answer.status_code, answer.json()) == (422, {"code": "validation_error", "message": "This plan run failed"})
+
+
+def test_exporting_a_run_whose_track_file_changed_answers_422_with_its_message(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    itinerary = {
+        "stops": [
+            {
+                "item_id": "assietta",
+                "name": "Strada dell'Assietta",
+                "kind": "track",
+                "leg_km": None,
+                "location": None,
+                "entry": {"lat": 45.05, "lon": 7.04},
+                "exit": {"lat": 44.96, "lon": 6.88},
+                "direction_version": 1,
+                "point_count": 2,
+                "canonical_sha256": "the hash of what the run recorded",
+            }
+        ]
+    }
+    LocalFileStore(data_dir).keep_canonical_points("assietta", 1, b"other bytes")
+    run_id = _stored_run(data_dir, project_id, "ready", json.dumps(itinerary))
+
+    answer = client.get(f"/api/plan-runs/{run_id}/export.gpx")
+
+    assert (answer.status_code, answer.json()) == (
+        422,
+        {"code": "validation_error", "message": "Track data for this run is inconsistent - recalculate"},
     )
 
 

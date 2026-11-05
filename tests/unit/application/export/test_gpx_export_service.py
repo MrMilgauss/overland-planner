@@ -1,12 +1,14 @@
-"""Export keeps the trail's stored points in order (US-02b, HC-1, ADR-009 Amendment 2, ADR-010 Amendment 1).
+"""Export turns a stored run into a named file (US-02b, HC-1, ADR-009 Amendment 2, ADR-010 Amendment 1, D203).
 
-Driving port: `GpxExportService.export`. Driven ports: `PlanningUnitOfWork`, `FileStore`, `GpxWriter` (recording; the
-real writer is proven at its own test), `EventLog`.
-Observable universe: `plan_runs`, `commits`, `items`, `projects` as planning reads them, `files` as the store holds
-them, the `documents` handed to the writer and the `events` logged.
-Test Budget: 4 behaviors (each track holds its stored points by the run's version; a track that cannot be proven
-refuses with the fixed message; the refusal logs its violation; nothing changes, and an unknown run is not found)
-x 2 = 8; 6 used.
+Driving port: `GpxExportService.export`. Driven ports: `PlanningUnitOfWork`, `CatalogUnitOfWork`, `FileStore`,
+`GpxWriter` (recording; the real writer is proven at its own test), `EventLog`. The document's rules are proven at
+tests/unit/domain/export/test_gpx_document_builder.py, the file name's at test_run_file_name.py.
+Observable universe: `plan_runs`, `commits`, `items`, `projects` as planning reads them, the `catalog` project, `files`
+as the store holds them, the `documents` handed to the writer and the `events` logged.
+Test Budget: 7 behaviors (each trail holds its stored points by the run's version; a track that cannot be proven
+refuses with the fixed message; the refusal logs its violation; nothing changes, and an unknown run is not found; a
+Failed run is refused; the file and document are named from the project and the run; one `export.gpx` event per file)
+x 2 = 14; 9 used.
 """
 
 from __future__ import annotations
@@ -18,10 +20,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from overland_planner.application.catalog.facade import canonical_points_file
+from overland_planner.adapters.http.errors import install_error_handlers
+from overland_planner.adapters.http.export_routes import export_routes
+from overland_planner.application.catalog.facade import ProjectService, canonical_points_file
 from overland_planner.application.export.facade import (
     GpxExportService,
     PlanRunNotFoundError,
@@ -33,20 +39,25 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.catalog.project import Project, ProjectName
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.export.gpx_document import GpxDocument
+from overland_planner.domain.export.run_file_name import run_file_name
 from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
+from tests.common.catalog_fakes import InMemoryCatalog, InMemoryFileStore, RecordingEventLog
+from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning
 
-UNIVERSE = {"plan_runs", "commits", "items", "projects", "files", "documents", "events"}
+UNIVERSE = {"plan_runs", "commits", "items", "projects", "catalog", "files", "documents", "events"}
 PROJECT = "p"
 RUN = "run-1"
 REFUSAL = "Track data for this run is inconsistent - recalculate"
 VIOLATION = ("invariant.violation", RUN, "HC-5")
+EXPORTED = ("export.gpx", RUN, None)
+EXPORT_FIELDS = {"plan_run_id", "project_id", "items_included", "bytes", "stale"}
 VIOLATION_FIELDS = {"plan_run_id", "check", "detail"}
 BIG_TRACK_POINTS = 23_295
 
@@ -116,7 +127,10 @@ class _Harness:
     """The real service over the doubles of its driven ports, with one stored Ready run: Start, the tracks, End."""
 
     tracks: tuple[_StoredTrack, ...]
+    project_name: str = "Alpi"
+    number: int = 1
     planning: InMemoryPlanning = field(default_factory=InMemoryPlanning)
+    catalog: InMemoryCatalog = field(default_factory=InMemoryCatalog)
     files: InMemoryFileStore = field(default_factory=InMemoryFileStore)
     writer: _RecordingGpxWriter = field(default_factory=_RecordingGpxWriter)
     log: RecordingEventLog = field(default_factory=RecordingEventLog)
@@ -131,7 +145,7 @@ class _Harness:
             NewPlanRun(
                 id=RUN,
                 project_id=PROJECT,
-                number=1,
+                number=self.number,
                 status="ready",
                 failure_reason=None,
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -145,7 +159,16 @@ class _Harness:
         for track in self.tracks:
             self.files.keep_canonical_points(track.item_id, track.run_version, track.file)
             self.files.keep_canonical_points(track.item_id, track.run_version + 1, track.later_file)
-        self.service = GpxExportService(PlanRunQueries(self.planning.unit_of_work), self.files, self.writer, self.log)
+        self.catalog.projects[PROJECT] = Project.create(
+            PROJECT, ProjectName(self.project_name), datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        self.service = GpxExportService(
+            PlanRunQueries(self.planning.unit_of_work),
+            ProjectService(self.catalog.unit_of_work, FakeClock()),
+            self.files,
+            self.writer,
+            self.log,
+        )
 
     def view(self) -> dict[str, Any]:
         snapshot = self.planning.snapshots[PROJECT]
@@ -156,12 +179,16 @@ class _Harness:
             "commits": self.planning.commits,
             "items": snapshot.items,
             "projects": (PROJECT, self.planning.stamps[PROJECT], snapshot.start_item_id, snapshot.end_item_id),
+            "catalog": (self.catalog.projects[PROJECT], self.catalog.commits),
             "files": tuple(sorted(self.files.files.items())),
             "documents": tuple(_tracks_of(document) for document in self.writer.documents),
             "events": tuple(
                 (event, fields.get("plan_run_id"), fields.get("check")) for event, fields in self.log.events
             ),
         }
+
+    def fail_the_run(self) -> None:
+        self.planning.runs[0] = replace(self.planning.runs[0], status="failed", failure_reason="timeout", stops=())
 
     def replace_track_stop(self, track: _StoredTrack, **changes: Any) -> None:
         run = self.planning.runs[0]
@@ -180,7 +207,7 @@ class _Harness:
 
 
 def _tracks_of(document: GpxDocument) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:
-    return tuple((track.name, track.points) for track in document.tracks)
+    return tuple((track.name, track.points) for track in document.tracks if track.kind == "offroad")
 
 
 def _expected(tracks: tuple[_StoredTrack, ...]) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:
@@ -191,6 +218,7 @@ def _one_more_document(old: Any, new: Any) -> bool:
     return len(new) == len(old) + 1
 
 
+_project_names = st.text(min_size=1, max_size=40).filter(str.strip)
 _point = st.builds(
     TrackPoint.at,
     st.floats(-90, 90),
@@ -242,8 +270,14 @@ def test_the_document_holds_every_track_with_its_name_and_its_stored_points_in_o
 
     answer = harness.service.export(RUN)
 
-    assert_state_delta(before, harness.view(), UNIVERSE, {"documents": set_to((_expected(tracks),))}, strict=True)
-    assert answer == repr(harness.writer.documents[-1]).encode(), "the answer is the writer's file"
+    assert_state_delta(
+        before,
+        harness.view(),
+        UNIVERSE,
+        {"documents": set_to((_expected(tracks),)), "events": gained(EXPORTED)},
+        strict=True,
+    )
+    assert answer.content == repr(harness.writer.documents[-1]).encode(), "the answer is the writer's file"
 
 
 def test_a_full_size_track_exports_whole() -> None:
@@ -255,7 +289,13 @@ def test_a_full_size_track_exports_whole() -> None:
 
     harness.service.export(RUN)
 
-    assert_state_delta(before, harness.view(), UNIVERSE, {"documents": set_to((_expected((track,)),))}, strict=True)
+    assert_state_delta(
+        before,
+        harness.view(),
+        UNIVERSE,
+        {"documents": set_to((_expected((track,)),)), "events": gained(EXPORTED)},
+        strict=True,
+    )
 
 
 @settings(deadline=None)
@@ -296,13 +336,19 @@ def test_inconsistent_file_logs_invariant_violation(
 # bypass: two fixed shapes of a broken stored run; there is no input to vary, the bytes above already vary.
 @pytest.mark.parametrize(
     ("broken_by", "detail"),
-    [("unreadable_file_with_its_own_hash", "canonical file v1"), ("stop_without_a_version", "no direction version")],
+    [
+        ("unreadable_file_with_its_own_hash", "canonical file v1"),
+        ("stop_without_a_version", "no direction version"),
+        ("stop_without_a_place", "names no place"),
+    ],
 )
 def test_a_track_that_cannot_be_read_by_the_run_refuses_the_same_way(broken_by: str, detail: str) -> None:
     track = _StoredTrack("assietta", "Strada dell'Assietta", 1, (TrackPoint.at(45.0, 7.0), TrackPoint.at(45.1, 7.1)))
     harness = _Harness((track,))
     if broken_by == "stop_without_a_version":
         harness.replace_track_stop(track, direction_version=None)
+    elif broken_by == "stop_without_a_place":
+        harness.replace_track_stop(track, entry=None)
     else:
         harness.files.keep_canonical_points(track.item_id, track.run_version, b"not json")
         harness.replace_track_stop(track, canonical_sha256=_sha256(b"not json"))
@@ -329,4 +375,62 @@ def test_export_changes_nothing_and_unknown_run_is_not_found(tracks: tuple[_Stor
 
     harness.service.export(RUN)
 
-    assert_state_delta(before, harness.view(), UNIVERSE, {"documents": _one_more_document}, strict=True)
+    assert_state_delta(
+        before, harness.view(), UNIVERSE, {"documents": _one_more_document, "events": gained(EXPORTED)}, strict=True
+    )
+
+
+@settings(deadline=None)
+@given(tracks=_tracks)
+def test_failed_run_export_is_refused_with_422_and_its_message(tracks: tuple[_StoredTrack, ...]) -> None:
+    harness = _Harness(tracks)
+    harness.fail_the_run()
+    app = FastAPI()
+    install_error_handlers(app, harness.log)
+    app.include_router(export_routes(harness.service))
+    before = harness.view()
+
+    answer = TestClient(app).get(f"/api/plan-runs/{RUN}/export.gpx")
+
+    assert answer.status_code == 422, "a Failed run is not exported"
+    assert answer.json() == {"code": "validation_error", "message": "This plan run failed"}
+    assert_state_delta(before, harness.view(), UNIVERSE, {}, strict=True)
+
+
+@settings(deadline=None)
+@given(tracks=_tracks, project_name=_project_names, number=st.integers(1, 10_000))
+def test_the_file_and_the_document_are_named_from_the_project_and_the_run(
+    tracks: tuple[_StoredTrack, ...], project_name: str, number: int
+) -> None:
+    harness = _Harness(tracks, project_name, number)
+    before = harness.view()
+
+    answer = harness.service.export(RUN)
+
+    assert answer.file_name == run_file_name(project_name, number)
+    document = harness.writer.documents[-1]
+    assert document.name == f"Plan run #{number}"
+    assert [point.name for point in document.waypoints] == ["Casa Marco (S/E)"]
+    assert len([track for track in document.tracks if track.kind == "road"]) == len(tracks) + 1
+    assert_state_delta(
+        before, harness.view(), UNIVERSE, {"documents": _one_more_document, "events": gained(EXPORTED)}, strict=True
+    )
+
+
+@settings(deadline=None)
+@given(tracks=_tracks)
+def test_each_export_logs_one_event_with_the_kpi_fields(tracks: tuple[_StoredTrack, ...]) -> None:
+    harness = _Harness(tracks)
+
+    answer = harness.service.export(RUN)
+
+    assert [event for event, _ in harness.log.events] == ["export.gpx"]
+    fields = harness.log.events[0][1]
+    assert set(fields) == EXPORT_FIELDS
+    assert fields == {
+        "plan_run_id": RUN,
+        "project_id": PROJECT,
+        "items_included": len(tracks) + 1,  # the anchor, once, and every trail
+        "bytes": len(answer.content),
+        "stale": False,
+    }

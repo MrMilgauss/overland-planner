@@ -18,7 +18,11 @@ from starlette.exceptions import HTTPException
 
 from overland_planner.adapters.http.upload_limits import UploadFormError, UploadTooLargeError
 from overland_planner.application.catalog.facade import ItemNotFoundError, ProjectNotFoundError, TrackFilesRefusedError
-from overland_planner.application.export.facade import PlanRunNotFoundError, TrackDataInconsistentError
+from overland_planner.application.export.facade import (
+    FailedRunExportError,
+    PlanRunNotFoundError,
+    TrackDataInconsistentError,
+)
 from overland_planner.application.planning.facade import PlanRefusedError
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.domain.catalog.anchors import AnchorNotAPlaceError
@@ -47,6 +51,7 @@ _REFUSED_WITH_REASON: dict[type[Exception], int] = {
     CoordinateOutOfRangeError: _INVALID,
     AnchorNotAPlaceError: _INVALID,
     TrackDataInconsistentError: _INVALID,
+    FailedRunExportError: _INVALID,
     UploadFormError: _INVALID,
     UploadTooLargeError: _TOO_LARGE,
 }
