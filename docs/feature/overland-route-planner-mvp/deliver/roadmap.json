@@ -2,7 +2,7 @@
   "roadmap": {
     "project_id": "overland-route-planner-mvp",
     "created_at": "2026-11-02T19:53:04Z",
-    "total_steps": 37
+    "total_steps": 47
   },
   "phases": [
     {
@@ -1238,6 +1238,338 @@
           "implementation_notes": "Slice 01b; D170, D190. FEATURE: remove only `@pending` from the feature-level tag line (the only allowed feature-file edit); check with `git diff` that nothing else moved. PENDING_FLAGS in ci.yml becomes `--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b`, with its comment; update the pin at tests/ci/test_ci_workflow.py line 128. WHICH JOB RUNS THE BROWSER SCENARIO: CI job 2 (test-python), not job 7. Job 2's `-m 'not real_provider and not pi'` selects it, and it already has `npm ci` and the web/dist the scenario's real server needs. Job 7 lacks that web/dist, its pytest selects only `compose or security`, and its Playwright run skips first-plan.spec.ts by design because the settings are absent. Job 2 lacks the browser, so add `npx --no-install playwright install --with-deps chromium` (working-directory web) after npm ci and before pytest. Without this the scenario would fail in job 2, not skip, because the package is there. CANNOT PASS BY SKIPPING: steps/browser.py skips when web/node_modules/@playwright/test is missing; change it to fail when the CI environment variable is set. tests/ci/test_first_plan_journey_gate.py proves that behaviour, and test_ci_workflow.py proves the install step order. Check job 2's 20-minute timeout on the first green run and report the duration. TAG ISSUE: the pytestmark from 04-01 stays; re-verify 0 scenarios selected under pre-push's marker expression, now that @pending is gone. Run the full local suite and `make mutate BASE=<slice-01b start>` (>= 80 %). Also add a short comment in the test module saying why the whole module is solver_child. Commit: 'test(acceptance): slice 01b blocking in CI'. LAST STEP OF SLICE 01b: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push and verify CI green, and read job 2's summary to confirm the browser scenario PASSED and is not in the skip list. Then, at a start time the user names: make deploy to the Pi (Alembic 0004 -> 0005 with the automatic pre-migration copy) and the demo on the supplied real assietta.gpx (D198: it stays out of git), recording plan and export time for its 23,295 points and checking 1:1 point order. A person performs 'The first plan opens in OsmAnd' on the tablet and logs evidence in docs/demo/. Note for rollback: a release at 0004 refuses a 0005 database (db_newer_than_app), so rolling back needs the snapshot and `alembic downgrade 0004` first (D90).\n\nBATCH-2 RULE (UI-DELIVER-3): RED is recorded in the DES log with its failure class and message, and unit tests are written before production code.\n\nEXEMPT FROM PARADIGM: workflow and test-gate configuration with one observable outcome each, and a manual scenario with no automated test. Compensating tests: the single-example CI contract tests named above, and the property-based tests of 04-02, 04-05 and 04-09 on the behaviour these scenarios guard. Acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks."
         }
       ]
+    },
+    {
+      "id": "05",
+      "name": "Slice 02: direction-safe optimizer with fixed anchors and honest totals",
+      "description": "US-03, US-04, US-05. The directional model, explicit anchors and HC-1 guard of 01b already hold (5 scenarios ALREADY_GREEN). This phase adds what the slice's scenarios still lack: item removal that clears anchors, nullable anchors and POI-only choices, Stale runs, the off-road speed setting, road times and the scripted offline road map (MOCK_PLAN), itinerary columns and totals (FR-6.1, FR-6.2, D11), the HC-5 length check, a Failed run's report in product words, the fingerprint memo (D15, D42, ADR-014 section 5), totals on the phone, and the A-6 property in its own CI job (D216). Ends with every slice-02 scenario blocking in CI.",
+      "steps": [
+        {
+          "id": "05-01",
+          "name": "Remove an item, unset an anchor, offer only POIs as Start or End",
+          "description": "DELETE items/{item_id} removes an item and clears any anchor it held in the same change. PUT anchors accepts null for an anchor left unset. GET items?type= filters by type. A track as Start or End is refused with the scenario's wording. The Calculate refusals of 04-01 then name the missing anchor even when the other one is set.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "04-11"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "Removing an item answers 204: the item leaves the project's item list, the Start, the End or both are cleared if it held them, and the project revision rises by exactly one; other items, other projects and plan runs are unchanged.",
+            "Removing an unknown item, or an item of another project, answers 404 not_found and changes nothing.",
+            "After the place holding only the Start (or only the End) is removed, Calculate answers 422 missing_anchor 'Set the Start before calculating' (or 'Set the End before calculating') and creates no job and no plan run.",
+            "GET items?type=poi lists only the project's POIs and ?type=track only its tracks, in the order they were added; with no type every item is listed; an unknown type answers 422 validation_error.",
+            "PUT anchors with null for the Start or the End leaves that anchor unset; a track or another project's item as Start or End answers 422 validation_error 'Only places (POIs) can be the Start or End' and the Start, the End and the revision stay as they were."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "Calculate is refused while an anchor is missing | Only POIs can be chosen as Start or End | A track cannot be made the Start even when asked directly | tests/unit/domain/catalog/test_anchors.py | tests/unit/application/catalog/test_project_service.py | tests/unit/application/catalog/test_anchor_service.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/anchors.py",
+            "src/overland_planner/domain/catalog/project.py",
+            "src/overland_planner/application/catalog/project_service.py",
+            "src/overland_planner/application/catalog/anchor_service.py",
+            "src/overland_planner/application/ports/repositories.py",
+            "src/overland_planner/adapters/persistence/item_repository.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/common/catalog_fakes.py",
+            "tests/unit/domain/catalog/test_anchors.py",
+            "tests/unit/application/catalog/test_project_service.py",
+            "tests/unit/application/catalog/test_anchor_service.py",
+            "web/src/lib/WorkspacePage.test.ts",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-04 S2/S3, D6, D201; brief section 5 (`GET .../items?type=`, `PUT .../anchors`, `DELETE .../items/{item_id}`, 204 on delete, error envelope D130). RED (red-classification.md #7-10): #7-8 fail in their Given on DELETE answering 404 (no route); #9 on `type` being ignored; #10 on 'end_item_id: Input should be a valid string' and on the 01a wording. REMOVAL: one catalog change in one unit of work: the item row goes (tracks and pois rows cascade) and, when it was an anchor, the project's anchors are cleared explicitly so the revision rises once; the FK `ON DELETE SET NULL` on projects.start_item_id/end_item_id alone would not raise the revision. Removal lives in ProjectService (it already lists the project's items); no new service file, the DESIGN component table names none for removal. FILES: a removed track's canonical and original files stay on disk (ADR-018 Revision 2: sweep-only deletion, and no sweep exists yet), so an earlier plan run that drove it still exports. A removal during an active plan job is allowed; that job's run is computed on its snapshot and is Stale once stored (05-02). The plan runs are not touched by a removal. ANCHORS: `Anchors.chosen` accepts an unset Start or End; the message of the D6 refusal becomes 'Only places (POIs) can be the Start or End' (slice-02 line 81, steps/world.py line 50); update its pins in tests/unit/domain/catalog/test_anchors.py and web/src/lib/WorkspacePage.test.ts line 172 (the web shows the planner's message verbatim). The 04-01 refusal order is unchanged: with both anchors missing the Start is named first. `make openapi-snapshot`. Local check: `uv run pytest -q tests/acceptance/overland_route_planner_mvp/test_slice_02.py --run-pending=slice-02 -k 'anchor_is_missing or only_pois_can_be_chosen or cannot_be_made_the_start'` and the full 01a/01b suites (they set anchors and list items). Do not edit the feature file. Commit: 'feat(catalog): remove items and unset anchors'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any project of POIs and tracks with any anchors and any item removed, the universe {project.items, project.anchors, project.revision, plan_runs} changes only in the removed row, the anchors it held and revision + 1; for any (start, end) drawn from POIs, tracks, other projects' items and null, the anchors are either exactly the choice or unchanged with the refusal."
+        },
+        {
+          "id": "05-02",
+          "name": "Plan runs are marked Stale after a catalog change",
+          "description": "Each run in the plan run list carries stale: true when the project's revision is no longer the revision the run was computed at (brief section 8). Removing an anchor POI, or any other catalog change, therefore marks earlier runs Stale.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-01"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "Every run in GET projects/{id}/plan-runs carries stale: false while the project's revision equals the run's revision, and true otherwise.",
+            "Any catalog change after a run (removing an item, setting anchors, adding an item) marks every earlier run stale; the next computed run is not stale.",
+            "Reading the plan run list changes nothing: projects, items and plan runs are unchanged.",
+            "'Removing the Start POI clears the Start' passes once open decision (a) is resolved; until then the only failing Then is 'the plan is marked Stale', with the binding's own message, recorded in the hand-off."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "Removing the Start POI clears the Start | tests/unit/application/planning/test_plan_run_queries.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/planning/plan_run.py",
+            "src/overland_planner/application/planning/plan_run_queries.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/planning/planning_doubles.py",
+            "tests/unit/application/planning/test_plan_run_queries.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-04 S4; brief section 8 last line (Stale = project revision != the revision stored on the run), section 9 (plan_runs.revision exists since 0005). No migration: the run's revision is stored, the project's current revision comes through the planning unit of work's ProjectSnapshotReader stamp, the read-only view planning already has of the catalog (no import of application.catalog; import-linter facade contracts). Stale is computed on read, never stored. OPEN DECISION (a), RAISED BY DISTILL: the scenario's Given computes no plan run, so its 'the plan is marked Stale' Then fails with 'there is no plan to be marked Stale' even with this step done. Do not edit the feature file or rebind the step to make it pass. Implement and unit-test Stale, show that the scenario's first and third Thens pass, record the remaining failure verbatim, and stop for the orchestrator. The orchestrator obtains the user's answer (a Given computing a run, a rebinding, or a definition of Stale without a run) before 05-10. tests/unit/application/planning/test_plan_run_queries.py is a new test module in the existing package. `make openapi-snapshot`. Local check: `--run-pending=slice-02 -k removing_the_start_poi`. Commit: 'feat(planning): stale plan runs'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT target: for any sequence of runs stored at revisions r1..rn and any current revision R, run i is stale iff ri != R, and listing leaves the universe {plan_runs, projects} unchanged."
+        },
+        {
+          "id": "05-03",
+          "name": "Off-road speed setting on the project",
+          "description": "GET and PATCH projects/{id} show and change offroad_speed_kmh, 15 km/h by default (FR-4.6). A speed of 0 or less is refused with 'Off-road speed must be more than 0 km/h'. Stored in the existing projects.settings JSON, so no migration.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-02"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "GET projects/{id} shows offroad_speed_kmh: 15 for a new project and for every project created before this release.",
+            "PATCH projects/{id} with a speed above 0 stores it, raises the revision by exactly one, and GET shows the new speed.",
+            "PATCH with 0, a negative or a non-finite speed answers 422 validation_error 'Off-road speed must be more than 0 km/h'; the speed, the revision and every other field are unchanged.",
+            "PATCH on an unknown project answers 404 not_found and creates nothing."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "An off-road speed that cannot be driven is refused | tests/unit/domain/catalog/test_project.py | tests/unit/application/catalog/test_project_service.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/catalog/project.py",
+            "src/overland_planner/application/catalog/project_service.py",
+            "src/overland_planner/adapters/persistence/project_repository.py",
+            "src/overland_planner/adapters/http/catalog_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/common/catalog_fakes.py",
+            "tests/unit/domain/catalog/test_project.py",
+            "tests/unit/application/catalog/test_project_service.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-05 S4, FR-4.6; brief section 5 (`GET|PATCH /api/projects/{project_id}`), section 9 (projects.settings). RED (#18-19): the Given's PATCH answers 404. STORAGE: projects.settings is a JSON column since 0001, written `{}` today (project_repository.py line 27), so the speed goes in it under `offroad_speed_kmh` and an absent key reads 15: no migration 0006 for projects. The binding's proposal (a column) is not needed. VALUE: a domain value object refuses 0, negatives, NaN and infinities with the scenario's text; FastAPI's float would otherwise accept a JSON `Infinity`. A change is a catalog change (revision + 1), so earlier runs become Stale (05-02). DEFAULT: FR-4.6's 15 km/h is the domain default. Brief section 12 lists `DEFAULT_OFFROAD_SPEED_KMH=15` as an indicative .env key; it is not wired in this slice (no scenario sets it); report this deviation in the hand-off. The speed is read by planning at 05-05. `make openapi-snapshot`. Local check: `--run-pending=slice-02 -k cannot_be_driven_is_refused`. Commit: 'feat(catalog): off-road speed setting'. Crafter stops at the commit; no push.\n\nORCHESTRATOR NOTE: 05-01 to 05-03 are the slice's catalog range (domain/catalog, application/catalog, plus the small planning read of 05-02). It can be pushed alone, so CI job 8 mutates only these files (D213); slice-02 scenarios stay skipped in CI under @pending.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT target: for any float including 0, negatives, subnormals, NaN and infinities, the project either takes the speed with revision + 1 or keeps the universe {project.offroad_speed_kmh, project.revision, project.items, project.anchors} unchanged with the refusal."
+        },
+        {
+          "id": "05-04",
+          "name": "Road times and the scripted offline road map (MOCK_PLAN)",
+          "description": "Every road leg carries a road time as well as a distance. The offline road map reads an optional MOCK_PLAN file: listed pairs answer their scripted distance and time, every other pair keeps straight line x detour factor. A bad file refuses start-up.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-03"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "With MOCK_PLAN unset, road distances are unchanged (straight line x 1.3) and every leg between distinct points has a road time above 0; identical points are 0 m and 0 s.",
+            "With MOCK_PLAN naming a road-map file, each listed pair answers exactly its distance_m and duration_s, and every other pair keeps the default at the file's detour_factor.",
+            "A MOCK_PLAN file that is missing, unreadable or malformed refuses start-up with one health.startup.refused line for component routing_provider; the start-up probe also proves one scripted pair answers as scripted.",
+            "The provider_id of a scripted road map differs from the default's and from any other script's, so legs and plans of different road maps are never taken for each other.",
+            "Planning receives each required pair's distance and road time, and each pair is asked for once."
+          ],
+          "test_file": "tests/integration/adapters/routing/test_mock_routing_provider.py",
+          "scenario_name": "test_scripted_pair_answers_its_distance_and_time | test_unlisted_pair_keeps_the_default | test_bad_road_map_refuses_start | test_provider_id_names_the_road_map | tests/unit/application/routing/test_leg_resolver.py | tests/unit/domain/routing/test_road_leg.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/routing/road_leg.py",
+            "src/overland_planner/application/ports/routing_provider.py",
+            "src/overland_planner/application/routing/leg_resolver.py",
+            "src/overland_planner/adapters/routing/mock_routing_provider.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "pyproject.toml",
+            "uv.lock",
+            "tests/integration/adapters/routing/test_mock_routing_provider.py",
+            "tests/unit/application/routing/test_leg_resolver.py",
+            "tests/unit/domain/routing/test_road_leg.py",
+            "tests/integration/bootstrap/test_server_start.py"
+          ],
+          "implementation_notes": "Slice 02, US-05 S2/S3, FR-6.1/6.2; brief section 6 (MockRoutingProvider configuration: detour_factor, per-pair values, straight-line default; `MOCK_PLAN` path), section 12 (.env key MOCK_PLAN). Brief section 6 places the rest of the scripting (snap classes, levels, unreachable points, fault plan, latency) with slice 06a: only distance and road time per pair and detour_factor here. RED: red-classification.md #15-16 name 'the road map ignores MOCK_PLAN' as next in line. FORMAT: the DISTILL fixture tests/acceptance/overland_route_planner_mvp/fixtures/road-maps/plan-run-4.yaml is YAML (DISTILL left the format to DELIVER, but the steps point MOCK_PLAN at that file): pairs {from: [lat, lon], to: [lat, lon], distance_m, duration_s}, matched at 6 decimals. Reading YAML in production needs PyYAML (MIT) as a runtime dependency; today it is dev-only. Move it to [project].dependencies and `uv lock`; this is a dependency decision reported to the user (open decision f). Parse with yaml.safe_load only. Do not edit the fixture. PORT: the matrix answers one cell per pair holding distance in integer metres and road time in seconds; RoadLeg and LegTable carry the road time next to the distance, and LegResolver hands both on. Keep `LegResolver(MockRoutingProvider())`, `MockRoutingProvider()` with no arguments and `resolve(required_pairs)` working as they are: steps/in_memory_planning.py builds them so. DEFAULT ROAD TIME for an unscripted pair: the brief gives none. Use one named constant speed on the road distance (proposed 60 km/h, open decision f); #12 only needs it above 0. EARNED TRUST (what if the file lies): the file is read and validated once at start-up (settings validation names the path); the probe checks Torino -> Susa when that pair is not scripted, identical points 0, and one scripted pair answering its scripted values; a pair listed twice with different values is malformed. provider_id becomes e.g. `mock:straight_line_x1.3` without a script and names the script's sha256 with one; the memo of 05-08 keys on it. The composition root reads MOCK_PLAN into Settings and passes the parsed map to the provider; the acceptance world sets MOCK_PLAN in the planner's environment before it starts. Domain routing gains no import of domain.planning. Commit: 'feat(routing): road times and the scripted offline road map'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. The provider tests are adapter integration tests and stay single-example. PBT targets at unit level: for any Alpine-box point set and any script over a subset of its pairs, the table answers the script on listed pairs and the default elsewhere, distance and time 0 only for identical points; the resolver asks each distinct required pair exactly once."
+        },
+        {
+          "id": "05-05",
+          "name": "Itinerary columns, totals and the HC-5 length check in the planning domain",
+          "description": "Pure domain: the assembled plan gains every FR-6.1 column (leg time, cumulative km and time to the end of each stop per D11, track km and off-road time at the project's off-road speed) and the six FR-6.2 totals. InvariantGuard adds ADR-009 check 4's length part, deferred from 01b, and the leg-time part of check 5.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-04"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Each stop's cumulative km and time are road plus off-road driving up to the end of that stop (D11); the last stop's cumulative values equal the totals.",
+            "A track stop carries its stored length in km and its off-road time = length / the project's off-road speed (15 km/h by default); a POI stop carries neither.",
+            "Road km and time are the sums of the legs, off-road km and time the sums of the track stops, total = road + off-road; a plan with only Start and End has one leg and zero off-road.",
+            "The guard fails a plan whose track stop length differs from the stored track length, or whose leg time differs from the leg table, naming the rule; every plan the assembler builds passes.",
+            "The HC-1, HC-5 and A-2 properties stay green at solution_limit 100 with profile dev, and the 01b guard tests still pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "No generated plan ever drives a track in reverse | Tracks are always driven in full | The trip always starts at Start and ends at End | tests/unit/domain/planning/test_plan_run_assembler.py | tests/unit/domain/planning/test_invariant_guard.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/planning/plan_run.py",
+            "src/overland_planner/domain/planning/plan_run_assembler.py",
+            "src/overland_planner/domain/planning/project_snapshot.py",
+            "src/overland_planner/domain/planning/invariant_guard.py",
+            "src/overland_planner/adapters/persistence/project_snapshot_reader.py",
+            "tests/unit/domain/planning/test_plan_run_assembler.py",
+            "tests/unit/domain/planning/test_invariant_guard.py",
+            "tests/unit/domain/planning/trips.py"
+          ],
+          "implementation_notes": "Slice 02, US-05 S2/S3/S4, FR-6.1, FR-6.2, FR-4.6, D11; brief section 4 (PlanRunAssembler owns itinerary, totals and report; DESIGN component decomposition names Itinerary and Totals in domain/planning); ADR-009 check 4 ('its off-road length equals the stored track length') and check 5. A retrace counts as ordinary off-road driving (U32, D57) but none exists until 03b. Duration override per track is slice 07: off-road time is length / speed only. Totals are a frozen value object compared by value: the A-6 Then compares `detail.totals` of two runs with ==. Km and seconds are not rounded here; display rounding is the web's (05-09). SNAPSHOT: ProjectSnapshot gains the off-road speed, read from projects.settings by the snapshot reader (05-03 storage), default 15; brief section 8 puts settings in the snapshot. COMPATIBILITY WITH THE DISTILL COMPOSITION (steps/in_memory_planning.py, not to be edited): it builds `ProjectSnapshot(start, end, items)` positionally, `ProjectStamp(revision=1, objective='distance')`, `CanonicalFileEvidence(sha256, count, first, last)` positionally, `InvariantGuard(snapshot, legs).check_plan(stops, evidence)` and reads `PlanStop.item_id/entry/exit/point_count/canonical_sha256/leg_km`; new fields need defaults and the length check reads the snapshot's TrackItem.length_m, not the file evidence. The guard is the oracle of the three properties (ADR-009), so each property is rerun at profile dev and its timing reported; no scenario turns GREEN, these three must stay green. D212 CARRY-OVER: this step touches InvariantGuard. Every applicable check and every applicable mutation must run on every generated plan, not one random draw: a test that draws one mutation per example can miss a check under the mutation profile's fixed seed and make the kill rate depend on collection scope. Commit: 'feat(planning): itinerary columns, totals and the track length check'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any snapshot, leg table, speed > 0 and order, cumulative km and time are non-decreasing, stop i's cumulative equals the sum of legs and track lengths up to i, the last equals the totals, total = road + off-road; for any assembled plan every length and leg-time mutation fails with its named rule (all of them per plan, D212)."
+        },
+        {
+          "id": "05-06",
+          "name": "Totals and itinerary columns stored and shown for each plan run",
+          "description": "Migration 0006 adds totals, report, fingerprint and memo_hit to plan_runs. The job stores the assembled totals; GET plan-runs/{id} shows totals and the FR-6.1 columns per stop. Plan run #4 on the scripted road map reads 612.3 / 122.6 / 734.9 km and 9h40 / 8h10 / 17h50.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-05"
+          ],
+          "estimated_hours": 4.5,
+          "criteria": [
+            "GET plan-runs/{id} of a ready run shows totals {road_km, road_s, offroad_km, offroad_s, total_km, total_s} and, per stop, leg_s, cumulative_km and cumulative_s, plus track_km and offroad_s for a track; the API does not round them.",
+            "Plan run #4 on the scripted road map shows road 612.3 km and 9h40, off-road 122.6 km and 8h10, total 734.9 km and 17h50; its row 2 shows Strada dell'Assietta, Track, leg 86.1 km, cumulative 120.3 km, track 34.2 km and 2h17.",
+            "At off-road speed 12 km/h the Assietta shows 2h51; a Start-and-End-only trip shows one road leg whose km and time are the totals, with no off-road driving.",
+            "Plan runs #1, #2 and #3 of Dolomiti 2028, the third after a restart, have the same order, legs and totals; the A-6 property passes locally with `-m slow` at profile dev, and its duration is reported.",
+            "Alembic upgrades to 0006 and downgrades to 0005 keeping every project, item and plan run, through the operator path and with foreign keys on; a run stored before 0006 opens with totals null."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "Totals separate road and off-road driving | The itinerary shows each stop with legs and cumulative distance | The off-road speed setting changes track durations | A trip with only a Start and an End is a direct road route | Identical inputs produce identical plans | Any project planned twice from scratch gets the same plan | tests/unit/application/planning/test_plan_request_job_guard.py | tests/integration/migrations/test_alembic_round_trip.py",
+          "files_to_modify": [
+            "migrations/versions/0006_plan_run_totals.py",
+            "src/overland_planner/adapters/persistence/tables.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/application/ports/plan_run_repository.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/application/planning/plan_run_queries.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "tests/unit/application/planning/planning_doubles.py",
+            "tests/unit/application/planning/test_plan_request_job_guard.py",
+            "tests/integration/migrations/test_alembic_round_trip.py",
+            "tests/integration/bootstrap/test_composition_root.py",
+            "tests/integration/adapters/persistence/test_migrator.py",
+            "tests/integration/adapters/persistence/test_sqlite_probe.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-05 S1-S4, US-04 (OD-4, D150); brief section 9 (plan_runs: fingerprint, run flags, totals, report), ADR-006/018 migrations with tested downgrade (DV-5). RED (#12, #13, #14, #15, #16, #17): each stops at 'shows no totals' or at the missing per-stop columns. MIGRATION 0006_plan_run_totals: plan_runs gains totals JSON nullable, report JSON nullable, fingerprint TEXT nullable and memo_hit BOOLEAN NOT NULL default false; one revision for the slice, so the Pi migrates once. report is filled at 05-07, fingerprint and memo_hit at 05-08. SQLite needs Alembic batch mode for the downgrade. Extend test_alembic_round_trip.py with a seeded 0005 run on both downgrade paths (operator path D90 and foreign_keys=ON); move the Alembic head pins in test_composition_root.py, test_migrator.py and test_sqlite_probe.py to 0006. The per-stop columns live in the stored itinerary JSON; runs stored by 01b have neither totals nor the new stop fields and show null (the web copes, 05-09); they are not recomputed. PlanRunDetail gains totals (and report at 05-07); the DISTILL composition reads `detail.totals` through PlanRunQueries.get, so InMemoryPlanning in planning_doubles.py stores and returns it. #13 (Identical inputs, @solver_child, real restart) needs only totals: red-classification.md says its order and legs already agree, because OR-Tools at the 10,000 budget is deterministic; the memo that D15/D42 require is 05-08. #14 (A-6, @slow) runs `--run-pending=slice-02 -m slow -k planned_twice` locally at profile dev (100 cases x 2 solves; DISTILL measured 248 s with a stand-in); report the time. D212 CARRY-OVER: this step rewrites the stored row and the plan-run view, so pin the stored `inputs` key names and the `id` and `project_id` of the plan-run view with assertions that a renamed key or a swapped id fails. `make openapi-snapshot`. Local check: `--run-pending=slice-02 -k 'totals_separate or legs_and_cumulative or offroad_speed_changes or only_a_start_and_an_end or identical_inputs'`. Commit: 'feat(planning): totals and itinerary columns'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks; the A-6 scenario is already a property (@property). PBT target: for any scripted solver outcome, a ready run's stored totals equal the assembler's for that order and a Failed run stores none, and the universe {plan_runs, items, projects} gains exactly one row. The migration round trip stays single-example (integration)."
+        },
+        {
+          "id": "05-07",
+          "name": "A Failed run's report keeps the reason in product words",
+          "description": "A Failed run shows report {reason} in product words mapped from its stored code (D206); for the guard, 'internal invariant violation'. The stored failure_reason code and the invariant.violation event are unchanged. The previous ready run stays the latest successful one.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-06"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "A run the guard refused shows status failed, no stops, and report {reason: 'internal invariant violation'}; its failure_reason stays internal_invariant_violation.",
+            "Each failure code the planner stores (internal_invariant_violation, no_valid_route_found, optimizer_failed, timeout) maps to exactly one product wording; a ready run has no failure report.",
+            "The run before the Failed one stays the latest ready run, and the invariant.violation event still names the broken check."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "A plan that would break a hard rule is never shown | tests/unit/domain/planning/test_plan_run_assembler.py | tests/unit/application/planning/test_plan_request_job_guard.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/planning/plan_run_assembler.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/application/ports/plan_run_repository.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/planning/planning_doubles.py",
+            "tests/unit/domain/planning/test_plan_run_assembler.py",
+            "tests/unit/application/planning/test_plan_request_job_guard.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-03, HC-1/HC-5, waiver W1; ADR-009 line 18, ADR-015 line 83, D206, D211. RED (#5): 'the Failed run #2 has no report'; its first and last Thens already pass. WORDING: D206 stores the ADR-015 code and maps the product words when the slice arrives; the slice-02 text gives 'internal invariant violation'. ADR-009's '(<rule>)' suffix is not added: by D206 the rule lives in the event's check field. The other three codes have no product wording in any scenario yet: use their code words without underscores ('no valid route found', 'optimizer failed', 'timeout') and report them as open decision (e). The report column comes from 0006 (05-06) and is written once with the run; it is the minimal form of the consideration report that slice 04 (US-07b) completes, so name the field reason, as the binding reads it. The mapping sits with the report in PlanRunAssembler (brief section 4). EVIDENCE NOTE, open decision (b): the W1 double cannot name a reversed traversal through the port, so it puts `reversed:<track id>` in the track's place and the guard refuses it under HC-3 (unknown/missing item), not HC-1; the scenario passes on the reason text either way. Record which check fired in the hand-off. Local check: `--run-pending=slice-02 -k break_a_hard_rule`. Commit: 'feat(planning): failed run report in product words'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT target: for any solver outcome and any guard verdict, a Failed run has exactly one report reason equal to its code's wording, a ready run has none, and the universe {plan_runs, log.invariant_violations} changes by one run and at most one event."
+        },
+        {
+          "id": "05-08",
+          "name": "Identical solver inputs reuse the stored order (fingerprint memo)",
+          "description": "Before solving, the job computes the fingerprint of the solver inputs (ADR-014 section 5). A ready run of the same project with that fingerprint gives its order without asking the optimizer; the guard checks it and totals are recomputed. memo_hit shows in the poll payload and the run event. ?ignore_memo=true solves afresh.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-07"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "A Calculate whose solver inputs equal those of a ready run of the same project stores a ready run with that run's order without asking the optimizer; memo_hit is true in the poll payload and in plan.run.completed.",
+            "On a memo hit the totals are recomputed: after an off-road speed change the order is reused and the track durations change.",
+            "Changing any one fingerprint input and nothing else (an included item, an anchor, a track's direction version or point, a leg's distance, the road map, the objective, the budget, the solver identity) gives a miss and a fresh solve.",
+            "The memo holds across a restart: run #3 of Dolomiti 2028 after the restart is a memo hit with the same order, legs and totals as run #1.",
+            "A reused order passes the guard before it is stored, a violation stores a Failed run, and a Failed run is never a memo source.",
+            "POST plan-runs?ignore_memo=true solves afresh with memo_hit false and ignore_memo true, gives the same refusals, and leaves earlier runs untouched."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "Identical inputs produce identical plans | tests/unit/domain/planning/test_fingerprint.py | tests/unit/application/planning/test_fingerprint_memo.py",
+          "files_to_modify": [
+            "src/overland_planner/domain/planning/fingerprint.py",
+            "src/overland_planner/application/planning/fingerprint_memo.py",
+            "src/overland_planner/application/planning/plan_request_job.py",
+            "src/overland_planner/application/planning/plan_request_service.py",
+            "src/overland_planner/application/planning/plan_job_registry.py",
+            "src/overland_planner/application/planning/facade.py",
+            "src/overland_planner/application/ports/plan_run_repository.py",
+            "src/overland_planner/adapters/persistence/plan_run_repository.py",
+            "src/overland_planner/adapters/solver/ortools_tour_solver.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/domain/planning/test_fingerprint.py",
+            "tests/unit/application/planning/test_fingerprint_memo.py",
+            "tests/unit/application/planning/planning_doubles.py",
+            "tests/unit/application/planning/test_plan_job_registry.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/plan_steps.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 02, US-05 S1, FR-5.6, D15 as amended, D42, D74, D124; ADR-014 section 5 and its D124 amendment, ADR-015 line 21 (ignore_memo), ADR-009 (guard after a memo hit), brief section 4 (FingerprintMemo in application/planning; DESIGN component decomposition names Fingerprint in domain/planning; both are NEW files the design plans), brief section 5 (poll fields memo_hit, ignore_memo). STATE AT 01b: there is no memo. #13 turns green at 05-06 without it, because the solve is deterministic; no scenario sees the reuse itself, so this step's evidence is memo_hit in the poll payload and event plus the unit properties. FINGERPRINT: SHA-256 over the canonical model as ADR-014 section 5 lists it, as far as it exists today: node item ids in stable order, quantised entry/exit/location, direction_version and canonical_sha256 per track, every arc cost, objective, provider_id (05-04 names the road map), the budget and a solver identity (OR-Tools version, first-solution strategy, metaheuristic) published as a constant by the solver adapter and passed in by the composition root. Weighting mode, phase limits and retrace penalties (D124) do not exist yet; prefix a fingerprint scheme version, so later slices that add inputs miss instead of hitting an old memo. The off-road speed is not in the fingerprint: it changes totals, not the order (ADR-014: totals, report and warnings are always recomputed). The source is the latest ready run of the same project with that fingerprint; its order is read from its stored itinerary's item ids. A memo source made by a stopped or time-limited run keeps its label (D74), which arrives with slice 03. COMPATIBILITY: steps/in_memory_planning.py builds PlanRequestJob with exactly unit_of_work, legs, solver, budget, clock, event_log and files; the memo and the solver identity must be optional with defaults that keep that call valid. The A-6 property plans 'without reusing earlier plans' in a fresh composition each time, so it never hits the memo. MEMO VS WAIVER W1, open decision (d): in 'A plan that would break a hard rule is never shown' the armed second Calculate has the same inputs as run #1, so with the memo it would reuse run #1's order, never ask RuleBreakingTourSolver and store a ready run, and the scenario would fail. Planned default, pending the user: that scenario's armed Calculate goes with ?ignore_memo=true (the optimizer is then really asked to propose), done in the shared press in steps/plan_steps.py, keyed on a world flag the W1 Given sets. This edits a DISTILL step file (not the feature text); if the user refuses it, the memo moves to slice 03 with Stop and the rest of this step is dropped. Run the full 01b and 02 suites: any other scenario that relies on a second identical Calculate reaching the solver shows up there. D212 CARRY-OVER: this step touches PlanJobRegistry's poll payload and plan.job.finished; pin the elapsed_ms scale of plan.job.finished so a changed unit fails. `make openapi-snapshot`. Local check: `--run-pending=slice-02 -k 'identical_inputs or break_a_hard_rule'` and `--run-pending=slice-01b`. Commit: 'feat(planning): fingerprint memo'. Crafter stops at the commit; no push.\n\nORCHESTRATOR NOTE: 05-04 to 05-08 are the slice's planning range (domain/routing, domain/planning, application/routing, application/planning); push it alone so job 8 stays well inside its 75 min (D213). 05-09 and 05-10 touch no domain or application file, so job 8 skips that push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: for any model the fingerprint is stable under rebuilding and changes under each single-input change (every input on every generated model, not one random draw, D212); for any sequence of Calculates over a scripted solver, the solver is asked iff no ready run of the project has the fingerprint or ignore_memo is set, and the universe {plan_runs, solver_calls} changes by one run and at most one call."
+        },
+        {
+          "id": "05-09",
+          "name": "Itinerary columns and totals readable on a 390 px phone",
+          "description": "The browser itinerary shows every FR-6.1 column and a Totals block (road, off-road and total km and time), readable at 390 px with no horizontal scrolling. A Failed run shows its report reason instead of the code (D211).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-08"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "On a 390 px wide screen Giulia reads every stop and the totals of plan run #4 without horizontal scrolling; every row lies within the screen.",
+            "An element labelled Totals shows road, off-road and total km to one decimal as the API's values round, and road, off-road and total time as 9h40, 8h10, 17h50.",
+            "Each row shows its type, its leg km and time and its cumulative km; a track row also shows its track km and off-road time; a run stored before totals existed still renders, without totals.",
+            "A Failed run reads 'This plan run failed (internal invariant violation)' from its report reason, and the code only for a run that has no report.",
+            "The Playwright scenario has really run: it reports passed, not skipped."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "Giulia reads the itinerary on her phone | web/src/lib/Itinerary.test.ts | web/src/lib/PlanPanel.test.ts | web/src/lib/duration.test.ts",
+          "gated_scenarios": [
+            {
+              "title": "Giulia reads the itinerary on her phone",
+              "gate": null
+            }
+          ],
+          "files_to_modify": [
+            "web/src/lib/api.ts",
+            "web/src/lib/Itinerary.svelte",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/duration.ts",
+            "web/src/lib/Itinerary.test.ts",
+            "web/src/lib/PlanPanel.test.ts",
+            "web/src/lib/duration.test.ts"
+          ],
+          "implementation_notes": "Slice 02, US-05 S5, FR-6.1/6.2, D211; brief section 5 driving port 1. ROLES fixed by tests/e2e/phone-itinerary.spec.ts (DISTILL, not to be edited): list named Itinerary with one listitem per stop, and an element found by getByLabel('Totals') whose text holds `N.N km` for road_km, offroad_km and total_km and `XhMM` for road_s, offroad_s and total_s. ROUNDING MUST MATCH THE BINDING: km go through the existing web/src/lib/legKm.ts (ties to even, judged on x * 4, as Python's `:.1f`); durations go through a new web/src/lib/duration.ts matching direction_steps.py hours_minutes: minutes = Python round(seconds / 60), which rounds an exact half to even (90 s gives 2 min, 150 s gives 2 min), then `h` and two-digit minutes. Seconds may be fractional (off-road time = km / speed), so an exact half occurs only when seconds is an integer ending in 30 s past the minute; add vitest cases for 90 s, 150 s, 34,800 s (9h40) and 8,208 s (2h17). TRACK ROW TEXT: rows still show entry and exit coordinates (D202); the brief's 'Pian dell'Alpe -> Sestriere' row text is open decision (c), not built here. D211: the placeholder 'This plan run failed (<reason code>)' takes report.reason when present. No removal dialog or off-road speed field in the UI: no scenario drives them through the browser (open decision g). BEFORE RUNNING: `npx vite build` in web (the server serves web/dist); `npx --no-install playwright install chromium` once; steps/browser.py fails in CI and skips outside it without the package, so use `-rs`: `uv run pytest -q -rs tests/acceptance/overland_route_planner_mvp/test_slice_02.py --run-pending=slice-02 -k on_her_phone`, and report PASSED. Commit: 'feat(web): itinerary columns and totals on the phone'. Crafter stops at the commit; no push.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nEXEMPT FROM PARADIGM: single-shot UI rendering in TypeScript (no Hypothesis in the web stack) and a single-example browser journey. Compensate with property-based test at unit level on adjacent slot: the itinerary and totals arithmetic of 05-05 and the stored totals of 05-06; vitest cases here cover the rounding ties and each run state. Acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks."
+        },
+        {
+          "id": "05-10",
+          "name": "Every slice-02 scenario blocking in CI, A-6 in its own job; slice 02 ends",
+          "description": "Removes @pending from the slice-02 feature. CI job 2 excludes slow, so the A-6 property runs in a new parallel job at profile ci; pre-push stays under five minutes. Confirms the five ALREADY_GREEN scenarios now run blocking.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "05-02",
+            "05-09"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Every slice-02 scenario passes without --run-pending and is blocking in CI: @pending removed, the rest of the feature text byte-identical, slice-02 in PENDING_FLAGS.",
+            "CI job 2 selects every slice-02 scenario except the A-6 property; a new parallel job selects exactly the A-6 property, runs it at Hypothesis profile ci within its timeout, and fails when it selects nothing.",
+            "Pre-push selects the HC-1, HC-5 and A-2 properties and the refusal and settings scenarios, but no solver_child or slow scenario, and the whole pre-push pytest run stays under five minutes (time reported).",
+            "The mutation kill rate on the slice's domain and application files is at least 80 %."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_02.py",
+          "scenario_name": "The Assietta is driven from Pian dell'Alpe to Sestriere even when reversing would be shorter | A loop trail is driven in its recorded order | Any project planned twice from scratch gets the same plan | tests/ci/test_ci_workflow.py",
+          "files_to_modify": [
+            "tests/acceptance/overland_route_planner_mvp/slice-02-directional-optimizer.feature",
+            ".github/workflows/ci.yml",
+            "tests/ci/test_ci_workflow.py"
+          ],
+          "implementation_notes": "Slice 02; D170, D199, D213, D215, D216. PRECONDITION: open decision (a) is answered and 'Removing the Start POI clears the Start' passes; if not, stop and report. FEATURE: remove only `@pending` from the feature-level tag line (the only allowed feature-file edit); check with `git diff` that nothing else moved, and add a pin like test_slice_01b_scenarios_run_without_being_enabled. PENDING_FLAGS gains `--run-pending=slice-02` (D170 precedent at 04-11); update the pin at tests/ci/test_ci_workflow.py line 128. JOB 2 TODAY DOES NOT EXCLUDE slow: its expression is `-m 'not real_provider and not pi'` (ci.yml line 238), so once @pending goes it would run A-6 (200 projects x 2 solves at budget 10,000, about 15-20 min in CI by D216) inside its 20-min timeout. Change it to `not real_provider and not pi and not slow` and update the pin at test_ci_workflow.py line 138; job 2 keeps the browser scenarios (test_job_2_selection_includes_the_browser_scenario). NEW JOB `slow-properties` (name '10 slow-properties'): needs changes, runs when code changed, ubuntu-24.04, HYPOTHESIS_PROFILE ci, the same PLANNER_TEST_WORKSPACE/DATA_DIR env and uv set-up as job 2 (no web build, no browser: the property runs in-process), `uv run pytest -q $PENDING_FLAGS -m slow`, timeout-minutes 40, measured on the first run and reported. pytest exits 5 when nothing is selected, which fails the job, so a lost tag cannot pass silently; test_ci_workflow.py proves that the job's expression collects exactly the A-6 scenario and that job 2's collects it not. Whether publish needs the new job is open decision (h); the planned default adds it to publish.needs and to the if-condition with the other blocking jobs (DEVOPS table: blocking unless marked), and test_publish_gating_matches_d160 is updated. PRE-PUSH: `.pre-commit-config.yaml` and Makefile PYTEST_FAST already use `not slow and not solver_child`; no change. test_slice_02.py marks every scenario that solves in the child or opens a browser as solver_child, so pre-push gains only the three properties (about 15 s at profile dev) and the refusals and settings scenarios; time the whole pre-push pytest run and report it against the five-minute budget (DISTILL measured 106 s before slice 02). WEEKLY: weekly.yml deep-properties (`-m 'not real_provider and not pi and not walking_skeleton and not ui'`, profile deep, 90 min) will also run A-6 at 200 cases from now on; report its next duration, no change here. ALREADY_GREEN: the Assietta direction and the loop order scenarios (and the three properties, 05-05) passed before this phase; this step proves them blocking. Run the full local suite and `make mutate BASE=<slice-02 start>` (>= 80 %). Commit: 'test(acceptance): slice 02 blocking in CI'. LAST STEP OF SLICE 02: the crafter stops at the commit and never pushes.\n\nORCHESTRATOR GATE (after this step): push and verify CI green, including the new slow-properties job's duration and job 2's duration against its 20-min timeout. Then, at a start time the user names: make deploy to the Pi (Alembic 0005 -> 0006 with the automatic pre-migration copy) and the dogfood moment: Marco loads his 3 favourite trails and checks that the Assietta is never planned Sestriere -> Pian dell'Alpe. Per D202 the rows show coordinates, so the check reads the entry and exit coordinates, or waits for open decision (c). Rollback: a release at 0005 refuses a 0006 database (db_newer_than_app), so rolling back needs the snapshot and `alembic downgrade 0005` first (D90).\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nEXEMPT FROM PARADIGM: workflow and test-gate configuration with one observable outcome each. Compensate with property-based test at unit level on adjacent slot: the guard and assembler properties of 05-05 and the memo properties of 05-08; the acceptance properties themselves (HC-1, HC-5, A-2, A-6) are the slice's invariants. Acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks."
+        }
+      ]
     }
   ],
   "implementation_scope": {
@@ -1268,15 +1600,19 @@
     ]
   },
   "validation": {
-    "status": "approved",
-    "scope": "phase 04 (slice 01b)",
-    "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
-    "approved_at": "2026-11-04",
+    "status": "pending_review",
+    "scope": "phase 05 (slice 02)",
     "previous_approval": {
       "status": "approved",
-      "scope": "phases 01-03",
-      "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
-      "approved_at": "2026-11-02"
+      "scope": "phase 04 (slice 01b)",
+      "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
+      "approved_at": "2026-11-04",
+      "previous_approval": {
+        "status": "approved",
+        "scope": "phases 01-03",
+        "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
+        "approved_at": "2026-11-02"
+      }
     }
   }
 }
