@@ -31,6 +31,12 @@ def test_a_plan_that_would_break_a_hard_rule_is_never_shown() -> None:
 
 
 @pytest.mark.solver_child
+@scenario(FEATURE, "Removing the Start POI clears the Start")
+def test_removing_the_start_poi_clears_the_start() -> None:
+    """Real solve before the removal, so there is a plan to mark Stale (D217)."""
+
+
+@pytest.mark.solver_child
 @scenario(FEATURE, "A trip with only a Start and an End is a direct road route")
 def test_a_trip_with_only_a_start_and_an_end() -> None:
     """Real solve."""

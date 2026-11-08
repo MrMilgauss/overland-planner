@@ -521,13 +521,12 @@ def then_project_has_no_start_and_no_end(world: PlannerWorld) -> None:
 
 @then("the plan is marked Stale")
 def then_the_plan_is_marked_stale(world: PlannerWorld) -> None:
-    runs = runs_by_number(world)
-    assert runs, (
-        "there is no plan to be marked Stale: the scenario computes none before the removal "
-        "(DISTILL slice 02 open question, red-classification.md)"
-    )
-    latest = runs[max(runs)]
-    assert latest.get("stale") is True, f"plan run #{latest['number']} is not marked Stale: {latest}"
+    """The run the Given computed before the removal (D217); its number is not asserted (branch fixture)."""
+    computed = world.scratch.get("plan_run_id")
+    assert computed is not None, "no plan run was computed before the removal"
+    run = next((run for run in runs_by_number(world).values() if str(run["id"]) == computed), None)
+    assert run is not None, f"the plan run computed before the removal is gone: {computed}"
+    assert run.get("stale") is True, f"the plan computed before the removal is not marked Stale: {run}"
 
 
 @then(parsers.re(r'Calculate is refused with "(?P<message>[^"]+)"'))

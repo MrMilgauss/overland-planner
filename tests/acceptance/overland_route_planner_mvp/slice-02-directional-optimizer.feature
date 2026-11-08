@@ -84,6 +84,7 @@ Feature: Direction-safe plans with fixed Start and End
   @US-04 @J-01 @HC-2 @error
   Scenario: Removing the Start POI clears the Start
     Given "Casa Marco, Torino" is Start and End
+    And Marco has pressed Calculate
     When Marco confirms the removal of "Casa Marco, Torino" from the project
     Then the project has no Start and no End
     And the plan is marked Stale
