@@ -44,6 +44,11 @@ BADGE_TO_ANCHOR = {"S/E": "start_end", "Start": "start", "End": "end"}
 REFUSALS = {  # what Marco reads -> the status and code of that refusal (brief §5, §8; D183)
     "Optimizer unavailable - nothing was changed": (503, "optimizer_unavailable"),
     "A plan is already being calculated for this project": (409, "job_active"),
+    # slice 02 (D201 for the End)
+    "Set the Start before calculating": (422, "missing_anchor"),
+    "Set the End before calculating": (422, "missing_anchor"),
+    "Only places (POIs) can be the Start or End": (422, "validation_error"),
+    "Off-road speed must be more than 0 km/h": (422, "validation_error"),
 }
 
 

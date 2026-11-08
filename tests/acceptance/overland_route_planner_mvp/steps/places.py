@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "gpx"
+ROAD_MAPS = FIXTURES.parent / "road-maps"
 ENTRY_EXIT_TOLERANCE_M = 50.0
 
 
@@ -29,6 +30,18 @@ PLACES = {
         Place("Casa Marco, Torino", 45.0703, 7.6869),
         Place("Briancon", 44.8990, 6.6430),
         Place("Aosta", 45.7370, 7.3200),
+        # slice 02
+        Place("Hotel Sestriere", 44.9580, 6.8790),
+        Place("Rifugio Pian dell'Alpe", 45.0560, 7.0410),
+        Place("Bardonecchia", 45.0780, 6.7040),
+        Place("Cortina d'Ampezzo", 46.5405, 12.1357),
+        Place("Lago di Braies", 46.6943, 12.0855),
+        Place("Passo Giau", 46.4836, 12.0539),
+        Place("Passo Falzarego", 46.5192, 12.0086),
+        Place("Rifugio Auronzo", 46.6125, 12.2953),
+        Place("Misurina", 46.5819, 12.2531),
+        Place("Passo Valparola", 46.5317, 11.9917),
+        Place("Cuneo", 44.3845, 7.5427),
     )
 }
 
@@ -49,6 +62,9 @@ TRAIL_FILES = {
     "empty.gpx": TrailFile("empty.gpx"),
     "waypoints-only.gpx": TrailFile("waypoints-only.gpx"),
     "trap.gpx": TrailFile("trap.gpx"),
+    # slice 02 (D198: synthetic, generated for the scenarios' numbers; never a third party's recording)
+    "jafferau-loop.gpx": TrailFile("jafferau-loop.gpx", "Jafferau loop", 18.9),
+    "maira-varaita-ridge.gpx": TrailFile("maira-varaita-ridge.gpx", "Maira-Varaita ridge", 69.5),
 }
 
 

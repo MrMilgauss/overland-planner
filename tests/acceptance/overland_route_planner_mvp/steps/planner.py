@@ -69,12 +69,23 @@ class PlannerSession:
     def add_poi(self, project_id: str, name: str, lat: float, lon: float) -> httpx.Response:
         return self._request("POST", f"/api/projects/{project_id}/pois", json={"name": name, "lat": lat, "lon": lon})
 
-    def set_anchors(self, project_id: str, start_item_id: str, end_item_id: str) -> httpx.Response:
+    def set_anchors(self, project_id: str, start_item_id: str | None, end_item_id: str | None) -> httpx.Response:
+        """`None` keeps that anchor unset (slice 02: "set X as Start" while there is no End)."""
         return self._request(
             "PUT",
             f"/api/projects/{project_id}/anchors",
             json={"start_item_id": start_item_id, "end_item_id": end_item_id},
         )
+
+    # --- catalog, slice 02 (brief §5: `?type=`, `PATCH /api/projects/{id}`, `DELETE .../items/{item_id}`) ----------
+    def items_of_type(self, project_id: str, item_type: str) -> httpx.Response:
+        return self._request("GET", f"/api/projects/{project_id}/items", params={"type": item_type})
+
+    def update_project(self, project_id: str, **fields: Any) -> httpx.Response:
+        return self._request("PATCH", f"/api/projects/{project_id}", json=fields)
+
+    def remove_item(self, project_id: str, item_id: str) -> httpx.Response:
+        return self._request("DELETE", f"/api/projects/{project_id}/items/{item_id}")
 
     # --- planning -------------------------------------------------------------------------------------
     def calculate(self, project_id: str) -> httpx.Response:

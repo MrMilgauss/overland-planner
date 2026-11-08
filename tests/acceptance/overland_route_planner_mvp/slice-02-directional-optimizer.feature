@@ -106,7 +106,7 @@ Feature: Direction-safe plans with fixed Start and End
     When Marco recalculates without changing anything
     Then plan runs #2 and #3 of "Dolomiti 2028" have the same order, legs and totals as plan run #1
 
-  @US-05 @J-03 @A-6 @FR-5.6 @property
+  @US-05 @J-03 @A-6 @FR-5.6 @property @slow
   Scenario: Any project planned twice from scratch gets the same plan
     Given 200 randomly generated projects with 2 to 30 included items
     When each is planned twice with the default search budget and without reusing earlier plans

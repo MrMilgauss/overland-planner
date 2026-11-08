@@ -1,0 +1,26 @@
+# Scripted road map (MOCK_PLAN, brief sections 6 and 12) for plan run #4 of "Alpi Occidentali giugno 2027" (slice 02,
+# US-05): a round trip from "Casa Marco, Torino" over "Strada dell'Assietta", "Jafferau loop" and "Maira-Varaita ridge".
+#
+# DISTILL's proposal of the file the offline road map reads; DELIVER owns the format. Points are [lat, lon] and match
+# the stored points at 6 decimals. A listed pair answers its distance and road time; every other pair keeps the
+# default, straight line x detour_factor, Confirmed (brief section 6).
+#
+# The cheapest order is the only one without a 900 km pair: Casa Marco -> Assietta -> Jafferau -> Maira-Varaita ->
+# Casa Marco. Its road legs: 86.1 + 168.2 + 172.4 + 185.6 = 612.3 km, 1h25 + 2h40 + 2h45 + 2h50 = 9h40 (34,800 s).
+# Off-road: 34.2 + 18.9 + 69.5 = 122.6 km; at 15 km/h 8h10. Row 2 (Assietta): leg 86.1 km, cumulative 120.3 km.
+detour_factor: 1.3
+pairs:
+  # the trip's own legs
+  - {from: [45.0703, 7.6869], to: [45.056, 7.041], distance_m: 86100, duration_s: 5100}  # Casa Marco -> Assietta (Pian dell'Alpe)
+  - {from: [44.958, 6.879], to: [45.078, 6.704], distance_m: 168200, duration_s: 9600}  # Assietta (Sestriere) -> Jafferau (Bardonecchia)
+  - {from: [45.078, 6.704], to: [44.564, 7.117], distance_m: 172400, duration_s: 9900}  # Jafferau -> Maira-Varaita (Colle di Sampeyre)
+  - {from: [44.494876, 7.773677], to: [45.0703, 7.6869], distance_m: 185600, duration_s: 10200}  # Maira-Varaita -> Casa Marco
+  # every other pair of the model: 900 km, 15 h
+  - {from: [45.0703, 7.6869], to: [45.078, 6.704], distance_m: 900000, duration_s: 54000}
+  - {from: [45.0703, 7.6869], to: [44.564, 7.117], distance_m: 900000, duration_s: 54000}
+  - {from: [44.958, 6.879], to: [44.564, 7.117], distance_m: 900000, duration_s: 54000}
+  - {from: [44.958, 6.879], to: [45.0703, 7.6869], distance_m: 900000, duration_s: 54000}
+  - {from: [45.078, 6.704], to: [45.056, 7.041], distance_m: 900000, duration_s: 54000}
+  - {from: [45.078, 6.704], to: [45.0703, 7.6869], distance_m: 900000, duration_s: 54000}
+  - {from: [44.494876, 7.773677], to: [45.056, 7.041], distance_m: 900000, duration_s: 54000}
+  - {from: [44.494876, 7.773677], to: [45.078, 6.704], distance_m: 900000, duration_s: 54000}

@@ -251,6 +251,8 @@ def given_project_has_track_from_to(world: PlannerWorld, project: str, track: st
 
 @given(parsers.re(r'"(?P<name>[^"]+)" is Start and End'))
 def given_is_start_and_end(world: PlannerWorld, name: str) -> None:
+    if world.project_id is None:  # slice 02 opens with this Given: the feature's trip
+        ensure_project(world, FIRST_TRIP)
     ensure_item(world, name)
     set_anchors(world, name, name)
     require_success(world, f"set {name!r} as Start and End")

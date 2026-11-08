@@ -82,3 +82,49 @@ class FirstPlanJourney:
         )
         seen: dict[str, Any] = json.loads((self._workdir / "result.json").read_text())
         return BrowserRun(seen["stop_rows"], seen["downloaded_name"], self._workdir / "downloaded.gpx")
+
+
+@dataclass(frozen=True)
+class PhoneView:
+    """What a phone screen showed (slice 02, `tests/e2e/phone-itinerary.spec.ts`): the page's own width against the
+    screen's, each itinerary row with its text and horizontal extent, and the totals text (None when absent)."""
+
+    screen_width: int
+    page_width: int
+    rows: list[dict[str, Any]]
+    totals_text: str | None
+
+
+class PhoneItineraryJourney:
+    """Giulia opens a project's results on a 390 px wide phone screen (a viewport, not a real device)."""
+
+    SCREEN_WIDTH = 390
+
+    def __init__(self, project_id: str, workdir: Path) -> None:
+        self._project_id = project_id
+        self._workdir = workdir
+
+    def run(self, planner_url: str) -> PhoneView:
+        _require_playwright()
+        _require_current_web_page()
+        self._workdir.mkdir(parents=True, exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k != "E2E_START_LOCAL"}
+        env.update(
+            {
+                "PLANNER_URL": planner_url,
+                "PHONE_PROJECT_ID": self._project_id,
+                "PHONE_SCREEN_WIDTH": str(self.SCREEN_WIDTH),
+                "PHONE_RESULT_DIR": str(self._workdir),
+                "NODE_PATH": str(WEB_DIR / "node_modules"),
+                "NO_COLOR": "1",
+            }
+        )
+        command = [
+            "npx", "--no-install", "playwright", "test", "phone-itinerary", "--project=chromium", "--reporter=line"
+        ]  # fmt: skip
+        result = subprocess.run(
+            command, cwd=WEB_DIR, env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S, check=False
+        )
+        assert result.returncode == 0, f"Giulia could not open the results:\n{(result.stdout + result.stderr)[-1500:]}"
+        seen: dict[str, Any] = json.loads((self._workdir / "result.json").read_text())
+        return PhoneView(seen["screen_width"], seen["page_width"], seen["rows"], seen["totals_text"])
