@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from overland_planner.adapters.http.schemas import (
@@ -18,6 +18,7 @@ from overland_planner.adapters.http.schemas import (
 )
 from overland_planner.adapters.http.upload_limits import FILES_FIELD, UploadLimits, read_track_files
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
+from overland_planner.domain.catalog.item import ItemType
 
 # The body is read by `read_track_files` (bounded, never spooled to disk), so the schema is declared here.
 _TRACK_UPLOAD_BODY: dict[str, Any] = {
@@ -82,11 +83,19 @@ def catalog_routes(use_cases: CatalogUseCases, limits: UploadLimits) -> APIRoute
 
     @router.put("/{project_id}/anchors")
     def set_anchors(project_id: str, body: AnchorsChoice) -> ProjectResource:
-        """Replaces Start and End. Unknown ids answer 404; a track or another project's item 422; nothing changes."""
+        """Replaces Start and End; `null` leaves one unset. Unknown ids answer 404; a track or another project's item
+        422; nothing changes."""
         return ProjectResource.of(anchors.set(project_id, body.start_item_id, body.end_item_id))
 
     @router.get("/{project_id}/items")
-    def project_items(project_id: str) -> list[ItemResource]:
-        return [ItemResource.of(item) for item in catalog.items(project_id)]
+    def project_items(project_id: str, type: ItemType | None = None) -> list[ItemResource]:
+        """Every item in the order added, or only those of `type`; an unknown type answers 422."""
+        return [ItemResource.of(item) for item in catalog.items(project_id, type)]
+
+    @router.delete("/{project_id}/items/{item_id}", status_code=204)
+    def remove_item(project_id: str, item_id: str) -> Response:
+        """Clears any anchor the item held; an unknown item or one of another project answers 404; plan runs stay."""
+        catalog.remove_item(project_id, item_id)
+        return Response(status_code=204)
 
     return router

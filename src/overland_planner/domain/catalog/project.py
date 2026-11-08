@@ -49,3 +49,7 @@ class Project:
     def anchored(self, anchors: Anchors) -> Project:
         """The project with new Start and End, replacing the previous ones: one more catalog change."""
         return replace(self, anchors=anchors).revised()
+
+    def item_removed(self, item_id: str) -> Project:
+        """The project once one of its items is removed: any anchor it held is unset; one more catalog change."""
+        return replace(self, anchors=self.anchors.without(item_id)).revised()

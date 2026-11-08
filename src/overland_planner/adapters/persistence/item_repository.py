@@ -62,6 +62,10 @@ class SqlAlchemyItemRepository:
         query = _with_details().where(items.c.project_id == project_id).order_by(items.c.position)
         return [_item(row) for row in self._connection.execute(query).mappings()]
 
+    def remove(self, item_id: str) -> None:
+        """Its `tracks` or `pois` row goes with it (ON DELETE CASCADE); the track's files stay (ADR-018 R2)."""
+        self._connection.execute(items.delete().where(items.c.id == item_id))
+
 
 def _with_details() -> Select[Any]:
     return (

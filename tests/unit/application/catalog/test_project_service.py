@@ -3,7 +3,10 @@
 Driving port: `ProjectService` from the catalog facade. Driven port: `CatalogUnitOfWork` (in-memory double in
 `tests/common/catalog_fakes.py`, honouring commit/rollback like the SQLite adapter). Observable universe = what
 Marco sees through the driving port: `projects.names` (the list) and `project.items` (the open project's items).
-Test Budget: 4 behaviors (create+list, blank refused, open unknown refused, revision per change) x 2 = 8; 4 used.
+Test Budget: 7 behaviors (create+list, blank refused, open unknown refused, revision per change, removal clears the
+anchors it held + revision, unknown or foreign item not removed, items listed by type) x 2 = 14; 7 used.
+Removal universe = `project.items`, `project.anchors`, `project.revision` of the project and the same three of
+another project (plan runs live outside the catalog and are covered by the acceptance scenarios).
 """
 
 from __future__ import annotations
@@ -15,12 +18,20 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from overland_planner.application.catalog.facade import ProjectNotFoundError, ProjectService
+from overland_planner.application.catalog.facade import (
+    AnchorService,
+    ItemNotFoundError,
+    PoiService,
+    ProjectNotFoundError,
+    ProjectService,
+)
+from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.project import ProjectNameRequiredError
 from tests.common.catalog_fakes import InMemoryCatalog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
-from tests.common.state_delta import assert_state_delta
+from tests.common.state_delta import assert_state_delta, set_to
 
 UNIVERSE = {"projects.names", "project.items"}
 BLANK = st.text(alphabet=st.sampled_from([" ", "\t", "\n", chr(0xA0)]), max_size=8)
@@ -83,3 +94,114 @@ def test_each_project_gets_its_own_id_and_creation_time() -> None:
     first, second = service.create("Alpi"), service.create("Alpi")
     assert first.id != second.id
     assert service.open(first.id).created_at == datetime(2027, 6, 1, tzinfo=UTC)
+
+
+# --- removal and listing by type (slice 02, US-04 S2/S3) ----------------------------------------------------------
+TRIP_UNIVERSE = {f"{p}.{slot}" for p in ("project", "other") for slot in ("items", "anchors", "revision")}
+HERE = Coordinate(45.07, 7.69)
+
+
+def _trip(catalog: InMemoryCatalog, project_id: str, kinds: list[str]) -> list[str]:
+    """Adds one POI or track per kind, in order; the ids in the order added."""
+    places = PoiService(catalog.unit_of_work)
+    ids = []
+    for index, kind in enumerate(kinds):
+        if kind == "poi":
+            ids.append(places.add(project_id, f"Place {index}", 45.0, 7.0).id)
+            continue
+        track = TrackItem(
+            id=f"{project_id}-track-{index}",
+            project_id=project_id,
+            name=f"Trail {index}",
+            description=None,
+            original_sha256="a",
+            canonical_sha256="b",
+            direction_version=1,
+            point_count=2,
+            entry=HERE,
+            exit=HERE,
+            length_m=1.0,
+        )
+        with catalog.unit_of_work() as uow:
+            uow.items.add(track)
+            uow.commit()
+        ids.append(track.id)
+    return ids
+
+
+@st.composite
+def trips(draw: st.DrawFn) -> tuple[ProjectService, str, str, list[str], list[str]]:
+    """Two projects of POIs and tracks, each with any anchors among its POIs (or none)."""
+    catalog = InMemoryCatalog()
+    service = ProjectService(catalog.unit_of_work, FakeClock(datetime(2027, 6, 1, tzinfo=UTC)))
+    anchors = AnchorService(catalog.unit_of_work)
+    kinds = st.lists(st.sampled_from(["poi", "track"]), min_size=1, max_size=6)
+    project_id, other_id = service.create("Alpi").id, service.create("Dolomiti").id
+    ids, other_ids = _trip(catalog, project_id, draw(kinds)), _trip(catalog, other_id, draw(kinds))
+    for trip in (project_id, other_id):
+        places = [item.id for item in service.items(trip) if item.type == "poi"]
+        choice = st.sampled_from([None, *places])
+        start, end = draw(choice), draw(choice)
+        if (start, end) != (None, None):
+            anchors.set(trip, start, end)
+    return service, project_id, other_id, ids, other_ids
+
+
+def _trip_view(service: ProjectService, project_id: str, other_id: str) -> dict[str, Any]:
+    view: dict[str, Any] = {}
+    for prefix, trip in (("project", project_id), ("other", other_id)):
+        opened = service.open(trip)
+        view[f"{prefix}.items"] = tuple((item.id, item.type, item.anchor) for item in service.items(trip))
+        view[f"{prefix}.anchors"] = (opened.anchors.start_item_id, opened.anchors.end_item_id)
+        view[f"{prefix}.revision"] = opened.revision
+    return view
+
+
+@given(trip=trips(), data=st.data())
+def test_removing_an_item_drops_its_row_clears_the_anchors_it_held_and_adds_one_revision(
+    trip: tuple[ProjectService, str, str, list[str], list[str]], data: st.DataObject
+) -> None:
+    service, project_id, other_id, ids, _ = trip
+    removed = data.draw(st.sampled_from(ids))
+    before = _trip_view(service, project_id, other_id)
+
+    service.remove_item(project_id, removed)
+
+    start, end = before["project.anchors"]
+    anchors = (None if start == removed else start, None if end == removed else end)
+    expected = {
+        "project.items": set_to(tuple(row for row in before["project.items"] if row[0] != removed)),
+        "project.revision": set_to(before["project.revision"] + 1),
+    }
+    if anchors != before["project.anchors"]:
+        expected["project.anchors"] = set_to(anchors)
+    assert_state_delta(before, _trip_view(service, project_id, other_id), TRIP_UNIVERSE, expected, strict=True)
+
+
+@given(trip=trips(), data=st.data(), unknown=st.uuids().map(lambda u: u.hex))
+def test_an_unknown_item_or_an_item_of_another_project_is_not_removed_and_nothing_changes(
+    trip: tuple[ProjectService, str, str, list[str], list[str]], data: st.DataObject, unknown: str
+) -> None:
+    service, project_id, other_id, ids, other_ids = trip
+    before = _trip_view(service, project_id, other_id)
+    # Every refused case runs on every example (D212).
+    cases = [(project_id, unknown, ItemNotFoundError), (unknown, ids[0], ProjectNotFoundError)]
+    cases += [(project_id, foreign, ItemNotFoundError) for foreign in other_ids]
+    for target, item_id, error in cases:
+        with pytest.raises(error):
+            service.remove_item(target, item_id)
+
+    assert_state_delta(before, _trip_view(service, project_id, other_id), TRIP_UNIVERSE, {}, strict=True)
+
+
+@given(trip=trips())
+def test_items_of_a_type_are_the_items_of_that_type_in_the_order_added(
+    trip: tuple[ProjectService, str, str, list[str], list[str]],
+) -> None:
+    # bypass: a read changes nothing; the listing itself is the outcome, compared with the full list.
+    service, project_id, _, _, _ = trip
+    every = [(item.id, item.type, item.anchor) for item in service.items(project_id)]
+    for item_type in ("poi", "track"):
+        listed = [(item.id, item.type, item.anchor) for item in service.items(project_id, item_type)]
+        assert listed == [row for row in every if row[1] == item_type]
+    assert [item.id for item in service.items(project_id, None)] == [row[0] for row in every]

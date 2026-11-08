@@ -35,10 +35,10 @@ class PoiCreate(BaseModel):
 
 
 class AnchorsChoice(BaseModel):
-    """The Start and End item ids (HC-2): POIs of the project, the same one for a round trip. Both required in 01a."""
+    """The Start and End item ids (HC-2): POIs of the project, one POI for both on a round trip; `null` unsets one."""
 
-    start_item_id: str
-    end_item_id: str
+    start_item_id: str | None
+    end_item_id: str | None
 
 
 class ProjectResource(BaseModel):

@@ -169,7 +169,7 @@ describe('Workspace page', () => {
     [
       'setting Start and End',
       'PUT /api/projects/p1/anchors',
-      'Only a place of this project can be the Start or End',
+      'Only places (POIs) can be the Start or End',
       async () => {
         await fireEvent.change(screen.getByLabelText('Start'), { target: { value: 'i1' } });
         await fireEvent.change(screen.getByLabelText('End'), { target: { value: 'i1' } });

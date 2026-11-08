@@ -34,6 +34,10 @@ class ItemRepository(Protocol):
         """The project's items in the order they were added."""
         ...
 
+    def remove(self, item_id: str) -> None:
+        """Remove the item with its track or POI details."""
+        ...
+
 
 class CatalogUnitOfWork(UnitOfWork, Protocol):
     """A unit of work exposing the catalog repositories bound to its transaction."""

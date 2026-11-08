@@ -57,6 +57,9 @@ class _Items:
     def list(self, project_id: str) -> list[CatalogItem]:
         return [item for item in self._rows if item.project_id == project_id]
 
+    def remove(self, item_id: str) -> None:
+        self._rows[:] = [item for item in self._rows if item.id != item_id]
+
 
 class InMemoryCatalogUnitOfWork:
     def __init__(self, catalog: InMemoryCatalog) -> None:

@@ -2,7 +2,8 @@
 
 Driving port: the pure domain value `Anchors` (`Anchors.chosen(...)` and `marked(items)` are its public interface).
 Observable universe = the item rows as listed (`project.items`: id, type, anchor) and the refusal, if any.
-Test Budget: 2 behaviors (chosen rows carry the anchors, non-POI or foreign choice refused) x 2 = 4; 2 used.
+Test Budget: 3 behaviors (chosen rows carry the anchors, non-POI or foreign choice refused, an unset anchor is kept
+unset) x 2 = 6; 3 used.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from tests.common.predicates import rows_replaced
-from tests.common.state_delta import assert_state_delta, set_to
+from tests.common.state_delta import assert_state_delta, set_to, unchanged
 
 PROJECT = "p"
 UNIVERSE = {"project.items", "refusal"}
@@ -93,5 +94,29 @@ def test_a_track_or_a_place_of_another_project_is_refused_as_start_or_end(
         Anchors.chosen(PROJECT, start, end)
 
     after = _view(items, str(refusal.value))
-    expected = {"refusal": set_to("Only a place of this project can be the Start or End")}
+    expected = {"refusal": set_to("Only places (POIs) can be the Start or End")}
     assert_state_delta(before, after, UNIVERSE, expected, strict=True)
+
+
+@given(items=catalogs())
+def test_any_choice_of_places_or_none_is_exactly_the_anchors_and_any_track_or_foreign_item_is_refused(
+    items: list[CatalogItem],
+) -> None:
+    # Every (start, end) pair over POIs, tracks, another project's place and None runs on every example (D212).
+    candidates: list[CatalogItem | None] = [*items, _poi(0, "q"), None]
+    for start in candidates:
+        for end in candidates:
+            acceptable = all(c is None or (isinstance(c, PoiItem) and c.project_id == PROJECT) for c in (start, end))
+            before = {"anchors": (None, None), "refusal": None}
+            try:
+                anchors = Anchors.chosen(PROJECT, start, end)
+                after = {"anchors": (anchors.start_item_id, anchors.end_item_id), "refusal": None}
+            except AnchorNotAPlaceError as refusal:
+                after = {"anchors": before["anchors"], "refusal": str(refusal)}
+            chosen = (None if start is None else start.id, None if end is None else end.id)
+            expected = (
+                {"anchors": set_to(chosen) if chosen != (None, None) else unchanged()}
+                if acceptable
+                else {"refusal": set_to("Only places (POIs) can be the Start or End")}
+            )
+            assert_state_delta(before, after, {"anchors", "refusal"}, expected, strict=True)

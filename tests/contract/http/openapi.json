@@ -2,15 +2,29 @@
   "components": {
     "schemas": {
       "AnchorsChoice": {
-        "description": "The Start and End item ids (HC-2): POIs of the project, the same one for a round trip. Both required in 01a.",
+        "description": "The Start and End item ids (HC-2): POIs of the project, one POI for both on a round trip; `null` unsets one.",
         "properties": {
           "end_item_id": {
-            "title": "End Item Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Item Id"
           },
           "start_item_id": {
-            "title": "Start Item Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Item Id"
           }
         },
         "required": [
@@ -740,7 +754,7 @@
     },
     "/api/projects/{project_id}/anchors": {
       "put": {
-        "description": "Replaces Start and End. Unknown ids answer 404; a track or another project's item 422; nothing changes.",
+        "description": "Replaces Start and End; `null` leaves one unset. Unknown ids answer 404; a track or another project's item\n422; nothing changes.",
         "operationId": "set_anchors_api_projects__project_id__anchors_put",
         "parameters": [
           {
@@ -800,6 +814,7 @@
     },
     "/api/projects/{project_id}/items": {
       "get": {
+        "description": "Every item in the order added, or only those of `type`; an unknown type answers 422.",
         "operationId": "project_items_api_projects__project_id__items_get",
         "parameters": [
           {
@@ -809,6 +824,26 @@
             "schema": {
               "title": "Project Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "track",
+                    "poi"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
             }
           }
         ],
@@ -849,6 +884,58 @@
           }
         },
         "summary": "Project Items"
+      }
+    },
+    "/api/projects/{project_id}/items/{item_id}": {
+      "delete": {
+        "description": "Clears any anchor the item held; an unknown item or one of another project answers 404; plan runs stay.",
+        "operationId": "remove_item_api_projects__project_id__items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Remove Item"
       }
     },
     "/api/projects/{project_id}/plan-runs": {
