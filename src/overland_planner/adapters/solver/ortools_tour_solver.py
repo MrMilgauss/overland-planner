@@ -15,17 +15,17 @@ end mean (ADR-015's table): the final order when the child ended normally, else 
 ends (interpreter teardown can be slow on a loaded Pi) is ended like any other, and its final counts: the exit code
 then only shows the parent's signal.
 
-The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past
-`safety_bound_s` the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the
-project in 409 until a restart. The bound is the FEASIBILITY_LIMIT_S default, not the configurable limits of slice 03,
-and the normal stop is the budget, never the clock. `SOLVER_IDENTITY` is the solver's `identity`, which the composition
-root hands to the fingerprint memo.
+The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). No child waits
+without a bound (D200): the parent reads in short waits against the solve's deadlines on the `Clock` port
+(`read_tour_child`), never past the one that applies: the feasibility deadline until a valid incumbent arrived, then the
+optimisation deadline. At that deadline it ends the child with SIGTERM, then SIGKILL after 2 s: the last incumbent
+labelled `time_limit`, or Failed `timeout` without one (a hung child too). The budget ends a search that is quicker.
+`SOLVER_IDENTITY` is the solver's `identity`, which the composition root hands to the fingerprint memo.
 """
 
 from __future__ import annotations
 
 import multiprocessing
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -54,6 +54,7 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
     IncumbentObserver,
+    SolveDeadlines,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
@@ -66,7 +67,7 @@ from overland_planner.domain.planning.solver_model_builder import TourModel
 PROBE_TIMEOUT_S = 30.0  # bounds a hung child; a cold first import of OR-Tools took over 10 s once on the Mac
 _PROBE_SOLUTION_LIMIT = 100
 _REAP_TIMEOUT_S = 2.0
-SOLVE_SAFETY_BOUND_S = 600.0  # the FEASIBILITY_LIMIT_S default (D200)
+_WAIT_STEP_S = 0.25  # the longest wait on the pipe before the deadlines are checked again on the Clock port
 # What makes this solver's orders what they are, for the fingerprint memo (ADR-014 sections 3 and 5): the installed
 # OR-Tools release, read from its metadata without importing it (G1), and the search `tour_child` runs.
 SOLVER_IDENTITY = f"ortools=={version('ortools')};PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH"
@@ -109,21 +110,26 @@ class OrToolsTourSolver:
         child_main: Callable[[Connection], None] = solve_probe_instance_twice,
         timeout_s: float = PROBE_TIMEOUT_S,
         tour_child_main: TourChildMain = run_tour_child,
-        safety_bound_s: float = SOLVE_SAFETY_BOUND_S,
     ) -> None:
         self._child_main = child_main
         self._timeout_s = timeout_s
         self._tour_child_main = tour_child_main
-        self._safety_bound_s = safety_bound_s
 
     def probe(self) -> ProbeResult:
         return probe_verdict(self._observe_probe_child())
 
-    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
-        return tour_outcome(self._observe_tour_child(model, budget, on_incumbent), model)
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: SolveDeadlines,
+    ) -> TourOutcome:
+        return tour_outcome(self._observe_tour_child(model, budget, on_incumbent, deadlines), model)
 
     def _observe_tour_child(
-        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver
+        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver, deadlines: SolveDeadlines
     ) -> TourChildObservation:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
@@ -136,20 +142,17 @@ class OrToolsTourSolver:
             sender.close()
             return TourChildObservation(exit_code=None)
         sender.close()
-        messages: list[Any] = []
-        overran = False
+        reading = ChildReading()
         outlived_reap_wait = False
         try:
-            overran = not _read_until_the_end(
-                receiver, time.monotonic() + self._safety_bound_s, model, messages.append, on_incumbent
-            )
-            if not overran:
+            reading = read_tour_child(receiver, deadlines, model, on_incumbent)
+            if not reading.overran:
                 child.join(_REAP_TIMEOUT_S)
                 outlived_reap_wait = child.is_alive()
         finally:
             receiver.close()
             _end_if_running(child)
-        return TourChildObservation(child.exitcode, tuple(messages), overran, outlived_reap_wait)
+        return TourChildObservation(child.exitcode, reading.messages, reading.overran, outlived_reap_wait)
 
     def _observe_probe_child(self) -> ProbeObservation:
         context = multiprocessing.get_context("spawn")
@@ -172,7 +175,8 @@ class OrToolsTourSolver:
 @dataclass(frozen=True)
 class TourChildObservation:
     """What the parent saw of a solve child: its messages in order, up to its final or the pipe's end (an unreadable
-    message ends the reading). `outlived_reap_wait` is read before the parent ends the child."""
+    message ends the reading); `overran` when the deadline that applies came first. `outlived_reap_wait` is read
+    before the parent ends the child."""
 
     exit_code: int | None
     messages: tuple[Any, ...] = ()
@@ -182,10 +186,12 @@ class TourChildObservation:
 
 def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOutcome:
     """ADR-015's table of endings: budget end -> the final order; an abnormal end -> the last valid incumbent labelled
-    `optimizer_failed`, or Failed without one; a final without an order -> no route; past the safety bound -> timeout.
+    `optimizer_failed`, or Failed without one; a final without an order -> no route; the deadline that applies ->
+    the last valid incumbent labelled `time_limit`, or Failed `timeout` without one.
     """
+    incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
     if observation.overran:
-        return TourTimedOut()
+        return TourFound(order=incumbents[-1].order, ending="time_limit") if incumbents else TourTimedOut()
     ended_normally = observation.exit_code == 0 or observation.outlived_reap_wait
     final = next((message for message in observation.messages if _is_final(message)), None)
     if ended_normally and final is not None:
@@ -193,7 +199,6 @@ def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOut
             return TourNoRoute()
         if _is_complete_tour(final[1], model):
             return TourFound(order=_item_ids(final[1], model))
-    incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
     if incumbents:
         return TourFound(order=incumbents[-1].order, ending="optimizer_failed")
     return _failed(observation.exit_code)
@@ -209,25 +214,36 @@ def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
     return Incumbent(order=_item_ids(nodes, model), objective=objective)
 
 
-def _read_until_the_end(
-    receiver: Connection,
-    deadline_s: float,
-    model: TourModel,
-    keep: Callable[[Any], None],
-    on_incumbent: IncumbentObserver,
-) -> bool:
-    """Reads until the final, the pipe's end or an unreadable message; `False` when the deadline came first."""
-    while receiver.poll(max(0.0, deadline_s - time.monotonic())):
+@dataclass(frozen=True)
+class ChildReading:
+    """The messages the parent read from a solve child, in order, and whether the deadline that applies came first."""
+
+    messages: tuple[Any, ...] = ()
+    overran: bool = False
+
+
+def read_tour_child(
+    receiver: Connection, deadlines: SolveDeadlines, model: TourModel, on_incumbent: IncumbentObserver
+) -> ChildReading:
+    """Reads until the final, the pipe's end or an unreadable message, handing each valid incumbent to `on_incumbent`;
+    overran when the deadline that applies passed first: the feasibility one until a valid incumbent arrived, then the
+    optimisation one. It waits at most `_WAIT_STEP_S` at a time and never past that deadline."""
+    messages: list[Any] = []
+    found = False
+    while (remaining_s := deadlines.remaining_s(found=found)) > 0:
+        if not receiver.poll(min(remaining_s, _WAIT_STEP_S)):
+            continue
         message = _read_message(receiver)
         if message is _UNREADABLE:
-            return True
-        keep(message)
+            return ChildReading(tuple(messages))
+        messages.append(message)
         incumbent = incumbent_of(message, model)
         if incumbent is not None:
+            found = True
             on_incumbent(incumbent)
         if _is_final(message):
-            return True
-    return False
+            return ChildReading(tuple(messages))
+    return ChildReading(tuple(messages), overran=True)
 
 
 def _is_final(message: Any) -> bool:

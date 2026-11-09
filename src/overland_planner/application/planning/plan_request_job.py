@@ -7,7 +7,11 @@ Before anything is stored the guard judges the solver's order, then the assemble
 (ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). The solve runs
 holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
 fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
-totals are recomputed. Later slices add the snapping, ladder, Stop and limits to this sequence.
+totals are recomputed. Later slices add the snapping, ladder and Stop to this sequence.
+
+The solve is handed its deadlines (ADR-014 section 2, D58): the job's `SolveLimits` from the start of the job's work on
+the `Clock` port, so the road legs and the wait for the solver slot count. A Failed `timeout` run and its job's end say
+so in words with the run's number (D151, `run_messages`).
 
 The solver streams its incumbents to the job: the poll shows the last one with `found_at_s`, stamped on receipt by the
 `Clock` port's monotonic time from the start of the job's work, and the job's line counts them (`incumbents`). How a
@@ -42,6 +46,7 @@ from overland_planner.application.ports.plan_run_repository import NewPlanRun, P
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
+    SolveLimits,
     TourFound,
     TourOptimizerFailed,
     TourOutcome,
@@ -58,7 +63,7 @@ from overland_planner.domain.planning.invariant_guard import (
 from overland_planner.domain.planning.plan_run import PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.run_messages import NotFullyOptimised
+from overland_planner.domain.planning.run_messages import NotFullyOptimised, job_message
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable
 
@@ -98,6 +103,7 @@ class PlanRequestJob:
     event_log: EventLog
     files: FileStore
     memo: FingerprintMemo | None = None
+    limits: SolveLimits = field(default_factory=SolveLimits)
 
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
         """With a memo, a ready run of the project with the inputs' fingerprint gives the order and the solver is not
@@ -198,7 +204,8 @@ class PlanRequestJob:
 
     def _solve(self, model: TourModel, progress: PlanJobProgress, started_s: float) -> TourOutcome:
         incumbents = _Incumbents(self.clock, progress, started_s)
-        outcome = self.solver.solve(model, self.budget, incumbents.found)
+        deadlines = self.limits.from_start(self.clock, started_s)
+        outcome = self.solver.solve(model, self.budget, incumbents.found, deadlines=deadlines)
         progress.note(incumbents=incumbents.count)
         if isinstance(outcome, TourOptimizerFailed):
             progress.note(exit_code=outcome.exit_code, signal=outcome.signal)
@@ -221,7 +228,8 @@ class PlanRequestJob:
             memo_hit=project.memo_hit,
             ignore_memo=project.ignore_memo,
         )
-        return StoredRun(run.id, finding.failure_reason, finding.reproducible, finding.not_fully_optimised)
+        message = job_message(finding.failure_reason, run.number)
+        return StoredRun(run.id, finding.failure_reason, finding.reproducible, finding.not_fully_optimised, message)
 
     def _new_run(self, project: _PlannedProject, finding: _Finding, number: int) -> NewPlanRun:
         return NewPlanRun(

@@ -247,12 +247,24 @@ class _ScriptsInTurn:
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        _on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+    ) -> TourOutcome:
         self._gate.passing()
         script = self._scripts.pop(0)
         if isinstance(script, BaseException):
             raise script
         return script if script is not None else TourFound(order=model.node_item_ids)
+
+
+def _failed_job_message(reason: str | None, number: int) -> str | None:
+    """What an ended job says of its Failed run, as Marco reads it (D151); only a timeout has words yet."""
+    return f"No valid route found within the time limit - plan run #{number} failed" if reason == "timeout" else None
 
 
 def _row(run: NewPlanRun) -> tuple[Any, ...]:
@@ -333,7 +345,7 @@ def test_any_solver_outcome_ends_in_one_terminal_state_with_a_run_named_iff_one_
     if row is None:
         assert (job.state, job.reason, job.message, job.plan_run_id) == ("failed", None, FAILED_MESSAGE, None)
     else:
-        assert (job.state, job.reason, job.message) == ("done", row[2], None)
+        assert (job.state, job.reason, job.message) == ("done", row[2], _failed_job_message(row[2], row[0]))
         stored = planner.queries.get(str(job.plan_run_id))
         assert stored is not None, "the job names a run that is not stored"
         assert (stored.project_id, stored.number, stored.status, stored.failure_reason) == (PROJECT, *row[:3])
@@ -590,7 +602,8 @@ def test_every_ending_writes_one_log_row_a_refusal_none_and_a_failing_write_chan
     def end(job_id: str, press: Press) -> None:
         job = planner.wait_until_ended(job_id)
         state, reason, stored = _ending_of(press.script)
-        assert (job.state, job.reason, job.message) == (state, reason, None if stored else FAILED_MESSAGE)
+        message = _failed_job_message(reason, len(runs) + 1) if stored else FAILED_MESSAGE
+        assert (job.state, job.reason, job.message) == (state, reason, message)
         assert (job.plan_run_id is not None) == stored, f"a run is named iff one is stored: {job}"
         if stored:
             runs.append((len(runs) + 1, "ready" if reason is None else "failed", reason))
@@ -692,7 +705,14 @@ class SolverOnCue:
     def cue(self, script: Script) -> None:
         self._cues.put(script)
 
-    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        _on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+    ) -> TourOutcome:
         with self._lock:
             self.solves += 1
             self.solving += 1

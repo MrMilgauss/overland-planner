@@ -4,7 +4,9 @@ Mutation runs select unit and integration tests without `solver_child`, so job s
 by OR-Tools (the waivers W1/W2 stay acceptance-only). The script is a `TourOutcome`, an exception to raise, or `None`
 for the tour that visits the model's nodes in order. Like the real adapter it refuses a model without nodes or a budget
 that is not positive. Before it ends it streams its scripted `incumbents` to the job's observer, the fake clock moved
-on `incumbent_every_s` before each, as the solver child does (ADR-015, brief section 6).
+on `incumbent_every_s` before each, as the solver child does (ADR-015, brief section 6). It keeps the deadlines each
+solve was handed (`deadlines`; `None` for a caller that hands none) and refuses an optimisation deadline before the
+feasibility one, which the real adapter could not honour.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
     IncumbentObserver,
+    SolveDeadlines,
     TourFound,
     TourOutcome,
     ignore_incumbents,
@@ -47,14 +50,24 @@ class ScriptedTourSolver:
         self.gate = gate or Gate()
         self.models: list[TourModel] = []
         self.budgets: list[int] = []
+        self.deadlines: list[SolveDeadlines | None] = []
         self.threads: list[threading.Thread] = []
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: SolveDeadlines | None = None,
+    ) -> TourOutcome:
         assert model.node_item_ids, "a model has at least the Start and End nodes"
         assert budget > 0, "the budget must be positive"
+        assert deadlines is None or deadlines.feasibility_s <= deadlines.optimisation_s, "deadlines out of order"
+        self.deadlines.append(deadlines)
         self.models.append(model)
         self.budgets.append(budget)
         self.threads.append(threading.current_thread())

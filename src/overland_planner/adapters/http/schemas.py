@@ -160,7 +160,8 @@ class PlanJobResource(BaseModel):
     """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is true when the
     order came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each
     stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
-    `legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route."""
+    `legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended
+    job's `message` names its Failed run in words when the run has them (D151)."""
 
     state: PlanJobState
     reason: str | None
@@ -241,7 +242,9 @@ class PlanRunDetailResource(BaseModel):
     """A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the
     reason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run
     stored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run
-    flags; `messages` the lines the results show in words, such as "not fully optimised (optimizer failed)"."""
+    flags (`not_fully_optimised`: `optimizer_failed` or `time_limit`); `messages` the lines the results show in words,
+    such as "not fully optimised (time limit)" or, for a run failed on the feasibility limit, "No valid route found
+    within the time limit - plan run #N failed" (D151)."""
 
     id: str
     project_id: str

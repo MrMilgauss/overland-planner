@@ -39,4 +39,7 @@ class PlanRunQueries:
         """The stored run with its itinerary, totals and the lines it shows, or `None` for an unknown id."""
         with self._unit_of_work() as uow:
             detail = uow.plan_runs.get(plan_run_id)
-        return None if detail is None else replace(detail, messages=run_messages(detail.not_fully_optimised))
+        if detail is None:
+            return None
+        messages = run_messages(detail.not_fully_optimised, failure_reason=detail.failure_reason, number=detail.number)
+        return replace(detail, messages=messages)

@@ -3,6 +3,9 @@
 Universe = the settings the planner reads (brief section 12 keys + WEB_DIST_DIR + MIGRATIONS_DIR), named by their
 environment key. The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD) is set as a pair or not at all.
 The upload caps (MAX_UPLOAD_*) are positive integers; zero or negative refuses the start (ADR-011 Amendment 1).
+The solve limits (FEASIBILITY_LIMIT_S, OPTIMISATION_LIMIT_S; ADR-014 section 2, D116) are whole seconds above 0 and the
+feasibility limit may not exceed the optimisation limit; their own property draws the pair, so the generic environments
+leave them unset.
 """
 
 from __future__ import annotations
@@ -30,7 +33,11 @@ KEYS = (
     "MAX_UPLOAD_FILE_MB",
     "MAX_UPLOAD_REQUEST_MB",
     "MAX_UPLOAD_FILES",
+    "FEASIBILITY_LIMIT_S",
+    "OPTIMISATION_LIMIT_S",
 )
+LIMITS = ("FEASIBILITY_LIMIT_S", "OPTIMISATION_LIMIT_S")
+LIMIT_DEFAULTS = {"FEASIBILITY_LIMIT_S": 600, "OPTIMISATION_LIMIT_S": 1800}  # ADR-014 section 2
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")
 AUTH_PAIR = ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD")
 UNIVERSE = set(KEYS)
@@ -87,13 +94,15 @@ def observable(settings: Settings) -> dict[str, Any]:
         "MAX_UPLOAD_FILE_MB": settings.max_upload_file_mb,
         "MAX_UPLOAD_REQUEST_MB": settings.max_upload_request_mb,
         "MAX_UPLOAD_FILES": settings.max_upload_files,
+        "FEASIBILITY_LIMIT_S": settings.feasibility_limit_s,
+        "OPTIMISATION_LIMIT_S": settings.optimisation_limit_s,
     }
 
 
 @st.composite
 def environments(draw: st.DrawFn) -> tuple[dict[str, str], dict[str, Any]]:
     """A process environment with any subset of the planner's keys set to valid values, plus unrelated keys."""
-    chosen = draw(st.lists(st.sampled_from(KEYS), unique=True))
+    chosen = draw(st.lists(st.sampled_from([key for key in KEYS if key not in LIMITS]), unique=True))
     if set(chosen) & set(AUTH_PAIR):
         chosen = list(dict.fromkeys([*chosen, *AUTH_PAIR]))
     environ: dict[str, str] = draw(st.dictionaries(_unrelated_key, _printable, max_size=5))
@@ -177,3 +186,57 @@ def test_an_empty_upload_cap_falls_back_to_its_default(
         },
         strict=True,
     )
+
+
+# Texts that are not a whole number of seconds above 0 (D116): zero, negatives, decimals, exponents, padding, words,
+# empty, and digits outside ASCII.
+_not_whole_seconds = st.one_of(
+    st.integers(max_value=0).map(str),
+    st.integers(min_value=0, max_value=10**4).map(lambda n: f"{n}.0"),
+    st.integers(min_value=1, max_value=10**4).map(lambda n: f"{n}.5"),
+    st.sampled_from(["", " 30", "30 ", "1e3", "+30", "30s", "thirty", "\u0663\u0660", "0x1e"]),
+)
+
+
+@st.composite
+def limit_settings(draw: st.DrawFn) -> tuple[dict[str, str], dict[str, int | None]]:
+    """Each limit absent, a whole number of seconds above 0 (leading zeros allowed) or anything else; the expected
+    value is the drawn number, the default when absent, `None` when the text is not whole seconds above 0."""
+    environ: dict[str, str] = {}
+    meant: dict[str, int | None] = {}
+    for key in LIMITS:
+        kind = draw(st.sampled_from(["absent", "whole", "not_whole"]), label=key)
+        if kind == "absent":
+            meant[key] = LIMIT_DEFAULTS[key]
+        elif kind == "whole":
+            seconds = draw(st.integers(min_value=1, max_value=10**5))
+            environ[key] = "0" * draw(st.integers(0, 2)) + str(seconds)
+            meant[key] = seconds
+        else:
+            environ[key] = draw(_not_whole_seconds)
+            meant[key] = None
+    return environ, meant
+
+
+@given(case=limit_settings())
+def test_the_start_up_accepts_the_limits_iff_both_are_whole_seconds_and_feasibility_fits_in_optimisation(
+    case: tuple[dict[str, str], dict[str, int | None]],
+) -> None:
+    environ, meant = case
+    not_whole = frozenset(key for key in LIMITS if meant[key] is None)
+    feasibility, optimisation = meant["FEASIBILITY_LIMIT_S"], meant["OPTIMISATION_LIMIT_S"]
+    too_long = not not_whole and feasibility is not None and optimisation is not None and feasibility > optimisation
+    refused = not_whole or (frozenset({"FEASIBILITY_LIMIT_S"}) if too_long else frozenset())
+
+    before = {**observable(Settings.from_environ({})), "refused": frozenset()}
+    try:
+        after = {**observable(Settings.from_environ(environ)), "refused": frozenset()}
+    except InvalidSettingsError as error:
+        assert all(key in str(error) for key in error.setting_names), "the refusal names each key it refuses"
+        after = {**dict.fromkeys(KEYS), "refused": error.setting_names}
+
+    if refused:
+        expected = {**{key: set_to(None) for key in KEYS}, "refused": set_to(refused)}
+    else:
+        expected = {key: set_to(meant[key]) if key in environ else unchanged() for key in KEYS}
+    assert_state_delta(before, after, universe=UNIVERSE | {"refused"}, expected=expected, strict=True)

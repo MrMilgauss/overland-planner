@@ -33,6 +33,7 @@ from overland_planner.adapters.solver.tour_child import FINAL, INCUMBENT, run_to
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
     IncumbentObserver,
+    SolveDeadlines,
     TourFound,
     TourOutcome,
     ignore_incumbents,
@@ -113,9 +114,16 @@ class RuleBreakingTourSolver:
     def drive_reversed(self, track_id: str) -> None:
         self._reversed_track_id = track_id
 
-    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: SolveDeadlines,
+    ) -> TourOutcome:
         if self._reversed_track_id is None:
-            outcome: TourOutcome = self._solver.solve(model, budget, on_incumbent)
+            outcome: TourOutcome = self._solver.solve(model, budget, on_incumbent, deadlines=deadlines)
             return outcome
         track_id = self._reversed_track_id
         assert track_id in model.node_item_ids, f"the track {track_id} is not in the plan"
@@ -146,7 +154,16 @@ class InProcessOrToolsTourSolver:
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: SolveDeadlines,
+    ) -> TourOutcome:
+        """In-process, so no deadline can end it early; it takes them like the production adapter does."""
+        assert deadlines.feasibility_s <= deadlines.optimisation_s, "deadlines out of order"
         answer = _CapturedAnswer()
         run_tour_child(answer, model, budget)  # type: ignore[arg-type]
         for message in answer.messages:  # after the search, not as found: only the hosting differs from the child

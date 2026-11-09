@@ -27,6 +27,7 @@ FAIL_CLOSED_PORTS = "${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER
 INTERPOLATION = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?P<rest>[^}]*)\}")
 SECRET_SETTINGS = ("PLANNER_BASIC_AUTH_PASSWORD",)
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")  # ADR-011 Am. 1
+LIMITS = {"FEASIBILITY_LIMIT_S": "feasibility_limit_s", "OPTIMISATION_LIMIT_S": "optimisation_limit_s"}  # ADR-014
 HARDENING = (
     "image",
     "init",
@@ -128,6 +129,10 @@ def test_settings_reach_the_container_by_interpolation_and_secrets_are_never_wri
     for key in ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD", *UPLOAD_CAPS):
         assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     assert environment["DATA_DIR"] == "/data" and environment["ROUTING_PROVIDER"] == "mock"
+    # The solve limits pass through with the planner's own defaults (ADR-014 section 2, brief section 12).
+    for key, field in LIMITS.items():
+        default = Settings.model_fields[field].default
+        assert environment[key] == f"${{{key}:-{default}}}", f"{key} is interpolated from .env, {default} when unset"
     for path in (COMPOSE, COMPOSE_CI, ENV_EXAMPLE):
         assert "env_file" not in path.read_text(), f"{path.name}: settings come through interpolation only"
     example = _env_example()

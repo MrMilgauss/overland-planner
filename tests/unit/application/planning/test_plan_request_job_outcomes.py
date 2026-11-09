@@ -1,13 +1,16 @@
-"""How a solve ended decides the run, its flags and its label (ADR-015 table of endings, D122, D42, D223 b).
+"""How a solve ended decides the run, its flags and its label (ADR-015 table of endings, D122, D42, D223 b, D151).
 
 Driving ports: `PlanJobRegistry` (start, poll) running the real `PlanRequestJob`, and `PlanRunQueries.get`. Driven
 ports: `PlanningUnitOfWork` and `PlanJobLog` (in-memory), `TourSolver` (scripted: it streams incumbents to the job's
-observer, then ends as scripted), `Clock` (fake, moved on before each incumbent).
+observer, then ends as scripted, and keeps the deadlines it was handed), `Clock` (fake, moved on before each incumbent).
 Observable universe: `plan_runs` as stored and shown (status, reason, order, reproducible, label code, messages),
-`job_log` (the job's row: incumbents, reproducible, not_fully_optimised_reason) and `poll.incumbent` while solving.
-Test Budget: 2 behaviors (an ending gives exactly one run with the flags of that ending; incumbents show on the poll
-and are counted in the job's row) x 2 = 4; 1 property test used, both behaviors on every example (D212). The label
-texts are written here as the product shows them, not imported.
+`job_log` (the job's row: incumbents, reproducible, not_fully_optimised_reason), `poll.incumbent` while solving,
+`poll.message` once ended, and `solve.deadlines`: the feasibility and optimisation deadlines the solve was handed, in
+seconds from the job's start on the `Clock` port (ADR-014 section 2, D58), for any pair of limits.
+Test Budget: 3 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
+incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start)
+x 2 = 6; 1 property test used, every behavior on every example (D212). The label texts are written here as the product
+shows them, not imported.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from hypothesis import strategies as st
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
+    SolveLimits,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
@@ -43,10 +47,12 @@ from tests.unit.application.planning.planning_doubles import (
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, trips
 
-UNIVERSE = {"plan_runs", "job_log", "poll.incumbent"}
+UNIVERSE = {"plan_runs", "job_log", "poll.incumbent", "poll.message", "solve.deadlines"}
 BUDGET = 500
 EVERY_S = 1.5  # the fake clock moves on this much before each incumbent
 CRASH_LABEL = ("not fully optimised (optimizer failed)",)
+TIME_LIMIT_LABEL = ("not fully optimised (time limit)",)
+TIMEOUT_TEXT = "No valid route found within the time limit - plan run #1 failed"
 NOT_AN_ITEM = "reversed:item"
 FAILED = "optimizer_failed"
 
@@ -59,6 +65,7 @@ class Ending:
     outcome: TourOutcome
     run: tuple[Any, ...]
     row: tuple[Any, ...]
+    message: str | None = None
 
 
 @st.composite
@@ -69,7 +76,9 @@ def endings(draw: st.DrawFn, trip: Trip) -> Ending:
     objectives = sorted(draw(st.lists(st.integers(1, 10**7), unique=True, max_size=3)), reverse=True)
     incumbents = tuple(Incumbent(order=an_order(), objective=objective) for objective in objectives)
     count = len(incumbents)
-    kind = draw(st.sampled_from(["budget", "crash_after", "crash_before", "no_route", "timeout", "broken_order"]))
+    kind = draw(
+        st.sampled_from(["budget", "crash_after", "crash_before", "no_route", "time_limit", "timeout", "broken_order"])
+    )
     if kind == "budget":
         order = an_order()
         return Ending(
@@ -87,9 +96,13 @@ def endings(draw: st.DrawFn, trip: Trip) -> Ending:
     if kind == "no_route":
         run = (1, "failed", "no_valid_route_found", (), True, None, ())
         return Ending((), TourNoRoute(), run, ("done", 0, True, None))
-    if kind == "timeout":
-        run = (1, "failed", "timeout", (), False, None, ())
-        return Ending(incumbents, TourTimedOut(), run, ("done", count, False, None))
+    if kind == "time_limit" and incumbents:  # the optimisation limit with an incumbent: the last one, labelled
+        order = incumbents[-1].order
+        run = (1, "ready", None, order, False, "time_limit", TIME_LIMIT_LABEL)
+        return Ending(incumbents, TourFound(order, ending="time_limit"), run, ("done", count, False, "time_limit"))
+    if kind in ("time_limit", "timeout"):  # the feasibility limit without one
+        run = (1, "failed", "timeout", (), False, None, (TIMEOUT_TEXT,))
+        return Ending((), TourTimedOut(), run, ("done", 0, False, None), TIMEOUT_TEXT)
     # the chosen order breaks a rule: Failed, never an earlier valid incumbent instead (ADR-015, no fallback)
     broken = TourFound((trip.start.id, NOT_AN_ITEM, trip.end.id), ending=draw(st.sampled_from(["budget", FAILED])))
     reproducible = broken.ending == "budget"
@@ -97,7 +110,13 @@ def endings(draw: st.DrawFn, trip: Trip) -> Ending:
     return Ending(incumbents, broken, run, ("done", count, reproducible, None))
 
 
-def _view(planning: InMemoryPlanning, job_log: InMemoryPlanJobLog, poll: Any) -> dict[str, Any]:
+def _view(
+    planning: InMemoryPlanning,
+    job_log: InMemoryPlanJobLog,
+    poll: Any,
+    message: str | None = None,
+    deadlines: tuple[float, float] | None = None,
+) -> dict[str, Any]:
     queries = PlanRunQueries(planning.unit_of_work)
     shown = [queries.get(run.id) for run in planning.runs]
     return {
@@ -123,15 +142,18 @@ def _view(planning: InMemoryPlanning, job_log: InMemoryPlanJobLog, poll: Any) ->
             for row in job_log.rows
         ),
         "poll.incumbent": poll,
+        "poll.message": message,
+        "solve.deadlines": deadlines,
     }
 
 
 @settings(deadline=None)
-@given(trip=trips(), data=st.data())
+@given(trip=trips(), data=st.data(), feasibility=st.integers(1, 600), longer=st.integers(0, 1800))
 def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving(
-    trip: Trip, data: st.DataObject
+    trip: Trip, data: st.DataObject, feasibility: int, longer: int
 ) -> None:
     ending = data.draw(endings(trip), label="ending")
+    limits = SolveLimits(feasibility_s=feasibility, optimisation_s=feasibility + longer)
     planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
     trip.seed_canonical_files(files)
     planning.add_project(PROJECT, trip.snapshot)
@@ -140,17 +162,27 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
         ending.outcome, gate=Gate(held=True), incumbents=ending.incumbents, clock=clock, incumbent_every_s=EVERY_S
     )
     work = PlanRequestJob(
-        planning.unit_of_work, LegResolver(RecordingRoadMap(trip.leg_m)), solver, BUDGET, clock, log, files
+        planning.unit_of_work,
+        LegResolver(RecordingRoadMap(trip.leg_m)),
+        solver,
+        BUDGET,
+        clock,
+        log,
+        files,
+        limits=limits,
     )
     registry = PlanJobRegistry(clock, work, log, job_log=job_log)
     before = _view(planning, job_log, None)
 
+    job_started_s = clock.monotonic()
     job_id = registry.start(PROJECT)
     assert job_id is not None
     assert solver.gate.reached.wait(30.0), "the solve was never asked"
     solving = known_job(registry, job_id)
     solver.gate.release()
-    job_when_ended(registry, job_id)
+    ended = job_when_ended(registry, job_id)
+    (handed,) = solver.deadlines
+    assert handed is not None, "the solve was handed no deadlines"
 
     last = ending.incumbents[-1] if ending.incumbents else None
     shown_while_solving = None
@@ -165,12 +197,20 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
     assert solving.state == "solving"
     assert_state_delta(
         before,
-        _view(planning, job_log, solving.incumbent),
+        _view(
+            planning,
+            job_log,
+            solving.incumbent,
+            ended.message,
+            (handed.feasibility_s - job_started_s, handed.optimisation_s - job_started_s),
+        ),
         UNIVERSE,
         {
             "plan_runs": gained(ending.run),
             "job_log": gained(ending.row),
             "poll.incumbent": set_to(shown_while_solving),
+            "poll.message": set_to(ending.message),
+            "solve.deadlines": set_to((float(feasibility), float(feasibility + longer))),
         },
         strict=True,
     )

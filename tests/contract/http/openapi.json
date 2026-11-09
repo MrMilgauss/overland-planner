@@ -431,7 +431,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route.",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended\njob's `message` names its Failed run in words when the run has them (D151).",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -569,7 +569,7 @@
         "type": "object"
       },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags; `messages` the lines the results show in words, such as \"not fully optimised (optimizer failed)\".",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags (`not_fully_optimised`: `optimizer_failed` or `time_limit`); `messages` the lines the results show in words,\nsuch as \"not fully optimised (time limit)\" or, for a run failed on the feasibility limit, \"No valid route found\nwithin the time limit - plan run #N failed\" (D151).",
         "properties": {
           "failure_reason": {
             "anyOf": [
@@ -596,7 +596,10 @@
           "not_fully_optimised": {
             "anyOf": [
               {
-                "const": "optimizer_failed",
+                "enum": [
+                  "optimizer_failed",
+                  "time_limit"
+                ],
                 "type": "string"
               },
               {
@@ -679,7 +682,10 @@
           "not_fully_optimised": {
             "anyOf": [
               {
-                "const": "optimizer_failed",
+                "enum": [
+                  "optimizer_failed",
+                  "time_limit"
+                ],
                 "type": "string"
               },
               {

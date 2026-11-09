@@ -2,10 +2,10 @@
 
 A job moves `queued -> computing_legs -> solving -> finalising` and ends in exactly one terminal state, published in one
 assignment together with its `plan_run_id`: a poll never sees a run before the job is done. Solver-side outcomes end
-`done` with a Failed run (D122). `failed` is anything else the work raises, SystemExit too, since a job without an
-ending would hold its project in 409 until a restart: no run, reason null (ADR-015 fixes the codes and none covers it)
-and a fixed message. It is logged and the thread then ends. `refused`, `cancelled` and `timed_out` arrive with Stop and
-the limits.
+`done` with a Failed run (D122), whose message, if it has words, names the run (D151). `failed` is anything else the
+work raises, SystemExit too, since a job without an ending would hold its project in 409 until a restart: no run,
+reason null (ADR-015 fixes the codes and none covers it) and a fixed message. It is logged and the thread then ends.
+`refused`, `cancelled` and `timed_out` arrive with Stop and the look-up-side limit.
 
 A project has one active job: `start` checks and registers under one lock. One solver child runs at a time (D133): a job
 that reaches the solve stage while the slot is busy shows `waiting_for_optimizer`, holding neither a lock of this
@@ -87,12 +87,13 @@ class PlanJobView:
 @dataclass(frozen=True)
 class StoredRun:
     """The run a finished plan stored. `reason` is the failure reason of a Failed run; `reproducible` and
-    `not_fully_optimised` are the run's flags (brief section 8)."""
+    `not_fully_optimised` are the run's flags (brief section 8); `message` is what the ended job says of it (D151)."""
 
     plan_run_id: str
     reason: str | None
     reproducible: bool = True
     not_fully_optimised: NotFullyOptimised | None = None
+    message: str | None = None
 
 
 class PlanJobProgress(Protocol):
@@ -252,7 +253,7 @@ class PlanJobRegistry:
             job.note(error_class=type(error).__name__)
             return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic(), self._clock.now())
         ended_s, ended_at = self._clock.monotonic(), self._clock.now()
-        return _Ending("done", stored.reason, None, stored.plan_run_id, ended_s, ended_at)
+        return _Ending("done", stored.reason, stored.message, stored.plan_run_id, ended_s, ended_at)
 
     def _finished_fields(self, job: _Job, ending: _Ending) -> dict[str, object]:
         """The `plan.job.finished` fields, which the job's row holds too."""

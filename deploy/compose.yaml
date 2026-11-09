@@ -29,6 +29,9 @@ services:
       ROUTING_PROVIDER: mock
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
+      # Solve limits in whole seconds from pressing Calculate (ADR-014 section 2); feasibility <= optimisation.
+      FEASIBILITY_LIMIT_S: ${FEASIBILITY_LIMIT_S:-600}
+      OPTIMISATION_LIMIT_S: ${OPTIMISATION_LIMIT_S:-1800}
       PLANNER_BASIC_AUTH_USER: ${PLANNER_BASIC_AUTH_USER:-}
       PLANNER_BASIC_AUTH_PASSWORD: ${PLANNER_BASIC_AUTH_PASSWORD:-}
       # Trail upload caps; empty when unset in .env, which the planner reads as its default (25 MiB, 100 MiB, 50).

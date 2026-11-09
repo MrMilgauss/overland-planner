@@ -69,7 +69,14 @@ class _ProposingSolver:
     def probe(self) -> Any:
         raise AssertionError("the plan job never probes the solver")
 
-    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        _on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+    ) -> TourOutcome:
         self.calls += 1
         assert self.answers, "the solver was asked although the memo had the order"
         answer = self.answers.pop(0)

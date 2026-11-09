@@ -8,16 +8,22 @@ The upload caps (MAX_UPLOAD_FILE_MB, MAX_UPLOAD_REQUEST_MB in MiB, MAX_UPLOAD_FI
 an empty cap (compose passes `${MAX_UPLOAD_...:-}`) is its default.
 MOCK_PLAN is the path of the offline road map's script (brief sections 6 and 12); empty or absent means no script. The
 composition root reads and validates the file once at start-up; a bad file refuses the start for `routing_provider`.
+FEASIBILITY_LIMIT_S and OPTIMISATION_LIMIT_S (ADR-014 section 2) are whole seconds above 0, written in ASCII digits;
+the feasibility limit may not exceed the optimisation limit (D116), else the start is refused naming
+FEASIBILITY_LIMIT_S.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+from overland_planner.application.ports.tour_solver import DEFAULT_FEASIBILITY_LIMIT_S, DEFAULT_OPTIMISATION_LIMIT_S
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # Only the mock provider exists until slice 06a wires Valhalla.
@@ -27,6 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REPO_WEB_DIST = _REPO_ROOT / "web" / "dist"
 # The planner's Alembic migrations; the image sets MIGRATIONS_DIR=/app/migrations.
 _REPO_MIGRATIONS = _REPO_ROOT / "migrations"
+_WHOLE_SECONDS = re.compile(r"[0-9]+")
 
 
 class InvalidSettingsError(ValueError):
@@ -54,6 +61,12 @@ class Settings(BaseSettings):
     basic_auth_user: Annotated[str | None, Field(validation_alias="PLANNER_BASIC_AUTH_USER")] = None
     basic_auth_password: Annotated[SecretStr | None, Field(validation_alias="PLANNER_BASIC_AUTH_PASSWORD")] = None
     mock_plan: Annotated[Path | None, Field(validation_alias="MOCK_PLAN")] = None
+    feasibility_limit_s: Annotated[int, Field(validation_alias="FEASIBILITY_LIMIT_S", gt=0)] = (
+        DEFAULT_FEASIBILITY_LIMIT_S
+    )
+    optimisation_limit_s: Annotated[int, Field(validation_alias="OPTIMISATION_LIMIT_S", gt=0)] = (
+        DEFAULT_OPTIMISATION_LIMIT_S
+    )
 
     @field_validator("basic_auth_user", "basic_auth_password", "mock_plan", mode="before")
     @classmethod
@@ -64,6 +77,13 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_cap_is_default(cls, value: object, info: ValidationInfo) -> object:
         return cls.model_fields[str(info.field_name)].default if value == "" else value
+
+    @field_validator("feasibility_limit_s", "optimisation_limit_s", mode="before")
+    @classmethod
+    def _whole_seconds(cls, value: object) -> object:
+        if isinstance(value, str) and _WHOLE_SECONDS.fullmatch(value) is None:
+            raise ValueError("must be a whole number of seconds above 0")
+        return value
 
     @field_validator("basic_auth_user")
     @classmethod
@@ -102,4 +122,6 @@ class Settings(BaseSettings):
         if (settings.basic_auth_user is None) != (settings.basic_auth_password is None):
             missing = "PLANNER_BASIC_AUTH_USER" if settings.basic_auth_user is None else "PLANNER_BASIC_AUTH_PASSWORD"
             raise InvalidSettingsError({missing: "must be set together with the other shared password setting"})
+        if settings.feasibility_limit_s > settings.optimisation_limit_s:
+            raise InvalidSettingsError({"FEASIBILITY_LIMIT_S": "must not exceed OPTIMISATION_LIMIT_S (D116)"})
         return settings

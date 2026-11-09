@@ -77,7 +77,7 @@ from overland_planner.application.platform.facade import (
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
-from overland_planner.application.ports.tour_solver import TourSolver
+from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
@@ -180,6 +180,7 @@ class _Wiring:
             event_log=self._event_log,
             files=self._file_store,
             memo=FingerprintMemo(self._tour_solver.identity),
+            limits=SolveLimits(self._settings.feasibility_limit_s, self._settings.optimisation_limit_s),
         )
         jobs = PlanJobRegistry(self._clock, job, self._event_log, job_log=self._plan_job_log)
         return planning_routes(

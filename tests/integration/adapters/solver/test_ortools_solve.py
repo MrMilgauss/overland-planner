@@ -25,10 +25,13 @@ from pathlib import Path
 
 import pytest
 
+from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
+    SolveDeadlines,
+    SolveLimits,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
@@ -38,6 +41,19 @@ from overland_planner.domain.planning.solver_model_builder import TourModel
 from tests.common.workspace import workspace_data_dir
 
 pytestmark = pytest.mark.solver_child
+
+
+def _default_limits() -> SolveDeadlines:
+    """The default limits (ADR-014 section 2) from now: far beyond any search here."""
+    clock = SystemClock()
+    return SolveLimits().from_start(clock, clock.monotonic())
+
+
+def _within(bound_s: float) -> SolveDeadlines:
+    """Both limits `bound_s` from now: a child that sends no valid route is ended at the feasibility deadline (D200)."""
+    clock = SystemClock()
+    return SolveDeadlines(clock, clock.monotonic() + bound_s, clock.monotonic() + bound_s)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PID_FILE_VARIABLE = "TOUR_CHILD_TEST_PID_FILE"
@@ -212,8 +228,8 @@ def _child_reporting_its_death_signal(_answer: Connection, _model: TourModel, _b
 def test_solves_a_small_round_trip() -> None:
     solver = OrToolsTourSolver()
 
-    first_solution = solver.solve(ROUND_TRIP, 1)
-    best = solver.solve(ROUND_TRIP, ENOUGH_BUDGET)
+    first_solution = solver.solve(ROUND_TRIP, 1, deadlines=_default_limits())
+    best = solver.solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits())
 
     assert best == TourFound(order=_best_order(ROUND_TRIP))
     assert isinstance(best, TourFound)
@@ -225,7 +241,7 @@ def test_solves_a_small_round_trip() -> None:
 
 def test_solves_a_small_one_way_trip() -> None:
     # The probe's timeout must not bound a solve: this one is far shorter than any child spawn.
-    outcome = OrToolsTourSolver(timeout_s=0.001).solve(ONE_WAY, ENOUGH_BUDGET)
+    outcome = OrToolsTourSolver(timeout_s=0.001).solve(ONE_WAY, ENOUGH_BUDGET, deadlines=_default_limits())
 
     assert outcome == TourFound(order=_best_order(ONE_WAY))
 
@@ -235,7 +251,9 @@ def test_the_real_child_streams_only_improving_incumbents_and_ends_on_the_last()
     `golden_order` check, which runs with this streaming on). The search must report more than one tour."""
     streamed: list[Incumbent] = []
 
-    outcome = OrToolsTourSolver().solve(_scattered_model(60, seed=1), ENOUGH_BUDGET, on_incumbent=streamed.append)
+    outcome = OrToolsTourSolver().solve(
+        _scattered_model(60, seed=1), ENOUGH_BUDGET, on_incumbent=streamed.append, deadlines=_default_limits()
+    )
 
     assert isinstance(outcome, TourFound)
     assert outcome.ending == "budget"
@@ -250,17 +268,17 @@ def test_same_budget_gives_the_same_order() -> None:
     solver = OrToolsTourSolver()
     model = _complete_model(30)
 
-    first = solver.solve(model, ENOUGH_BUDGET)
+    first = solver.solve(model, ENOUGH_BUDGET, deadlines=_default_limits())
 
     assert isinstance(first, TourFound)
-    assert first == solver.solve(model, ENOUGH_BUDGET)
+    assert first == solver.solve(model, ENOUGH_BUDGET, deadlines=_default_limits())
 
 
 @pytest.mark.parametrize("item_count", [0, 1, 2])
 def test_tiny_trips_finish_on_the_full_budget(item_count: int) -> None:
     model = _complete_model(item_count)
 
-    outcome = OrToolsTourSolver().solve(model, DEFAULT_BUDGET)
+    outcome = OrToolsTourSolver().solve(model, DEFAULT_BUDGET, deadlines=_default_limits())
 
     assert isinstance(outcome, TourFound)
     assert outcome.order[0] == "node-0"
@@ -281,7 +299,7 @@ def test_tiny_trips_finish_on_the_full_budget(item_count: int) -> None:
     ids=["exit-code", "sigkill", "exception", "no-message", "garbled-message", "exit-code-after-the-final"],
 )
 def test_crashed_child_is_optimizer_failed(child: object, expected: TourOptimizerFailed) -> None:
-    outcome = OrToolsTourSolver(tour_child_main=child).solve(ROUND_TRIP, ENOUGH_BUDGET)  # type: ignore[arg-type]
+    outcome = OrToolsTourSolver(tour_child_main=child).solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits())  # type: ignore[arg-type]
 
     assert outcome == expected
     assert outcome.reason == "optimizer_failed"
@@ -289,7 +307,7 @@ def test_crashed_child_is_optimizer_failed(child: object, expected: TourOptimize
 
 @pytest.mark.parametrize("model", [NO_WAY_INTO_AN_ITEM, NO_WAY_OUT_OF_START], ids=["item-unreachable", "start-stuck"])
 def test_no_route_is_reported(model: TourModel) -> None:
-    outcome = OrToolsTourSolver().solve(model, ENOUGH_BUDGET)
+    outcome = OrToolsTourSolver().solve(model, ENOUGH_BUDGET, deadlines=_default_limits())
 
     assert outcome == TourNoRoute()
     assert outcome.reason == "no_valid_route_found"
@@ -300,7 +318,9 @@ def _assert_no_child_left() -> None:
 
 
 def test_a_valid_final_counts_when_the_child_does_not_exit_in_time() -> None:
-    outcome = OrToolsTourSolver(tour_child_main=_final_then_hanging_child).solve(ROUND_TRIP, ENOUGH_BUDGET)
+    outcome = OrToolsTourSolver(tour_child_main=_final_then_hanging_child).solve(
+        ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits()
+    )
 
     assert outcome == TourFound(order=ROUND_TRIP.node_item_ids)
     _assert_no_child_left()
@@ -308,10 +328,10 @@ def test_a_valid_final_counts_when_the_child_does_not_exit_in_time() -> None:
 
 def test_overrunning_child_is_killed() -> None:
     bound_s = 1.0
-    solver = OrToolsTourSolver(tour_child_main=_hanging_child, safety_bound_s=bound_s)
+    solver = OrToolsTourSolver(tour_child_main=_hanging_child)
 
     started = time.monotonic()
-    outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET)
+    outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_within(bound_s))
     elapsed = time.monotonic() - started
 
     assert outcome == TourTimedOut()
@@ -325,9 +345,9 @@ def test_overrunning_child_gets_sigterm_first(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv(PID_FILE_VARIABLE, str(listening))
     # SIGTERM kills a child that has no handler yet, and that run proves nothing: only then a longer bound.
     for bound_s in (2.0, 5.0, 20.0):
-        solver = OrToolsTourSolver(tour_child_main=_sigterm_recording_child, safety_bound_s=bound_s)
+        solver = OrToolsTourSolver(tour_child_main=_sigterm_recording_child)
 
-        assert solver.solve(ROUND_TRIP, ENOUGH_BUDGET) == TourTimedOut()
+        assert solver.solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_within(bound_s)) == TourTimedOut()
         if listening.exists():
             break
 
@@ -341,10 +361,10 @@ def test_child_ignoring_sigterm_gets_sigkill_after_the_grace(tmp_path: Path, mon
     monkeypatch.setenv(PID_FILE_VARIABLE, str(ignoring))
     # SIGTERM kills a child that has not reached SIG_IGN yet, and that run proves nothing: only then a longer bound.
     for bound_s in (5.0, 10.0, 20.0):
-        solver = OrToolsTourSolver(tour_child_main=_sigterm_ignoring_child, safety_bound_s=bound_s)
+        solver = OrToolsTourSolver(tour_child_main=_sigterm_ignoring_child)
 
         started = time.monotonic()
-        outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET)
+        outcome = solver.solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_within(bound_s))
         elapsed = time.monotonic() - started
 
         assert outcome == TourTimedOut()
@@ -380,7 +400,7 @@ from tests.integration.adapters.solver import test_ortools_solve as here
 
 if __name__ == "__main__":
     solver = OrToolsTourSolver(tour_child_main=here._real_child_reporting_its_pid)
-    solver.solve(here._complete_model(60), 10**9)
+    solver.solve(here._complete_model(60), 10**9, deadlines=here._default_limits())
 """
 
 
@@ -414,7 +434,9 @@ def test_linux_child_asks_to_be_killed_with_its_parent(tmp_path: Path, monkeypat
     report = tmp_path / "death-signal"
     monkeypatch.setenv(PID_FILE_VARIABLE, str(report))
 
-    OrToolsTourSolver(tour_child_main=_child_reporting_its_death_signal).solve(ROUND_TRIP, ENOUGH_BUDGET)
+    OrToolsTourSolver(tour_child_main=_child_reporting_its_death_signal).solve(
+        ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits()
+    )
 
     assert report.read_text() == str(int(signal.SIGKILL))
 
@@ -422,7 +444,9 @@ def test_linux_child_asks_to_be_killed_with_its_parent(tmp_path: Path, monkeypat
 _CHECKED_SERVER = """
 import sys
 
+from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
+from overland_planner.application.ports.tour_solver import SolveLimits
 from overland_planner.bootstrap.app_factory import create_app
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
@@ -436,7 +460,8 @@ if __name__ == "__main__":
     create_app({"DATA_DIR": sys.argv[1]})  # default settings: the real solver, probed in its child
     print("after create_app:", ortools_loaded())
     model = TourModel(("s", "e"), 0, 1, ((None, 5), (None, None)))
-    print("solved:", OrToolsTourSolver().solve(model, 10))
+    deadlines = SolveLimits().from_start(SystemClock(), SystemClock().monotonic())
+    print("solved:", OrToolsTourSolver().solve(model, 10, deadlines=deadlines))
     print("after solve:", ortools_loaded())
 """
 
@@ -467,4 +492,6 @@ def test_a_child_that_could_not_start_is_a_child_failure(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(BaseProcess, "start", out_of_memory)
 
-    assert OrToolsTourSolver().solve(ROUND_TRIP, ENOUGH_BUDGET) == TourOptimizerFailed(exit_code=None, signal=None)
+    assert OrToolsTourSolver().solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits()) == TourOptimizerFailed(
+        exit_code=None, signal=None
+    )
