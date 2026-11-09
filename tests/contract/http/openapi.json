@@ -225,8 +225,22 @@
         "title": "PlanJobResource",
         "type": "object"
       },
+      "PlanReportResource": {
+        "description": "Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "PlanReportResource",
+        "type": "object"
+      },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops and totals; a Failed run has neither and names its `failure_reason`. A run\nstored before the totals were (0006) shows `totals` null.",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null.",
         "properties": {
           "failure_reason": {
             "anyOf": [
@@ -250,6 +264,16 @@
           "project_id": {
             "title": "Project Id",
             "type": "string"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanReportResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "enum": [
@@ -284,7 +308,8 @@
           "status",
           "failure_reason",
           "stops",
-          "totals"
+          "totals",
+          "report"
         ],
         "title": "PlanRunDetailResource",
         "type": "object"

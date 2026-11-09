@@ -6,7 +6,8 @@ Observable universe: `plan_runs`, `items`, `projects` as planning reads them and
 Test Budget: 7 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
 solver's broken order ends the same way, job done; the size of a real track; canonical file round trip; a ready run
 stores and shows the totals of its stops, a Failed run none; a ready run stores and shows each stop with the
-assembler's columns, a Failed run no stops) x 2 = 14; 7 used.
+assembler's columns, a Failed run no stops; a Failed run stores and shows its reason in product words, a ready run no
+report) x 2 = 16; 8 used.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from itertools import permutations
 from typing import Any
@@ -39,12 +40,12 @@ from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStats, TrackStatsCalculator
 from overland_planner.domain.planning.plan_run import Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
+from overland_planner.domain.planning.plan_run_assembler import PlanReport, PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
-from tests.common.state_delta import assert_state_delta
+from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, track_points, trips
@@ -186,6 +187,62 @@ def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_n
             trip.end.id,
             BUDGET,
         )
+
+
+PRODUCT_WORDS = {
+    REASON: "internal invariant violation",  # slice 02, US-03 (D206)
+    "no_valid_route_found": "no valid route found",  # no product wording yet: the code's words (D220 e)
+    "optimizer_failed": "optimizer failed",
+    "timeout": "timeout",
+}
+REPORT_UNIVERSE = {"plan_runs", "log.invariant_violations"}
+
+
+def _reported(harness: Harness) -> dict[str, Any]:
+    """The runs as stored with their report, and the checks the guard said were broken."""
+    return {
+        "plan_runs": tuple((*_row(run), run.report) for run in harness.planning.runs),
+        "log.invariant_violations": tuple(fields["check"] for fields in harness.log.fields_of("invariant.violation")),
+    }
+
+
+@settings(deadline=None)
+@given(trip=trips(), data=st.data())
+def test_a_failed_run_stores_and_shows_its_reason_in_product_words_and_a_ready_run_no_report(
+    trip: Trip, data: st.DataObject
+) -> None:
+    """Every solver outcome and a guard refusal on every example (D212); the order of the runs is drawn."""
+    visited = data.draw(st.permutations([item.id for item in trip.items]), label="order")
+    order = (trip.start.id, *visited, trip.end.id)
+    refused, check = data.draw(_orders_the_solver_should_not_give(trip), label="refused order")
+    outcomes = [
+        (TourFound(order), None),
+        (TourFound(refused), check),
+        (TourNoRoute(), None),
+        (TourTimedOut(), None),
+        (TourOptimizerFailed(exit_code=1, signal=None), None),
+    ]
+    harness = _harness_of(trip)
+    for outcome, broken in data.draw(st.permutations(outcomes), label="outcomes"):
+        harness.job = replace(harness.job, solver=ScriptedTourSolver(outcome))
+        before = _reported(harness)
+
+        stored = harness.run()
+
+        run = harness.planning.runs[-1]
+        report = None if stored.reason is None else PlanReport(reason=PRODUCT_WORDS[stored.reason])
+        status = "ready" if report is None else "failed"
+        expected = {
+            "plan_runs": gained((*_row(run), report)),
+            "log.invariant_violations": gained(broken) if broken else unchanged(),
+        }
+        assert_state_delta(before, _reported(harness), REPORT_UNIVERSE, expected, strict=True)
+        assert (stored.reason == REASON) == (broken is not None), f"{outcome} stored {stored.reason}"
+        shown = PlanRunQueries(harness.planning.unit_of_work).get(stored.plan_run_id)
+        assert shown is not None
+        assert (shown.status, shown.failure_reason, shown.report) == (status, stored.reason, report)
+    ready = [run for run in harness.planning.runs if run.status == "ready"]
+    assert len(ready) == 1 and ready[0].report is None, "the ready run stays the latest ready run, with no report"
 
 
 def _with_a_place_and_a_track(trip: Trip) -> bool:

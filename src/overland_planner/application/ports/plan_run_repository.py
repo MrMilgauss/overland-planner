@@ -10,6 +10,7 @@ from typing import Protocol
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanReport
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class PlanRunDetail:
     failure_reason: str | None
     stops: tuple[PlanStop, ...]
     totals: Totals | None = None
+    report: PlanReport | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class NewPlanRun:
     inputs: Mapping[str, object]
     stops: tuple[PlanStop, ...]
     totals: Totals | None = None
+    report: PlanReport | None = None
 
 
 class PlanRunRepository(Protocol):

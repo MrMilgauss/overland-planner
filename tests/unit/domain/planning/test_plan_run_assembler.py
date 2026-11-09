@@ -3,8 +3,8 @@ their road legs, track lengths, off-road times and cumulative values, and the pl
 
 Driving ports: `PlanRunAssembler` (`assemble(order)`) and `Totals.of(stops)`, both pure.
 Observable universe = the stops as the itinerary, the guard and the export read them, the totals and the snapshot read.
-Test Budget: 5 behaviors (stops in order with their details, road leg of each stop, what each stop drives, cumulative
-to the end of each stop, the totals) x 2 = 10; 5 used.
+Test Budget: 6 behaviors (stops in order with their details, road leg of each stop, what each stop drives, cumulative
+to the end of each stop, the totals, the report of a run's outcome) x 2 = 12; 6 used.
 Km and seconds are not rounded by the domain; expected values are worked out here from the business rules (km from
 metres, off-road time = length / speed) and compared within float rounding, the last cumulative against the totals
 exactly.
@@ -22,7 +22,7 @@ from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.plan_run import PlanStop, Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
+from overland_planner.domain.planning.plan_run_assembler import PlanReport, PlanRunAssembler
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.domain.planning.trips import Trip, left_at, reached_at, trips
 
@@ -212,3 +212,27 @@ def test_totals_sum_the_road_legs_and_the_tracks_and_end_the_cumulative(
     assert_state_delta(before, after, universe, expected, strict=True)
     if not order:
         assert (len(legs), after["plan.totals"][2:4]) == (1, (0, 0)), "Start and End only: one leg, no off-road"
+
+
+PRODUCT_WORDS = {
+    "internal_invariant_violation": "internal invariant violation",  # slice 02, US-03 (D206)
+    "no_valid_route_found": "no valid route found",  # no product wording yet: the code's words (D220 e)
+    "optimizer_failed": "optimizer failed",
+    "timeout": "timeout",
+}
+
+
+@given(planned=planned_trips(), codes=st.permutations([*PRODUCT_WORDS, None]))
+def test_a_failed_run_reports_its_reason_in_product_words_and_a_ready_run_has_no_report(
+    planned: tuple[Trip, tuple[CatalogItem, ...]], codes: list[str | None]
+) -> None:
+    """Every stored failure code and the ready outcome (`None`) on every example (D212), in any order."""
+    trip, _ = planned
+    assembler = PlanRunAssembler(trip.snapshot, trip.legs)
+    universe = {"snapshot.read", "plan.reports"}
+    before = {"snapshot.read": trip.snapshot, "plan.reports": {}}
+
+    after = {"snapshot.read": trip.snapshot, "plan.reports": {code: assembler.report(code) for code in codes}}
+
+    reports = {code: None if code is None else PlanReport(reason=PRODUCT_WORDS[code]) for code in codes}
+    assert_state_delta(before, after, universe, {"plan.reports": set_to(reports)}, strict=True)

@@ -112,7 +112,14 @@ class _Runs:
         for row in self._rows:
             if row.id == plan_run_id:
                 return PlanRunDetail(
-                    row.id, row.project_id, row.number, row.status, row.failure_reason, row.stops, row.totals
+                    row.id,
+                    row.project_id,
+                    row.number,
+                    row.status,
+                    row.failure_reason,
+                    row.stops,
+                    row.totals,
+                    row.report,
                 )
         return None
 

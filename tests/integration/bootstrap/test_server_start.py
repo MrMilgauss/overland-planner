@@ -225,7 +225,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     assert set(job) == {"state", "reason", "message", "plan_run_id", "elapsed_s"}
     assert (job["state"], job["reason"], job["message"]) == ("done", None, None)
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
-    assert set(shown) == {"id", "project_id", "number", "status", "failure_reason", "stops", "totals"}
+    assert set(shown) == {"id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"}
     assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)
     assert (shown["status"], shown["failure_reason"]) == ("ready", None)
     assert [(stop["name"], stop["type"]) for stop in shown["stops"]] == [

@@ -208,8 +208,15 @@ class TotalsResource(BaseModel):
         )
 
 
+class PlanReportResource(BaseModel):
+    """Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`."""
+
+    reason: str
+
+
 class PlanRunDetailResource(BaseModel):
-    """A plan run with its ordered stops and totals; a Failed run has neither and names its `failure_reason`. A run
+    """A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the
+    reason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run
     stored before the totals were (0006) shows `totals` null."""
 
     id: str
@@ -219,6 +226,7 @@ class PlanRunDetailResource(BaseModel):
     failure_reason: str | None
     stops: list[PlanStopResource]
     totals: TotalsResource | None
+    report: PlanReportResource | None
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -230,6 +238,7 @@ class PlanRunDetailResource(BaseModel):
             failure_reason=run.failure_reason,
             stops=[PlanStopResource.of(stop) for stop in run.stops],
             totals=None if run.totals is None else TotalsResource.of(run.totals),
+            report=None if run.report is None else PlanReportResource(reason=run.report.reason),
         )
 
 

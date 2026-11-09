@@ -2,7 +2,8 @@
 
 The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary and no
 totals (SQL NULL), nor has a run stored before 0006. A stop stored before its driving columns were (05-07) reads them
-as `None`: runs are not recomputed.
+as `None`: runs are not recomputed. `report` holds a Failed run's reason in product words; a ready run, and any run
+stored before 05-08, has none (SQL NULL).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanStop, Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanReport
 
 
 class SqlAlchemyPlanRunRepository:
@@ -46,6 +48,7 @@ class SqlAlchemyPlanRunRepository:
             failure_reason=row["failure_reason"],
             stops=_stops(row["itinerary"]),
             totals=None if row["totals"] is None else Totals(**row["totals"]),
+            report=None if row["report"] is None else PlanReport(reason=row["report"]["reason"]),
         )
 
     def next_number(self, project_id: str) -> int:
@@ -67,6 +70,7 @@ class SqlAlchemyPlanRunRepository:
                 inputs=dict(run.inputs),
                 itinerary={"stops": [_stop_json(stop) for stop in run.stops]} if run.stops else null(),
                 totals=null() if run.totals is None else asdict(run.totals),
+                report=null() if run.report is None else asdict(run.report),
             )
         )
 

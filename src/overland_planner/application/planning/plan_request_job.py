@@ -166,6 +166,7 @@ class PlanRequestJob:
             inputs=self._inputs(project.snapshot),
             stops=finding.stops,
             totals=finding.totals,
+            report=PlanRunAssembler.report(finding.failure_reason),
         )
 
     def _inputs(self, snapshot: ProjectSnapshot) -> dict[str, object]:
