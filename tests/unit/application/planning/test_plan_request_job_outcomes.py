@@ -1,0 +1,176 @@
+"""How a solve ended decides the run, its flags and its label (ADR-015 table of endings, D122, D42, D223 b).
+
+Driving ports: `PlanJobRegistry` (start, poll) running the real `PlanRequestJob`, and `PlanRunQueries.get`. Driven
+ports: `PlanningUnitOfWork` and `PlanJobLog` (in-memory), `TourSolver` (scripted: it streams incumbents to the job's
+observer, then ends as scripted), `Clock` (fake, moved on before each incumbent).
+Observable universe: `plan_runs` as stored and shown (status, reason, order, reproducible, label code, messages),
+`job_log` (the job's row: incumbents, reproducible, not_fully_optimised_reason) and `poll.incumbent` while solving.
+Test Budget: 2 behaviors (an ending gives exactly one run with the flags of that ending; incumbents show on the poll
+and are counted in the job's row) x 2 = 4; 1 property test used, both behaviors on every example (D212). The label
+texts are written here as the product shows them, not imported.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries
+from overland_planner.application.ports.tour_solver import (
+    Incumbent,
+    TourFound,
+    TourNoRoute,
+    TourOptimizerFailed,
+    TourOutcome,
+    TourTimedOut,
+)
+from overland_planner.application.routing.facade import LegResolver
+from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
+from tests.common.fakes import FakeClock
+from tests.common.predicates import gained
+from tests.common.state_delta import assert_state_delta, set_to
+from tests.unit.application.planning.planning_doubles import (
+    Gate,
+    InMemoryPlanJobLog,
+    InMemoryPlanning,
+    RecordingRoadMap,
+    job_when_ended,
+    known_job,
+)
+from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
+from tests.unit.domain.planning.trips import PROJECT, Trip, trips
+
+UNIVERSE = {"plan_runs", "job_log", "poll.incumbent"}
+BUDGET = 500
+EVERY_S = 1.5  # the fake clock moves on this much before each incumbent
+CRASH_LABEL = ("not fully optimised (optimizer failed)",)
+NOT_AN_ITEM = "reversed:item"
+FAILED = "optimizer_failed"
+
+
+@dataclass(frozen=True)
+class Ending:
+    """A scripted solve: what it streams, how it ends, and the run, row and label that ending must give."""
+
+    incumbents: tuple[Incumbent, ...]
+    outcome: TourOutcome
+    run: tuple[Any, ...]
+    row: tuple[Any, ...]
+
+
+@st.composite
+def endings(draw: st.DrawFn, trip: Trip) -> Ending:
+    def an_order() -> tuple[str, ...]:
+        return (trip.start.id, *draw(st.permutations([item.id for item in trip.items])), trip.end.id)
+
+    objectives = sorted(draw(st.lists(st.integers(1, 10**7), unique=True, max_size=3)), reverse=True)
+    incumbents = tuple(Incumbent(order=an_order(), objective=objective) for objective in objectives)
+    count = len(incumbents)
+    kind = draw(st.sampled_from(["budget", "crash_after", "crash_before", "no_route", "timeout", "broken_order"]))
+    if kind == "budget":
+        order = an_order()
+        return Ending(
+            incumbents, TourFound(order), (1, "ready", None, order, True, None, ()), ("done", count, True, None)
+        )
+    if kind == "crash_after" and incumbents:
+        order = incumbents[-1].order
+        outcome: TourOutcome = TourFound(order, ending="optimizer_failed")
+        run = (1, "ready", None, order, False, "optimizer_failed", CRASH_LABEL)
+        return Ending(incumbents, outcome, run, ("done", count, False, "optimizer_failed"))
+    if kind in ("crash_after", "crash_before"):
+        exit_code, signal = draw(st.sampled_from([(3, None), (None, 9), (1, None)]))
+        run = (1, "failed", "optimizer_failed", (), False, None, ())
+        return Ending((), TourOptimizerFailed(exit_code, signal), run, ("done", 0, False, None))
+    if kind == "no_route":
+        run = (1, "failed", "no_valid_route_found", (), True, None, ())
+        return Ending((), TourNoRoute(), run, ("done", 0, True, None))
+    if kind == "timeout":
+        run = (1, "failed", "timeout", (), False, None, ())
+        return Ending(incumbents, TourTimedOut(), run, ("done", count, False, None))
+    # the chosen order breaks a rule: Failed, never an earlier valid incumbent instead (ADR-015, no fallback)
+    broken = TourFound((trip.start.id, NOT_AN_ITEM, trip.end.id), ending=draw(st.sampled_from(["budget", FAILED])))
+    reproducible = broken.ending == "budget"
+    run = (1, "failed", "internal_invariant_violation", (), reproducible, None, ())
+    return Ending(incumbents, broken, run, ("done", count, reproducible, None))
+
+
+def _view(planning: InMemoryPlanning, job_log: InMemoryPlanJobLog, poll: Any) -> dict[str, Any]:
+    queries = PlanRunQueries(planning.unit_of_work)
+    shown = [queries.get(run.id) for run in planning.runs]
+    return {
+        "plan_runs": tuple(
+            (
+                run.number,
+                run.status,
+                run.failure_reason,
+                tuple(stop.item_id for stop in run.stops),
+                run.reproducible,
+                run.not_fully_optimised,
+                detail.messages if detail is not None else None,
+            )
+            for run, detail in zip(planning.runs, shown, strict=True)
+        ),
+        "job_log": tuple(
+            (
+                row.fields["terminal_state"],
+                row.fields["incumbents"],
+                row.fields["reproducible"],
+                row.fields["not_fully_optimised_reason"],
+            )
+            for row in job_log.rows
+        ),
+        "poll.incumbent": poll,
+    }
+
+
+@settings(deadline=None)
+@given(trip=trips(), data=st.data())
+def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving(
+    trip: Trip, data: st.DataObject
+) -> None:
+    ending = data.draw(endings(trip), label="ending")
+    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    trip.seed_canonical_files(files)
+    planning.add_project(PROJECT, trip.snapshot)
+    job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
+    solver = ScriptedTourSolver(
+        ending.outcome, gate=Gate(held=True), incumbents=ending.incumbents, clock=clock, incumbent_every_s=EVERY_S
+    )
+    work = PlanRequestJob(
+        planning.unit_of_work, LegResolver(RecordingRoadMap(trip.leg_m)), solver, BUDGET, clock, log, files
+    )
+    registry = PlanJobRegistry(clock, work, log, job_log=job_log)
+    before = _view(planning, job_log, None)
+
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    assert solver.gate.reached.wait(30.0), "the solve was never asked"
+    solving = known_job(registry, job_id)
+    solver.gate.release()
+    job_when_ended(registry, job_id)
+
+    last = ending.incumbents[-1] if ending.incumbents else None
+    shown_while_solving = None
+    if last is not None:
+        found_at_s = EVERY_S * len(ending.incumbents)
+        shown_while_solving = {
+            "unconfirmed_legs": 0,
+            "retraces": 0,
+            "objective": last.objective,
+            "found_at_s": found_at_s,
+        }
+    assert solving.state == "solving"
+    assert_state_delta(
+        before,
+        _view(planning, job_log, solving.incumbent),
+        UNIVERSE,
+        {
+            "plan_runs": gained(ending.run),
+            "job_log": gained(ending.row),
+            "poll.incumbent": set_to(shown_while_solving),
+        },
+        strict=True,
+    )

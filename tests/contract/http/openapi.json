@@ -135,6 +135,35 @@
         "title": "ErrorEnvelope",
         "type": "object"
       },
+      "IncumbentResource": {
+        "description": "The last valid route found while optimising: its legs not yet confirmed, its retraces, the optimizer's cost of\nit and when it was found, in seconds from the job's start.",
+        "properties": {
+          "found_at_s": {
+            "title": "Found At S",
+            "type": "number"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "number"
+          },
+          "retraces": {
+            "title": "Retraces",
+            "type": "integer"
+          },
+          "unconfirmed_legs": {
+            "title": "Unconfirmed Legs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unconfirmed_legs",
+          "retraces",
+          "objective",
+          "found_at_s"
+        ],
+        "title": "IncumbentResource",
+        "type": "object"
+      },
       "ItemResource": {
         "description": "A catalog item (D107): `location` for a POI; `entry`, `exit` and `length_m` for a track; others null.",
         "properties": {
@@ -402,7 +431,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known.",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route.",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -411,6 +440,16 @@
           "ignore_memo": {
             "title": "Ignore Memo",
             "type": "boolean"
+          },
+          "incumbent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IncumbentResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "items_included": {
             "anyOf": [
@@ -509,7 +548,8 @@
           "ignore_memo",
           "stage_ms",
           "legs_total",
-          "items_included"
+          "items_included",
+          "incumbent"
         ],
         "title": "PlanJobResource",
         "type": "object"
@@ -529,7 +569,7 @@
         "type": "object"
       },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null.",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags; `messages` the lines the results show in words, such as \"not fully optimised (optimizer failed)\".",
         "properties": {
           "failure_reason": {
             "anyOf": [
@@ -545,6 +585,25 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "messages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "not_fully_optimised": {
+            "anyOf": [
+              {
+                "const": "optimizer_failed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Fully Optimised"
           },
           "number": {
             "title": "Number",
@@ -563,6 +622,10 @@
                 "type": "null"
               }
             ]
+          },
+          "reproducible": {
+            "title": "Reproducible",
+            "type": "boolean"
           },
           "status": {
             "enum": [
@@ -598,21 +661,40 @@
           "failure_reason",
           "stops",
           "totals",
-          "report"
+          "report",
+          "reproducible",
+          "not_fully_optimised",
+          "messages"
         ],
         "title": "PlanRunDetailResource",
         "type": "object"
       },
       "PlanRunResource": {
-        "description": "A numbered plan run; a job still running has none. `stale`: the project changed since it was computed.",
+        "description": "A numbered plan run; a job still running has none. `stale`: the project changed since it was computed.\n`reproducible` is false when its search did not end on its budget; `not_fully_optimised` names why a ready run is\nnot (brief section 8 run flags), null otherwise.",
         "properties": {
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "not_fully_optimised": {
+            "anyOf": [
+              {
+                "const": "optimizer_failed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Fully Optimised"
+          },
           "number": {
             "title": "Number",
             "type": "integer"
+          },
+          "reproducible": {
+            "title": "Reproducible",
+            "type": "boolean"
           },
           "stale": {
             "title": "Stale",
@@ -631,7 +713,9 @@
           "id",
           "number",
           "status",
-          "stale"
+          "stale",
+          "reproducible",
+          "not_fully_optimised"
         ],
         "title": "PlanRunResource",
         "type": "object"

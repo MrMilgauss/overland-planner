@@ -4,7 +4,8 @@ The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A F
 totals (SQL NULL), nor has a run stored before 0006. A stop stored before its driving columns were (05-07) reads them
 as `None`: runs are not recomputed. `report` holds a Failed run's reason in product words; a ready run, and any run
 stored before 05-08, has none (SQL NULL). `fingerprint` and `memo_hit` (05-10) are stored on every run; a run stored
-before has a null fingerprint and is never a memo source.
+before has a null fingerprint and is never a memo source. The run flags `reproducible` and `not_fully_optimised` (0008)
+are stored on every run and shown in the list and the detail; a run stored before reads reproducible and no label.
 """
 
 from __future__ import annotations
@@ -30,13 +31,28 @@ class SqlAlchemyPlanRunRepository:
 
     def list(self, project_id: str) -> list[PlanRun]:
         query = (
-            select(plan_runs.c.id, plan_runs.c.number, plan_runs.c.status, plan_runs.c.revision)
+            select(
+                plan_runs.c.id,
+                plan_runs.c.number,
+                plan_runs.c.status,
+                plan_runs.c.revision,
+                plan_runs.c.reproducible,
+                plan_runs.c.not_fully_optimised,
+            )
             .where(plan_runs.c.project_id == project_id)
             .order_by(plan_runs.c.number)
         )
         rows = self._connection.execute(query).mappings()
         return [
-            PlanRun(id=row["id"], number=row["number"], status=row["status"], revision=row["revision"]) for row in rows
+            PlanRun(
+                id=row["id"],
+                number=row["number"],
+                status=row["status"],
+                revision=row["revision"],
+                reproducible=row["reproducible"],
+                not_fully_optimised=row["not_fully_optimised"],
+            )
+            for row in rows
         ]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
@@ -78,6 +94,8 @@ class SqlAlchemyPlanRunRepository:
                 report=null() if run.report is None else asdict(run.report),
                 fingerprint=run.fingerprint,
                 memo_hit=run.memo_hit,
+                reproducible=run.reproducible,
+                not_fully_optimised=run.not_fully_optimised,
             )
         )
 
@@ -94,6 +112,8 @@ def _detail(row: RowMapping | None) -> PlanRunDetail | None:
         stops=_stops(row["itinerary"]),
         totals=None if row["totals"] is None else Totals(**row["totals"]),
         report=None if row["report"] is None else PlanReport(reason=row["report"]["reason"]),
+        reproducible=row["reproducible"],
+        not_fully_optimised=row["not_fully_optimised"],
     )
 
 

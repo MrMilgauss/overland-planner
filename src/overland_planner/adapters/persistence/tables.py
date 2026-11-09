@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     false,
+    true,
 )
 
 metadata = MetaData()
@@ -80,7 +81,9 @@ pois = Table(
 
 # One row per numbered plan run (brief §9); a job still running has none. `totals` is NULL for a Failed run and for one
 # stored before 0006; `report` is NULL for a ready run and for one stored before 05-08; `fingerprint` is NULL for a run
-# stored before the memo (05-10) and `memo_hit` false.
+# stored before the memo (05-10) and `memo_hit` false. The run flags (0008): `reproducible` (true for a run stored
+# before), `not_fully_optimised` (time_limit, stopped, optimizer_failed or NULL), `run_time_ms` and `memo_source_run_id`
+# (NULL until 06-10 writes them).
 plan_runs = Table(
     "plan_runs",
     metadata,
@@ -99,6 +102,10 @@ plan_runs = Table(
     Column("report", JSON, nullable=True),
     Column("fingerprint", Text, nullable=True),
     Column("memo_hit", Boolean, nullable=False, server_default=false()),
+    Column("reproducible", Boolean, nullable=False, server_default=true()),
+    Column("not_fully_optimised", Text, nullable=True),
+    Column("run_time_ms", Integer, nullable=True),
+    Column("memo_source_run_id", Text, nullable=True),
     UniqueConstraint("project_id", "number", name="uq_plan_runs_project_id_number"),
 )
 

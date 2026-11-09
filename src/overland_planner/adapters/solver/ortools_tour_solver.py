@@ -6,9 +6,14 @@ imported in the server process (idle-RAM guardrail G1).
 The probe child solves the fixed probe instance twice and sends both answers through a one-way pipe. The parent waits at
 most `timeout_s`, then kills it.
 
-A solve spawns one child (`tour_child`) that sends its final message and exits; `tour_outcome` says what its end means.
-A child still running when the reap wait after its message ends (interpreter teardown can be slow on a loaded Pi) is
-ended like any other, and its message counts: the exit code then only shows the parent's signal.
+A solve spawns one child (`tour_child`) that streams its incumbents, sends its final message and exits. The parent reads
+the pipe in the thread that spawned the child for the child's whole life (PR_SET_PDEATHSIG, `tour_child`), hands each
+valid incumbent (`incumbent_of`) to the solve's observer as it arrives, and stops reading at the final or the pipe's
+end; a message that is not a complete tour from Start to End is ignored. `tour_outcome` says what the messages and the
+end mean (ADR-015's table): the final order when the child ended normally, else the last valid incumbent labelled
+`optimizer_failed`, else Failed with the exit code or signal. A child still running when the reap wait after its final
+ends (interpreter teardown can be slow on a loaded Pi) is ended like any other, and its final counts: the exit code
+then only shows the parent's signal.
 
 The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past
 `safety_bound_s` the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the
@@ -20,6 +25,7 @@ root hands to the fingerprint memo.
 from __future__ import annotations
 
 import multiprocessing
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -38,6 +44,7 @@ from overland_planner.adapters.solver.probe_instance import (
 )
 from overland_planner.adapters.solver.tour_child import (
     FINAL,
+    INCUMBENT,
     TourChildMain,
     first_solution_search_parameters,
     run_tour_child,
@@ -45,11 +52,14 @@ from overland_planner.adapters.solver.tour_child import (
 )
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
+    Incumbent,
+    IncumbentObserver,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
     TourOutcome,
     TourTimedOut,
+    ignore_incumbents,
 )
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
@@ -109,10 +119,12 @@ class OrToolsTourSolver:
     def probe(self) -> ProbeResult:
         return probe_verdict(self._observe_probe_child())
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
-        return tour_outcome(self._observe_tour_child(model, budget), model)
+    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
+        return tour_outcome(self._observe_tour_child(model, budget, on_incumbent), model)
 
-    def _observe_tour_child(self, model: TourModel, budget: int) -> TourChildObservation:
+    def _observe_tour_child(
+        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver
+    ) -> TourChildObservation:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
         arguments = (self._tour_child_main, sender, model, budget)
@@ -122,21 +134,22 @@ class OrToolsTourSolver:
         except OSError:  # for example out of memory on the Pi: a process that could not start is a child failure
             receiver.close()
             sender.close()
-            return TourChildObservation(exit_code=None, message=None, overran=False)
+            return TourChildObservation(exit_code=None)
         sender.close()
-        message: Any = None
+        messages: list[Any] = []
         overran = False
         outlived_reap_wait = False
         try:
-            overran = not receiver.poll(self._safety_bound_s)
+            overran = not _read_until_the_end(
+                receiver, time.monotonic() + self._safety_bound_s, model, messages.append, on_incumbent
+            )
             if not overran:
-                message = _read_message(receiver)
                 child.join(_REAP_TIMEOUT_S)
                 outlived_reap_wait = child.is_alive()
         finally:
             receiver.close()
             _end_if_running(child)
-        return TourChildObservation(child.exitcode, message, overran, outlived_reap_wait)
+        return TourChildObservation(child.exitcode, tuple(messages), overran, outlived_reap_wait)
 
     def _observe_probe_child(self) -> ProbeObservation:
         context = multiprocessing.get_context("spawn")
@@ -158,31 +171,71 @@ class OrToolsTourSolver:
 
 @dataclass(frozen=True)
 class TourChildObservation:
-    """What the parent saw of a solve child. `outlived_reap_wait` is read before the parent ends the child."""
+    """What the parent saw of a solve child: its messages in order, up to its final or the pipe's end (an unreadable
+    message ends the reading). `outlived_reap_wait` is read before the parent ends the child."""
 
     exit_code: int | None
-    message: Any
-    overran: bool
+    messages: tuple[Any, ...] = ()
+    overran: bool = False
     outlived_reap_wait: bool = False
 
 
 def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOutcome:
+    """ADR-015's table of endings: budget end -> the final order; an abnormal end -> the last valid incumbent labelled
+    `optimizer_failed`, or Failed without one; a final without an order -> no route; past the safety bound -> timeout.
+    """
     if observation.overran:
         return TourTimedOut()
-    message = observation.message
-    exited_abnormally = observation.exit_code != 0 and not observation.outlived_reap_wait
-    if exited_abnormally or not _is_final(message):
-        return _failed(observation.exit_code)
-    nodes = message[1]
-    if nodes is None:
-        return TourNoRoute()
-    if not _is_complete_tour(nodes, model):
-        return _failed(observation.exit_code)
-    return TourFound(order=tuple(model.node_item_ids[node] for node in nodes))
+    ended_normally = observation.exit_code == 0 or observation.outlived_reap_wait
+    final = next((message for message in observation.messages if _is_final(message)), None)
+    if ended_normally and final is not None:
+        if final[1] is None:
+            return TourNoRoute()
+        if _is_complete_tour(final[1], model):
+            return TourFound(order=_item_ids(final[1], model))
+    incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
+    if incumbents:
+        return TourFound(order=incumbents[-1].order, ending="optimizer_failed")
+    return _failed(observation.exit_code)
+
+
+def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
+    """The incumbent a message carries, or `None` when it is no `(INCUMBENT, complete tour, objective)`."""
+    if not (isinstance(message, tuple) and len(message) == 3 and message[0] == INCUMBENT):
+        return None
+    _, nodes, objective = message
+    if type(objective) not in (int, float) or not _is_complete_tour(nodes, model):
+        return None
+    return Incumbent(order=_item_ids(nodes, model), objective=objective)
+
+
+def _read_until_the_end(
+    receiver: Connection,
+    deadline_s: float,
+    model: TourModel,
+    keep: Callable[[Any], None],
+    on_incumbent: IncumbentObserver,
+) -> bool:
+    """Reads until the final, the pipe's end or an unreadable message; `False` when the deadline came first."""
+    while receiver.poll(max(0.0, deadline_s - time.monotonic())):
+        message = _read_message(receiver)
+        if message is _UNREADABLE:
+            return True
+        keep(message)
+        incumbent = incumbent_of(message, model)
+        if incumbent is not None:
+            on_incumbent(incumbent)
+        if _is_final(message):
+            return True
+    return False
 
 
 def _is_final(message: Any) -> bool:
     return isinstance(message, tuple) and len(message) == 2 and message[0] == FINAL
+
+
+def _item_ids(nodes: tuple[int, ...], model: TourModel) -> tuple[str, ...]:
+    return tuple(model.node_item_ids[node] for node in nodes)
 
 
 def _is_complete_tour(nodes: Any, model: TourModel) -> bool:
@@ -199,15 +252,18 @@ def _failed(exit_code: int | None) -> TourOptimizerFailed:
     return TourOptimizerFailed(exit_code=exit_code, signal=None)
 
 
-def _read_message(receiver: Connection) -> Any:
-    """The child's message, or None when it closed the pipe without one or sent something unreadable.
+_UNREADABLE = object()
 
-    What a broken child wrote can fail unpickling in many ways; each one ends as `optimizer_failed`, which reports it.
+
+def _read_message(receiver: Connection) -> Any:
+    """The child's next message, or `_UNREADABLE` at the pipe's end or for something that cannot be read.
+
+    What a broken child wrote can fail unpickling in many ways; each one ends the reading, and the child's end decides.
     """
     try:
         return receiver.recv()
     except Exception:
-        return None
+        return _UNREADABLE
 
 
 def _end_if_running(child: BaseProcess) -> None:

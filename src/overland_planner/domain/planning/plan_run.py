@@ -14,6 +14,7 @@ from typing import Literal, NamedTuple
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
+from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
 PlanRunStatus = Literal["ready", "failed"]
 StopKind = Literal["poi", "track"]
@@ -30,13 +31,17 @@ class Driven(NamedTuple):
 
 @dataclass(frozen=True)
 class PlanRun:
-    """`revision` is the project's revision the run was computed at; `stale` is decided on read, never stored."""
+    """`revision` is the project's revision the run was computed at; `stale` is decided on read, never stored.
+    `reproducible` is false when the search did not end on its budget (D42); `not_fully_optimised` names why a ready
+    run is not (brief section 8 run flags)."""
 
     id: str
     number: int
     status: PlanRunStatus
     revision: int
     stale: bool = False
+    reproducible: bool = True
+    not_fully_optimised: NotFullyOptimised | None = None
 
     def seen_at(self, project_revision: int) -> PlanRun:
         """This run as listed while the project is at `project_revision`: Stale when that is not its own (brief §8)."""

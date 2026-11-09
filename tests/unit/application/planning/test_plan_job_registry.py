@@ -48,12 +48,14 @@ from overland_planner.application.ports.plan_job_log import PLAN_JOB_LOG_FIELDS
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 from overland_planner.application.ports.tour_solver import (
+    IncumbentObserver,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
     TourOutcome,
     TourSolver,
     TourTimedOut,
+    ignore_incumbents,
 )
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
@@ -120,6 +122,9 @@ FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
     "elapsed_ms",
     "memo_hit",
     "ignore_memo",
+    "incumbents",  # 06-06 fills these three (test_plan_request_job_outcomes.py)
+    "reproducible",
+    "not_fully_optimised_reason",
 }
 RUN_FIELDS = {
     "plan_run_id",
@@ -242,7 +247,7 @@ class _ScriptsInTurn:
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
         self._gate.passing()
         script = self._scripts.pop(0)
         if isinstance(script, BaseException):
@@ -687,7 +692,7 @@ class SolverOnCue:
     def cue(self, script: Script) -> None:
         self._cues.put(script)
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
         with self._lock:
             self.solves += 1
             self.solving += 1

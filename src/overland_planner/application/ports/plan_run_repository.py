@@ -10,11 +10,14 @@ from typing import Protocol
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
 from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, Totals
+from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
 
 @dataclass(frozen=True)
 class PlanRunDetail:
-    """A stored plan run with its itinerary and totals; a Failed run, or one stored before 0006, has no totals."""
+    """A stored plan run with its itinerary and totals; a Failed run, or one stored before 0006, has no totals. A run
+    stored before 0008 reads `reproducible` true and no `not_fully_optimised`. `messages` are the lines the run shows,
+    which the run queries fill (D223 b); the repository reads none."""
 
     id: str
     project_id: str
@@ -24,6 +27,9 @@ class PlanRunDetail:
     stops: tuple[PlanStop, ...]
     totals: Totals | None = None
     report: PlanReport | None = None
+    reproducible: bool = True
+    not_fully_optimised: NotFullyOptimised | None = None
+    messages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,7 @@ class NewPlanRun:
     """The row a finished plan writes: its number comes from the same transaction (brief section 8).
 
     `fingerprint` is the solver inputs' memo key, null for a job without a memo; `memo_hit` says the order was reused.
+    `reproducible` and `not_fully_optimised` are the run flags of how its search ended (brief section 8).
     """
 
     id: str
@@ -48,6 +55,8 @@ class NewPlanRun:
     report: PlanReport | None = None
     fingerprint: str | None = None
     memo_hit: bool = False
+    reproducible: bool = True
+    not_fully_optimised: NotFullyOptimised | None = None
 
 
 class PlanRunRepository(Protocol):

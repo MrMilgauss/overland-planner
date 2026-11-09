@@ -23,10 +23,20 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
-from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver, TourChildObservation, tour_outcome
-from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
+from overland_planner.adapters.solver.ortools_tour_solver import (
+    OrToolsTourSolver,
+    TourChildObservation,
+    incumbent_of,
+    tour_outcome,
+)
+from overland_planner.adapters.solver.tour_child import FINAL, INCUMBENT, run_tour_child
 from overland_planner.application.ports.probe import ProbeResult
-from overland_planner.application.ports.tour_solver import TourFound, TourOutcome
+from overland_planner.application.ports.tour_solver import (
+    IncumbentObserver,
+    TourFound,
+    TourOutcome,
+    ignore_incumbents,
+)
 from overland_planner.domain.planning.solver_model_builder import TourModel
 from tests.common.fakes import FakeClock
 
@@ -103,9 +113,9 @@ class RuleBreakingTourSolver:
     def drive_reversed(self, track_id: str) -> None:
         self._reversed_track_id = track_id
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
         if self._reversed_track_id is None:
-            outcome: TourOutcome = self._solver.solve(model, budget)
+            outcome: TourOutcome = self._solver.solve(model, budget, on_incumbent)
             return outcome
         track_id = self._reversed_track_id
         assert track_id in model.node_item_ids, f"the track {track_id} is not in the plan"
@@ -113,13 +123,13 @@ class RuleBreakingTourSolver:
 
 
 class _CapturedAnswer:
-    """The child's end of the pipe, kept in-process: it keeps the one message the solve sends."""
+    """The child's end of the pipe, kept in-process: it keeps every message the solve sends, in order."""
 
     def __init__(self) -> None:
-        self.message: Any = None
+        self.messages: list[Any] = []
 
     def send(self, message: Any) -> None:
-        self.message = message
+        self.messages.append(message)
 
     def close(self) -> None:
         pass
@@ -136,14 +146,17 @@ class InProcessOrToolsTourSolver:
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+    def solve(self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
         answer = _CapturedAnswer()
         run_tour_child(answer, model, budget)  # type: ignore[arg-type]
-        return tour_outcome(TourChildObservation(exit_code=0, message=answer.message, overran=False), model)
+        for message in answer.messages:  # after the search, not as found: only the hosting differs from the child
+            incumbent = incumbent_of(message, model)
+            if incumbent is not None:
+                on_incumbent(incumbent)
+        return tour_outcome(TourChildObservation(exit_code=0, messages=tuple(answer.messages)), model)
 
 
 # ---------------------------------------------------------------------------------------------------- slice 03 (W1)
-INCUMBENT = "incumbent"  # DISTILL's proposal of the child's incumbent message tag; DELIVER aligns it with tour_child
 SCRIPTED_CHILD_LIFE_S = 60.0  # a scripted child that "keeps searching" ends itself after this, so none outlives a test
 SCRIPTS = ("improving", "silent", "no_route", "finish")
 

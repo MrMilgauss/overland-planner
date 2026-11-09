@@ -320,15 +320,7 @@ def test_0006_keeps_every_run_stored_before_it_with_no_totals_and_its_downgrade_
     with sqlite3.connect(file) as connection:
         added = connection.execute("SELECT totals, report, fingerprint, memo_hit FROM plan_runs").fetchall()
     connection.close()
-    assert added == [(None, None, None, 0)]
-    database = SqliteDatabase(data_dir)
-    try:
-        with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
-            shown = uow.plan_runs.get("r1")
-    finally:
-        database.engine.dispose()
-    assert shown is not None
-    assert (shown.id, shown.project_id, shown.totals) == ("r1", "p1", None)
+    assert added == [(None, None, None, 0)]  # read through the repository at the head: the 0008 test
 
     downgrade(config, data_dir, monkeypatch, "0005")
 
@@ -395,7 +387,9 @@ def test_a_0006_release_refuses_a_0007_database(data_dir: Path, tmp_path: Path) 
     file = database_file(data_dir)
     command.upgrade(_config(f"sqlite:///{file}"), "0007")
     release_0006 = data_dir.parent / "migrations_0006"
-    shutil.copytree(REPO_ROOT / "migrations", release_0006, ignore=shutil.ignore_patterns("__pycache__", "0007_*.py"))
+    shutil.copytree(
+        REPO_ROOT / "migrations", release_0006, ignore=shutil.ignore_patterns("__pycache__", "0007_*.py", "0008_*.py")
+    )
     database = SqliteDatabase(data_dir)
     try:
         refused = DatabaseStartup(database, AlembicMigrator(database, release_0006), FakeClock()).probe()
@@ -404,6 +398,55 @@ def test_a_0006_release_refuses_a_0007_database(data_dir: Path, tmp_path: Path) 
 
     assert refused == ProbeResult(outcome="fatal", reason="db_newer_than_app")
     assert _revision(file) == ["0007"]
+
+
+RUN_COLUMNS_OF_0008 = {"reproducible", "not_fully_optimised", "run_time_ms", "memo_source_run_id"}
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_0008_adds_the_run_flags_older_runs_read_reproducible_with_no_label_and_its_downgrade_keeps_every_run(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0007")
+    _seed_trip_at_head(file)
+
+    command.upgrade(config, "0008")
+    assert (_trip(file), _plan_runs(file), _revision(file)) == (SEEDED_TRIP, SEEDED_RUNS, ["0008"])
+    assert _columns(file, "plan_runs") >= RUN_COLUMNS_OF_0008, f"plan_runs has {sorted(_columns(file, 'plan_runs'))}"
+    with sqlite3.connect(file) as connection:
+        added = connection.execute(
+            "SELECT reproducible, not_fully_optimised, run_time_ms, memo_source_run_id FROM plan_runs"
+        ).fetchall()
+    connection.close()
+    assert added == [(1, None, None, None)]
+    database = SqliteDatabase(data_dir)
+    try:
+        with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
+            shown, listed = uow.plan_runs.get("r1"), uow.plan_runs.list("p1")
+    finally:
+        database.engine.dispose()
+    assert shown is not None
+    assert (shown.id, shown.project_id, shown.totals) == ("r1", "p1", None)  # stored before 0006: no totals
+    assert (shown.reproducible, shown.not_fully_optimised) == (True, None)
+    assert [(run.id, run.reproducible, run.not_fully_optimised) for run in listed] == [("r1", True, None)]
+
+    downgrade(config, data_dir, monkeypatch, "0007")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0007"],
+    )
+    assert RUN_COLUMNS_OF_0008 & _columns(file, "plan_runs") == set()
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+    command.upgrade(config, "0008")
+    assert (_plan_runs(file), _revision(file)) == (SEEDED_RUNS, ["0008"])
+    assert _columns(file, "plan_runs") >= RUN_COLUMNS_OF_0008
 
 
 def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:

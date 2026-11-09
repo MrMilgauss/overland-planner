@@ -129,7 +129,7 @@ def test_each_start_logs_one_app_started_line(data_dir: Path) -> None:
         assert started[0]["app_version"] == "0123456789ab"
         assert started[0]["routing_provider"] == "mock"
         assert started[0]["python_version"] == platform.python_version()
-        assert started[0]["alembic_revision"] == "0007"
+        assert started[0]["alembic_revision"] == "0008"
 
 
 def _planner(data_dir: Path) -> TestClient:
@@ -233,8 +233,22 @@ def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(da
     assert (answer.status_code, answer.json()) == (
         200,
         [
-            {"id": "r2", "number": 2, "status": "ready", "stale": True},
-            {"id": "r10", "number": 10, "status": "failed", "stale": True},
+            {
+                "id": "r2",
+                "number": 2,
+                "status": "ready",
+                "stale": True,
+                "reproducible": True,
+                "not_fully_optimised": None,
+            },
+            {
+                "id": "r10",
+                "number": 10,
+                "status": "failed",
+                "stale": True,
+                "reproducible": True,
+                "not_fully_optimised": None,
+            },
         ],
     )
 

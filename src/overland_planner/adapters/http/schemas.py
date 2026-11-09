@@ -14,6 +14,7 @@ from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackIte
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
 from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
+from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
 
 class ErrorEnvelope(BaseModel):
@@ -118,27 +119,48 @@ class ItemResource(BaseModel):
 
 
 class PlanRunResource(BaseModel):
-    """A numbered plan run; a job still running has none. `stale`: the project changed since it was computed."""
+    """A numbered plan run; a job still running has none. `stale`: the project changed since it was computed.
+    `reproducible` is false when its search did not end on its budget; `not_fully_optimised` names why a ready run is
+    not (brief section 8 run flags), null otherwise."""
 
     id: str
     number: int
     status: PlanRunStatus
     stale: bool
+    reproducible: bool
+    not_fully_optimised: NotFullyOptimised | None
 
     @classmethod
     def of(cls, run: PlanRun) -> PlanRunResource:
-        return cls(id=run.id, number=run.number, status=run.status, stale=run.stale)
+        return cls(
+            id=run.id,
+            number=run.number,
+            status=run.status,
+            stale=run.stale,
+            reproducible=run.reproducible,
+            not_fully_optimised=run.not_fully_optimised,
+        )
 
 
 class PlanJobAccepted(BaseModel):
     job_id: str
 
 
+class IncumbentResource(BaseModel):
+    """The last valid route found while optimising: its legs not yet confirmed, its retraces, the optimizer's cost of
+    it and when it was found, in seconds from the job's start."""
+
+    unconfirmed_legs: int
+    retraces: int
+    objective: float
+    found_at_s: float
+
+
 class PlanJobResource(BaseModel):
     """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is true when the
     order came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each
     stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
-    `legs_total` and `items_included` are null until known."""
+    `legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route."""
 
     state: PlanJobState
     reason: str | None
@@ -150,6 +172,7 @@ class PlanJobResource(BaseModel):
     stage_ms: dict[str, int] | None
     legs_total: int | None
     items_included: int | None
+    incumbent: IncumbentResource | None
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:
@@ -217,7 +240,8 @@ class PlanReportResource(BaseModel):
 class PlanRunDetailResource(BaseModel):
     """A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the
     reason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run
-    stored before the totals were (0006) shows `totals` null."""
+    stored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run
+    flags; `messages` the lines the results show in words, such as "not fully optimised (optimizer failed)"."""
 
     id: str
     project_id: str
@@ -227,6 +251,9 @@ class PlanRunDetailResource(BaseModel):
     stops: list[PlanStopResource]
     totals: TotalsResource | None
     report: PlanReportResource | None
+    reproducible: bool
+    not_fully_optimised: NotFullyOptimised | None
+    messages: list[str]
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -239,6 +266,9 @@ class PlanRunDetailResource(BaseModel):
             stops=[PlanStopResource.of(stop) for stop in run.stops],
             totals=None if run.totals is None else TotalsResource.of(run.totals),
             report=None if run.report is None else PlanReportResource.of(run.report),
+            reproducible=run.reproducible,
+            not_fully_optimised=run.not_fully_optimised,
+            messages=list(run.messages),
         )
 
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from overland_planner.application.catalog.facade import ProjectNotFoundError
 from overland_planner.application.ports.plan_run_repository import PlanningUnitOfWork, PlanRunDetail
 from overland_planner.domain.planning.plan_run import PlanRun
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
+from overland_planner.domain.planning.run_messages import run_messages
 
 
 class PlanRunNotFoundError(LookupError):
@@ -34,6 +36,7 @@ class PlanRunQueries:
             return [run.seen_at(revision) for run in uow.plan_runs.list(project_id)]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
-        """The stored run with its itinerary and totals, or `None` for an unknown id."""
+        """The stored run with its itinerary, totals and the lines it shows, or `None` for an unknown id."""
         with self._unit_of_work() as uow:
-            return uow.plan_runs.get(plan_run_id)
+            detail = uow.plan_runs.get(plan_run_id)
+        return None if detail is None else replace(detail, messages=run_messages(detail.not_fully_optimised))

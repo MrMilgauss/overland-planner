@@ -17,7 +17,9 @@ the clock. Each job logs one `plan.job.finished` line before its end is publishe
 fields owned by later slices are null. A failed job names only the exception's class (D197). With a `PlanJobLog`, the
 line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the run is stored and before
 the end is published; a row that cannot be written changes nothing of the ending and logs `plan.job.log_failed` at
-warning with the error's class. The poll shows `stage_ms`, `legs_total` and `items_included` once the work noted them.
+warning with the error's class. The poll shows `stage_ms`, `legs_total` and `items_included` once the work noted them,
+and `incumbent` (null until the first valid route): the last incumbent the solve streamed, which the line leaves out
+(it counts them in `incumbents`).
 A job carries the `ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work
 noted, false until the memo gives the order.
 """
@@ -35,6 +37,7 @@ from typing import Literal, Protocol
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.plan_job_log import PlanJobLog, PlanJobLogEntry
+from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
 PlanJobState = Literal["queued", "computing_legs", "waiting_for_optimizer", "solving", "finalising", "done", "failed"]
 
@@ -59,6 +62,7 @@ _NULL_UNTIL_NOTED = (
     "retraces",
     "provider_id",
 )
+_POLL_ONLY = ("incumbent",)
 
 
 @dataclass(frozen=True)
@@ -77,14 +81,18 @@ class PlanJobView:
     stage_ms: dict[str, int] | None = None
     legs_total: int | None = None
     items_included: int | None = None
+    incumbent: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)
 class StoredRun:
-    """The run a finished plan stored. `reason` is the failure reason of a Failed run."""
+    """The run a finished plan stored. `reason` is the failure reason of a Failed run; `reproducible` and
+    `not_fully_optimised` are the run's flags (brief section 8)."""
 
     plan_run_id: str
     reason: str | None
+    reproducible: bool = True
+    not_fully_optimised: NotFullyOptimised | None = None
 
 
 class PlanJobProgress(Protocol):
@@ -171,6 +179,7 @@ class _Job:
             stage_ms=self._fact("stage_ms", dict),
             legs_total=self._fact("legs_total", int),
             items_included=self._fact("items_included", int),
+            incumbent=self._fact("incumbent", dict),
         )
 
     def _fact[T](self, name: str, kind: type[T]) -> T | None:
@@ -249,7 +258,7 @@ class PlanJobRegistry:
         """The `plan.job.finished` fields, which the job's row holds too."""
         return {
             **dict.fromkeys(_NULL_UNTIL_NOTED),
-            **job.facts,
+            **{name: value for name, value in job.facts.items() if name not in _POLL_ONLY},
             "job_id": job.id,
             "project_id": job.project_id,
             "terminal_state": ending.state,

@@ -151,7 +151,17 @@ class _Runs:
 
     def list(self, project_id: str) -> list[PlanRun]:
         rows = sorted((row for row in self._rows if row.project_id == project_id), key=lambda row: row.number)
-        return [PlanRun(id=row.id, number=row.number, status=row.status, revision=row.revision) for row in rows]
+        return [
+            PlanRun(
+                id=row.id,
+                number=row.number,
+                status=row.status,
+                revision=row.revision,
+                reproducible=row.reproducible,
+                not_fully_optimised=row.not_fully_optimised,
+            )
+            for row in rows
+        ]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         for row in self._rows:
@@ -165,6 +175,8 @@ class _Runs:
                     row.stops,
                     row.totals,
                     row.report,
+                    reproducible=row.reproducible,
+                    not_fully_optimised=row.not_fully_optimised,
                 )
         return None
 

@@ -13,6 +13,7 @@ import errno
 import itertools
 import multiprocessing
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -27,6 +28,7 @@ import pytest
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
 from overland_planner.application.ports.tour_solver import (
+    Incumbent,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
@@ -85,6 +87,21 @@ def _complete_model(item_count: int) -> TourModel:
     ids = tuple(f"node-{node}" for node in range(size))
     costs = tuple(tuple(cost(origin, destination) for destination in range(size)) for origin in range(size))
     return TourModel(ids, 0, last, costs)
+
+
+def _scattered_model(item_count: int, seed: int) -> TourModel:
+    """Every required arc with seeded random costs: unlike `_complete_model`'s, its first solution is not the best."""
+    rng = random.Random(seed)  # noqa: S311 - reproducible test costs, not security
+    size = item_count + 2
+    last = size - 1
+    costs = tuple(
+        tuple(
+            None if destination == 0 or origin in (last, destination) else rng.randint(100, 5_000)
+            for destination in range(size)
+        )
+        for origin in range(size)
+    )
+    return TourModel(tuple(f"node-{node}" for node in range(size)), 0, last, costs)
 
 
 def _best_order(model: TourModel) -> tuple[str, ...]:
@@ -211,6 +228,22 @@ def test_solves_a_small_one_way_trip() -> None:
     outcome = OrToolsTourSolver(timeout_s=0.001).solve(ONE_WAY, ENOUGH_BUDGET)
 
     assert outcome == TourFound(order=_best_order(ONE_WAY))
+
+
+def test_the_real_child_streams_only_improving_incumbents_and_ends_on_the_last() -> None:
+    """60 items, the size of I1 (whose model needs the whole planning pipeline: its golden order is the
+    `golden_order` check, which runs with this streaming on). The search must report more than one tour."""
+    streamed: list[Incumbent] = []
+
+    outcome = OrToolsTourSolver().solve(_scattered_model(60, seed=1), ENOUGH_BUDGET, on_incumbent=streamed.append)
+
+    assert isinstance(outcome, TourFound)
+    assert outcome.ending == "budget"
+    assert len(streamed) > 1, "the search reported no improvement after its first tour"
+    objectives = [incumbent.objective for incumbent in streamed]
+    assert all(later < earlier for earlier, later in itertools.pairwise(objectives)), f"not improving: {objectives}"
+    assert streamed[-1].order == outcome.order, "the final order is not the last incumbent"
+    assert {(incumbent.unconfirmed_legs, incumbent.retraces) for incumbent in streamed} == {(0, 0)}
 
 
 def test_same_budget_gives_the_same_order() -> None:
@@ -421,7 +454,7 @@ def test_importing_and_building_the_app_and_solving_leave_ortools_out(tmp_path: 
     assert printed == [
         "after import: []",
         "after create_app: []",
-        "solved: TourFound(order=('s', 'e'))",
+        "solved: TourFound(order=('s', 'e'), ending='budget')",
         "after solve: []",
     ]
 

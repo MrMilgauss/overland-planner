@@ -228,7 +228,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
 
     assert set(job) == {
         *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
-        *("stage_ms", "legs_total", "items_included"),
+        *("stage_ms", "legs_total", "items_included", "incumbent"),
     }
     assert (job["state"], job["reason"], job["message"]) == ("done", None, None)
     assert set(job["stage_ms"]) == {"snapshot", "matrix", "reach_model", "solve", "guard_persist"}
@@ -237,9 +237,13 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     connection.close()
     assert logged == [(project_id, "done", job["plan_run_id"])], "the job writes its one plan_job_log row"
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
-    assert set(shown) == {"id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"}
+    assert set(shown) == {
+        *("id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"),
+        *("reproducible", "not_fully_optimised", "messages"),
+    }
     assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)
     assert (shown["status"], shown["failure_reason"]) == ("ready", None)
+    assert (shown["reproducible"], shown["not_fully_optimised"], shown["messages"]) == (True, None, [])
     assert [(stop["name"], stop["type"]) for stop in shown["stops"]] == [
         ("Casa Marco", "poi"),
         ("Briancon", "poi"),
@@ -305,7 +309,14 @@ def test_a_failed_run_is_stored_without_stops_and_named_by_the_job(data_dir: Pat
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
     assert (shown["status"], shown["failure_reason"], shown["stops"]) == ("failed", "no_valid_route_found", [])
     assert client.get(f"/api/projects/{project_id}/plan-runs").json() == [
-        {"id": shown["id"], "number": 1, "status": "failed", "stale": False}
+        {
+            "id": shown["id"],
+            "number": 1,
+            "status": "failed",
+            "stale": False,
+            "reproducible": True,
+            "not_fully_optimised": None,
+        }
     ]
 
 

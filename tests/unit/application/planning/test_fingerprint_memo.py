@@ -22,7 +22,14 @@ from hypothesis import strategies as st
 from overland_planner.application.planning.facade import FingerprintMemo, PlanJobRegistry, PlanRequestJob
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
-from overland_planner.application.ports.tour_solver import TourFound, TourNoRoute, TourOutcome, TourTimedOut
+from overland_planner.application.ports.tour_solver import (
+    IncumbentObserver,
+    TourFound,
+    TourNoRoute,
+    TourOutcome,
+    TourTimedOut,
+    ignore_incumbents,
+)
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.poi import PoiItem
@@ -62,7 +69,7 @@ class _ProposingSolver:
     def probe(self) -> Any:
         raise AssertionError("the plan job never probes the solver")
 
-    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+    def solve(self, model: TourModel, budget: int, _on_incumbent: IncumbentObserver = ignore_incumbents) -> TourOutcome:
         self.calls += 1
         assert self.answers, "the solver was asked although the memo had the order"
         answer = self.answers.pop(0)
