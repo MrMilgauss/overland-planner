@@ -321,36 +321,51 @@ def _order_of(plan: Plan) -> tuple[str, ...]:
     return tuple(stop.item_id for stop in plan.stops)
 
 
-def _broken_orders(plan: Plan) -> list[tuple[tuple[str, ...], str]]:
+def _ends(first: tuple[str, ...], last: tuple[str, ...], plan: Plan) -> str:
+    """HC-2's detail: the first and last stop the order has, and the Start and End it should have."""
+    snapshot = plan.trip.snapshot
+    return f"the trip runs {first} to {last}, not {snapshot.start_item_id} to {snapshot.end_item_id}"
+
+
+def _items(extra: list[str], missing: list[str]) -> str:
+    """HC-3's detail: the items placed too often or never, by id."""
+    return f"not each item once: extra {extra}, missing {missing}"
+
+
+def _broken_orders(plan: Plan) -> list[tuple[tuple[str, ...], str, str]]:
+    """Each broken order with the rule it breaks first and the exact detail the guard gives."""
     order = _order_of(plan)
     start, end = order[0], order[-1]
     excluded = [item.id for item in plan.trip.snapshot.items if not item.included]
     broken = [
-        ((), "HC-2"),
-        ((start,), "HC-2"),
-        (order[1:], "HC-2"),
-        (order[:-1], "HC-2"),
-        (("no-such-item", *order), "HC-2"),
-        ((*order, "no-such-item"), "HC-2"),
-        ((start, "no-such-item", *order[1:]), "HC-3"),
-        ((start, start, *order[1:]), "HC-3"),
-        ((*order[:-1], end, end), "HC-3"),
+        ((), "HC-2", _ends((), (), plan)),
+        ((start,), "HC-2", _ends((start,), (start,), plan)),
+        (order[1:], "HC-2", _ends((order[1],), (end,), plan)),
+        (order[:-1], "HC-2", _ends((start,), (order[-2],), plan)),
+        (("no-such-item", *order), "HC-2", _ends(("no-such-item",), (end,), plan)),
+        ((*order, "no-such-item"), "HC-2", _ends((start,), ("no-such-item",), plan)),
+        ((start, "no-such-item", *order[1:]), "HC-3", _items(["no-such-item"], [])),
+        ((start, start, *order[1:]), "HC-3", _items([start], [])),
+        ((*order[:-1], end, end), "HC-3", _items([end], [])),
     ]
     between = order[1:-1]
     if between:
-        broken.append(((start, *between[1:], end), "HC-3"))
-        broken.append(((start, between[0], *between, end), "HC-3"))
-    broken.extend(((start, item_id, *order[1:]), "HC-3") for item_id in excluded)
+        broken.append(((start, *between[1:], end), "HC-3", _items([], [between[0]])))
+        broken.append(((start, between[0], *between, end), "HC-3", _items([between[0]], [])))
+    broken.extend(((start, item_id, *order[1:]), "HC-3", _items([item_id], [])) for item_id in excluded)
     return broken
 
 
-@given(plan=plans(), data=st.data())
-def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan: Plan, data: st.DataObject) -> None:
-    order, rule = data.draw(st.sampled_from(_broken_orders(plan)), label="order")
-    before = _judged(plan, plan.stops, None)
+@given(plan=plans())
+def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan: Plan) -> None:
+    """Every broken order on every example (D212), each with the exact detail the event log gets."""
+    for order, rule, detail in _broken_orders(plan):
+        note(f"order: {order}")
+        before = _judged(plan, plan.stops, None)
 
-    violation = plan.guard().check_order(order)
+        violation = plan.guard().check_order(order)
 
-    assert_state_delta(
-        before, _judged(plan, plan.stops, violation), UNIVERSE, {"guard.check": set_to(rule)}, strict=True
-    )
+        assert_state_delta(
+            before, _judged(plan, plan.stops, violation), UNIVERSE, {"guard.check": set_to(rule)}, strict=True
+        )
+        assert violation is not None and violation.detail == detail

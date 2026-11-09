@@ -104,10 +104,12 @@ def test_an_unknown_project_or_item_is_not_found_and_changes_nothing(
     )
     before = _view(projects, project_id)
 
-    with pytest.raises(error):
+    with pytest.raises(error) as refused:
         anchors.set(target, start, end)
 
     assert_state_delta(before, _view(projects, project_id), UNIVERSE, {}, strict=True)
+    named = f"No item with id {unknown}" if error is ItemNotFoundError else f"No project with id {unknown}"
+    assert str(refused.value) == named, "the refusal names what was not found"
 
 
 @given(place_count=PLACE_COUNT, track_count=st.integers(min_value=0, max_value=3), anchored=st.booleans())

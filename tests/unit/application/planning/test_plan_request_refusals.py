@@ -127,12 +127,13 @@ def test_an_unknown_project_is_not_found_and_changes_nothing(
     service, log = _service(planning, solver)
     before = _view(planning, log)
 
-    with pytest.raises(ProjectNotFoundError):
+    with pytest.raises(ProjectNotFoundError) as listed:
         PlanRunQueries(planning.unit_of_work).list(unknown)
-    with pytest.raises(ProjectNotFoundError):
+    with pytest.raises(ProjectNotFoundError) as requested:
         service.request(unknown)
 
     assert_state_delta(before, _view(planning, log), UNIVERSE, {}, strict=True)
+    assert str(listed.value) == str(requested.value) == f"No project with id {unknown}", "the refusal names it"
 
 
 @given(numbers=RUN_NUMBERS, other_numbers=RUN_NUMBERS)

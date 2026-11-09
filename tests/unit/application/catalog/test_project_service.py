@@ -189,8 +189,10 @@ def test_an_unknown_item_or_an_item_of_another_project_is_not_removed_and_nothin
     cases = [(project_id, unknown, ItemNotFoundError), (unknown, ids[0], ProjectNotFoundError)]
     cases += [(project_id, foreign, ItemNotFoundError) for foreign in other_ids]
     for target, item_id, error in cases:
-        with pytest.raises(error):
+        with pytest.raises(error) as refused:
             service.remove_item(target, item_id)
+        named = f"No item with id {item_id}" if error is ItemNotFoundError else f"No project with id {target}"
+        assert str(refused.value) == named, "the refusal names what was not found"
 
     assert_state_delta(before, _trip_view(service, project_id, other_id), TRIP_UNIVERSE, {}, strict=True)
 
