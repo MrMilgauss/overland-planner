@@ -22,7 +22,6 @@ Timing scenarios run the production solver adapter with a scripted child (waiver
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import random
@@ -30,8 +29,6 @@ import re
 import subprocess
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -66,6 +63,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.world import (
 from tests.common.predicates import gained
 from tests.common.solver_fakes import FollowingClock, ScriptedTourSolver
 from tests.common.state_delta import assert_state_delta
+from tests.perf.golden_instances import TripData, committed_trip, order_sha256
 
 SIXTY_TRIP = "Tutto quello che ho sempre voluto guidare"
 DOLOMITI_2028 = "Dolomiti 2028"
@@ -91,24 +89,6 @@ PI_URL_KEY = "PLANNER_PERF_URL"  # set by make perf-pi (slice 03-ops, D96): the 
 
 
 # ------------------------------------------------------------------------------------------- the trip data
-@dataclass(frozen=True)
-class TripData:
-    """A project as Marco would bring it: trail files, places, and the Start and End places."""
-
-    tracks: tuple[tuple[str, tuple[tuple[float, float, float], ...]], ...]
-    pois: tuple[tuple[str, float, float], ...]
-    start: tuple[str, float, float]
-    end: tuple[str, float, float]
-    solver_budget: int | None = None
-    expected_order: tuple[str, ...] = ()
-    expected_order_sha256: str | None = None
-    road_km: float | None = None
-
-    @property
-    def item_count(self) -> int:
-        return len(self.tracks) + len(self.pois)
-
-
 def synthetic_trip(tracks: int, pois: int) -> TripData:
     """The test-side builder: deterministic, short trails of 3 points and places in the Western Alps."""
     rng = random.Random(BUILDER_SEED)  # noqa: S311 - test data, not security
@@ -126,28 +106,6 @@ def synthetic_trip(tracks: int, pois: int) -> TripData:
     return TripData(
         tuple(built_tracks), built_pois, (home.name, home.lat, home.lon), (briancon.name, briancon.lat, briancon.lon)
     )
-
-
-def committed_trip(path: Path) -> TripData:
-    """The committed reference project (slice 03-ops). Format: see red-classification.md, slice 03 fixture contract."""
-    assert path.exists(), (
-        f"the committed reference project {path.relative_to(REPO_ROOT)} does not exist yet: slice 03-ops generates "
-        "I1 (dense) and I2 (sparse) with seed 20261101 and commits them with their golden order"
-    )
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return TripData(
-        tracks=tuple((t["name"], tuple(tuple(p) for p in t["points"])) for t in data["tracks"]),
-        pois=tuple((p["name"], p["lat"], p["lon"]) for p in data["pois"]),
-        start=(data["start"]["name"], data["start"]["lat"], data["start"]["lon"]),
-        end=(data["end"]["name"], data["end"]["lat"], data["end"]["lon"]),
-        solver_budget=data.get("solver_budget"),
-        expected_order=tuple(data.get("expected_order", ())),
-        expected_order_sha256=data.get("expected_order_sha256"),
-    )
-
-
-def order_sha256(names: list[str] | tuple[str, ...]) -> str:
-    return hashlib.sha256("\n".join(names).encode("utf-8")).hexdigest()
 
 
 def gpx_track(name: str, points: tuple[tuple[float, float, float], ...]) -> bytes:
