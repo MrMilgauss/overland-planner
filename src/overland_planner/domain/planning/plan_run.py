@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
@@ -19,6 +19,13 @@ PlanRunStatus = Literal["ready", "failed"]
 StopKind = Literal["poi", "track"]
 _METRES_PER_KM = 1000
 _SECONDS_PER_HOUR = 3600
+
+
+class Driven(NamedTuple):
+    """What a stop drives on the road leg into it and off-road along it, in one unit (km or seconds)."""
+
+    road: float
+    offroad: float
 
 
 @dataclass(frozen=True)
@@ -89,12 +96,13 @@ class PlanStop:
         track_km = stored_length_km(item)
         return replace(stop, track_km=track_km, offroad_s=track_km / offroad_speed.kmh * _SECONDS_PER_HOUR)
 
-    def driven_km(self) -> tuple[float, float]:
+    def driven_km(self) -> Driven:
         """Road and off-road km driven to reach and through this stop."""
-        return self.leg_km or 0.0, self.track_km or 0.0
+        return Driven(road=self.leg_km or 0.0, offroad=self.track_km or 0.0)
 
-    def driven_s(self) -> tuple[float, float]:
-        return self.leg_s or 0, self.offroad_s or 0.0
+    def driven_s(self) -> Driven:
+        """Road and off-road seconds driven to reach and through this stop."""
+        return Driven(road=self.leg_s or 0, offroad=self.offroad_s or 0.0)
 
     def ending(self, driven_before: Sequence[PlanStop]) -> PlanStop:
         """This stop with its cumulative values, after the stops `driven_before` it."""
@@ -116,10 +124,10 @@ class Totals:
     @classmethod
     def of(cls, stops: Sequence[PlanStop]) -> Totals:
         return cls(
-            road_km=math.fsum(stop.driven_km()[0] for stop in stops),
+            road_km=math.fsum(stop.driven_km().road for stop in stops),
             road_s=sum(stop.leg_s or 0 for stop in stops),
-            offroad_km=math.fsum(stop.driven_km()[1] for stop in stops),
-            offroad_s=math.fsum(stop.driven_s()[1] for stop in stops),
+            offroad_km=math.fsum(stop.driven_km().offroad for stop in stops),
+            offroad_s=math.fsum(stop.driven_s().offroad for stop in stops),
             total_km=_driven_km(stops),
             total_s=_driven_s(stops),
         )
