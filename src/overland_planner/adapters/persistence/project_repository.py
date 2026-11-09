@@ -71,11 +71,13 @@ class SqlAlchemyProjectRepository:
         stored = settings.get(_OFFROAD_SPEED_KEY)
         if stored is None:
             return DEFAULT_OFFROAD_SPEED
-        try:
-            return OffroadSpeed(float(stored))
-        except (TypeError, ValueError):  # OffroadSpeedNotDrivableError, or not a number at all
-            self._event_log.warning("catalog.settings.invalid", project_id=project_id, field=_OFFROAD_SPEED_KEY)
-            return DEFAULT_OFFROAD_SPEED
+        if isinstance(stored, (int, float)) and not isinstance(stored, bool):  # only a JSON number is a speed
+            try:
+                return OffroadSpeed(float(stored))
+            except ValueError:  # OffroadSpeedNotDrivableError
+                pass
+        self._event_log.warning("catalog.settings.invalid", project_id=project_id, field=_OFFROAD_SPEED_KEY)
+        return DEFAULT_OFFROAD_SPEED
 
 
 def _settings(project: Project) -> dict[str, Any]:
