@@ -20,7 +20,9 @@ from typing import Any
 from hypothesis import given
 from hypothesis import strategies as st
 
+from overland_planner.application.ports.tour_solver import TourNoRoute, TourOptimizerFailed, TourTimedOut
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.planning.invariant_guard import INVARIANT_VIOLATION_REASON
 from overland_planner.domain.planning.plan_run import PlanReport, PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from tests.common.state_delta import assert_state_delta, set_to
@@ -222,11 +224,22 @@ PRODUCT_WORDS = {
 }
 
 
-@given(planned=planned_trips(), codes=st.permutations([*PRODUCT_WORDS, None]))
+STORED_CODES = {TourNoRoute.reason, TourOptimizerFailed.reason, TourTimedOut.reason, INVARIANT_VIOLATION_REASON}
+unknown_codes = (
+    st.lists(st.from_regex(r"[a-z]{1,8}", fullmatch=True), min_size=1, max_size=4)
+    .map("_".join)
+    .filter(lambda code: code not in PRODUCT_WORDS)
+)
+
+
+@given(planned=planned_trips(), unknown=unknown_codes, data=st.data())
 def test_a_failed_run_reports_its_reason_in_product_words_and_a_ready_run_has_no_report(
-    planned: tuple[Trip, tuple[CatalogItem, ...]], codes: list[str | None]
+    planned: tuple[Trip, tuple[CatalogItem, ...]], unknown: str, data: st.DataObject
 ) -> None:
-    """Every stored failure code and the ready outcome (`None`) on every example (D212), in any order."""
+    """Every code a run can store, one with no wording (its words, D220 e) and the ready outcome (`None`) on every
+    example (D212), in any order."""
+    assert set(PRODUCT_WORDS) == STORED_CODES, "every reason a solver outcome or the guard can store has its words"
+    codes = data.draw(st.permutations([*PRODUCT_WORDS, unknown, None]), label="codes")
     trip, _ = planned
     assembler = PlanRunAssembler(trip.snapshot, trip.legs)
     universe = {"snapshot.read", "plan.reports"}
@@ -234,5 +247,6 @@ def test_a_failed_run_reports_its_reason_in_product_words_and_a_ready_run_has_no
 
     after = {"snapshot.read": trip.snapshot, "plan.reports": {code: assembler.report(code) for code in codes}}
 
-    reports = {code: None if code is None else PlanReport(reason=PRODUCT_WORDS[code]) for code in codes}
+    words = {**PRODUCT_WORDS, unknown: " ".join(unknown.split("_"))}
+    reports = {code: None if code is None else PlanReport(reason=words[code]) for code in codes}
     assert_state_delta(before, after, universe, {"plan.reports": set_to(reports)}, strict=True)

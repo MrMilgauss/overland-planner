@@ -40,8 +40,10 @@ class PlanRunAssembler:
 
     @staticmethod
     def report(failure_reason: str | None) -> PlanReport | None:
-        """`None` for a ready run; a code the planner does not store is a bug, so it raises `KeyError`."""
-        return None if failure_reason is None else PlanReport(_PRODUCT_WORDS[failure_reason])
+        """`None` for a ready run; a code with no product wording yet shows its words (D220 e)."""
+        if failure_reason is None:
+            return None
+        return PlanReport(_PRODUCT_WORDS.get(failure_reason, failure_reason.replace("_", " ")))
 
     def _stop(self, item: CatalogItem, previous: CatalogItem | None) -> PlanStop:
         leg = None if previous is None else self._legs.km_and_s(*road_between(previous, item))
