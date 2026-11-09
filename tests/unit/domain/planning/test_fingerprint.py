@@ -1,9 +1,9 @@
 """The fingerprint of the solver inputs (ADR-014 section 5, D124, FR-5.6): the memo key of a plan's order. Pure domain.
 
 Driving port: `Fingerprint.of`, the function the plan job calls. Observable universe: the fingerprint value.
-Test Budget: 2 behaviors (rebuilding the same inputs, or changing what only the totals use, keeps the fingerprint;
-changing any single input gives another) x 2 = 4; 2 used. Every single-input change is applied on every generated
-model (D212), not one random draw.
+Test Budget: 3 behaviors (rebuilding the same inputs, or changing what only the totals use, or moving a point by less
+than the quantum, keeps the fingerprint; changing any single input gives another; stored fingerprints never change
+silently) x 2 = 6; 3 used. Every single-input change is applied on every generated model (D212), not one random draw.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.catalog.item import CatalogItem
+from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.project import OffroadSpeed
 from overland_planner.domain.planning.fingerprint import FINGERPRINT_SCHEME, Fingerprint, SolveSettings
@@ -54,8 +54,19 @@ def _with_item(
     return replace(snapshot, items=tuple(change(item) if item.id == item_id else item for item in snapshot.items))
 
 
-def _moved(point: Coordinate) -> Coordinate:
-    return Coordinate(point.latitude + 0.001, point.longitude)
+ABOVE_QUANTUM = 0.001  # about 100 m: more than the 6-decimal quantum, less than a degree
+BELOW_QUANTUM = 4e-7  # under half the 6-decimal quantum: the same quantised point
+
+
+def _moved(point: Coordinate, latitude: float = 0.0, longitude: float = 0.0) -> Coordinate:
+    return Coordinate(point.latitude + latitude, point.longitude + longitude)
+
+
+def _nudged(item: CatalogItem, by: float) -> CatalogItem:
+    """The item with every point moved by `by` degrees, north and east."""
+    if isinstance(item, TrackItem):
+        return replace(item, entry=_moved(item.entry, by, by), exit=_moved(item.exit, by, by))
+    return replace(item, location=_moved(item.location, by, by))
 
 
 def _one_more_arc_metre(model: TourModel) -> TourModel:
@@ -78,12 +89,19 @@ def _single_input_changes(trip: Trip) -> dict[str, Inputs]:
     def track_as(**fields: Any) -> ProjectSnapshot:
         return _with_item(snapshot, track.id, lambda item: replace(item, **fields))
 
+    def place_at(location: Coordinate) -> ProjectSnapshot:
+        return _with_item(snapshot, trip.start.id, lambda item: replace(item, location=location))
+
     return {
         "item": (with_added, _model_with_legs(trip, with_added), solve),
         "anchor": (with_new_start, _model_with_legs(trip, with_new_start), solve),
         "track direction version": (track_as(direction_version=track.direction_version + 1), model, solve),
-        "track entry": (track_as(entry=_moved(track.entry)), model, solve),
-        "track exit": (track_as(exit=_moved(track.exit)), model, solve),
+        "track entry latitude": (track_as(entry=_moved(track.entry, latitude=ABOVE_QUANTUM)), model, solve),
+        "track entry longitude": (track_as(entry=_moved(track.entry, longitude=ABOVE_QUANTUM)), model, solve),
+        "track exit latitude": (track_as(exit=_moved(track.exit, latitude=ABOVE_QUANTUM)), model, solve),
+        "track exit longitude": (track_as(exit=_moved(track.exit, longitude=ABOVE_QUANTUM)), model, solve),
+        "place latitude": (place_at(_moved(trip.start.location, latitude=ABOVE_QUANTUM)), model, solve),
+        "place longitude": (place_at(_moved(trip.start.location, longitude=ABOVE_QUANTUM)), model, solve),
         "track points": (track_as(canonical_sha256="0" * 64), model, solve),
         "leg distance": (snapshot, _one_more_arc_metre(model), solve),
         "road map": (snapshot, model, replace(solve, provider_id="mock:straight_line_x1.3:script:" + "1" * 64)),
@@ -121,6 +139,9 @@ def test_rebuilding_the_same_inputs_or_changing_only_what_totals_use_keeps_the_f
 
     assert_state_delta(before, after, UNIVERSE, {"fingerprint": unchanged()}, strict=True)
     assert after["fingerprint"].startswith(f"{FINGERPRINT_SCHEME}:"), "the scheme version leads the fingerprint"
+    snapshot, model, solve = _inputs_of(trip)
+    nudged = replace(snapshot, items=tuple(_nudged(item, BELOW_QUANTUM) for item in snapshot.items))
+    assert _fingerprint((nudged, model, solve)) == before, "a move below the quantum is the same point"
 
 
 @settings(deadline=None)
@@ -135,3 +156,32 @@ def test_changing_any_single_solver_input_gives_another_fingerprint(trip: Trip) 
             assert_state_delta(before, after, UNIVERSE, {"fingerprint": _changed}, strict=True)
         except AssertionError as error:
             raise AssertionError(f"changing the {name} kept the fingerprint: {error}") from error
+
+
+GOLDEN_START = PoiItem(id="home", project_id=PROJECT, name="Casa Marco", location=Coordinate(45.0703391, 7.6868572))
+GOLDEN_TRACK = TrackItem(
+    id="assietta",
+    project_id=PROJECT,
+    name="Strada dell'Assietta",
+    description=None,
+    original_sha256="original",
+    canonical_sha256="ab" * 32,
+    direction_version=2,
+    point_count=23_295,
+    entry=Coordinate(45.0512345678, 7.0412345678),
+    exit=Coordinate(44.9687654321, 6.8787654321),
+    length_m=224_800.0,
+)
+GOLDEN_END = PoiItem(id="briancon", project_id=PROJECT, name="Briancon", location=Coordinate(44.8986, 6.6436))
+GOLDEN_SNAPSHOT = ProjectSnapshot(GOLDEN_START.id, GOLDEN_END.id, (GOLDEN_START, GOLDEN_TRACK, GOLDEN_END))
+GOLDEN_MODEL = TourModel(
+    ("home", "assietta", "briancon"), 0, 2, ((None, 61_200, 140_100), (None, None, 27_400), (None, None, None))
+)
+# sha256 of the canonical JSON written out by hand (sorted keys, no spaces, points to 6 decimals), not by `of`.
+GOLDEN_FINGERPRINT = "fp1:25884a670e4a16fba2b8861de399124b0188982c895b62316a1dbe64936167e3"
+
+
+def test_the_fingerprint_of_fixed_inputs_is_pinned_so_stored_fingerprints_never_change_silently() -> None:
+    """Runs keep their fingerprint in the database: a change of this value must bump FINGERPRINT_SCHEME (ADR-014
+    section 5), so old memo entries miss instead of matching inputs they were not computed from."""
+    assert Fingerprint.of(GOLDEN_SNAPSHOT, GOLDEN_MODEL, SETTINGS).value == GOLDEN_FINGERPRINT
