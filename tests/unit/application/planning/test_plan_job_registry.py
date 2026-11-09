@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from hypothesis import assume, given, settings
+from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -53,6 +53,7 @@ from overland_planner.application.ports.tour_solver import (
 )
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
@@ -71,7 +72,7 @@ from tests.unit.application.planning.planning_doubles import (
     known_job,
 )
 from tests.unit.application.planning.scripted_tour_solver import Script, ScriptedTourSolver
-from tests.unit.domain.planning.trips import PROJECT, Trip, left_at, reached_at, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, left_at, leg_table, reached_at, trips
 
 UNIVERSE = {"plan_runs", "items", "projects"}
 BUDGET = 500
@@ -351,12 +352,21 @@ def test_the_project_stays_readable_while_the_optimizer_works(trip: Trip) -> Non
     planner.wait_until_ended(job_id)
 
 
+def _round_trip_from_home() -> Trip:
+    """The smallest trip: Start and End the same place, nothing to visit."""
+    home = PoiItem(id="start", project_id=PROJECT, name="Casa Marco", location=POINTS[0])
+    leg_m = {pair: number for number, pair in enumerate(POINT_PAIRS, start=1)}
+    return Trip(ProjectSnapshot(home.id, home.id, (home,)), leg_table(leg_m), leg_m, home, home, ())
+
+
 @settings(deadline=None)
 @given(
     trip=trips(),
     waited_s=st.one_of(st.just(KEPT_FOR_S), st.floats(0, 2 * KEPT_FOR_S, allow_nan=False)),  # ten minutes is gone
     ended=st.booleans(),
 )
+@example(trip=_round_trip_from_home(), waited_s=KEPT_FOR_S, ended=True)  # exactly ten minutes: gone, on every run
+@example(trip=_round_trip_from_home(), waited_s=KEPT_FOR_S, ended=False)  # still running: kept
 def test_a_finished_job_is_kept_for_ten_minutes_and_a_running_one_as_long_as_it_runs(
     trip: Trip, waited_s: float, ended: bool
 ) -> None:
