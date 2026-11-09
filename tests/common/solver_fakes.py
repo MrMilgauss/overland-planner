@@ -4,18 +4,31 @@ Passed as `ExternalPorts(tour_solver=...)`. `HoldingTourSolver` hands the same c
 go, and `UnavailableTourSolver` must never be asked to solve at all; both accept any `solve` arguments. Slice 02 adds
 `RuleBreakingTourSolver` (W1: the one double that invents an order, a rule-breaking one) and
 `InProcessOrToolsTourSolver` (not a waiver: the real solve, hosted in the test process for the layer 1-2 properties).
+Slice 03 adds `ScriptedTourSolver` (W1: the production parent with a scripted child that sends incumbents, stays
+silent, ends without a route, or is killed after an incumbent) and `FollowingClock` for the wall-clock limits.
 """
 
 from __future__ import annotations
 
+import contextlib
+import functools
+import json
+import os
+import signal
 import threading
+import time
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import Any
 
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver, TourChildObservation, tour_outcome
-from overland_planner.adapters.solver.tour_child import run_tour_child
+from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import TourFound, TourOutcome
 from overland_planner.domain.planning.solver_model_builder import TourModel
+from tests.common.fakes import FakeClock
 
 MAX_HOLD_S = 60.0  # a plan job that blocks the request itself fails the scenario instead of hanging the suite
 
@@ -127,3 +140,110 @@ class InProcessOrToolsTourSolver:
         answer = _CapturedAnswer()
         run_tour_child(answer, model, budget)  # type: ignore[arg-type]
         return tour_outcome(TourChildObservation(exit_code=0, message=answer.message, overran=False), model)
+
+
+# ---------------------------------------------------------------------------------------------------- slice 03 (W1)
+INCUMBENT = "incumbent"  # DISTILL's proposal of the child's incumbent message tag; DELIVER aligns it with tour_child
+SCRIPTED_CHILD_LIFE_S = 60.0  # a scripted child that "keeps searching" ends itself after this, so none outlives a test
+SCRIPTS = ("improving", "silent", "no_route", "finish")
+
+
+def scripted_tour_child(
+    answer: Connection, model: TourModel, budget: int, *, script: str, record: str, life_s: float
+) -> None:
+    """A solve child that speaks the child protocol without OR-Tools (waiver W1), started by the real parent.
+
+    - `improving`: sends two valid incumbents (the second better), then keeps "searching" without a final message;
+    - `silent`: never finds a valid route and never sends anything;
+    - `no_route`: ends its search at once with `(FINAL, None)`;
+    - `finish`: sends a valid incumbent and its final order at once.
+    Each child appends its pid and the item ids of every incumbent it sent to `record` (JSON lines), so the scenario
+    knows the best route so far and which process to end."""
+    _append(record, {"pid": os.getpid(), "script": script})
+    middle = [node for node in range(len(model.node_item_ids)) if node not in (model.start_node, model.end_node)]
+    worse = (model.start_node, *reversed(middle), model.end_node)
+    best = (model.start_node, *middle, model.end_node)
+    if script == "no_route":
+        answer.send((FINAL, None))
+        answer.close()
+        return
+    if script in ("improving", "finish"):
+        for objective, order in ((2_000.0, worse), (1_000.0, best)):
+            answer.send((INCUMBENT, order, objective))
+            _append(record, {"incumbent": [model.node_item_ids[node] for node in order], "objective": objective})
+        if script == "finish":
+            answer.send((FINAL, best))
+            answer.close()
+            return
+    time.sleep(life_s)
+    os._exit(0)  # pipe EOF without a final message
+
+
+def _append(record: str, entry: dict[str, Any]) -> None:
+    with open(record, "a", encoding="utf-8") as sink:
+        sink.write(json.dumps(entry) + "\n")
+
+
+class ScriptedTourSolver(OrToolsTourSolver):
+    """The production solver adapter (parent side: spawn, pipe, limits, kill) with a scripted child (waiver W1).
+
+    `scripts` names the child of each successive solve; the last one repeats. The start-up probe answers ok without
+    a probe child. `incumbents()` lists what the children sent (item ids), `kill_child()` ends the running child with
+    SIGKILL ("the optimizer stops abnormally"), `abandon()` ends every child still alive when the scenario ends."""
+
+    def __init__(self, scripts: Sequence[str], record_dir: Path, *, life_s: float = SCRIPTED_CHILD_LIFE_S) -> None:
+        assert scripts and set(scripts) <= set(SCRIPTS), f"unknown scripts {scripts}"
+        super().__init__()
+        self.identity = "scripted-tour-solver:" + "+".join(scripts)
+        self._scripts = list(scripts)
+        self._life_s = life_s
+        record_dir.mkdir(parents=True, exist_ok=True)
+        self._record = record_dir / "scripted-children.jsonl"
+        self.calls = 0
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
+
+    def solve(self, *args: Any, **kwargs: Any) -> Any:
+        """Same arguments as the production adapter, whatever slice 03 adds to `solve` (limits, Stop)."""
+        script = self._scripts[min(self.calls, len(self._scripts) - 1)]
+        self.calls += 1
+        self._tour_child_main = functools.partial(
+            scripted_tour_child, script=script, record=str(self._record), life_s=self._life_s
+        )
+        return super().solve(*args, **kwargs)
+
+    def _entries(self) -> list[dict[str, Any]]:
+        if not self._record.exists():
+            return []
+        return [json.loads(line) for line in self._record.read_text(encoding="utf-8").splitlines() if line]
+
+    def incumbents(self) -> list[list[str]]:
+        return [entry["incumbent"] for entry in self._entries() if "incumbent" in entry]
+
+    def child_pids(self) -> list[int]:
+        return [int(entry["pid"]) for entry in self._entries() if "pid" in entry]
+
+    def kill_child(self) -> None:
+        pids = self.child_pids()
+        assert pids, "no optimizer child was started"
+        os.kill(pids[-1], signal.SIGKILL)
+
+    def abandon(self) -> None:
+        for pid in self.child_pids():
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+
+
+class FollowingClock(FakeClock):
+    """`Clock` double that follows real time from the fixed start (the limits are wall-clock limits, ADR-014)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._started_at = time.monotonic()
+
+    def now(self) -> datetime:
+        return super().now() + timedelta(seconds=time.monotonic() - self._started_at)
+
+    def monotonic(self) -> float:
+        return time.monotonic()

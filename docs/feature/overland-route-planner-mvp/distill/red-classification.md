@@ -139,3 +139,65 @@ With the guard off, the properties still fail: their oracle is the guard re-run 
 - #7-8: "has no Start/End" is bound as "had both, then removed the place that was the missing one" (US-04 S4's action), so the refusal must name the missing anchor even when the other one is set.
 - #10: "tries to set X as Start" keeps the End as it is (none here), so the anchors must accept an unset End.
 - The Thens of the RED scenarios have not run against a stand-in yet; each stops at its first missing piece.
+
+## Slice 03 (DISTILL of 2026-11-09)
+
+Host: dev-mac (macOS 26.2 arm64, Python 3.12.13, OR-Tools 9.15). Steps: `steps/performance_steps.py` (new; all 19 scenarios), plus small shared edits: `steps/planner.py` (`PlannerSession.stop_plan_job`, `.diagnostics`; `ServerPlanner.pid`, `.kill_abruptly`; `RemotePlanner` for the Pi), `steps/world.py` (`shutdown` also ends scripted children), `steps/plan_steps.py` (`note_plan_texts`: a poll payload's or Calculate answer's `message` and `notices`, and a run's `messages`, become what Marco has seen), `steps/direction_steps.py` (`"X" is offered` no longer matches "Re-optimise ...", which is slice 03's), `conftest.py` (registers the new module). Binding `test_slice_03.py`; slice 03 left `test_pending_slices.py`. The feature is unchanged and keeps `@slice-03 @pending`. No RED scaffold; nothing under `src/`, `migrations/` or `web/src` changed.
+
+Doubles (waiver W1, `tests/common/solver_fakes.py`): `ScriptedTourSolver` is the production `OrToolsTourSolver` parent (spawn, pipe, safety bound, whatever slice 03 adds to `solve`) with a scripted child (`scripted_tour_child`, picklable, no OR-Tools): `improving` (two valid incumbents, the second better, then silence without a final), `silent` (never a valid route), `no_route` (`(FINAL, None)` at once), `finish` (incumbents then the final order). The child logs its pid and the item ids of each incumbent to a JSON-lines file, so the scenario knows the best route so far and can SIGKILL the child ("the optimizer stops abnormally"). The incumbent message `("incumbent", node_order, objective)` is DISTILL's proposal; DELIVER aligns the tag with `tour_child`. `FollowingClock` (a `FakeClock` that follows real time) is used wherever limits run, so a limit measured on the `Clock` port and one measured on the wall clock both elapse.
+
+60-item project: a test-side deterministic builder (`synthetic_trip`, seed 20261109: 40 three-point trails "Pista 01-40" and 20 places "Punto 01-20" in the Western Alps, Start "Casa Marco, Torino", End "Briancon", 62 stops; 65 items = 45 trails + 20 places), imported through the API. Chosen for every scenario where the solver is scripted or the exact project does not matter: the scripted child derives its orders from the model, and the real-solve scenarios (#4, #5, #16-18) only need a 60/65-item project. Only #1, #3 (Pi) and #6 (golden order) read the committed reference project.
+
+Fixture contract proposed for slice 03-ops (the Givens fail with a clear AssertionError while it is missing):
+- `tests/acceptance/overland_route_planner_mvp/fixtures/golden/i1-dense.json` (and `i2-sparse.json`): `{name, seed: 20261101, generator, solver_budget, start: {name, lat, lon}, end: {name, lat, lon}, tracks: [{name, points: [[lat, lon, ele], ...]}], pois: [{name, lat, lon}], road_map: <optional MOCK_PLAN file next to it, for I2's missing pairs>, expected_order: [stop names, Start first, End last], expected_order_sha256}`. Hash: sha256 of the stop names joined by `\n`, UTF-8 (to align with the CI job 3 golden check and findings.md Setup if 03-ops defines it otherwise). The steps build each GPX file from `points` and import it through the API.
+- `fixtures/golden/i1-dense.reference-30min.json`: `{road_km, order, search_s: 1800, host, solver_identity}` (the 30-minute PC search).
+- The Pi scenarios reach `planner-perf` through `PLANNER_PERF_URL` (set by `make perf-pi`), seed I1 as a `__perf <timestamp>` project (outside K1/K7), read `stage_ms.solve` from each finished poll payload.
+
+API shapes the steps ask for (DISTILL's proposal; brief §5 field table, §8 run flags): poll payload `incumbent`, `legs_new`, `legs_cached`, `stage_ms`, `message`, `notices`; Stop `POST /api/plan-jobs/{id}/stop` (200 + payload, D136); plan run detail `not_fully_optimised` (`time_limit` | `stopped` | `optimizer_failed`; the step maps each "not fully optimised (...)" label to its code), `memo_hit` (Re-optimise is offered exactly on a reused plan), `messages` ("Planned 60 items in <run time>", "Reused the identical plan of run #N", "stopped before a valid route was found"); limits `FEASIBILITY_LIMIT_S` / `OPTIMISATION_LIMIT_S`; `GET /api/diagnostics[?project_id=]` with `k5.stage_p95_s`, `k5.retried_jobs`, `retried_jobs_30d`, `jobs_by_terminal_state_30d`, `k7.runs_per_project_day.max`, `k2.invariant_violations`, `k3.report_omissions` (kpi-contracts.yaml). The look-up latency of the offline road map is a proposed `MOCK_PLAN` key `latency: {answered_at_once_pairs, then_each_call_s}`, written per test to `tmp_path`.
+
+```
+uv run pytest -q tests/acceptance/overland_route_planner_mvp --run-pending=slice-03 -k test_slice_03
+  -> 14 failed, 3 passed, 2 skipped, 187 deselected, 0 errors, 104 s
+uv run pytest -q tests -m "not slow"
+  -> 567 passed, 165 skipped, 1 deselected, 0 failed, 166 s
+uv run ruff check tests ; uv run ruff format --check tests
+  -> All checks passed ; 125 files already formatted
+```
+
+Static binding check (scratch script over pytest-bdd's step registry): 79 step lines of `slice-03-pi-performance.feature`, each matches exactly one definition (0 unbound, 0 ambiguous); slice 02 re-checked (only its outline placeholders, as before).
+
+| # | Scenario | Result | Class | Where it fails and why | Local s | Markers |
+|---|---|---|---|---|---|---|
+| 1 | The solve stage for 60 items fits the budget on the Pi | SKIP | SKIPPED | `@requires_external @pi`: make perf-pi only (D96); would also stop at the missing I1 fixture | est. 10-12 min on the Pi (warm-up + 10 runs) | feature tags |
+| 2 | The best plan found is returned when the optimisation limit is reached | FAIL | MISSING_FUNCTIONALITY | Then "a complete plan is shown within 25 seconds": plan run #1 is Failed `optimizer_failed`: the parent takes the first incumbent message for the end of the child (no incumbent streaming, no limits) | 2.4 (green est. 21) | solver_child; slow recommended |
+| 3 | A plan found on the Pi is nearly as good as a long search | SKIP | SKIPPED | `@requires_external @pi`; needs I1 and its 30-minute reference | est. 1-2 min on the Pi | feature tags |
+| 4 | Marco sees how long planning took | FAIL | MISSING_FUNCTIONALITY | Then: the results show no "Planned 60 items in" (no `messages` on the run, nothing in the poll) | 2.0 | solver_child |
+| 5 | A project above 60 items is planned with a notice that it may take longer | FAIL | MISSING_FUNCTIONALITY | Then he sees "Large project - ...": Marco saw nothing. With the notice injected as a stand-in, "the plan is calculated" passes (65 items, 67 stops) | 1.8 | solver_child |
+| 6 | The 60-item plan is the same on every machine | FAIL | MISSING_FUNCTIONALITY | Given: `fixtures/golden/i1-dense.json` does not exist (slice 03-ops). Stand-in: a throwaway I1 (the synthetic 60 items, a deliberately wrong expected order): the real solve at the default budget ran and the Then failed "the order differs from the golden order" | 0.1 (22.3 with the stand-in) | solver_child (feature); slow recommended |
+| 7 | Marco stops a long optimisation and keeps the best route so far | FAIL | MISSING_FUNCTIONALITY | Given "a valid route has been found": no incumbent is reported while optimising; the job ends Failed `optimizer_failed` (same cause as #2) | 2.4 | solver_child |
+| 8 | Stopping before any valid route fails the run with a reason | FAIL | MISSING_FUNCTIONALITY | Then: after Stop the job is still `solving` 15 s later: `POST /api/plan-jobs/{id}/stop` does not exist | 15.3 (green est. 3) | solver_child |
+| 9 | Stopping while roads are still being looked up changes nothing | FAIL | MISSING_FUNCTIONALITY | Given: the planner refuses to start with the road map's `latency` key (offline road-map latency is planned for 06a) | 0.3 (green est. 3) | none (never solves) |
+| 10 | No valid route within the feasibility limit | FAIL | MISSING_FUNCTIONALITY | Then: the job is still `solving` after 45 s: `FEASIBILITY_LIMIT_S` is not read, only the 600 s safety bound applies | 45.3 (green est. 31) | solver_child; slow recommended |
+| 11 | The optimizer ends without any route | PASS | ALREADY_GREEN | D122 already holds: `(FINAL, None)` gives Failed `no_valid_route_found` in 0.4 s, no stops, export 422 `validation_error` | 0.4 | solver_child |
+| 12 | An optimizer that crashes after finding a route still gives the best route so far | FAIL | MISSING_FUNCTIONALITY | Given: as #7 | 2.4 | solver_child |
+| 13 | The feasibility limit reached while roads are still being looked up changes nothing | FAIL | MISSING_FUNCTIONALITY | Given: as #9 | 0.3 (green est. 31) | none; slow recommended |
+| 14 | A later no-change Recalculate returns the same plan as a stopped run | FAIL | MISSING_FUNCTIONALITY | Given (chains #7's Given + When + label): as #7 | 2.4 | solver_child |
+| 15 | Re-optimise starts a fresh search | FAIL | MISSING_FUNCTIONALITY | Given (chains #14): as #7 | 2.4 | solver_child |
+| 16 | Closing the planner during a long optimisation leaves nothing running | PASS | ALREADY_GREEN | Real uvicorn process, real OR-Tools child (budget 100,000,000), SIGKILL of the server: the child is gone within 3 s (pipe-EOF watchdog on macOS), no run after the restart | 5.0 | solver_child (feature) |
+| 17 | Only one plan is calculated per project at a time | PASS | ALREADY_GREEN | Slice 01b's 409 `job_active` and its message; the 60-item job stays `solving` | 2.9 | solver_child |
+| 18 | A plan for a second project waits for the optimizer and can be stopped while waiting | FAIL | MISSING_FUNCTIONALITY | Then: "Dolomiti 2028" still `waiting_for_optimizer` after Stop (the Given already passes: D133's slot exists); Stop missing | 16.0 (green est. 4) | solver_child |
+| 19 | Marco's diagnostics show how planning went | FAIL | MISSING_FUNCTIONALITY | Then: `GET /api/diagnostics` answers 404 `not_found` (DV-3; `plan_job_log` deferred by D204) | 1.4 | solver_child |
+
+Every failure is an `AssertionError` reached through a driving port; none is `IMPORT_ERROR`, `FIXTURE_BROKEN`, `SETUP_FAILURE`, `WRONG_ASSERTION` or `OBSERVABLE_NOT_AT_PORT`. Where RED stops in a Given (#6, #7, #9, #12-15), only #6's and #5's Thens could be run against a throwaway stand-in; the others need the production incumbent streaming or road-map latency to reach their Thens.
+
+**ALREADY_GREEN (3) and how each was shown to fail** (throwaway edits of `performance_steps.py`, restored from a copy; `src/` untouched):
+
+| Mutation | Fails | On |
+|---|---|---|
+| #11's optimizer finds a route after all (`finish` instead of `no_route`) | #11 | "fails with 'optimizer_failed'" (the reason check fires; today an incumbent message ends the child) |
+| #16: a `sleep 20` process is counted among the optimizer processes | #16 | "optimizer processes still running 3 s after the planner stopped: [7682]" |
+| #17: the 60-item solve child is killed and the job ends before the second press | #17 | "'A plan is already being calculated for this project' not shown; Marco saw []" |
+
+#16's second Then ("no plan run after the restart") was not mutated separately.
+
+**Markers and CI cost.** `solver_child` on every scenario that spawns a solve child (scripted or real) or a planner process. Four scenarios are long when green (#2 about 21 s, #6 22 s, #10 and #13 about 31 s each: the 20 s / 30 s limits are the scenario text, and #6 solves 60 items at budget 10,000) and should be `slow`; `slow` is not set because `tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_job_2_does_not` pins the slow population to A-6 + the slice 02 HC properties (D221). Without them, slice 03 adds about 50 s to CI job 2 when enabled (13.6 of 15 min today).

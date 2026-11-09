@@ -23,11 +23,12 @@ from tests.acceptance.overland_route_planner_mvp.steps.planner import (
     Auth,
     InProcessPlanner,
     PlannerSession,
+    RemotePlanner,
     ServerPlanner,
     StartRecord,
 )
 from tests.common.fakes import FakeClock, FakeMountTable
-from tests.common.solver_fakes import HoldingTourSolver
+from tests.common.solver_fakes import HoldingTourSolver, ScriptedTourSolver
 
 CATALOG_UNIVERSE = {"projects.names", "project.items"}
 PLANNING_UNIVERSE = CATALOG_UNIVERSE | {"project.plan_runs"}
@@ -60,7 +61,7 @@ class PlannerWorld:
     clock: FakeClock
     mount_table: FakeMountTable
     tour_solver: TourSolver | None = None  # None = the real optimizer; doubles only under waivers W1/W2
-    planner: InProcessPlanner | ServerPlanner | None = None
+    planner: InProcessPlanner | ServerPlanner | RemotePlanner | None = None
     marco_auth: Auth = None
     project_id: str | None = None
     project_name: str | None = None
@@ -88,7 +89,7 @@ class PlannerWorld:
         return self.planner.session(self.marco_auth)
 
     def shutdown(self) -> None:
-        if isinstance(self.tour_solver, HoldingTourSolver):
+        if isinstance(self.tour_solver, HoldingTourSolver | ScriptedTourSolver):
             self.tour_solver.abandon()
         if self.planner is not None:
             self.planner.stop()

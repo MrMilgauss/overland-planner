@@ -105,6 +105,15 @@ class PlannerSession:
     def export_gpx(self, plan_run_id: str) -> httpx.Response:
         return self._request("GET", f"/api/plan-runs/{plan_run_id}/export.gpx")
 
+    # --- slice 03 (brief §5: Stop, D136; diagnostics, DV-3 and kpi-contracts.yaml) -----------------------------
+    def stop_plan_job(self, job_id: str) -> httpx.Response:
+        """ "Stop and use best so far": always 200 with the current poll payload (D136); 404 for an unknown job."""
+        return self._request("POST", f"/api/plan-jobs/{job_id}/stop")
+
+    def diagnostics(self, project_id: str | None = None) -> httpx.Response:
+        params = {"project_id": project_id} if project_id else None
+        return self._request("GET", "/api/diagnostics", params=params)
+
 
 class InProcessPlanner:
     """The production app built in-process; a restart builds a new app on the same data folder."""
@@ -257,6 +266,17 @@ class ServerPlanner:
         self.stop()
         self.start()
 
+    @property
+    def pid(self) -> int:
+        assert self._process is not None, "the planner process is not running"
+        return self._process.pid
+
+    def kill_abruptly(self) -> None:
+        """The planner is stopped abruptly: SIGKILL, no shutdown of its own (slice 03)."""
+        assert self._process is not None, "the planner process is not running"
+        self._process.kill()
+        self._process.wait(timeout=10)
+
     def session(self, auth: Auth = None) -> PlannerSession:
         assert self._client is not None, "the planner is not running"
         return PlannerSession(self._client, auth)
@@ -264,6 +284,29 @@ class ServerPlanner:
     def _join_pumps(self) -> None:
         for pump in getattr(self, "_pumps", []):
             pump.join(timeout=10)
+
+
+class RemotePlanner:
+    """A planner already running elsewhere, reached over real HTTP: `planner-perf` on the Pi through the loopback
+    tunnel of `make perf-pi` (D96, slice 03-ops). Only `@requires_external @pi` scenarios use it."""
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+        self._client: httpx.Client | None = None
+
+    def start(self) -> None:
+        self._client = httpx.Client(base_url=self.base_url, timeout=60.0)
+        health = self._client.get("/healthz")
+        assert health.status_code == 200, f"the planner at {self.base_url} is not healthy: {health.status_code}"
+
+    def stop(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+    def session(self, auth: Auth = None) -> PlannerSession:
+        assert self._client is not None, "the planner is not reachable"
+        return PlannerSession(self._client, auth)
 
 
 def _pump(stream: Any, sink: list[str]) -> None:

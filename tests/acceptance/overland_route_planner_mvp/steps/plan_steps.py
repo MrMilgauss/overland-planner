@@ -97,6 +97,7 @@ def press_calculate(world: PlannerWorld) -> None:
     armed = _rule_breaking_optimizer_is_armed(world)
     answer = world.note(world.marco().calculate(world.project_id, ignore_memo=armed))
     if answer.status_code == 202:
+        note_plan_texts(world, answer.json())
         world.scratch["job_id"] = str(answer.json()["job_id"])
         if armed:
             job = _plan_job(world, world.scratch["job_id"])
@@ -210,7 +211,18 @@ def gpx_waypoints(content: bytes) -> list[str]:
 def _plan_job(world: PlannerWorld, job_id: str) -> dict[str, Any]:
     answer = world.marco().plan_job(job_id)
     assert answer.status_code == 200, f"the plan job did not open: {answer.status_code} {answer.text[:300]}"
-    return dict(answer.json())
+    job = dict(answer.json())
+    note_plan_texts(world, job)
+    return job
+
+
+def note_plan_texts(world: PlannerWorld, shown: dict[str, Any]) -> None:
+    """What the planner shows Marco about a plan (slice 03, DISTILL's proposal): the `message` of a poll payload or
+    Calculate answer, its `notices`, and a plan run's `messages`. Kept once each, in the order first shown."""
+    texts = [shown.get("message"), *(shown.get("notices") or ()), *(shown.get("messages") or ())]
+    for text in texts:
+        if isinstance(text, str) and text and text not in world.seen_messages:
+            world.seen_messages.append(text)
 
 
 def _plan_run_id(world: PlannerWorld) -> str:

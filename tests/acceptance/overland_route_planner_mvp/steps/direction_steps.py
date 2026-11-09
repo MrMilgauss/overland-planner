@@ -475,7 +475,7 @@ def when_marco_opens_the_start_choices(world: PlannerWorld) -> None:
     world.scratch["start_choices"] = [item["name"] for item in answer.json()]
 
 
-@then(parsers.re(r'"(?P<name>[^"]+)" is offered'))
+@then(parsers.re(r'"(?P<name>(?!Re-optimise )[^"]+)" is offered'))  # Re-optimise: performance_steps (slice 03)
 def then_is_offered(world: PlannerWorld, name: str) -> None:
     assert name in world.scratch["start_choices"], f"the Start choices are {world.scratch['start_choices']}"
 
