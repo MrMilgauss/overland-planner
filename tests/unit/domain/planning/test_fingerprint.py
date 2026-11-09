@@ -8,6 +8,7 @@ silently) x 2 = 6; 3 used. Every single-input change is applied on every generat
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -96,12 +97,18 @@ def _single_input_changes(trip: Trip) -> dict[str, Inputs]:
         "item": (with_added, _model_with_legs(trip, with_added), solve),
         "anchor": (with_new_start, _model_with_legs(trip, with_new_start), solve),
         "track direction version": (track_as(direction_version=track.direction_version + 1), model, solve),
-        "track entry latitude": (track_as(entry=_moved(track.entry, latitude=ABOVE_QUANTUM)), model, solve),
-        "track entry longitude": (track_as(entry=_moved(track.entry, longitude=ABOVE_QUANTUM)), model, solve),
-        "track exit latitude": (track_as(exit=_moved(track.exit, latitude=ABOVE_QUANTUM)), model, solve),
-        "track exit longitude": (track_as(exit=_moved(track.exit, longitude=ABOVE_QUANTUM)), model, solve),
-        "place latitude": (place_at(_moved(trip.start.location, latitude=ABOVE_QUANTUM)), model, solve),
-        "place longitude": (place_at(_moved(trip.start.location, longitude=ABOVE_QUANTUM)), model, solve),
+        **{
+            f"{name} {direction}": changed
+            for direction, by in (("up", ABOVE_QUANTUM), ("down", -ABOVE_QUANTUM))
+            for name, changed in {
+                "track entry latitude": (track_as(entry=_moved(track.entry, latitude=by)), model, solve),
+                "track entry longitude": (track_as(entry=_moved(track.entry, longitude=by)), model, solve),
+                "track exit latitude": (track_as(exit=_moved(track.exit, latitude=by)), model, solve),
+                "track exit longitude": (track_as(exit=_moved(track.exit, longitude=by)), model, solve),
+                "place latitude": (place_at(_moved(trip.start.location, latitude=by)), model, solve),
+                "place longitude": (place_at(_moved(trip.start.location, longitude=by)), model, solve),
+            }.items()
+        },
         "track points": (track_as(canonical_sha256="0" * 64), model, solve),
         "leg distance": (snapshot, _one_more_arc_metre(model), solve),
         "road map": (snapshot, model, replace(solve, provider_id="mock:straight_line_x1.3:script:" + "1" * 64)),
@@ -140,8 +147,9 @@ def test_rebuilding_the_same_inputs_or_changing_only_what_totals_use_keeps_the_f
     assert_state_delta(before, after, UNIVERSE, {"fingerprint": unchanged()}, strict=True)
     assert after["fingerprint"].startswith(f"{FINGERPRINT_SCHEME}:"), "the scheme version leads the fingerprint"
     snapshot, model, solve = _inputs_of(trip)
-    nudged = replace(snapshot, items=tuple(_nudged(item, BELOW_QUANTUM) for item in snapshot.items))
-    assert _fingerprint((nudged, model, solve)) == before, "a move below the quantum is the same point"
+    for by in (BELOW_QUANTUM, -BELOW_QUANTUM):
+        nudged = replace(snapshot, items=tuple(_nudged(item, by) for item in snapshot.items))
+        assert _fingerprint((nudged, model, solve)) == before, f"a move of {by} degrees is the same point"
 
 
 @settings(deadline=None)
@@ -177,11 +185,19 @@ GOLDEN_SNAPSHOT = ProjectSnapshot(GOLDEN_START.id, GOLDEN_END.id, (GOLDEN_START,
 GOLDEN_MODEL = TourModel(
     ("home", "assietta", "briancon"), 0, 2, ((None, 61_200, 140_100), (None, None, 27_400), (None, None, None))
 )
-# sha256 of the canonical JSON written out by hand (sorted keys, no spaces, points to 6 decimals), not by `of`.
+# The canonical JSON written out by hand (sorted keys, no spaces, points to 6 decimals), not by `of`.
+GOLDEN_TEXT = (
+    '{"arc_m":[[null,61200,140100],[null,null,27400],[null,null,null]],"budget":500,"end_node":2,'
+    '"nodes":[["poi","home",[45.070339,7.686857]],["track","assietta",[45.051235,7.041235],[44.968765,6.878765],2,'
+    '"abababababababababababababababababababababababababababababababab"],["poi","briancon",[44.8986,6.6436]]],'
+    '"objective":"distance","provider_id":"mock:straight_line_x1.3","scheme":"fp1",'
+    '"solver":"ortools==9.15.6755;PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH","start_node":0}'
+)
 GOLDEN_FINGERPRINT = "fp1:25884a670e4a16fba2b8861de399124b0188982c895b62316a1dbe64936167e3"
 
 
 def test_the_fingerprint_of_fixed_inputs_is_pinned_so_stored_fingerprints_never_change_silently() -> None:
     """Runs keep their fingerprint in the database: a change of this value must bump FINGERPRINT_SCHEME (ADR-014
     section 5), so old memo entries miss instead of matching inputs they were not computed from."""
+    assert "fp1:" + hashlib.sha256(GOLDEN_TEXT.encode()).hexdigest() == GOLDEN_FINGERPRINT, "the text is the pinned one"
     assert Fingerprint.of(GOLDEN_SNAPSHOT, GOLDEN_MODEL, SETTINGS).value == GOLDEN_FINGERPRINT
