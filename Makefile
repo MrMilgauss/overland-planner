@@ -127,9 +127,11 @@ logs: ## Follow the JSON log of SVC (default planner), pretty-printed with jq wh
 	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) logs -f --no-log-prefix $(SVC)' | \
 	  if command -v jq >/dev/null; then jq -R 'fromjson? // .'; else cat; fi
 
-diag: ## Container stats of project overland (no stream) and /healthz; /api/diagnostics comes with 03-ops (read-only)
-	$(PI_SSH) 'cd $(PI_DIR) && docker stats --no-stream $$($(PI_COMPOSE) ps -q) && . scripts/lib.sh && \
-	  curl -fsS --max-time 10 "http://$$(env_value .env PLANNER_BIND):$$(planner_port)/healthz" && echo'
+diag: ## Container stats of project overland (no stream), /healthz and /api/diagnostics read with the Pi's .env password (never printed); jq pretty-prints on the Mac when present (read-only)
+	@out=$$($(PI_SSH) 'cd $(PI_DIR) && docker stats --no-stream $$($(PI_COMPOSE) ps -q) && . scripts/lib.sh && \
+	  url="http://$$(env_value .env PLANNER_BIND):$$(planner_port)" && curl -fsS --max-time 10 "$$url/healthz" && echo && \
+	  curl_planner "$$url/api/diagnostics" && echo') || exit $$?; \
+	printf '%s\n' "$$out" | if command -v jq >/dev/null; then jq -R -r 'fromjson? // .'; else cat; fi
 
 image-gc: ## Remove planner images except the three digests of release.env, .prev and .prev2 (rollback needs them)
 	$(PI_SSH) 'cd $(PI_DIR) && keep="$$(sed -n "s|^PLANNER_IMAGE=.*@||p" release.env release.env.prev release.env.prev2 2>/dev/null)" && \

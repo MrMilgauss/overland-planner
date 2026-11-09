@@ -34,6 +34,88 @@
         "title": "AnchorsChoice",
         "type": "object"
       },
+      "DiagnosticsResource": {
+        "description": "`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,\n`g1`, `g2`, `g4` and `cache_hit_rate_30d` stay null until the slices that own their sources.",
+        "properties": {
+          "cache_hit_rate_30d": {
+            "title": "Cache Hit Rate 30D",
+            "type": "null"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "g1": {
+            "title": "G1",
+            "type": "null"
+          },
+          "g2": {
+            "title": "G2",
+            "type": "null"
+          },
+          "g4": {
+            "title": "G4",
+            "type": "null"
+          },
+          "jobs_by_terminal_state_30d": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Jobs By Terminal State 30D",
+            "type": "object"
+          },
+          "k1": {
+            "title": "K1",
+            "type": "null"
+          },
+          "k2": {
+            "$ref": "#/components/schemas/K2Resource"
+          },
+          "k3": {
+            "$ref": "#/components/schemas/K3Resource"
+          },
+          "k4": {
+            "title": "K4",
+            "type": "null"
+          },
+          "k5": {
+            "$ref": "#/components/schemas/K5Resource"
+          },
+          "k7": {
+            "$ref": "#/components/schemas/K7Resource"
+          },
+          "process_started_at": {
+            "title": "Process Started At",
+            "type": "string"
+          },
+          "retried_jobs_30d": {
+            "title": "Retried Jobs 30D",
+            "type": "integer"
+          },
+          "second_pass_jobs_30d": {
+            "title": "Second Pass Jobs 30D",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "process_started_at",
+          "days",
+          "k2",
+          "k3",
+          "k5",
+          "k7",
+          "jobs_by_terminal_state_30d",
+          "retried_jobs_30d",
+          "second_pass_jobs_30d"
+        ],
+        "title": "DiagnosticsResource",
+        "type": "object"
+      },
       "ErrorEnvelope": {
         "description": "Every non-2xx answer under /api (D183).",
         "properties": {
@@ -146,6 +228,164 @@
           "length_m"
         ],
         "title": "ItemResource",
+        "type": "object"
+      },
+      "K2Resource": {
+        "description": "Plan runs that broke a hard rule (Failed with `internal_invariant_violation`): `all_time` and `window`.",
+        "properties": {
+          "invariant_violations": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Invariant Violations",
+            "type": "object"
+          }
+        },
+        "required": [
+          "invariant_violations"
+        ],
+        "title": "K2Resource",
+        "type": "object"
+      },
+      "K3Resource": {
+        "description": "Plan runs whose stops left out an item they were asked to visit: `all_time` and `window`.",
+        "properties": {
+          "report_omissions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Report Omissions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "report_omissions"
+        ],
+        "title": "K3Resource",
+        "type": "object"
+      },
+      "K5Resource": {
+        "description": "Planning time, a server-side proxy (D177): nearest-rank p95 in seconds (the max below 20 jobs) over the cold\njobs of the window, done, failed and cancelled alike; per-band fields are keyed le_30, 31_59, 60, 61_70 and a band\nwithout a job shows null. `e2e_source` names what e2e measures (`elapsed_ms` until slice 06a). The counts are\nshown apart and stay in every p95, except memo hits, which are not cold plans.",
+        "properties": {
+          "cancelled_jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Cancelled Jobs",
+            "type": "object"
+          },
+          "e2e_p95_by_band_s": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "E2E P95 By Band S",
+            "type": "object"
+          },
+          "e2e_p95_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E2E P95 S"
+          },
+          "e2e_source": {
+            "title": "E2E Source",
+            "type": "string"
+          },
+          "failed_jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Failed Jobs",
+            "type": "object"
+          },
+          "memo_hit_jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Memo Hit Jobs",
+            "type": "object"
+          },
+          "retried_jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Retried Jobs",
+            "type": "object"
+          },
+          "second_pass_gt_700_jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Second Pass Gt 700 Jobs",
+            "type": "object"
+          },
+          "solve_p95_s": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Solve P95 S",
+            "type": "object"
+          },
+          "stage_p95_s": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Stage P95 S",
+            "type": "object"
+          }
+        },
+        "required": [
+          "stage_p95_s",
+          "solve_p95_s",
+          "e2e_p95_s",
+          "e2e_p95_by_band_s",
+          "e2e_source",
+          "retried_jobs",
+          "second_pass_gt_700_jobs",
+          "failed_jobs",
+          "cancelled_jobs",
+          "memo_hit_jobs"
+        ],
+        "title": "K5Resource",
+        "type": "object"
+      },
+      "K7Resource": {
+        "description": "Done jobs per project and local day (Europe/Rome), projects named '__...' left out; null without a job.",
+        "properties": {
+          "runs_per_project_day": {
+            "$ref": "#/components/schemas/RunsPerProjectDayResource"
+          }
+        },
+        "required": [
+          "runs_per_project_day"
+        ],
+        "title": "K7Resource",
         "type": "object"
       },
       "PlanJobAccepted": {
@@ -610,6 +850,38 @@
         "title": "ProjectUpdate",
         "type": "object"
       },
+      "RunsPerProjectDayResource": {
+        "properties": {
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "median": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median"
+          }
+        },
+        "required": [
+          "median",
+          "max"
+        ],
+        "title": "RunsPerProjectDayResource",
+        "type": "object"
+      },
       "TotalsResource": {
         "description": "The plan's road, off-road and total driving (FR-6.2), in km and seconds, unrounded: rounding is the web's.",
         "properties": {
@@ -657,6 +929,75 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/diagnostics": {
+      "get": {
+        "description": "K2, K3, K5 and K7 over the last `days` days; `project_id` limits every figure to that project.",
+        "operationId": "read_diagnostics_api_diagnostics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticsResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Read Diagnostics"
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "api_health_api_health_get",

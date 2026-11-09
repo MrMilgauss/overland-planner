@@ -19,6 +19,7 @@ from hypothesis import strategies as st
 from tests.common.state_delta import assert_state_delta, set_to, unchanged
 from tests.deploy.conftest import (
     BASIC_AUTH_PASSWORD,
+    BASIC_AUTH_USER,
     CURRENT,
     IMAGE,
     NEW,
@@ -154,6 +155,21 @@ def test_purge_with_the_word_removes_only_overland_volumes_and_planner_images(pi
     assert image_rm_refs(pi_home) == [CURRENT.image]
     downs = [c["argv"] for c in pi_home.calls("docker") if "down" in c["argv"]]
     assert len(downs) == 1 and downs[0][:3] == ["compose", "-p", "overland"] and "-v" not in downs[0]
+
+
+def test_diag_reads_the_diagnostics_with_the_env_credentials_and_never_prints_them(pi_home: FakePi) -> None:
+    diagnostics = '{"version":"0123456789ab","k5":{"stage_p95_s":{"solve":41.0}}}'
+    pi_home.rule("curl", "/api/diagnostics", stdout=diagnostics)
+
+    result = remote(pi_home, "diag")
+
+    assert result.returncode == 0, result.stderr
+    assert diagnostics in result.stdout and '{"status":"ok"}' in result.stdout
+    (call,) = [call for call in pi_home.calls("curl") if call["argv"][-1].endswith("/api/diagnostics")]
+    assert call["argv"][-1] == "http://192.168.1.10:8080/api/diagnostics"
+    assert "-K" in call["argv"] and f"{BASIC_AUTH_USER}:" in call["stdin"]  # the .env credentials, on stdin only
+    shown = result.stdout + result.stderr + " ".join(call["argv"]) + " ".join(c["argv"][-1] for c in pi_home.calls())
+    assert BASIC_AUTH_PASSWORD not in shown and "sh4red" not in shown
 
 
 def preflight(pi: FakePi, tmp: Path) -> subprocess.CompletedProcess[str]:

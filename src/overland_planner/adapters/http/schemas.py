@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from overland_planner.application.planning.facade import PlanJobState, PlanJobView
+from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
@@ -238,6 +239,84 @@ class PlanRunDetailResource(BaseModel):
             stops=[PlanStopResource.of(stop) for stop in run.stops],
             totals=None if run.totals is None else TotalsResource.of(run.totals),
             report=None if run.report is None else PlanReportResource.of(run.report),
+        )
+
+
+class K2Resource(BaseModel):
+    """Plan runs that broke a hard rule (Failed with `internal_invariant_violation`): `all_time` and `window`."""
+
+    invariant_violations: dict[str, int]
+
+
+class K3Resource(BaseModel):
+    """Plan runs whose stops left out an item they were asked to visit: `all_time` and `window`."""
+
+    report_omissions: dict[str, int]
+
+
+class K5Resource(BaseModel):
+    """Planning time, a server-side proxy (D177): nearest-rank p95 in seconds (the max below 20 jobs) over the cold
+    jobs of the window, done, failed and cancelled alike; per-band fields are keyed le_30, 31_59, 60, 61_70 and a band
+    without a job shows null. `e2e_source` names what e2e measures (`elapsed_ms` until slice 06a). The counts are
+    shown apart and stay in every p95, except memo hits, which are not cold plans."""
+
+    stage_p95_s: dict[str, float | None]
+    solve_p95_s: dict[str, float | None]
+    e2e_p95_s: float | None
+    e2e_p95_by_band_s: dict[str, float | None]
+    e2e_source: str
+    retried_jobs: dict[str, int]
+    second_pass_gt_700_jobs: dict[str, int]
+    failed_jobs: dict[str, int]
+    cancelled_jobs: dict[str, int]
+    memo_hit_jobs: dict[str, int]
+
+
+class RunsPerProjectDayResource(BaseModel):
+    median: float | None
+    max: int | None
+
+
+class K7Resource(BaseModel):
+    """Done jobs per project and local day (Europe/Rome), projects named '__...' left out; null without a job."""
+
+    runs_per_project_day: RunsPerProjectDayResource
+
+
+class DiagnosticsResource(BaseModel):
+    """`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,
+    `g1`, `g2`, `g4` and `cache_hit_rate_30d` stay null until the slices that own their sources."""
+
+    version: str
+    process_started_at: str
+    days: int
+    k1: None = None
+    k2: K2Resource
+    k3: K3Resource
+    k4: None = None
+    k5: K5Resource
+    k7: K7Resource
+    g1: None = None
+    g2: None = None
+    g4: None = None
+    cache_hit_rate_30d: None = None
+    jobs_by_terminal_state_30d: dict[str, int]
+    retried_jobs_30d: int
+    second_pass_jobs_30d: int
+
+    @classmethod
+    def of(cls, report: DiagnosticsReport) -> DiagnosticsResource:
+        return cls(
+            version=report.version,
+            process_started_at=report.process_started_at.isoformat(),
+            days=report.days,
+            k2=K2Resource.model_validate(report.k2, from_attributes=True),
+            k3=K3Resource.model_validate(report.k3, from_attributes=True),
+            k5=K5Resource.model_validate(report.k5, from_attributes=True),
+            k7=K7Resource.model_validate(report.k7, from_attributes=True),
+            jobs_by_terminal_state_30d=dict(report.jobs_by_terminal_state),
+            retried_jobs_30d=report.retried_jobs,
+            second_pass_jobs_30d=report.second_pass_jobs,
         )
 
 

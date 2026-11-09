@@ -117,6 +117,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
                 "clock": {"outcome": "ok", "reason": None},
                 "data_dir": {"outcome": "ok", "reason": None},
                 "database": {"outcome": "ok", "reason": None},
+                "diagnostics_reader": {"outcome": "ok", "reason": None},
                 "event_log": {"outcome": "ok", "reason": None},
                 "file_store": {"outcome": "ok", "reason": None},
                 "gpx_parser": {"outcome": "ok", "reason": None},

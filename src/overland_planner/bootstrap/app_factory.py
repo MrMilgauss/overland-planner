@@ -5,9 +5,9 @@ Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the sa
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> the `MOCK_PLAN` road map, read once (a bad file refuses the start for `routing_provider`) -> wire
 -> probe every registered component in wiring order (the database probe migrates it to head
-first; then the `plan_job_log` write-and-read round trip, the file store round trip, the mount table, the `DATA_DIR`
-persistence verdict (D121), the GPX parser's embedded-sample and billion-laughs check, the GPX writer's write and
-re-parse and the road map's known pair) -> mount routes
+first; then the `plan_job_log` write-and-read round trip, the diagnostics read, the file store round trip, the mount
+table, the `DATA_DIR` persistence verdict (D121), the GPX parser's embedded-sample and billion-laughs check, the GPX
+writer's write and re-parse and the road map's known pair) -> mount routes
 (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
@@ -38,6 +38,7 @@ from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
 from overland_planner.adapters.gpx.gpxpy_writer import GpxpyWriter
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
 from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catalog_routes
+from overland_planner.adapters.http.diagnostics_routes import diagnostics_routes
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.export_routes import export_routes
 from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
@@ -47,6 +48,7 @@ from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
 from overland_planner.adapters.persistence.catalog_unit_of_work import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.persistence.database import SqliteDatabase
+from overland_planner.adapters.persistence.diagnostics_reader import SqlAlchemyDiagnosticsReader
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
@@ -66,7 +68,12 @@ from overland_planner.application.planning.facade import (
     PlanRequestService,
     PlanRunQueries,
 )
-from overland_planner.application.platform.facade import DataDirPersistence, HealthService, log_reason
+from overland_planner.application.platform.facade import (
+    DataDirPersistence,
+    DiagnosticsService,
+    HealthService,
+    log_reason,
+)
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
@@ -106,6 +113,8 @@ class _Wiring:
         self._database = SqliteDatabase(settings.data_dir)
         self.migrator = AlembicMigrator(self._database, settings.migrations_dir)
         self._plan_job_log = SqlAlchemyPlanJobLog(self._database, app_version=settings.planner_git_sha)
+        self._diagnostics_reader = SqlAlchemyDiagnosticsReader(self._database)  # read-only, never the writer lock
+        self._started_at = clock.now()
         self._file_store = LocalFileStore(settings.data_dir)
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
@@ -128,6 +137,7 @@ class _Wiring:
         registry.register(
             "plan_job_log", self._plan_job_log
         )  # a round trip on the migrated table; fatal like the database
+        registry.register("diagnostics_reader", self._diagnostics_reader)  # one read on an empty window
         registry.register("file_store", self._file_store)
         registry.register("mount_table", self._mount_table)
         # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
@@ -180,6 +190,15 @@ class _Wiring:
             )
         )
 
+    def diagnostics_router(self) -> APIRouter:
+        service = DiagnosticsService(
+            self._diagnostics_reader,
+            self._clock,
+            version=self._settings.planner_git_sha,
+            process_started_at=self._started_at,
+        )
+        return diagnostics_routes(service)
+
     def export_router(self) -> APIRouter:
         runs = PlanRunQueries(self._planning_unit_of_work)
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
@@ -214,6 +233,7 @@ def create_app(
     app.include_router(wiring.catalog_router())
     app.include_router(wiring.planning_router(health))
     app.include_router(wiring.export_router())
+    app.include_router(wiring.diagnostics_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
     event_log.info(
