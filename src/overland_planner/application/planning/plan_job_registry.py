@@ -142,32 +142,22 @@ class _Job:
         return ending is not None and now_s - ending.ended_s >= KEEP_FINISHED_S
 
     def view(self, now_s: float) -> PlanJobView:
-        ending = self.ending
-        if ending is None:
-            elapsed_s = now_s - self.started_s
-            return PlanJobView(
-                self.id,
-                self.project_id,
-                self._state,
-                reason=None,
-                message=None,
-                plan_run_id=None,
-                elapsed_s=elapsed_s,
-                ignore_memo=self.ignore_memo,
-                memo_hit=self.memo_hit(),
-            )
-        elapsed_s = ending.ended_s - self.started_s
+        shown = self.ending or self._so_far(now_s)
         return PlanJobView(
             self.id,
             self.project_id,
-            ending.state,
-            ending.reason,
-            ending.message,
-            ending.plan_run_id,
-            elapsed_s,
+            shown.state,
+            shown.reason,
+            shown.message,
+            shown.plan_run_id,
+            elapsed_s=shown.ended_s - self.started_s,
             ignore_memo=self.ignore_memo,
             memo_hit=self.memo_hit(),
         )
+
+    def _so_far(self, now_s: float) -> _Ending:
+        """A running job as a poll at `now_s` shows it: its state, nothing more yet."""
+        return _Ending(self._state, reason=None, message=None, plan_run_id=None, ended_s=now_s)
 
     def memo_hit(self) -> bool:
         return self.facts.get("memo_hit") is True
