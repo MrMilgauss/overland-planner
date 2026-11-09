@@ -26,7 +26,7 @@ from overland_planner.domain.planning.invariant_guard import INVARIANT_VIOLATION
 from overland_planner.domain.planning.plan_run import PlanReport, PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.unit.domain.planning.trips import Trip, left_at, reached_at, trips
+from tests.unit.domain.planning.trips import PRODUCT_WORDS, Trip, left_at, reached_at, trips
 
 
 @st.composite
@@ -214,14 +214,6 @@ def test_totals_sum_the_road_legs_and_the_tracks_and_end_the_cumulative(
     assert_state_delta(before, after, universe, expected, strict=True)
     if not order:
         assert (len(legs), after["plan.totals"][2:4]) == (1, (0, 0)), "Start and End only: one leg, no off-road"
-
-
-PRODUCT_WORDS = {
-    "internal_invariant_violation": "internal invariant violation",  # slice 02, US-03 (D206)
-    "no_valid_route_found": "no valid route found",  # no product wording yet: the code's words (D220 e)
-    "optimizer_failed": "optimizer failed",
-    "timeout": "timeout",
-}
 
 
 STORED_CODES = {TourNoRoute.reason, TourOptimizerFailed.reason, TourTimedOut.reason, INVARIANT_VIOLATION_REASON}

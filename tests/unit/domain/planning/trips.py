@@ -28,6 +28,13 @@ from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.catalog_fakes import InMemoryFileStore
 
 PROJECT = "p"
+# The words a Failed run shows for each stored reason code, as the product writes them (expected, not imported).
+PRODUCT_WORDS = {
+    "internal_invariant_violation": "internal invariant violation",  # slice 02, US-03 (D206)
+    "no_valid_route_found": "no valid route found",  # no product wording yet: the code's words (D220 e)
+    "optimizer_failed": "optimizer failed",
+    "timeout": "timeout",
+}
 POINTS = tuple(Coordinate(45.0 + i / 10, 7.0 + i / 10) for i in range(5))
 POINT_PAIRS = tuple(permutations(POINTS, 2))
 NAMES = ("Casa Marco", "Briancon", "Strada dell'Assietta")  # few on purpose: names may repeat, item ids do not

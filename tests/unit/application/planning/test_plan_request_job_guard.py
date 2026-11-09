@@ -48,7 +48,7 @@ from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
-from tests.unit.domain.planning.trips import PROJECT, Trip, planned_totals, track_points, trips
+from tests.unit.domain.planning.trips import PRODUCT_WORDS, PROJECT, Trip, planned_totals, track_points, trips
 
 UNIVERSE = {"plan_runs", "items", "projects", "files"}
 REASON = "internal_invariant_violation"
@@ -189,12 +189,6 @@ def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_n
         )
 
 
-PRODUCT_WORDS = {
-    REASON: "internal invariant violation",  # slice 02, US-03 (D206)
-    "no_valid_route_found": "no valid route found",  # no product wording yet: the code's words (D220 e)
-    "optimizer_failed": "optimizer failed",
-    "timeout": "timeout",
-}
 REPORT_UNIVERSE = {"plan_runs", "log.invariant_violations"}
 
 
