@@ -3,7 +3,7 @@
 Driving ports: `PlanRequestJob.run` and, for the job's end, `PlanJobRegistry`. Driven ports: `PlanningUnitOfWork`,
 `RoutingProvider`, `TourSolver` (scripted), `FileStore`, `EventLog`. Removing the guard from the job fails these tests.
 Observable universe: `plan_runs`, `items`, `projects` as planning reads them and `files` as the store holds them.
-Test Budget: 7 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
+Test Budget: 8 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
 solver's broken order ends the same way, job done; the size of a real track; canonical file round trip; a ready run
 stores and shows the totals of its stops, a Failed run none; a ready run stores and shows each stop with the
 assembler's columns, a Failed run no stops; a Failed run stores and shows its reason in product words, a ready run no
