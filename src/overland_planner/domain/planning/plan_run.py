@@ -57,8 +57,8 @@ class PlanStop:
     leg_s: int | None = None
     track_km: float | None = None
     offroad_s: float | None = None
-    cumulative_km: float = 0.0
-    cumulative_s: float = 0.0
+    cumulative_km: float | None = None
+    cumulative_s: float | None = None
 
     @classmethod
     def of(cls, item: CatalogItem, leg_km: float | None) -> PlanStop:

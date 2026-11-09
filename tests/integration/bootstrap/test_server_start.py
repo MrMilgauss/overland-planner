@@ -22,6 +22,8 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import TourNoRoute
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
+from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.planning.plan_run import PlanStop
 from tests.acceptance.overland_route_planner_mvp.steps.places import trail_file_bytes
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.common.fakes import FakeClock, FakeMountTable
@@ -33,6 +35,21 @@ BUILT_WEB_PAGE = REPO_ROOT / "web" / "dist" / "index.html"
 NOT_PERSISTENT = "Data directory is not persistent - projects would be lost on restart"
 PLAN_DEADLINE_S = 30.0
 ASSIETTA = "Strada dell'Assietta"
+COLUMNS = ("leg_s", "track_km", "offroad_s", "cumulative_km", "cumulative_s")
+SHOWN_STOP_KEYS = {"name", "type", "leg_km", "entry", "exit", *COLUMNS}
+STORED_STOP_KEYS = {
+    "item_id",
+    "name",
+    "kind",
+    "leg_km",
+    "location",
+    "entry",
+    "exit",
+    "direction_version",
+    "point_count",
+    "canonical_sha256",
+    *COLUMNS,
+}
 
 
 @pytest.fixture
@@ -217,7 +234,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
         (ASSIETTA, "track"),
         ("Casa Marco", "poi"),
     ]
-    assert all(set(stop) == {"name", "type", "leg_km", "entry", "exit"} for stop in shown["stops"])
+    assert all(set(stop) == SHOWN_STOP_KEYS for stop in shown["stops"]), shown["stops"]
     assert shown["stops"][0]["leg_km"] is None
 
     database = SqliteDatabase(data_dir)
@@ -227,10 +244,25 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
         row = uow.connection.execute(select(plan_runs)).mappings().one()
     assert stored is not None and items is not None
     assert [item.name for item in items.items] == ["Briancon", ASSIETTA, "Casa Marco"]
-    home, briancon, trail, back = stored.stops
-    assert trail == type(trail).of(items.item(item_ids[ASSIETTA]), trail.leg_km)
-    assert briancon == type(briancon).of(items.item(item_ids["Briancon"]), briancon.leg_km)
-    assert (home.leg_km, home.location, back.location) == (None, items.start().location, items.start().location)
+    saved = row["itinerary"]["stops"]
+    assert [set(stop) for stop in saved] == [STORED_STOP_KEYS] * 4, "a stored stop key was renamed or lost"
+    assert [stop["item_id"] for stop in saved] == [item_ids[name] for name in ("Casa Marco", "Briancon", ASSIETTA)] + [
+        item_ids["Casa Marco"]
+    ]
+    expected: list[PlanStop] = []
+    in_order = (items.start_item_id, item_ids["Briancon"], item_ids[ASSIETTA], items.end_item_id)
+    for item_id, stop in zip(in_order, saved, strict=True):
+        leg = None if stop["leg_km"] is None else (stop["leg_km"], stop["leg_s"])
+        expected.append(PlanStop.driving(items.item(item_id), leg, items.offroad_speed).ending(expected))
+    assert stored.stops == tuple(expected), "a column did not survive SQLite"
+    track = items.item(item_ids[ASSIETTA])
+    assert isinstance(track, TrackItem)
+    assert (saved[2]["entry"], saved[2]["exit"]) == tuple(
+        {"lat": point.latitude, "lon": point.longitude} for point in (track.entry, track.exit)
+    )
+    assert [[stop[column] for column in COLUMNS] for stop in shown["stops"]] == [
+        [getattr(stop, column) for column in COLUMNS] for stop in stored.stops
+    ], "HTTP shows the stored columns unrounded"
     assert [stop.leg_km for stop in stored.stops[1:]] == [stop["leg_km"] for stop in shown["stops"][1:]]
     assert (row["revision"], row["objective"]) == (
         client.get(f"/api/projects/{project_id}").json()["revision"],
@@ -238,6 +270,16 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     )
     assert row["provider_id"] == "mock:straight_line_x1.3"
     assert row["inputs"]["included_item_ids"] == [item_ids["Briancon"], item_ids[ASSIETTA]]
+
+    before_columns = [{key: value for key, value in stop.items() if key not in COLUMNS} for stop in saved]
+    with SqlAlchemyPlanningUnitOfWork(database) as uow:  # as a run stored before the columns were (01b, 05-06)
+        uow.connection.execute(plan_runs.update().values(itinerary={"stops": before_columns}))
+        uow.commit()
+    older = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
+    assert [[stop[column] for column in COLUMNS] for stop in older["stops"]] == [[None] * len(COLUMNS)] * 4
+    assert [{key: stop[key] for key in SHOWN_STOP_KEYS - set(COLUMNS)} for stop in older["stops"]] == [
+        {key: stop[key] for key in SHOWN_STOP_KEYS - set(COLUMNS)} for stop in shown["stops"]
+    ]
 
 
 def test_a_failed_run_is_stored_without_stops_and_named_by_the_job(data_dir: Path) -> None:

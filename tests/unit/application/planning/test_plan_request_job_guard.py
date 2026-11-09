@@ -3,9 +3,10 @@
 Driving ports: `PlanRequestJob.run` and, for the job's end, `PlanJobRegistry`. Driven ports: `PlanningUnitOfWork`,
 `RoutingProvider`, `TourSolver` (scripted), `FileStore`, `EventLog`. Removing the guard from the job fails these tests.
 Observable universe: `plan_runs`, `items`, `projects` as planning reads them and `files` as the store holds them.
-Test Budget: 6 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
+Test Budget: 7 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
 solver's broken order ends the same way, job done; the size of a real track; canonical file round trip; a ready run
-stores and shows the totals of its stops, a Failed run none) x 2 = 12; 6 used.
+stores and shows the totals of its stops, a Failed run none; a ready run stores and shows each stop with the
+assembler's columns, a Failed run no stops) x 2 = 14; 7 used.
 """
 
 from __future__ import annotations
@@ -185,6 +186,39 @@ def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_n
             trip.end.id,
             BUDGET,
         )
+
+
+def _with_a_place_and_a_track(trip: Trip) -> bool:
+    """Start is always a place, so a trip with an Included track has both kinds of stop (D212: every rule, every
+    example)."""
+    return bool(trip.tracks())
+
+
+@settings(deadline=None)
+@given(trip=trips().filter(_with_a_place_and_a_track), data=st.data(), failure=FAILED_OUTCOMES)
+def test_a_ready_run_stores_and_shows_each_stop_with_its_columns_and_a_failed_run_no_stops(
+    trip: Trip, data: st.DataObject, failure: TourOutcome
+) -> None:
+    visited = data.draw(st.permutations([item.id for item in trip.items]), label="order")
+    order = (trip.start.id, *visited, trip.end.id)
+    assembled = PlanRunAssembler(trip.snapshot, trip.legs).assemble(visited)
+    for outcome, stops in ((TourFound(order), assembled), (failure, ())):
+        harness = _harness_of(trip, outcome)
+        before = harness.view()
+
+        stored = harness.run()
+
+        status, totals = ("ready", Totals.of(stops)) if stops else ("failed", None)
+        row = (1, status, stored.reason, tuple(stop.item_id for stop in stops), totals)
+        assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
+        shown = PlanRunQueries(harness.planning.unit_of_work).get(stored.plan_run_id)
+        assert shown is not None
+        assert shown.stops == stops, "the stored itinerary is the assembler's, column for column"
+        assert {stop.kind for stop in shown.stops} == ({"poi", "track"} if stops else set())
+        for at, stop in enumerate(shown.stops):
+            assert (stop.leg_s is None) == (at == 0), f"stop {at} road time: {stop.leg_s}"
+            assert (stop.track_km is not None, stop.offroad_s is not None) == (stop.kind == "track",) * 2
+            assert None not in (stop.cumulative_km, stop.cumulative_s), f"stop {at} has no cumulative values"
 
 
 def _damages(track: TrackItem) -> st.SearchStrategy[bytes | None]:

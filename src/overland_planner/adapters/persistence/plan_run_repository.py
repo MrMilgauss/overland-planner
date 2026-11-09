@@ -1,7 +1,8 @@
 """`PlanRunRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`.
 
 The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary and no
-totals (SQL NULL), nor has a run stored before 0006.
+totals (SQL NULL), nor has a run stored before 0006. A stop stored before its driving columns were (05-07) reads them
+as `None`: runs are not recomputed.
 """
 
 from __future__ import annotations
@@ -82,6 +83,11 @@ def _stop_json(stop: PlanStop) -> dict[str, Any]:
         "direction_version": stop.direction_version,
         "point_count": stop.point_count,
         "canonical_sha256": stop.canonical_sha256,
+        "leg_s": stop.leg_s,
+        "track_km": stop.track_km,
+        "offroad_s": stop.offroad_s,
+        "cumulative_km": stop.cumulative_km,
+        "cumulative_s": stop.cumulative_s,
     }
 
 
@@ -105,6 +111,11 @@ def _stop(stop: dict[str, Any]) -> PlanStop:
         direction_version=stop["direction_version"],
         point_count=stop["point_count"],
         canonical_sha256=stop["canonical_sha256"],
+        leg_s=stop.get("leg_s"),
+        track_km=stop.get("track_km"),
+        offroad_s=stop.get("offroad_s"),
+        cumulative_km=stop.get("cumulative_km"),
+        cumulative_s=stop.get("cumulative_s"),
     )
 
 

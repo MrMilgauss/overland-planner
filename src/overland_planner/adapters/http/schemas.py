@@ -154,19 +154,36 @@ class PlanJobResource(BaseModel):
 
 
 class PlanStopResource(BaseModel):
-    """One stop of the itinerary: the first has no road leg; a track shows its entry and exit (HC-1), a POI none."""
+    """One stop of the itinerary (FR-6.1): the first has no road leg; a track shows its entry and exit (HC-1), its
+    length and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null."""
 
     name: str
     type: StopKind
     leg_km: float | None
     entry: PointResource | None
     exit: PointResource | None
+    leg_s: int | None
+    track_km: float | None
+    offroad_s: float | None
+    cumulative_km: float | None
+    cumulative_s: float | None
 
     @classmethod
     def of(cls, stop: PlanStop) -> PlanStopResource:
         entry = None if stop.entry is None else PointResource.of(stop.entry)
         exit_ = None if stop.exit is None else PointResource.of(stop.exit)
-        return cls(name=stop.name, type=stop.kind, leg_km=stop.leg_km, entry=entry, exit=exit_)
+        return cls(
+            name=stop.name,
+            type=stop.kind,
+            leg_km=stop.leg_km,
+            entry=entry,
+            exit=exit_,
+            leg_s=stop.leg_s,
+            track_km=stop.track_km,
+            offroad_s=stop.offroad_s,
+            cumulative_km=stop.cumulative_km,
+            cumulative_s=stop.cumulative_s,
+        )
 
 
 class TotalsResource(BaseModel):

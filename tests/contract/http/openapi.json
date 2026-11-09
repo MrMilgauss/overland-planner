@@ -323,8 +323,30 @@
         "type": "object"
       },
       "PlanStopResource": {
-        "description": "One stop of the itinerary: the first has no road leg; a track shows its entry and exit (HC-1), a POI none.",
+        "description": "One stop of the itinerary (FR-6.1): the first has no road leg; a track shows its entry and exit (HC-1), its\nlength and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null.",
         "properties": {
+          "cumulative_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Km"
+          },
+          "cumulative_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative S"
+          },
           "entry": {
             "anyOf": [
               {
@@ -356,9 +378,42 @@
             ],
             "title": "Leg Km"
           },
+          "leg_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg S"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "offroad_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offroad S"
+          },
+          "track_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Km"
           },
           "type": {
             "enum": [
@@ -374,7 +429,12 @@
           "type",
           "leg_km",
           "entry",
-          "exit"
+          "exit",
+          "leg_s",
+          "track_km",
+          "offroad_s",
+          "cumulative_km",
+          "cumulative_s"
         ],
         "title": "PlanStopResource",
         "type": "object"
