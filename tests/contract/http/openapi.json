@@ -162,7 +162,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is false until the\nmemo (05-10).",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve.",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",

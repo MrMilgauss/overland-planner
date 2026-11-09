@@ -134,8 +134,8 @@ class PlanJobAccepted(BaseModel):
 
 
 class PlanJobResource(BaseModel):
-    """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is false until the
-    memo (05-10)."""
+    """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is true when the
+    order came from the fingerprint memo (05-10) instead of a solve."""
 
     state: PlanJobState
     reason: str | None
