@@ -39,7 +39,7 @@ from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStats, TrackStatsCalculator
-from overland_planner.domain.planning.plan_run import PlanReport, Totals
+from overland_planner.domain.planning.plan_run import PlanReport
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
@@ -48,7 +48,7 @@ from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
-from tests.unit.domain.planning.trips import PROJECT, Trip, track_points, trips
+from tests.unit.domain.planning.trips import PROJECT, Trip, planned_totals, track_points, trips
 
 UNIVERSE = {"plan_runs", "items", "projects", "files"}
 REASON = "internal_invariant_violation"
@@ -145,7 +145,7 @@ def test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok(trip: Trip
 
     stored = harness.run()
 
-    totals = Totals.of(PlanRunAssembler(trip.snapshot, trip.legs).assemble(visited))
+    totals = planned_totals(trip.snapshot, trip.leg_m, visited)
     row = (1, "ready", None, (trip.start.id, *visited, trip.end.id), totals)
     assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
     assert stored.reason is None
@@ -166,7 +166,7 @@ def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_n
 ) -> None:
     visited = data.draw(st.permutations([item.id for item in trip.items]), label="order")
     order = (trip.start.id, *visited, trip.end.id)
-    totals = Totals.of(PlanRunAssembler(trip.snapshot, trip.legs).assemble(visited))
+    totals = planned_totals(trip.snapshot, trip.leg_m, visited)
     for outcome, row in (
         (TourFound(order), (1, "ready", None, order, totals)),
         (failure, (1, "failed", getattr(failure, "reason", None), (), None)),
@@ -265,7 +265,7 @@ def test_a_ready_run_stores_and_shows_each_stop_with_its_columns_and_a_failed_ru
 
         stored = harness.run()
 
-        status, totals = ("ready", Totals.of(stops)) if stops else ("failed", None)
+        status, totals = ("ready", planned_totals(trip.snapshot, trip.leg_m, visited)) if stops else ("failed", None)
         row = (1, status, stored.reason, tuple(stop.item_id for stop in stops), totals)
         assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
         shown = PlanRunQueries(harness.planning.unit_of_work).get(stored.plan_run_id)

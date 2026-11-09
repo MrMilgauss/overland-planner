@@ -9,8 +9,10 @@ default 15 km/h among them.
 from __future__ import annotations
 
 import hashlib
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from itertools import permutations
+from itertools import pairwise, permutations
 
 from hypothesis import strategies as st
 
@@ -20,6 +22,7 @@ from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
 from overland_planner.domain.catalog.track import TrackPoint
+from overland_planner.domain.planning.plan_run import Totals
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.catalog_fakes import InMemoryFileStore
@@ -89,6 +92,28 @@ def track_points(entry: Coordinate, exit_: Coordinate, point_count: int) -> tupl
     """A recorded sequence from entry to exit; the points between are made up, their identity is all that matters."""
     between = (TrackPoint.at(45.9, 7.9 + i / 1000, 1000.0 + i) for i in range(point_count - 2))
     return (TrackPoint(entry), *between, TrackPoint(exit_))
+
+
+def planned_totals(
+    snapshot: ProjectSnapshot, leg_m: dict[tuple[Coordinate, Coordinate], int], visited: Sequence[str]
+) -> Totals:
+    """The six totals of driving Start, `visited` and End, from the leg distances and the track lengths alone (FR-6.2):
+    each road leg from where a stop is left to where the next is reached, each track at the project's speed (FR-4.6).
+    """
+    stops = (snapshot.start(), *map(snapshot.item, visited), snapshot.end())
+    roads = [(left_at(previous), reached_at(item)) for previous, item in pairwise(stops)]
+    driven = [(0, 0) if a == b else (leg_m[a, b], road_time_s(leg_m[a, b])) for a, b in roads]  # nothing at one point
+    road_km, road_s = [m / 1000 for m, _ in driven], [s for _, s in driven]
+    track_km = [item.length_m / 1000 for item in stops if isinstance(item, TrackItem)]
+    offroad_s = [km / snapshot.offroad_speed.kmh * 3600 for km in track_km]
+    return Totals(
+        road_km=math.fsum(road_km),
+        road_s=sum(road_s),
+        offroad_km=math.fsum(track_km),
+        offroad_s=math.fsum(offroad_s),
+        total_km=math.fsum(road_km + track_km),
+        total_s=math.fsum([*road_s, *offroad_s]),
+    )
 
 
 def canonical_file_of(track: TrackItem) -> bytes:

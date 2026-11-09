@@ -26,11 +26,8 @@ from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
-from overland_planner.domain.planning.plan_run import Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
-from overland_planner.domain.routing.road_leg import LegTable
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -41,7 +38,7 @@ from tests.unit.application.planning.planning_doubles import (
     RecordingRoadMap,
     job_when_ended,
 )
-from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, leg_table, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, leg_table, planned_totals, trips
 
 UNIVERSE = {"plan_runs", "solver_calls"}
 OTHER_PROJECT = "q"
@@ -102,8 +99,8 @@ class Desk:
     def view(self) -> dict[str, Any]:
         return {"plan_runs": tuple(_row(run) for run in self.planning.runs), "solver_calls": self.solver.calls}
 
-    def job(self, changed: str) -> tuple[PlanRequestJob, LegTable]:
-        """The job and the road legs it gets, with the one input `changed` (or none)."""
+    def job(self, changed: str) -> tuple[PlanRequestJob, dict[tuple[Coordinate, Coordinate], int]]:
+        """The job and the road leg distances it gets, with the one input `changed` (or none)."""
         shift = 1 if changed == "leg distance" else 0
         leg_m = {pair: metres + shift for pair, metres in self.trip.leg_m.items()}
         road_map = RecordingRoadMap(leg_m)
@@ -119,7 +116,7 @@ class Desk:
             self.files,
             memo=FingerprintMemo(IDENTITY + "-next" if changed == "solver identity" else IDENTITY),
         )
-        return job, leg_table(leg_m)
+        return job, leg_m
 
     def project_as(self, project: str, changed: str, speed: OffroadSpeed) -> ProjectSnapshot:
         snapshot = replace(self.trip.snapshot, offroad_speed=speed)
@@ -200,7 +197,7 @@ def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint
     memo: dict[tuple[str, str], tuple[str, ...]] = {}  # (project, changed input) -> order of its latest ready run
     for press in presses:
         snapshot = desk.project_as(press.project, press.changed, press.speed)
-        job, legs = desk.job(press.changed)
+        job, leg_m = desk.job(press.changed)
         desk.solver.answers = [press.answer]
         inputs = (press.project, _as_the_solver_sees_it(snapshot, press.changed))
         reused = None if press.ignore_memo else memo.get(inputs)
@@ -218,7 +215,7 @@ def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint
         if order is None:
             row = (press.project, number, "failed", getattr(press.answer, "reason", None), (), None, False)
         else:
-            totals = Totals.of(PlanRunAssembler(snapshot, legs).assemble(order))
+            totals = planned_totals(snapshot, leg_m, order)
             stops = (snapshot.start_item_id, *order, snapshot.end_item_id)
             row = (press.project, number, "ready", None, stops, totals, reused is not None)
             memo[inputs] = order
@@ -241,14 +238,14 @@ def test_a_reused_order_is_judged_by_the_guard_and_a_failed_run_is_never_a_memo_
     desk = Desk(trip)
     visited = tuple(data.draw(st.permutations([item.id for item in trip.items]), label="order"))
     snapshot = desk.project_as(PROJECT, "same", trip.snapshot.offroad_speed)
-    job, legs = desk.job("same")
+    job, leg_m = desk.job("same")
     desk.solver.answers = [TourFound(visited)]
     job.run(PROJECT, _Progress())
     track = data.draw(st.sampled_from(trip.tracks()), label="track")
     kept = desk.files.read_canonical_points(track.id, track.direction_version)
     assert isinstance(kept, bytes)
     stops = (snapshot.start_item_id, *visited, snapshot.end_item_id)
-    totals = Totals.of(PlanRunAssembler(snapshot, legs).assemble(visited))
+    totals = planned_totals(snapshot, leg_m, visited)
 
     for damaged, row in (
         (True, (PROJECT, 2, "failed", REASON, (), None, True)),
