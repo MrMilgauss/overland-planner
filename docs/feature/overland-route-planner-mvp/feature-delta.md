@@ -4661,4 +4661,29 @@ Noted: `.local` lookups from the Mac add about 5 s per request (`/healthz` 5.04 
 | Integrity | `des-verify-integrity`: exit 0, all 49 steps traced. 05-01's PREPARE and RED_ACCEPTANCE share one timestamp, and its stop validation did not run (UI-DELIVER-5) |
 | Suite | 567 passed, 165 skipped, 0 failed (`-m "not slow"`); A-6 `-m slow` passes locally in about 400 s; vitest 78 passed; pre-push 2m03s |
 | CI so far | `02fba5c` (run 42577553911) and `01237e5` (run 42580730014): every test job green, but job 5 trivy (3 attempts) and job 1 lint failed on HTTP 504 downloads from GitHub releases; nothing published. Job 2: 596 s and 655 s, still without slice 02's scenarios; job 8: 272 s and 3669 s |
-| Not yet run | Last push (05-12, refactor, fixes), job 2 after-figure against 11 minutes, slow-properties duration, deploy (0005 -> 0006), dogfood, OsmAnd (no device, US-02b still NOT RUN) |
+| Not yet run (at the time) | Last push (05-12, refactor, fixes), job 2 after-figure against 11 minutes, slow-properties duration, deploy (0005 -> 0006), dogfood, OsmAnd (no device, US-02b still NOT RUN) |
+| CI on the last push | `c81c426`, run 42609468929: every job green and published. Job 2 814 s (13.6 min, D221 target 15); slow-properties 955 s (timeout 40 min); job 8 mutation 3084 s (51.4 min, limit 75, D213); job 5 trivy 142 s with no 504; job 6 arm64 305 s, solver probe passed first time |
+
+### Slice 02 demo on pi-host (2026-11-09, user start "Start now"; orchestrator-run through the API)
+
+Release `c81c426` (`sha256:272b30ee…`, CI run 42609468929), schema 0005 -> 0006, deployed with `make deploy` from a clean worktree at the full SHA; `releases.log` copied back. The script ran on the Pi against 192.168.1.10, reading the credentials from the Pi's `.env`. Data: the supplied real `assietta.gpx` (sha256 `b1f214fa…`, D198, copied to a temporary directory and deleted after), plus the **synthetic** DISTILL fixtures `jafferau-loop.gpx` and `maira-varaita-ridge.gpx`, because no real recordings of those two exist. Two new projects: "Slice 02 demo 2026-11-09" and "… reverse bait".
+
+| Check | Action | Result |
+|---|---|---|
+| Deploy | `make deploy SHA=c81c426…` | ok; `releases.log` result ok, alembic head 0006 |
+| Health | `/api/health` | all 10 components ok, no banners, 0.022 s |
+| Import | the three files | HTTP 201; the real file in 1.14 s, 224,814.85 m (the same as slice 01a), entry 45.068983, 6.689721, exit 45.134639, 7.174399 |
+| US-04 refused without anchors | Calculate | HTTP 422 `missing_anchor`, "Set the Start before calculating" |
+| US-03/04/05 Calculate, round trip from Casa Marco, Torino | Calculate | 202 in 0.007 s, job done in 1.63 s, run ready, no report. Order: S/E Casa Marco -> Jafferau loop -> Assietta (the real file) -> Maira-Varaita ridge -> S/E Casa Marco. Rows 1 and 5 are the anchor. Each track's row is its entry -> exit as stored. Legs, track km, off-road time at 15 km/h and cumulative columns are filled. Totals: road 268.6 km \| off-road 313.2 km \| total 581.9 km; road 4h29 \| off-road 20h53 \| total 25h22 |
+| US-05 identical inputs | Calculate again | `memo_hit` true, 0.21 s; stops and totals byte-identical to run 1 |
+| A-6 on the Pi | Calculate with `ignore_memo=true` | fresh solve in 1.62 s, `memo_hit` false; stops and totals byte-identical to run 1 |
+| HC-1 on the real file | export of run 1 against the supplied file | 2,062,216 bytes in 0.55 s; the Assietta trk has 23,295 points 1:1 in stored order at 6 dp, first 45.068983, 6.689721, last 45.134639, 7.174399; road legs are separate 2-point trks |
+| **Dogfood: the Assietta is never planned reversed** | Start POI at the file's exit, End POI at its entry, so a reversed trail would need 0 km of road | run ready in 1.02 s. Start -> Assietta entry 50.356 km -> Assietta entry -> exit -> End 50.356 km; haversine 38.74 km x 1.3 = 50.36 km. The track's entry and exit equal the file's. Across all five runs the Assietta was driven entry -> exit |
+| US-05 off-road speed | PATCH 20 km/h, then Calculate | off-road 20h53 -> 15h40; road km and road time unchanged; order reused (`memo_hit` true: the speed is not a solver input). 0 km/h refused with 422 "Off-road speed must be more than 0 km/h" |
+| US-04 removing the Start POI | DELETE the Start POI | 204; Start cleared, End kept; Calculate then refused with 422 `missing_anchor`; `?type=poi` lists only the End POI |
+| User's projects | items and runs before and after | unchanged ("Alpi Occidentali giugno 2027": 4 items, 2 runs; "test": 1 item, 0 runs) |
+| Memory | `docker stats` | 99.0 MiB of 1 GiB after the demo, CPU 0.13 % |
+| Giulia reads the itinerary on her phone | manual | not run (no phone to hand); the scenario passes in CI through Playwright |
+| **US-02b "The first plan opens in OsmAnd"** | manual | **still NOT RUN: no tablet and no phone (2026-11-09). K6 stays unproven** |
+
+Not matched to the pitch text: the pitches quote the 34.2 km synthetic Assietta and "Set the Start before optimizing". The real file is the whole 224.8 km Bardonecchia-Sommelier-Jafferau-Assietta route, named from its GPX `<name>`, and the product says "calculating" (D220 e). Track rows still show coordinates, not place names (D219, FR-2.4 open). The two demo projects stay on the Pi because no project delete exists.
