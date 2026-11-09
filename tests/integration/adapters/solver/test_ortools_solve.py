@@ -33,6 +33,7 @@ from overland_planner.application.ports.tour_solver import (
     TourTimedOut,
 )
 from overland_planner.domain.planning.solver_model_builder import TourModel
+from tests.common.workspace import workspace_data_dir
 
 pytestmark = pytest.mark.solver_child
 
@@ -389,7 +390,7 @@ _CHECKED_SERVER = """
 import sys
 
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
-from overland_planner.bootstrap.app_factory import create_app  # noqa: F401
+from overland_planner.bootstrap.app_factory import create_app
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
 
@@ -399,21 +400,27 @@ def ortools_loaded():
 
 if __name__ == "__main__":
     print("after import:", ortools_loaded())
+    create_app({"DATA_DIR": sys.argv[1]})  # default settings: the real solver, probed in its child
+    print("after create_app:", ortools_loaded())
     model = TourModel(("s", "e"), 0, 1, ((None, 5), (None, None)))
     print("solved:", OrToolsTourSolver().solve(model, 10))
     print("after solve:", ortools_loaded())
 """
 
 
-def test_importing_the_app_factory_leaves_ortools_out(tmp_path: Path) -> None:
+def test_importing_and_building_the_app_and_solving_leave_ortools_out(tmp_path: Path) -> None:
     script = tmp_path / "checked_server.py"
     script.write_text(_CHECKED_SERVER)
 
-    result = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
+    with workspace_data_dir("integration") as data_dir:
+        command = [sys.executable, str(script), str(data_dir)]
+        result = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=90)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
+    printed = [line for line in result.stdout.splitlines() if not line.startswith("{")]  # not the event log's lines
+    assert printed == [
         "after import: []",
+        "after create_app: []",
         "solved: TourFound(order=('s', 'e'))",
         "after solve: []",
     ]
