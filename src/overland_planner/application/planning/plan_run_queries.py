@@ -27,10 +27,11 @@ class PlanRunQueries:
         self._unit_of_work = unit_of_work
 
     def list(self, project_id: str) -> list[PlanRun]:
-        """The project's plan runs, ordered by number. Raises `ProjectNotFoundError`."""
+        """The project's plan runs, ordered by number, each Stale or not. Raises `ProjectNotFoundError`."""
         with self._unit_of_work() as uow:
             existing_snapshot(uow, project_id)
-            return uow.plan_runs.list(project_id)
+            revision = uow.project_snapshots.stamp(project_id).revision
+            return [run.seen_at(revision) for run in uow.plan_runs.list(project_id)]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         """The stored run with its itinerary, or `None` for an unknown id."""

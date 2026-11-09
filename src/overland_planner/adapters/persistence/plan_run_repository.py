@@ -21,12 +21,14 @@ class SqlAlchemyPlanRunRepository:
 
     def list(self, project_id: str) -> list[PlanRun]:
         query = (
-            select(plan_runs.c.id, plan_runs.c.number, plan_runs.c.status)
+            select(plan_runs.c.id, plan_runs.c.number, plan_runs.c.status, plan_runs.c.revision)
             .where(plan_runs.c.project_id == project_id)
             .order_by(plan_runs.c.number)
         )
         rows = self._connection.execute(query).mappings()
-        return [PlanRun(id=row["id"], number=row["number"], status=row["status"]) for row in rows]
+        return [
+            PlanRun(id=row["id"], number=row["number"], status=row["status"], revision=row["revision"]) for row in rows
+        ]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         query = select(plan_runs).where(plan_runs.c.id == plan_run_id)

@@ -80,7 +80,7 @@ class InMemoryPlanning:
         self.snapshots[project_id] = snapshot
         self.stamps[project_id] = stamp
 
-    def seed_run(self, project_id: str, number: int, status: PlanRunStatus = "ready") -> None:
+    def seed_run(self, project_id: str, number: int, status: PlanRunStatus = "ready", revision: int = 1) -> None:
         self.runs.append(
             NewPlanRun(
                 id=f"{project_id}-seeded-{number}",
@@ -89,7 +89,7 @@ class InMemoryPlanning:
                 status=status,
                 failure_reason=None,
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
-                revision=1,
+                revision=revision,
                 provider_id="seeded",
                 objective="distance",
                 inputs={},
@@ -105,7 +105,7 @@ class _Runs:
 
     def list(self, project_id: str) -> list[PlanRun]:
         rows = sorted((row for row in self._rows if row.project_id == project_id), key=lambda row: row.number)
-        return [PlanRun(id=row.id, number=row.number, status=row.status) for row in rows]
+        return [PlanRun(id=row.id, number=row.number, status=row.status, revision=row.revision) for row in rows]
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         for row in self._rows:

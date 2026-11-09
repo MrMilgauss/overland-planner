@@ -279,7 +279,7 @@
         "type": "object"
       },
       "PlanRunResource": {
-        "description": "A numbered plan run; a job still running has none.",
+        "description": "A numbered plan run; a job still running has none. `stale`: the project changed since it was computed.",
         "properties": {
           "id": {
             "title": "Id",
@@ -288,6 +288,10 @@
           "number": {
             "title": "Number",
             "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
           },
           "status": {
             "enum": [
@@ -301,7 +305,8 @@
         "required": [
           "id",
           "number",
-          "status"
+          "status",
+          "stale"
         ],
         "title": "PlanRunResource",
         "type": "object"

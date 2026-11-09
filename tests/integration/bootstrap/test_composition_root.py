@@ -170,7 +170,10 @@ def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(da
     answer = client.get(f"/api/projects/{project_id}/plan-runs")
     assert (answer.status_code, answer.json()) == (
         200,
-        [{"id": "r2", "number": 2, "status": "ready"}, {"id": "r10", "number": 10, "status": "failed"}],
+        [
+            {"id": "r2", "number": 2, "status": "ready", "stale": True},
+            {"id": "r10", "number": 10, "status": "failed", "stale": True},
+        ],
     )
 
 

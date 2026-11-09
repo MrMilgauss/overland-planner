@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -14,9 +14,17 @@ StopKind = Literal["poi", "track"]
 
 @dataclass(frozen=True)
 class PlanRun:
+    """`revision` is the project's revision the run was computed at; `stale` is decided on read, never stored."""
+
     id: str
     number: int
     status: PlanRunStatus
+    revision: int
+    stale: bool = False
+
+    def seen_at(self, project_revision: int) -> PlanRun:
+        """This run as listed while the project is at `project_revision`: Stale when that is not its own (brief §8)."""
+        return replace(self, stale=self.revision != project_revision)
 
 
 @dataclass(frozen=True)

@@ -234,7 +234,7 @@ def test_a_failed_run_is_stored_without_stops_and_named_by_the_job(data_dir: Pat
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
     assert (shown["status"], shown["failure_reason"], shown["stops"]) == ("failed", "no_valid_route_found", [])
     assert client.get(f"/api/projects/{project_id}/plan-runs").json() == [
-        {"id": shown["id"], "number": 1, "status": "failed"}
+        {"id": shown["id"], "number": 1, "status": "failed", "stale": False}
     ]
 
 

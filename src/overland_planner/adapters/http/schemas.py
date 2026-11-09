@@ -105,15 +105,16 @@ class ItemResource(BaseModel):
 
 
 class PlanRunResource(BaseModel):
-    """A numbered plan run; a job still running has none."""
+    """A numbered plan run; a job still running has none. `stale`: the project changed since it was computed."""
 
     id: str
     number: int
     status: PlanRunStatus
+    stale: bool
 
     @classmethod
     def of(cls, run: PlanRun) -> PlanRunResource:
-        return cls(id=run.id, number=run.number, status=run.status)
+        return cls(id=run.id, number=run.number, status=run.status, stale=run.stale)
 
 
 class PlanJobAccepted(BaseModel):
