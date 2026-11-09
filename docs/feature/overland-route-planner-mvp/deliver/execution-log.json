@@ -1793,6 +1793,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-09T01:33:06Z"
+    },
+    {
+      "sid": "05-10",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:37:06Z"
+    },
+    {
+      "sid": "05-10",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: both claimed scenarios are green since 05-06/05-08 and must stay green; no scenario observes the reuse; RED is carried by the fingerprint and memo unit properties",
+      "t": "2026-11-09T01:37:16Z"
+    },
+    {
+      "sid": "05-10",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-09T01:40:00Z"
+    },
+    {
+      "sid": "05-10",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:48:30Z"
+    },
+    {
+      "sid": "05-10",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:48:49Z"
     }
   ]
 }
