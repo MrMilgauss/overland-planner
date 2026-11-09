@@ -3,8 +3,9 @@
 Driving port: `ProjectService` from the catalog facade. Driven port: `CatalogUnitOfWork` (in-memory double in
 `tests/common/catalog_fakes.py`, honouring commit/rollback like the SQLite adapter). Observable universe = what
 Marco sees through the driving port: `projects.names` (the list) and `project.items` (the open project's items).
-Test Budget: 7 behaviors (create+list, blank refused, open unknown refused, revision per change, removal clears the
-anchors it held + revision, unknown or foreign item not removed, items listed by type) x 2 = 14; 7 used.
+Test Budget: 8 behaviors (create+list, blank refused, open unknown refused, revision per change, removal clears the
+anchors it held + revision, unknown or foreign item not removed, items listed by type, off-road speed taken or
+refused) x 2 = 16; 8 used (the unknown-project test also covers setting the speed of an unknown project).
 Removal universe = `project.items`, `project.anchors`, `project.revision` of the project and the same three of
 another project (plan runs live outside the catalog and are covered by the acceptance scenarios).
 """
@@ -15,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from hypothesis import assume, given
+from hypothesis import assume, example, given
 from hypothesis import strategies as st
 
 from overland_planner.application.catalog.facade import (
@@ -27,7 +28,7 @@ from overland_planner.application.catalog.facade import (
 )
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
-from overland_planner.domain.catalog.project import ProjectNameRequiredError
+from overland_planner.domain.catalog.project import OffroadSpeedNotDrivableError, ProjectNameRequiredError
 from tests.common.catalog_fakes import InMemoryCatalog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -81,7 +82,7 @@ def test_an_unknown_project_id_is_not_found_and_changes_nothing(existing: list[s
     service = _service(existing)
     before = _view(service, None)
 
-    for use in (service.open, service.items):
+    for use in (service.open, service.items, lambda project_id: service.set_offroad_speed(project_id, 20.0)):
         with pytest.raises(ProjectNotFoundError):
             use(unknown)
 
@@ -205,3 +206,48 @@ def test_items_of_a_type_are_the_items_of_that_type_in_the_order_added(
         listed = [(item.id, item.type, item.anchor) for item in service.items(project_id, item_type)]
         assert listed == [row for row in every if row[1] == item_type]
     assert [item.id for item in service.items(project_id, None)] == [row[0] for row in every]
+
+
+# --- off-road speed (slice 02, US-05 S4, FR-4.6) ------------------------------------------------------------------
+SPEED_UNIVERSE = {"project.offroad_speed_kmh", "project.revision", "project.items", "project.anchors"}
+DRIVABLE = st.floats(min_value=0, exclude_min=True, allow_infinity=False, allow_subnormal=True)
+NOT_DRIVABLE = st.one_of(st.floats(max_value=0), st.sampled_from([float("nan"), float("inf"), float("-inf")]))
+
+
+def _speed_view(service: ProjectService, project_id: str) -> dict[str, Any]:
+    opened = service.open(project_id)
+    return {
+        "project.offroad_speed_kmh": opened.offroad_speed.kmh,
+        "project.revision": opened.revision,
+        "project.items": tuple((item.id, item.type, item.anchor) for item in service.items(project_id)),
+        "project.anchors": (opened.anchors.start_item_id, opened.anchors.end_item_id),
+    }
+
+
+@given(trip=trips(), refused=NOT_DRIVABLE, taken=DRIVABLE)
+@example(trip=None, refused=0.0, taken=5e-324).via("boundary")
+@example(trip=None, refused=-0.0, taken=1e308).via("boundary")
+@example(trip=None, refused=float("nan"), taken=15.0).via("boundary")
+@example(trip=None, refused=float("inf"), taken=0.1).via("boundary")
+@example(trip=None, refused=float("-inf"), taken=120.0).via("boundary")
+def test_a_drivable_speed_is_taken_with_one_revision_and_any_other_is_refused_changing_nothing(
+    trip: tuple[ProjectService, str, str, list[str], list[str]] | None, refused: float, taken: float
+) -> None:
+    # Every example runs both rules (D212): first a refused speed, then a drivable one.
+    service, project_id = (_service(), None) if trip is None else (trip[0], trip[1])
+    project_id = project_id or service.create("Alpi").id
+    before = _speed_view(service, project_id)
+    assert before["project.offroad_speed_kmh"] == 15  # FR-4.6 default
+
+    with pytest.raises(OffroadSpeedNotDrivableError, match=r"^Off-road speed must be more than 0 km/h$"):
+        service.set_offroad_speed(project_id, refused)
+    assert_state_delta(before, _speed_view(service, project_id), SPEED_UNIVERSE, {}, strict=True)
+
+    changed = service.set_offroad_speed(project_id, taken)
+
+    expected = {
+        "project.offroad_speed_kmh": set_to(taken),
+        "project.revision": set_to(before["project.revision"] + 1),
+    }
+    assert_state_delta(before, _speed_view(service, project_id), SPEED_UNIVERSE, expected, strict=True)
+    assert (changed.offroad_speed.kmh, changed.revision) == (taken, before["project.revision"] + 1)

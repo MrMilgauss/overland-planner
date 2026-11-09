@@ -1,4 +1,5 @@
-"""Catalog use cases on trip projects (brief §3, §5): create, list, open, list and remove items; one unit of work each.
+"""Catalog use cases on trip projects (brief §3, §5): create, list, open, set the off-road speed, list and remove items;
+one unit of work each.
 
 Removing an item clears any anchor it held and raises the project revision once (slice 02, US-04 S2/S3). The plan runs
 and a removed track's files are not touched (ADR-018 Revision 2: sweep-only deletion).
@@ -12,7 +13,7 @@ from collections.abc import Callable, Sequence
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
 from overland_planner.domain.catalog.item import CatalogItem, ItemType
-from overland_planner.domain.catalog.project import Project, ProjectName
+from overland_planner.domain.catalog.project import OffroadSpeed, Project, ProjectName
 
 
 class ProjectNotFoundError(LookupError):
@@ -71,3 +72,12 @@ class ProjectService:
             uow.projects.update(project.item_removed(item_id))
             uow.items.remove(item_id)
             uow.commit()
+
+    def set_offroad_speed(self, project_id: str, kmh: float) -> Project:
+        """Raises `ProjectNotFoundError`, or `OffroadSpeedNotDrivableError` for 0, less or a non-finite speed; nothing
+        changes then. Otherwise one more catalog change (revision + 1)."""
+        with self._unit_of_work() as uow:
+            project = existing_project(uow, project_id).with_offroad_speed(OffroadSpeed(kmh))
+            uow.projects.update(project)
+            uow.commit()
+        return project

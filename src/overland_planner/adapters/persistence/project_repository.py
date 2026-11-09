@@ -8,10 +8,12 @@ from sqlalchemy import Connection, select
 
 from overland_planner.adapters.persistence.tables import projects
 from overland_planner.domain.catalog.anchors import Anchors
-from overland_planner.domain.catalog.project import Project, ProjectName
+from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed, Project, ProjectName
 
-# Column values until the objective and project settings become editable (distance is the default objective).
+# Column value until the objective becomes editable (distance is the default objective).
 _DEFAULT_OBJECTIVE = "distance"
+# `projects.settings` (brief §9, JSON since 0001): a project written before slice 02 has `{}` and drives 15 km/h.
+_OFFROAD_SPEED_KEY = "offroad_speed_kmh"
 
 
 class SqlAlchemyProjectRepository:
@@ -24,7 +26,7 @@ class SqlAlchemyProjectRepository:
                 id=project.id,
                 name=project.name.value,
                 objective=_DEFAULT_OBJECTIVE,
-                settings={},
+                settings=_settings(project),
                 revision=project.revision,
                 created_at=project.created_at,
             )
@@ -44,6 +46,7 @@ class SqlAlchemyProjectRepository:
             .where(projects.c.id == project.id)
             .values(
                 revision=project.revision,
+                settings=_settings(project),
                 start_item_id=project.anchors.start_item_id,
                 end_item_id=project.anchors.end_item_id,
             )
@@ -57,4 +60,14 @@ def _project(row: Any) -> Project:
         revision=row["revision"],
         created_at=row["created_at"],
         anchors=Anchors(start_item_id=row["start_item_id"], end_item_id=row["end_item_id"]),
+        offroad_speed=_offroad_speed(row["settings"]),
     )
+
+
+def _settings(project: Project) -> dict[str, Any]:
+    return {_OFFROAD_SPEED_KEY: project.offroad_speed.kmh}
+
+
+def _offroad_speed(settings: dict[str, Any]) -> OffroadSpeed:
+    stored = settings.get(_OFFROAD_SPEED_KEY)
+    return DEFAULT_OFFROAD_SPEED if stored is None else OffroadSpeed(float(stored))

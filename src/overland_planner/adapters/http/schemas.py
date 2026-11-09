@@ -26,6 +26,12 @@ class ProjectCreate(BaseModel):
     name: str
 
 
+class ProjectUpdate(BaseModel):
+    """The project's settings. The speed rule (above 0, finite) is the domain's, so it is not checked here."""
+
+    offroad_speed_kmh: float
+
+
 class PoiCreate(BaseModel):
     """A place by decimal degrees. The ranges are the domain's rule (D151 reasons), so they are not checked here."""
 
@@ -45,10 +51,16 @@ class ProjectResource(BaseModel):
     id: str
     name: str
     revision: int
+    offroad_speed_kmh: float
 
     @classmethod
     def of(cls, project: Project) -> ProjectResource:
-        return cls(id=project.id, name=project.name.value, revision=project.revision)
+        return cls(
+            id=project.id,
+            name=project.name.value,
+            revision=project.revision,
+            offroad_speed_kmh=project.offroad_speed.kmh,
+        )
 
 
 class PointResource(BaseModel):

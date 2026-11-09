@@ -433,6 +433,10 @@
             "title": "Name",
             "type": "string"
           },
+          "offroad_speed_kmh": {
+            "title": "Offroad Speed Kmh",
+            "type": "number"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -441,9 +445,24 @@
         "required": [
           "id",
           "name",
-          "revision"
+          "revision",
+          "offroad_speed_kmh"
         ],
         "title": "ProjectResource",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "description": "The project's settings. The speed rule (above 0, finite) is the domain's, so it is not checked here.",
+        "properties": {
+          "offroad_speed_kmh": {
+            "title": "Offroad Speed Kmh",
+            "type": "number"
+          }
+        },
+        "required": [
+          "offroad_speed_kmh"
+        ],
+        "title": "ProjectUpdate",
         "type": "object"
       }
     }
@@ -755,6 +774,64 @@
           }
         },
         "summary": "Open Project"
+      },
+      "patch": {
+        "description": "Sets the off-road speed (one more revision); 0 or less, or not finite, answers 422 and nothing changes.",
+        "operationId": "update_project_api_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Update Project"
       }
     },
     "/api/projects/{project_id}/anchors": {
