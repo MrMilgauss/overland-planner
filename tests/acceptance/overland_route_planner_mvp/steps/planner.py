@@ -88,8 +88,10 @@ class PlannerSession:
         return self._request("DELETE", f"/api/projects/{project_id}/items/{item_id}")
 
     # --- planning -------------------------------------------------------------------------------------
-    def calculate(self, project_id: str) -> httpx.Response:
-        return self._request("POST", f"/api/projects/{project_id}/plan-runs")
+    def calculate(self, project_id: str, *, ignore_memo: bool = False) -> httpx.Response:
+        """`ignore_memo` is "Re-optimise (ignore previous result)": `?ignore_memo=true`."""
+        params = {"ignore_memo": "true"} if ignore_memo else None
+        return self._request("POST", f"/api/projects/{project_id}/plan-runs", params=params)
 
     def plan_job(self, job_id: str) -> httpx.Response:
         return self._request("GET", f"/api/plan-jobs/{job_id}")
