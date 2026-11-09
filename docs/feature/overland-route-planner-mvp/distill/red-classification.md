@@ -198,6 +198,6 @@ Every failure is an `AssertionError` reached through a driving port; none is `IM
 | #16: a `sleep 20` process is counted among the optimizer processes | #16 | "optimizer processes still running 3 s after the planner stopped: [7682]" |
 | #17: the 60-item solve child is killed and the job ends before the second press | #17 | "'A plan is already being calculated for this project' not shown; Marco saw []" |
 
-#16's second Then ("no plan run after the restart") was not mutated separately.
+The second Then of #16 ("no plan run after the restart") was not mutated by the binding agent; the orchestrator showed it able to fail afterwards (a real plan run started after the restart made it fail with "the interrupted plan left a plan run"), and reverted the mutation.
 
 **Markers and CI cost.** `solver_child` on every scenario that spawns a solve child (scripted or real) or a planner process. Four scenarios are long when green (#2 about 21 s, #6 22 s, #10 and #13 about 31 s each: the 20 s / 30 s limits are the scenario text, and #6 solves 60 items at budget 10,000) and should be `slow`; `slow` is not set because `tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_job_2_does_not` pins the slow population to A-6 + the slice 02 HC properties (D221). Without them, slice 03 adds about 50 s to CI job 2 when enabled (13.6 of 15 min today).
