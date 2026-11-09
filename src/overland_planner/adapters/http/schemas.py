@@ -161,7 +161,8 @@ class PlanJobResource(BaseModel):
     order came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each
     stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
     `legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended
-    job's `message` names its Failed run in words when the run has them (D151)."""
+    job's `message` names its Failed run in words when the run has them (D151), or says what a job without a run did
+    (`cancelled`, `timed_out`). `stoppable` is true in every state before `finalising` and false from then on (D136)."""
 
     state: PlanJobState
     reason: str | None
@@ -174,6 +175,7 @@ class PlanJobResource(BaseModel):
     legs_total: int | None
     items_included: int | None
     incumbent: IncumbentResource | None
+    stoppable: bool
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:

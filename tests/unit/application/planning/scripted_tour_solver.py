@@ -6,7 +6,9 @@ for the tour that visits the model's nodes in order. Like the real adapter it re
 that is not positive. Before it ends it streams its scripted `incumbents` to the job's observer, the fake clock moved
 on `incumbent_every_s` before each, as the solver child does (ADR-015, brief section 6). It keeps the deadlines each
 solve was handed (`deadlines`; `None` for a caller that hands none) and refuses an optimisation deadline before the
-feasibility one, which the real adapter could not honour.
+feasibility one, which the real adapter could not honour. It keeps the stop signal each solve was handed (`stops`) and,
+held at its gate, ends as the real adapter ends a stopped solve once that signal is set (brief section 6, ADR-015): the
+last incumbent labelled `stopped`, or Failed `stopped` without one.
 """
 
 from __future__ import annotations
@@ -19,8 +21,10 @@ from overland_planner.application.ports.tour_solver import (
     Incumbent,
     IncumbentObserver,
     SolveDeadlines,
+    StopSignal,
     TourFound,
     TourOutcome,
+    TourStopped,
     ignore_incumbents,
 )
 from overland_planner.domain.planning.solver_model_builder import TourModel
@@ -51,6 +55,7 @@ class ScriptedTourSolver:
         self.models: list[TourModel] = []
         self.budgets: list[int] = []
         self.deadlines: list[SolveDeadlines | None] = []
+        self.stops: list[StopSignal | None] = []
         self.threads: list[threading.Thread] = []
 
     def probe(self) -> ProbeResult:
@@ -63,11 +68,13 @@ class ScriptedTourSolver:
         on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: SolveDeadlines | None = None,
+        stop: StopSignal | None = None,
     ) -> TourOutcome:
         assert model.node_item_ids, "a model has at least the Start and End nodes"
         assert budget > 0, "the budget must be positive"
         assert deadlines is None or deadlines.feasibility_s <= deadlines.optimisation_s, "deadlines out of order"
         self.deadlines.append(deadlines)
+        self.stops.append(stop)
         self.models.append(model)
         self.budgets.append(budget)
         self.threads.append(threading.current_thread())
@@ -76,6 +83,13 @@ class ScriptedTourSolver:
                 self._clock.advance(self._every_s)
             on_incumbent(incumbent)
         self.gate.passing()
+        if stop is not None and stop.is_set():
+            return self._stopped()
         if isinstance(self._script, BaseException):
             raise self._script
         return self._script if self._script is not None else TourFound(order=model.node_item_ids)
+
+    def _stopped(self) -> TourOutcome:
+        if self._incumbents:
+            return TourFound(order=self._incumbents[-1].order, ending="stopped")
+        return TourStopped()

@@ -5,12 +5,22 @@ assignment together with its `plan_run_id`: a poll never sees a run before the j
 `done` with a Failed run (D122), whose message, if it has words, names the run (D151). `failed` is anything else the
 work raises, SystemExit too, since a job without an ending would hold its project in 409 until a restart: no run,
 reason null (ADR-015 fixes the codes and none covers it) and a fixed message. It is logged and the thread then ends.
-`refused`, `cancelled` and `timed_out` arrive with Stop and the look-up-side limit.
+`refused` arrives with the look-up-side limit.
 
 A project has one active job: `start` checks and registers under one lock. One solver child runs at a time (D133): a job
 that reaches the solve stage while the slot is busy shows `waiting_for_optimizer`, holding neither a lock of this
 registry nor the writer lock, and every ending of a solve frees the slot. "Max 2 jobs overall" is not enforced: ADR-015
-names no answer for a third project, so its job is accepted and waits for the slot like the second.
+names no answer for a third project, so its job is accepted and waits for the slot like the second. The wait gives up
+on Stop (`cancelled`) and at the work's feasibility limit counted from the job's start (`timed_out`); neither stores a
+run, and both end with words and a reason (`stopped`, `timeout`).
+
+Stop (US-06b, ADR-015 state table, D136) is idempotent and answers the current poll: `stop` is `None` only for an
+unknown or expired job. The poll shows `stoppable` true in every state before `finalising` and false from then on; a
+Stop when it is false changes nothing, so the run being written completes. A Stop before solving ends the job
+`cancelled` at its next state (06-09 makes it prompt during the road look-up); while solving it sets the stop signal the
+job's solver slot hands the solve (brief section 6), and the solve ends with the best so far. A job that a Stop ended
+logs one `plan.job.stopped` line (brief section 12) before its `plan.job.finished` line, with the state it was stopped
+in.
 
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
@@ -28,7 +38,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,12 +47,29 @@ from typing import Literal, Protocol
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.plan_job_log import PlanJobLog, PlanJobLogEntry
+from overland_planner.application.ports.tour_solver import SolveLimits, StopSignal
 from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
-PlanJobState = Literal["queued", "computing_legs", "waiting_for_optimizer", "solving", "finalising", "done", "failed"]
+PlanJobState = Literal[
+    "queued",
+    "computing_legs",
+    "waiting_for_optimizer",
+    "solving",
+    "finalising",
+    "done",
+    "failed",
+    "cancelled",
+    "timed_out",
+]
 
 KEEP_FINISHED_S = 600.0
 FAILED_MESSAGE = "The plan could not be calculated - nothing was changed"
+CANCELLED_MESSAGE = "Stopped - nothing was changed"
+WAIT_TIMED_OUT_MESSAGE = "No valid route found within the time limit - nothing was changed"
+STOPPED_REASON = "stopped"
+_SLOT_WAIT_STEP_S = 0.25  # the longest wait for the solver slot before Stop and the feasibility limit are checked
+_BEFORE_SOLVING = frozenset({"queued", "computing_legs", "waiting_for_optimizer"})
+_NOT_STOPPABLE = frozenset({"finalising", "done", "failed", "cancelled", "timed_out"})
 _MILLISECONDS_PER_SECOND = 1000
 _NULL_UNTIL_NOTED = (
     "items_included",
@@ -82,6 +109,7 @@ class PlanJobView:
     legs_total: int | None = None
     items_included: int | None = None
     incumbent: dict[str, float] | None = None
+    stoppable: bool = True
 
 
 @dataclass(frozen=True)
@@ -103,13 +131,55 @@ class PlanJobProgress(Protocol):
         """Facts for the job's `plan.job.finished` line."""
         ...
 
-    def solver_slot(self) -> AbstractContextManager[None]:
-        """Holds the one solver slot while in `solving`, waiting for it first if another job has it."""
+    def solver_slot(self) -> AbstractContextManager[StopSignal | None]:
+        """Holds the one solver slot while in `solving`, waiting for it first if another job has it; answers the stop
+        signal of the solve it holds (`None`: none)."""
         ...
 
 
 class PlanWork(Protocol):
+    @property
+    def limits(self) -> SolveLimits:
+        """The limits of the work, from the job's start: a wait for the solver slot gives up at the feasibility one."""
+        ...
+
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun: ...
+
+
+class _EndedBeforeSolving(Exception):
+    """A job that ended before its solve: no run, its terminal state, reason and words."""
+
+    def __init__(self, state: PlanJobState, reason: str, message: str) -> None:
+        super().__init__(state)
+        self.state, self.reason, self.message = state, reason, message
+
+
+def _cancelled() -> _EndedBeforeSolving:
+    return _EndedBeforeSolving("cancelled", STOPPED_REASON, CANCELLED_MESSAGE)
+
+
+class _SolverSlot:
+    """The one solver slot (D133). A wait for it gives up on Stop and at the feasibility limit from the job's start."""
+
+    def __init__(self, clock: Clock, work: PlanWork) -> None:
+        self._lock = threading.Lock()
+        self._clock = clock
+        self._work = work
+
+    def take(self, started_s: float, stop: threading.Event, waiting: Callable[[], None]) -> None:
+        """Takes the slot, calling `waiting` first when it is busy; raises the ending when the wait gives up."""
+        if self._lock.acquire(blocking=False):
+            return
+        waiting()
+        give_up_at_s = started_s + self._work.limits.feasibility_s
+        while not self._lock.acquire(timeout=_SLOT_WAIT_STEP_S):
+            if stop.is_set():
+                raise _cancelled()
+            if self._clock.monotonic() >= give_up_at_s:
+                raise _EndedBeforeSolving("timed_out", "timeout", WAIT_TIMED_OUT_MESSAGE)
+
+    def release(self) -> None:
+        self._lock.release()
 
 
 @dataclass(frozen=True)
@@ -128,7 +198,7 @@ class _Job:
         job_id: str,
         project_id: str,
         started: tuple[float, datetime],
-        slot: threading.Lock,
+        slot: _SolverSlot,
         *,
         ignore_memo: bool,
     ) -> None:
@@ -139,22 +209,40 @@ class _Job:
         self._slot = slot
         self.facts: dict[str, object] = {"ignore_memo": ignore_memo, "memo_hit": False}
         self.ending: _Ending | None = None
+        self.stopped_in: PlanJobState | None = None
         self._state: PlanJobState = "queued"
+        self._stop = threading.Event()
+        self._guard = threading.Lock()  # a Stop and a change of state never interleave
 
     def enter(self, state: PlanJobState) -> None:
-        self._state = state
+        """Raises the `cancelled` ending instead when a Stop came before the solve."""
+        with self._guard:
+            if self._stop.is_set() and self._state in _BEFORE_SOLVING:
+                raise _cancelled()
+            self._state = state
 
     def note(self, **facts: object) -> None:
         self.facts.update(facts)
 
+    def request_stop(self) -> None:
+        with self._guard:
+            if self.ending is not None or self._state in _NOT_STOPPABLE or self._stop.is_set():
+                return
+            self.stopped_in = self._state
+            self._stop.set()
+
+    def was_stopped(self, ending: _Ending) -> bool:
+        return self.stopped_in is not None and STOPPED_REASON in (
+            ending.reason,
+            self.facts.get("not_fully_optimised_reason"),
+        )
+
     @contextmanager
-    def solver_slot(self) -> Iterator[None]:
-        if not self._slot.acquire(blocking=False):
-            self.enter("waiting_for_optimizer")
-            self._slot.acquire()
+    def solver_slot(self) -> Iterator[StopSignal]:
+        self._slot.take(self.started_s, self._stop, lambda: self.enter("waiting_for_optimizer"))
         try:
             self.enter("solving")
-            yield
+            yield self._stop
         finally:
             self._slot.release()
 
@@ -181,6 +269,7 @@ class _Job:
             legs_total=self._fact("legs_total", int),
             items_included=self._fact("items_included", int),
             incumbent=self._fact("incumbent", dict),
+            stoppable=shown.state not in _NOT_STOPPABLE,
         )
 
     def _fact[T](self, name: str, kind: type[T]) -> T | None:
@@ -203,7 +292,7 @@ class PlanJobRegistry:
         self._event_log = event_log
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
-        self._solver_slot = threading.Lock()
+        self._solver_slot = _SolverSlot(clock, work)
 
     def has_active_job(self, project_id: str) -> bool:
         with self._lock:
@@ -228,6 +317,16 @@ class PlanJobRegistry:
             job = self._jobs.get(job_id)
         return None if job is None else job.view(self._clock.monotonic())
 
+    def stop(self, job_id: str) -> PlanJobView | None:
+        """Stop and use best so far (D136): the job as a poll shows it right after, `None` when unknown or expired."""
+        with self._lock:
+            self._forget_expired()
+            job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        job.request_stop()
+        return job.view(self._clock.monotonic())
+
     def _active_in(self, project_id: str) -> bool:
         return any(job.project_id == project_id and job.is_active() for job in self._jobs.values())
 
@@ -239,6 +338,15 @@ class PlanJobRegistry:
     def _run(self, job: _Job) -> None:
         ending = self._ending_of(job)
         try:
+            if job.was_stopped(ending):
+                self._event_log.info(
+                    "plan.job.stopped",
+                    job_id=job.id,
+                    project_id=job.project_id,
+                    state=job.stopped_in,
+                    terminal_state=ending.state,
+                    plan_run_id=ending.plan_run_id,
+                )
             fields = self._finished_fields(job, ending)
             log = self._event_log.warning if ending.state == "failed" else self._event_log.info
             log("plan.job.finished", **fields)
@@ -249,6 +357,9 @@ class PlanJobRegistry:
     def _ending_of(self, job: _Job) -> _Ending:
         try:
             stored = self._work.run(job.project_id, job, ignore_memo=job.ignore_memo)
+        except _EndedBeforeSolving as ended:
+            job.note(reason=ended.reason)
+            return _Ending(ended.state, ended.reason, ended.message, None, self._clock.monotonic(), self._clock.now())
         except BaseException as error:
             job.note(error_class=type(error).__name__)
             return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic(), self._clock.now())

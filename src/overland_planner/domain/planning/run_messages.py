@@ -1,22 +1,25 @@
 """The user-facing lines of a plan run's results and of its ended job (D223 b, worded as D220 e: words, never codes).
 
 A ready run that is not fully optimised names why in words; the code stays in its `not_fully_optimised`. A run that
-failed on the feasibility limit names itself by number (D151); the reason code stays `timeout` (ADR-015). Slices 06-08
-and 06-10 add the Stop label and the run time line here.
+failed on the feasibility limit names itself by number (D151); the reason code stays `timeout` (ADR-015). A run stopped
+before a valid route was found says so in the feature's words (US-06b), its code `stopped`. Slice 06-10 adds the run
+time line here.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-NotFullyOptimised = Literal["optimizer_failed", "time_limit"]  # stopped (06-08) next
+NotFullyOptimised = Literal["optimizer_failed", "time_limit", "stopped"]
 
 _LABELS: dict[str, str] = {
     "optimizer_failed": "not fully optimised (optimizer failed)",
     "time_limit": "not fully optimised (time limit)",
+    "stopped": "not fully optimised (stopped)",
 }
 _FAILED: dict[str, str] = {
     "timeout": "No valid route found within the time limit - plan run #{number} failed",
+    "stopped": "stopped before a valid route was found",
 }
 
 

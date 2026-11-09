@@ -5,12 +5,15 @@ ports: `PlanningUnitOfWork` and `PlanJobLog` (in-memory), `TourSolver` (scripted
 observer, then ends as scripted, and keeps the deadlines it was handed), `Clock` (fake, moved on before each incumbent).
 Observable universe: `plan_runs` as stored and shown (status, reason, order, reproducible, label code, messages),
 `job_log` (the job's row: incumbents, reproducible, not_fully_optimised_reason), `poll.incumbent` while solving,
-`poll.message` once ended, and `solve.deadlines`: the feasibility and optimisation deadlines the solve was handed, in
-seconds from the job's start on the `Clock` port (ADR-014 section 2, D58), for any pair of limits.
-Test Budget: 3 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
-incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start)
-x 2 = 6; 1 property test used, every behavior on every example (D212). The label texts are written here as the product
-shows them, not imported.
+`poll.message` once ended, `solve.deadlines`: the feasibility and optimisation deadlines the solve was handed, in
+seconds from the job's start on the `Clock` port (ADR-014 section 2, D58), for any pair of limits, and `stop.answer`:
+the state and `stoppable` a Stop pressed while solving answers (D136), null when nobody pressed it. A Stop while solving
+reaches the solve through the port's stop signal (brief section 6) and ends it like the adapter does: the last incumbent
+labelled `stopped`, or Failed `stopped` without one (ADR-015, D122).
+Test Budget: 4 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
+incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start;
+a Stop while solving ends the solve through its stop signal with the best so far) x 2 = 8; 1 property test used, every
+behavior on every example (D212). The label texts are written here as the product shows them, not imported.
 """
 
 from __future__ import annotations
@@ -47,12 +50,14 @@ from tests.unit.application.planning.planning_doubles import (
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, trips
 
-UNIVERSE = {"plan_runs", "job_log", "poll.incumbent", "poll.message", "solve.deadlines"}
+UNIVERSE = {"plan_runs", "job_log", "poll.incumbent", "poll.message", "solve.deadlines", "stop.answer"}
 BUDGET = 500
 EVERY_S = 1.5  # the fake clock moves on this much before each incumbent
 CRASH_LABEL = ("not fully optimised (optimizer failed)",)
 TIME_LIMIT_LABEL = ("not fully optimised (time limit)",)
 TIMEOUT_TEXT = "No valid route found within the time limit - plan run #1 failed"
+STOPPED_LABEL = ("not fully optimised (stopped)",)
+STOPPED_TEXT = "stopped before a valid route was found"
 NOT_AN_ITEM = "reversed:item"
 FAILED = "optimizer_failed"
 
@@ -66,6 +71,7 @@ class Ending:
     run: tuple[Any, ...]
     row: tuple[Any, ...]
     message: str | None = None
+    stopped: bool = False  # Marco presses Stop while the solve runs; the scripted outcome is then never reached
 
 
 @st.composite
@@ -77,8 +83,17 @@ def endings(draw: st.DrawFn, trip: Trip) -> Ending:
     incumbents = tuple(Incumbent(order=an_order(), objective=objective) for objective in objectives)
     count = len(incumbents)
     kind = draw(
-        st.sampled_from(["budget", "crash_after", "crash_before", "no_route", "time_limit", "timeout", "broken_order"])
+        st.sampled_from(
+            ["budget", "crash_after", "crash_before", "no_route", "time_limit", "timeout", "broken_order", "stop"]
+        )
     )
+    if kind == "stop" and incumbents:  # the best so far: the last incumbent, labelled, not reproducible (D60)
+        order = incumbents[-1].order
+        run = (1, "ready", None, order, False, "stopped", STOPPED_LABEL)
+        return Ending(incumbents, TourFound(an_order()), run, ("done", count, False, "stopped"), stopped=True)
+    if kind == "stop":
+        run = (1, "failed", "stopped", (), False, None, (STOPPED_TEXT,))
+        return Ending((), TourFound(an_order()), run, ("done", 0, False, None), STOPPED_TEXT, stopped=True)
     if kind == "budget":
         order = an_order()
         return Ending(
@@ -116,6 +131,7 @@ def _view(
     poll: Any,
     message: str | None = None,
     deadlines: tuple[float, float] | None = None,
+    stop_answer: tuple[str, bool] | None = None,
 ) -> dict[str, Any]:
     queries = PlanRunQueries(planning.unit_of_work)
     shown = [queries.get(run.id) for run in planning.runs]
@@ -144,6 +160,7 @@ def _view(
         "poll.incumbent": poll,
         "poll.message": message,
         "solve.deadlines": deadlines,
+        "stop.answer": stop_answer,
     }
 
 
@@ -179,6 +196,7 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
     assert job_id is not None
     assert solver.gate.reached.wait(30.0), "the solve was never asked"
     solving = known_job(registry, job_id)
+    answer = registry.stop(job_id) if ending.stopped else None
     solver.gate.release()
     ended = job_when_ended(registry, job_id)
     (handed,) = solver.deadlines
@@ -203,6 +221,7 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
             solving.incumbent,
             ended.message,
             (handed.feasibility_s - job_started_s, handed.optimisation_s - job_started_s),
+            None if answer is None else (answer.state, answer.stoppable),
         ),
         UNIVERSE,
         {
@@ -211,6 +230,7 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
             "poll.incumbent": set_to(shown_while_solving),
             "poll.message": set_to(ending.message),
             "solve.deadlines": set_to((float(feasibility), float(feasibility + longer))),
+            "stop.answer": set_to(("solving", True) if ending.stopped else None),
         },
         strict=True,
     )

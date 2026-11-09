@@ -5,13 +5,16 @@ real `PlanRequestJob` and `LegResolver`. Driven ports: `PlanningUnitOfWork`, `Ro
 `Clock` (`FakeClock`, which never moves by itself) and `EventLog`.
 Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them, and
 `plan_job_log` as the `PlanJobLog` double holds it (ADR-015 DV-2); for several projects (`PlanDesk`) `plan_runs`, `jobs`
-as polled and `refusals_logged`.
+as polled and `refusals_logged`; for Stop (`StopDesk`) the project's `plan_runs` with their flags, its `plan_job_log`
+rows and the `plan.job.stopped` events (`stopped_logged`).
 Test Budget: 8 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
 always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
 by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past; Calculate reports
 the `ignore_memo` it was given and refuses alike with or without it; every ending writes one `plan_job_log` row with
-the values of its line, a refusal none, and a failing write changes nothing else) x 2 = 18; 15 used.
+the values of its line, a refusal none, and a failing write changes nothing else; a Stop ends the job as ADR-015's
+state table names and answers the current payload; a job waiting for the optimizer gives up at the feasibility limit)
+x 2 = 22; 17 used.
 """
 
 from __future__ import annotations
@@ -48,7 +51,9 @@ from overland_planner.application.ports.plan_job_log import PLAN_JOB_LOG_FIELDS
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 from overland_planner.application.ports.tour_solver import (
+    Incumbent,
     IncumbentObserver,
+    SolveLimits,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
@@ -254,6 +259,7 @@ class _ScriptsInTurn:
         _on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+        stop: object = None,  # the job's stop signal (06-08); nobody stops these solves
     ) -> TourOutcome:
         self._gate.passing()
         script = self._scripts.pop(0)
@@ -712,6 +718,7 @@ class SolverOnCue:
         _on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+        stop: object = None,  # the job's stop signal (06-08); nobody stops these solves
     ) -> TourOutcome:
         with self._lock:
             self.solves += 1
@@ -1120,3 +1127,194 @@ def test_calculate_reports_the_ignore_memo_it_was_given_and_refuses_alike_with_o
         completed = [f for f in desk.log.fields_of("plan.run.completed") if f["plan_run_id"] == ended.plan_run_id]
         expected_completed = [(press.ignore_memo, False)] if stored else []
         assert [(fields["ignore_memo"], fields["memo_hit"]) for fields in completed] == expected_completed
+
+
+# --------------------------------------------------------------- Stop (US-06b, ADR-015 state table, D60, D133, D136)
+STOP_UNIVERSE = {"plan_runs", "plan_job_log", "stopped_logged", "items", "projects"}
+OTHER = "project-other"  # its job holds the solver slot, so the stopped one waits for it
+MOMENTS = ("queued", "waiting_for_optimizer", "solving", "finalising", "done")
+NOT_STOPPABLE = {"finalising", *TERMINAL_STATES}
+CANCELLED_MESSAGE = "Stopped - nothing was changed"
+STOPPED_TEXT = "stopped before a valid route was found"
+WAITED_TOO_LONG = "No valid route found within the time limit - nothing was changed"
+
+
+@dataclass
+class StopDesk:
+    """The real job over the doubles, with a second project whose job can hold the solver slot. Each gate is held
+    only when the press under test stops there."""
+
+    planning: InMemoryPlanning
+    solver: ScriptedTourSolver
+    clock: FakeClock
+    log: RecordingEventLog
+    registry: PlanJobRegistry
+    job_log: InMemoryPlanJobLog
+    gates: dict[str, Gate]
+
+    def view(self) -> dict[str, Any]:
+        snapshot = self.planning.snapshots[PROJECT]
+        rows = (entry.columns() for entry in self.job_log.rows)
+        return {
+            "plan_runs": tuple(
+                (run.number, run.status, run.failure_reason, run.reproducible, run.not_fully_optimised)
+                for run in self.planning.runs
+                if run.project_id == PROJECT
+            ),
+            "plan_job_log": tuple(
+                tuple(row[name] for name in LOG_ROW_KEY) for row in rows if row["project_id"] == PROJECT
+            ),
+            "stopped_logged": tuple(
+                (fields["job_id"], fields["project_id"], fields["state"])
+                for fields in self.log.fields_of("plan.job.stopped")
+            ),
+            "items": tuple(item.id for item in snapshot.items),
+            "projects": (PROJECT, self.planning.stamps[PROJECT], snapshot.start_item_id, snapshot.end_item_id),
+        }
+
+    def start(self, project_id: str) -> str:
+        job_id = self.registry.start(project_id)
+        assert job_id is not None, f"the job of {project_id} did not start"
+        return job_id
+
+    def until_state(self, job_id: str, state: str) -> None:
+        _until(lambda: known_job(self.registry, job_id).state == state, f"job in {state}")
+
+
+def _stop_desk(trip: Trip, moment: str, incumbents: tuple[Incumbent, ...], limits: SolveLimits) -> StopDesk:
+    gates = {
+        "queued": Gate(held=moment == "queued"),
+        "solving": Gate(held=moment in ("solving", "waiting_for_optimizer")),
+        "finalising": Gate(held=moment == "finalising"),
+    }
+    planning = InMemoryPlanning(reading=gates["queued"], storing=gates["finalising"])
+    planning.add_project(PROJECT, trip.snapshot)
+    planning.add_project(OTHER, trip.snapshot)
+    solver = ScriptedTourSolver(None, gate=gates["solving"], incumbents=incumbents)
+    clock, log, files = FakeClock(), RecordingEventLog(), InMemoryFileStore()
+    trip.seed_canonical_files(files)
+    job = PlanRequestJob(
+        planning.unit_of_work,
+        LegResolver(RecordingRoadMap(trip.leg_m)),
+        solver,
+        BUDGET,
+        clock,
+        log,
+        files,
+        limits=limits,
+    )
+    job_log = InMemoryPlanJobLog(planning)
+    registry = PlanJobRegistry(clock, job, log, job_log=job_log)
+    return StopDesk(planning, solver, clock, log, registry, job_log, gates)
+
+
+def _incumbents_of(trip: Trip) -> st.SearchStrategy[tuple[Incumbent, ...]]:
+    order = st.permutations([item.id for item in trip.items]).map(lambda inner: (trip.start.id, *inner, trip.end.id))
+    found = st.builds(Incumbent, order=order, objective=st.integers(1, 10**6).map(float))
+    return st.lists(found, max_size=2).map(tuple)
+
+
+def _stopped_ending(moment: str, incumbents: tuple[Incumbent, ...]) -> tuple[Any, ...]:
+    """ADR-015's table: the job's (state, reason, message, run) for the moment of the first Stop, `run` as the view
+    shows it or `None`. Before solving: cancelled, no run (D133); solving: the best so far, labelled, or Failed
+    `stopped` without one (D60, D122); finalising and done: the run being written, unchanged (D136)."""
+    if moment in ("queued", "waiting_for_optimizer"):
+        return "cancelled", "stopped", CANCELLED_MESSAGE, None
+    if moment == "solving" and incumbents:
+        return "done", None, None, (1, "ready", None, False, "stopped")
+    if moment == "solving":
+        return "done", "stopped", STOPPED_TEXT, (1, "failed", "stopped", False, None)
+    return "done", None, None, (1, "ready", None, True, None)
+
+
+def _reach(desk: StopDesk, moment: str) -> str:
+    """Starts the job under test and returns its id once it is at `moment`."""
+    if moment == "waiting_for_optimizer":
+        desk.start(OTHER)
+        assert desk.gates["solving"].reached.wait(MAX_WAIT_S), "the other project's job never reached the solver"
+        job_id = desk.start(PROJECT)
+        desk.until_state(job_id, "waiting_for_optimizer")
+        return job_id
+    job_id = desk.start(PROJECT)
+    if moment == "done":
+        job_when_ended(desk.registry, job_id)
+        return job_id
+    assert desk.gates[moment].reached.wait(MAX_WAIT_S), f"the job never reached {moment}"
+    return job_id
+
+
+@settings(deadline=None, max_examples=60)
+@given(trip=trips(), data=st.data(), moment=st.sampled_from(MOMENTS), repeats=st.integers(1, 3))
+def test_a_stop_ends_the_job_as_the_state_table_names_and_every_stop_answers_the_current_payload(
+    trip: Trip, data: st.DataObject, moment: str, repeats: int
+) -> None:
+    incumbents = data.draw(_incumbents_of(trip), label="incumbents") if moment == "solving" else ()
+    desk = _stop_desk(trip, moment, incumbents, SolveLimits())
+    before = desk.view()
+    job_id = _reach(desk, moment)
+    at_the_stop = known_job(desk.registry, job_id)
+
+    answers = [desk.registry.stop(job_id) for _ in range(repeats)]
+    for gate in desk.gates.values():
+        gate.release()
+    ended = job_when_ended(desk.registry, job_id)
+
+    state, reason, message, run = _stopped_ending(moment, incumbents)
+    assert (ended.state, ended.reason, ended.message) == (state, reason, message)
+    assert (ended.plan_run_id is not None) == (run is not None), f"a run is named iff one is stored: {ended}"
+    assert not ended.stoppable, "an ended job is not stoppable"
+    for answer in answers:
+        assert answer is not None, "a known job's Stop answers its payload"
+        assert answer in (at_the_stop, ended), f"a Stop answered neither the payload at the stop nor the end: {answer}"
+        assert answer.stoppable == (answer.state not in NOT_STOPPABLE), f"stoppable before finalising only: {answer}"
+    assert at_the_stop.state == moment and at_the_stop.stoppable == (moment not in NOT_STOPPABLE)
+    stopped = moment not in ("finalising", "done")
+    _until(lambda: len(desk.job_log.rows) == (2 if moment == "waiting_for_optimizer" else 1), "every job's row")
+    assert_state_delta(
+        before,
+        desk.view(),
+        STOP_UNIVERSE,
+        {
+            "plan_runs": gained(run) if run is not None else set_to(()),
+            "plan_job_log": gained((job_id, PROJECT, state, ended.plan_run_id, reason, None)),
+            "stopped_logged": gained((job_id, PROJECT, moment)) if stopped else set_to(()),
+        },
+        strict=True,
+    )
+    assert desk.registry.stop("not-a-job") is None, "an unknown job's Stop answers nothing (404)"
+    desk.clock.advance(KEPT_FOR_S)
+    assert desk.registry.stop(job_id) is None, "an expired job's Stop answers nothing (404)"
+
+
+@settings(deadline=None, max_examples=10)
+@given(trip=trips(), feasibility=st.integers(1, 600), longer=st.integers(0, 1200))
+def test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_counted_from_its_start(
+    trip: Trip, feasibility: int, longer: int
+) -> None:
+    desk = _stop_desk(trip, "waiting_for_optimizer", (), SolveLimits(feasibility, feasibility + longer))
+    before = desk.view()
+    job_id = _reach(desk, "waiting_for_optimizer")
+
+    desk.clock.advance(feasibility - 1)
+    time.sleep(0.3)  # longer than the slot wait's step: a wait that gave up early would show by now
+    still = known_job(desk.registry, job_id)
+    desk.clock.advance(1)
+    ended = job_when_ended(desk.registry, job_id)
+    desk.gates["solving"].release()
+
+    assert (still.state, still.stoppable) == ("waiting_for_optimizer", True)
+    assert (ended.state, ended.reason, ended.message, ended.plan_run_id) == (
+        "timed_out",
+        "timeout",
+        WAITED_TOO_LONG,
+        None,
+    )
+    assert ended.elapsed_s == feasibility
+    _until(lambda: len(desk.job_log.rows) == 2, "every job's row")
+    assert_state_delta(
+        before,
+        desk.view(),
+        STOP_UNIVERSE,
+        {"plan_job_log": gained((job_id, PROJECT, "timed_out", None, "timeout", None))},
+        strict=True,
+    )

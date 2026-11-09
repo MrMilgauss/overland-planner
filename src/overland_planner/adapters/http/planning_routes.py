@@ -1,4 +1,4 @@
-"""Planning HTTP routes (brief §5, §8): Calculate, polling its job, and a project's plan runs."""
+"""Planning HTTP routes (brief §5, §8): Calculate, polling and stopping its job, and a project's plan runs."""
 
 from __future__ import annotations
 
@@ -48,6 +48,17 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
     def plan_job(job_id: str) -> PlanJobResource:
         """`plan_run_id` stays null until the run is stored. 404 `not_found` for an unknown or expired id."""
         job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(_NOT_FOUND, "Plan job not found")
+        return PlanJobResource.of(job)
+
+    @router.post("/plan-jobs/{job_id}/stop", responses=ERROR_RESPONSES)
+    def stop_plan_job(job_id: str) -> PlanJobResource:
+        """ "Stop and use best so far" (US-06b, D136): always 200 with the current poll payload, repeated Stops change
+        nothing. While solving the job ends with the best route so far, labelled, or Failed `stopped` without one;
+        before solving it ends `cancelled` with no run; once `stoppable` is false the run being written completes.
+        404 `not_found` for an unknown or expired id."""
+        job = jobs.stop(job_id)
         if job is None:
             raise HTTPException(_NOT_FOUND, "Plan job not found")
         return PlanJobResource.of(job)

@@ -1,12 +1,16 @@
 """TourSolver port (brief §6, ADR-015): the optimizer that orders a plan's stops.
 
-`solve(model, budget, on_incumbent, deadlines=...)` streams each valid incumbent to `on_incumbent` while it searches,
-then answers with a typed outcome; Stop arrives with 06-08. A found tour speaks item ids: `order` runs from Start to End
-(a round trip names the same id at both ends) and `visited_item_ids` is what `PlanRunAssembler.assemble` takes.
-`ending` says how a found tour's search ended: `budget` (its count-based stop, the only reproducible ending, D42),
-`optimizer_failed` (the child ended abnormally after an incumbent: the last one, D122) or `time_limit` (the
-optimisation deadline came with an incumbent: the last one); `stopped` comes next. Reason codes are fixed by ADR-015
-(D122).
+`solve(model, budget, on_incumbent, deadlines=..., stop=...)` streams each valid incumbent to `on_incumbent` while it
+searches, then answers with a typed outcome. A found tour speaks item ids: `order` runs from Start to End (a round trip
+names the same id at both ends) and `visited_item_ids` is what `PlanRunAssembler.assemble` takes. `ending` says how a
+found tour's search ended: `budget` (its count-based stop, the only reproducible ending, D42), `optimizer_failed` (the
+child ended abnormally after an incumbent: the last one, D122), `time_limit` (the optimisation deadline came with an
+incumbent: the last one) or `stopped` (Marco pressed Stop after an incumbent: the last one, D60). Reason codes are fixed
+by ADR-015 (D122).
+
+Stop reaches the solve through its stop signal (brief section 6): once `stop.is_set()` the solve ends as soon as it can
+with the last valid incumbent labelled `stopped`, or Failed `stopped` without one (`TourStopped`). A `threading.Event`
+is a stop signal.
 
 The limits (ADR-014 section 2, D41, D58, D200) are whole seconds from pressing Calculate: without an incumbent the solve
 ends at the feasibility deadline (Failed `timeout`), with one at the optimisation deadline (`time_limit`). The job turns
@@ -28,6 +32,18 @@ from overland_planner.domain.planning.solver_model_builder import TourModel
 TourEnding = Literal["budget"] | NotFullyOptimised
 DEFAULT_FEASIBILITY_LIMIT_S = 600
 DEFAULT_OPTIMISATION_LIMIT_S = 1800
+
+
+class StopSignal(Protocol):
+    def is_set(self) -> bool: ...
+
+
+class _NeverStopped:
+    def is_set(self) -> bool:
+        return False
+
+
+NEVER_STOPPED: StopSignal = _NeverStopped()  # the stop signal of a solve nobody can stop
 
 
 @dataclass(frozen=True)
@@ -119,7 +135,15 @@ class TourTimedOut:
     reproducible: ClassVar[bool] = False
 
 
-TourOutcome = TourFound | TourNoRoute | TourOptimizerFailed | TourTimedOut
+@dataclass(frozen=True)
+class TourStopped:
+    """Stopped before a valid route was found (ADR-015)."""
+
+    reason: ClassVar[str] = "stopped"
+    reproducible: ClassVar[bool] = False
+
+
+TourOutcome = TourFound | TourNoRoute | TourOptimizerFailed | TourTimedOut | TourStopped
 
 
 class TourSolver(Probeable, Protocol):
@@ -129,5 +153,11 @@ class TourSolver(Probeable, Protocol):
     identity: str
 
     def solve(
-        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver = ..., *, deadlines: SolveDeadlines
+        self,
+        model: TourModel,
+        budget: int,
+        on_incumbent: IncumbentObserver = ...,
+        *,
+        deadlines: SolveDeadlines,
+        stop: StopSignal = ...,
     ) -> TourOutcome: ...

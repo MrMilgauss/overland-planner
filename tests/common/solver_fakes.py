@@ -32,8 +32,10 @@ from overland_planner.adapters.solver.ortools_tour_solver import (
 from overland_planner.adapters.solver.tour_child import FINAL, INCUMBENT, run_tour_child
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
+    NEVER_STOPPED,
     IncumbentObserver,
     SolveDeadlines,
+    StopSignal,
     TourFound,
     TourOutcome,
     ignore_incumbents,
@@ -121,9 +123,10 @@ class RuleBreakingTourSolver:
         on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: SolveDeadlines,
+        stop: StopSignal = NEVER_STOPPED,
     ) -> TourOutcome:
         if self._reversed_track_id is None:
-            outcome: TourOutcome = self._solver.solve(model, budget, on_incumbent, deadlines=deadlines)
+            outcome: TourOutcome = self._solver.solve(model, budget, on_incumbent, deadlines=deadlines, stop=stop)
             return outcome
         track_id = self._reversed_track_id
         assert track_id in model.node_item_ids, f"the track {track_id} is not in the plan"
@@ -161,8 +164,9 @@ class InProcessOrToolsTourSolver:
         on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: SolveDeadlines,
+        stop: StopSignal = NEVER_STOPPED,
     ) -> TourOutcome:
-        """In-process, so no deadline can end it early; it takes them like the production adapter does."""
+        """In-process, so no deadline and no Stop can end it early; it takes them like the production adapter does."""
         assert deadlines.feasibility_s <= deadlines.optimisation_s, "deadlines out of order"
         answer = _CapturedAnswer()
         run_tour_child(answer, model, budget)  # type: ignore[arg-type]

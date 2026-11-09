@@ -76,6 +76,7 @@ class _ProposingSolver:
         _on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: object = None,  # the job's deadlines (06-07); this double ends as scripted, whatever they are
+        stop: object = None,  # the job's stop signal (06-08); nobody stops these solves
     ) -> TourOutcome:
         self.calls += 1
         assert self.answers, "the solver was asked although the memo had the order"

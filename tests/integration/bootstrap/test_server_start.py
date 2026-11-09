@@ -203,14 +203,20 @@ def _project_with_a_trail_between_two_places(client: TestClient) -> tuple[str, d
 
 
 def _plan(client: TestClient, project_id: str) -> dict[str, object]:
+    return _plan_job(client, project_id)[1]
+
+
+def _plan_job(client: TestClient, project_id: str) -> tuple[str, dict[str, object]]:
+    """The ended job's id and its last poll."""
     accepted = client.post(f"/api/projects/{project_id}/plan-runs")
     assert accepted.status_code == 202, accepted.text
     assert set(accepted.json()) == {"job_id"}
+    job_id = str(accepted.json()["job_id"])
     deadline = time.monotonic() + PLAN_DEADLINE_S
     while True:
-        job = client.get(f"/api/plan-jobs/{accepted.json()['job_id']}").json()
+        job = client.get(f"/api/plan-jobs/{job_id}").json()
         if job["state"] in {"done", "failed"}:
-            return dict(job)
+            return job_id, dict(job)
         assert time.monotonic() < deadline, f"the job did not end: {job}"
         time.sleep(0.01)
 
@@ -224,13 +230,15 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     client = _planner_with(data_dir, None)  # the scripted tour visits the nodes in the order the snapshot lists them
     project_id, item_ids = _project_with_a_trail_between_two_places(client)
 
-    job = _plan(client, project_id)
+    job_id, job = _plan_job(client, project_id)
 
     assert set(job) == {
         *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
-        *("stage_ms", "legs_total", "items_included", "incumbent"),
+        *("stage_ms", "legs_total", "items_included", "incumbent", "stoppable"),
     }
-    assert (job["state"], job["reason"], job["message"]) == ("done", None, None)
+    assert (job["state"], job["reason"], job["message"], job["stoppable"]) == ("done", None, None, False)
+    stop = client.post(f"/api/plan-jobs/{job_id}/stop")
+    assert (stop.status_code, stop.json()) == (200, job), "a Stop on a done job answers its final payload (D136)"
     assert set(job["stage_ms"]) == {"snapshot", "matrix", "reach_model", "solve", "guard_persist"}
     with sqlite3.connect(data_dir / "db" / "planner.sqlite") as connection:
         logged = connection.execute("SELECT project_id, terminal_state, plan_run_id FROM plan_job_log").fetchall()
@@ -334,7 +342,11 @@ def test_a_job_that_raises_ends_failed_and_stores_nothing(data_dir: Path) -> Non
 def test_an_unknown_job_or_plan_run_is_not_found(data_dir: Path) -> None:
     client = _client({"DATA_DIR": str(data_dir)})
 
-    for path in ("/api/plan-jobs/nope", "/api/plan-runs/nope"):
-        answer = client.get(path)
+    for method, path in (
+        ("GET", "/api/plan-jobs/nope"),
+        ("GET", "/api/plan-runs/nope"),
+        ("POST", "/api/plan-jobs/nope/stop"),
+    ):
+        answer = client.request(method, path)
         assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
         assert "nope" not in answer.json()["message"]

@@ -20,6 +20,8 @@ without a bound (D200): the parent reads in short waits against the solve's dead
 (`read_tour_child`), never past the one that applies: the feasibility deadline until a valid incumbent arrived, then the
 optimisation deadline. At that deadline it ends the child with SIGTERM, then SIGKILL after 2 s: the last incumbent
 labelled `time_limit`, or Failed `timeout` without one (a hung child too). The budget ends a search that is quicker.
+Stop ends it the same way: the parent checks the solve's stop signal between those short waits, so a Stop ends even a
+child deaf to SIGTERM within a wait step and the grace: the last incumbent labelled `stopped`, or Failed `stopped`.
 `SOLVER_IDENTITY` is the solver's `identity`, which the composition root hands to the fingerprint memo.
 """
 
@@ -52,13 +54,16 @@ from overland_planner.adapters.solver.tour_child import (
 )
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import (
+    NEVER_STOPPED,
     Incumbent,
     IncumbentObserver,
     SolveDeadlines,
+    StopSignal,
     TourFound,
     TourNoRoute,
     TourOptimizerFailed,
     TourOutcome,
+    TourStopped,
     TourTimedOut,
     ignore_incumbents,
 )
@@ -125,11 +130,12 @@ class OrToolsTourSolver:
         on_incumbent: IncumbentObserver = ignore_incumbents,
         *,
         deadlines: SolveDeadlines,
+        stop: StopSignal = NEVER_STOPPED,
     ) -> TourOutcome:
-        return tour_outcome(self._observe_tour_child(model, budget, on_incumbent, deadlines), model)
+        return tour_outcome(self._observe_tour_child(model, budget, on_incumbent, _Bounds(deadlines, stop)), model)
 
     def _observe_tour_child(
-        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver, deadlines: SolveDeadlines
+        self, model: TourModel, budget: int, on_incumbent: IncumbentObserver, bounds: _Bounds
     ) -> TourChildObservation:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
@@ -145,14 +151,16 @@ class OrToolsTourSolver:
         reading = ChildReading()
         outlived_reap_wait = False
         try:
-            reading = read_tour_child(receiver, deadlines, model, on_incumbent)
-            if not reading.overran:
+            reading = read_tour_child(receiver, bounds.deadlines, model, on_incumbent, bounds.stop)
+            if not (reading.overran or reading.stopped):
                 child.join(_REAP_TIMEOUT_S)
                 outlived_reap_wait = child.is_alive()
         finally:
             receiver.close()
             _end_if_running(child)
-        return TourChildObservation(child.exitcode, reading.messages, reading.overran, outlived_reap_wait)
+        return TourChildObservation(
+            child.exitcode, reading.messages, reading.overran, outlived_reap_wait, stopped=reading.stopped
+        )
 
     def _observe_probe_child(self) -> ProbeObservation:
         context = multiprocessing.get_context("spawn")
@@ -173,23 +181,35 @@ class OrToolsTourSolver:
 
 
 @dataclass(frozen=True)
+class _Bounds:
+    """What ends a solve before its budget: its deadlines and its stop signal."""
+
+    deadlines: SolveDeadlines
+    stop: StopSignal
+
+
+@dataclass(frozen=True)
 class TourChildObservation:
     """What the parent saw of a solve child: its messages in order, up to its final or the pipe's end (an unreadable
-    message ends the reading); `overran` when the deadline that applies came first. `outlived_reap_wait` is read
-    before the parent ends the child."""
+    message ends the reading); `overran` when the deadline that applies came first, `stopped` when Stop did.
+    `outlived_reap_wait` is read before the parent ends the child."""
 
     exit_code: int | None
     messages: tuple[Any, ...] = ()
     overran: bool = False
     outlived_reap_wait: bool = False
+    stopped: bool = False
 
 
 def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOutcome:
     """ADR-015's table of endings: budget end -> the final order; an abnormal end -> the last valid incumbent labelled
     `optimizer_failed`, or Failed without one; a final without an order -> no route; the deadline that applies ->
-    the last valid incumbent labelled `time_limit`, or Failed `timeout` without one.
+    the last valid incumbent labelled `time_limit`, or Failed `timeout` without one; Stop -> the last valid incumbent
+    labelled `stopped`, or Failed `stopped` without one.
     """
     incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
+    if observation.stopped:
+        return TourFound(order=incumbents[-1].order, ending="stopped") if incumbents else TourStopped()
     if observation.overran:
         return TourFound(order=incumbents[-1].order, ending="time_limit") if incumbents else TourTimedOut()
     ended_normally = observation.exit_code == 0 or observation.outlived_reap_wait
@@ -216,21 +236,30 @@ def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
 
 @dataclass(frozen=True)
 class ChildReading:
-    """The messages the parent read from a solve child, in order, and whether the deadline that applies came first."""
+    """The messages the parent read from a solve child, in order, and whether the deadline that applies or Stop came
+    first."""
 
     messages: tuple[Any, ...] = ()
     overran: bool = False
+    stopped: bool = False
 
 
 def read_tour_child(
-    receiver: Connection, deadlines: SolveDeadlines, model: TourModel, on_incumbent: IncumbentObserver
+    receiver: Connection,
+    deadlines: SolveDeadlines,
+    model: TourModel,
+    on_incumbent: IncumbentObserver,
+    stop: StopSignal = NEVER_STOPPED,
 ) -> ChildReading:
     """Reads until the final, the pipe's end or an unreadable message, handing each valid incumbent to `on_incumbent`;
     overran when the deadline that applies passed first: the feasibility one until a valid incumbent arrived, then the
-    optimisation one. It waits at most `_WAIT_STEP_S` at a time and never past that deadline."""
+    optimisation one; stopped when `stop` was set first. It waits at most `_WAIT_STEP_S` at a time and never past that
+    deadline, and checks `stop` before each wait."""
     messages: list[Any] = []
     found = False
     while (remaining_s := deadlines.remaining_s(found=found)) > 0:
+        if stop.is_set():
+            return ChildReading(tuple(messages), stopped=True)
         if not receiver.poll(min(remaining_s, _WAIT_STEP_S)):
             continue
         message = _read_message(receiver)

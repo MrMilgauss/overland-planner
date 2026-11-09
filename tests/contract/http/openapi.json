@@ -431,7 +431,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended\njob's `message` names its Failed run in words when the run has them (D151).",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended\njob's `message` names its Failed run in words when the run has them (D151), or says what a job without a run did\n(`cancelled`, `timed_out`). `stoppable` is true in every state before `finalising` and false from then on (D136).",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -532,10 +532,16 @@
               "solving",
               "finalising",
               "done",
-              "failed"
+              "failed",
+              "cancelled",
+              "timed_out"
             ],
             "title": "State",
             "type": "string"
+          },
+          "stoppable": {
+            "title": "Stoppable",
+            "type": "boolean"
           }
         },
         "required": [
@@ -549,7 +555,8 @@
           "stage_ms",
           "legs_total",
           "items_included",
-          "incumbent"
+          "incumbent",
+          "stoppable"
         ],
         "title": "PlanJobResource",
         "type": "object"
@@ -598,7 +605,8 @@
               {
                 "enum": [
                   "optimizer_failed",
-                  "time_limit"
+                  "time_limit",
+                  "stopped"
                 ],
                 "type": "string"
               },
@@ -684,7 +692,8 @@
               {
                 "enum": [
                   "optimizer_failed",
-                  "time_limit"
+                  "time_limit",
+                  "stopped"
                 ],
                 "type": "string"
               },
@@ -1156,6 +1165,56 @@
           }
         },
         "summary": "Plan Job"
+      }
+    },
+    "/api/plan-jobs/{job_id}/stop": {
+      "post": {
+        "description": "\"Stop and use best so far\" (US-06b, D136): always 200 with the current poll payload, repeated Stops change\nnothing. While solving the job ends with the best route so far, labelled, or Failed `stopped` without one;\nbefore solving it ends `cancelled` with no run; once `stoppable` is false the run being written completes.\n404 `not_found` for an unknown or expired id.",
+        "operationId": "stop_plan_job_api_plan_jobs__job_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanJobResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Stop Plan Job"
       }
     },
     "/api/plan-runs/{plan_run_id}": {

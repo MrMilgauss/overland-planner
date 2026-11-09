@@ -7,7 +7,11 @@ Before anything is stored the guard judges the solver's order, then the assemble
 (ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). The solve runs
 holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
 fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
-totals are recomputed. Later slices add the snapping, ladder and Stop to this sequence.
+totals are recomputed. Later slices add the snapping and the ladder to this sequence.
+
+Stop reaches the solve through the port's stop signal (brief section 6), the one the job's solver slot answers: a
+progress without one (`None`) hands the solve one that is never set. A stopped solve stores the last incumbent
+labelled `stopped`, not reproducible, or a Failed `stopped` run whose words say so (ADR-015, D60, D122).
 
 The solve is handed its deadlines (ADR-014 section 2, D58): the job's `SolveLimits` from the start of the job's work on
 the `Clock` port, so the road legs and the wait for the solver slot count. A Failed `timeout` run and its job's end say
@@ -45,8 +49,10 @@ from overland_planner.application.ports.file_store import CanonicalPointsMissing
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanningUnitOfWork
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
 from overland_planner.application.ports.tour_solver import (
+    NEVER_STOPPED,
     Incumbent,
     SolveLimits,
+    StopSignal,
     TourFound,
     TourOptimizerFailed,
     TourOutcome,
@@ -123,8 +129,8 @@ class PlanRequestJob:
             progress.note(memo_hit=True)
             outcome: TourOutcome = TourFound(order=reused)
         else:
-            with progress.solver_slot(), stages.timing("solve"):
-                outcome = self._solve(model, progress, started_s)
+            with progress.solver_slot() as stop, stages.timing("solve"):
+                outcome = self._solve(model, progress, started_s, stop or NEVER_STOPPED)
         progress.enter("finalising")
         with stages.timing("guard_persist"):
             stored = self._finish(project, legs, outcome)
@@ -202,10 +208,10 @@ class PlanRequestJob:
                 reused = self.memo.reused_order(uow, project.id, fingerprint)
         return replace(project, fingerprint=fingerprint.value, memo_hit=reused is not None), reused
 
-    def _solve(self, model: TourModel, progress: PlanJobProgress, started_s: float) -> TourOutcome:
+    def _solve(self, model: TourModel, progress: PlanJobProgress, started_s: float, stop: StopSignal) -> TourOutcome:
         incumbents = _Incumbents(self.clock, progress, started_s)
         deadlines = self.limits.from_start(self.clock, started_s)
-        outcome = self.solver.solve(model, self.budget, incumbents.found, deadlines=deadlines)
+        outcome = self.solver.solve(model, self.budget, incumbents.found, deadlines=deadlines, stop=stop)
         progress.note(incumbents=incumbents.count)
         if isinstance(outcome, TourOptimizerFailed):
             progress.note(exit_code=outcome.exit_code, signal=outcome.signal)
