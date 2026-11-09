@@ -55,7 +55,7 @@ from overland_planner.adapters.routing.mock_routing_provider import (
     RoadMapScript,
     read_road_map,
 )
-from overland_planner.adapters.solver.ortools_tour_solver import SOLVER_IDENTITY, OrToolsTourSolver
+from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.application.export.facade import GpxExportService
 from overland_planner.application.planning.facade import (
@@ -164,7 +164,7 @@ class _Wiring:
             clock=self._clock,
             event_log=self._event_log,
             files=self._file_store,
-            memo=FingerprintMemo(SOLVER_IDENTITY),
+            memo=FingerprintMemo(self._tour_solver.identity),
         )
         jobs = PlanJobRegistry(self._clock, job, self._event_log)
         return planning_routes(

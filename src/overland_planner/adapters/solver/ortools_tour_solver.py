@@ -13,8 +13,8 @@ ended like any other, and its message counts: the exit code then only shows the 
 The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past
 `safety_bound_s` the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the
 project in 409 until a restart. The bound is the FEASIBILITY_LIMIT_S default, not the configurable limits of slice 03,
-and the normal stop is the budget, never the clock. `SOLVER_IDENTITY` is the constant the composition root hands to the
-fingerprint memo.
+and the normal stop is the budget, never the clock. `SOLVER_IDENTITY` is the solver's `identity`, which the composition
+root hands to the fingerprint memo.
 """
 
 from __future__ import annotations
@@ -91,6 +91,8 @@ def solve_probe_instance_twice(answer: Connection) -> None:
 
 
 class OrToolsTourSolver:
+    identity = SOLVER_IDENTITY
+
     def __init__(
         self,
         *,

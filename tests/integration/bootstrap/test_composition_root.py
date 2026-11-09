@@ -373,3 +373,23 @@ def test_identical_inputs_after_a_restart_reuse_the_stored_order_through_sqlite(
     assert rows[0][2] == rows[1][2] and str(rows[0][2]).startswith("fp1:"), f"the fingerprints are {rows}"
     first, second = (restarted.get(f"/api/plan-runs/{job['plan_run_id']}").json() for job in (solved, reused))
     assert (first["stops"], first["totals"]) == (second["stops"], second["totals"])
+
+
+def test_another_solver_wired_after_a_restart_gives_another_fingerprint_and_solves_again(data_dir: Path) -> None:
+    """The memo is keyed by the identity of the solver the composition root wired, not a constant of OR-Tools."""
+    first_solver, second_solver = ScriptedTourSolver(identity="scripted:a"), ScriptedTourSolver(identity="scripted:b")
+    client = TestClient(create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=first_solver)))
+    project_id, place_id = _project_with_a_place(client)
+    client.put(f"/api/projects/{project_id}/anchors", json={"start_item_id": place_id, "end_item_id": place_id})
+    calculate = f"/api/projects/{project_id}/plan-runs"
+    solved = _ended_job(client, client.post(calculate).json()["job_id"])
+    restarted = TestClient(create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=second_solver)))
+
+    again = _ended_job(restarted, restarted.post(calculate).json()["job_id"])
+
+    assert (solved["memo_hit"], again["memo_hit"]) == (False, False)
+    assert (len(first_solver.models), len(second_solver.models)) == (1, 1)
+    connection = sqlite3.connect(database_file(data_dir))
+    fingerprints = [row[0] for row in connection.execute("SELECT fingerprint FROM plan_runs ORDER BY number")]
+    connection.close()
+    assert len(set(fingerprints)) == 2, f"the fingerprints are {fingerprints}"

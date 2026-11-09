@@ -3,8 +3,8 @@
 The source is the latest ready run of the same project with the inputs' fingerprint; its order is the item ids of its
 stored itinerary. A Failed run, and a run stored before the memo (fingerprint null), is never a source. The plan job
 still judges a reused order with the guard and recomputes the totals (ADR-009, ADR-014). A memo source made by a stopped
-or time-limited run keeps its label (D74), which arrives with slice 03. `solver_identity` is the constant the solver
-adapter publishes, passed in by the composition root.
+or time-limited run keeps its label (D74), which arrives with slice 03. `solver_identity` is the `identity` of the wired
+`TourSolver`, passed in by the composition root.
 """
 
 from __future__ import annotations

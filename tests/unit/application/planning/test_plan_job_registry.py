@@ -480,6 +480,8 @@ WORKING_STATES = {"solving", "waiting_for_optimizer"}
 class SolverOnCue:
     """Each solve waits for its cue, then answers like `ScriptedTourSolver` with the cued script; no child process."""
 
+    identity = "solver-on-cue"
+
     def __init__(self) -> None:
         self.solving = 0
         self.most_at_once = 0

@@ -29,6 +29,7 @@ class HoldingTourSolver:
 
     def __init__(self, solver: Any = None, *, max_hold_s: float = MAX_HOLD_S) -> None:
         self._solver: Any = solver if solver is not None else OrToolsTourSolver()
+        self.identity = f"holding:{self._solver.identity}"
         self._max_hold_s = max_hold_s
         self._asked = threading.Event()
         self._let_go = threading.Event()
@@ -58,6 +59,8 @@ class HoldingTourSolver:
 class UnavailableTourSolver:
     """An optimizer that could not start: the same probe outcome as a failed OR-Tools child (waiver W2)."""
 
+    identity = "unavailable-tour-solver"
+
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="degraded-unhealthy", reason="optimizer_unavailable")
 
@@ -78,6 +81,7 @@ class RuleBreakingTourSolver:
 
     def __init__(self, solver: Any = None) -> None:
         self._solver: Any = solver if solver is not None else OrToolsTourSolver()
+        self.identity = f"rule-breaking:{self._solver.identity}"
         self._reversed_track_id: str | None = None
 
     def probe(self) -> ProbeResult:
@@ -113,6 +117,8 @@ class InProcessOrToolsTourSolver:
     budget, `tour_child.run_tour_child`), run in the test process instead of a spawned child, and read back by the
     adapter's own `tour_outcome`. For the layer 1-2 properties only (D192: hosting is DELIVER's call); every other
     acceptance scenario keeps the production `OrToolsTourSolver` child."""
+
+    identity = f"in-process:{OrToolsTourSolver.identity}"
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")

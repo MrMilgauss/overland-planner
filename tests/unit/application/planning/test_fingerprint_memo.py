@@ -52,6 +52,8 @@ class _ProposingSolver:
     """Answers each solve with the next scripted answer. A `TourFound` script holds the trip's items in the order to
     propose; a place the Calculate added follows them."""
 
+    identity = "proposing-solver"
+
     def __init__(self) -> None:
         self.answers: list[TourOutcome] = []
         self.calls = 0

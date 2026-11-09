@@ -16,10 +16,12 @@ from overland_planner.domain.planning.solver_model_builder import TourModel
 from tests.unit.application.planning.planning_doubles import Gate
 
 Script = TourOutcome | BaseException | None
+SCRIPTED_IDENTITY = "scripted-tour-solver"
 
 
 class ScriptedTourSolver:
-    def __init__(self, script: Script = None, *, gate: Gate | None = None) -> None:
+    def __init__(self, script: Script = None, *, gate: Gate | None = None, identity: str = SCRIPTED_IDENTITY) -> None:
+        self.identity = identity
         self._script = script
         self.gate = gate or Gate()
         self.models: list[TourModel] = []

@@ -46,4 +46,9 @@ TourOutcome = TourFound | TourNoRoute | TourOptimizerFailed | TourTimedOut
 
 
 class TourSolver(Probeable, Protocol):
+    """`identity` names what makes this solver's orders what they are (ADR-014 section 5): the fingerprint memo keys by
+    it, so another solver never reuses this one's orders."""
+
+    identity: str
+
     def solve(self, model: TourModel, budget: int) -> TourOutcome: ...
