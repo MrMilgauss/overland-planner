@@ -346,6 +346,7 @@ def test_a_broken_order_from_the_solver_ends_the_job_done_with_a_failed_run_neve
     job = job_when_ended(registry, job_id)
 
     assert (job.state, job.reason, job.message) == ("done", REASON, None)
+    assert job.ignore_memo is False, "a job started without ignore_memo does not ignore the memo"
     assert job.plan_run_id is not None
     _assert_one_failed_run_only(harness, before, StoredRun(job.plan_run_id, REASON), check)
     finished = harness.log.fields_of("plan.job.finished")
