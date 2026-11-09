@@ -4645,3 +4645,19 @@ Noted: `.local` lookups from the Mac add about 5 s per request (`/healthz` 5.04 
 | Integrity | `des-verify-integrity` exit 0, all 37 steps traced. It checks phases, not data: see D207 |
 | Suite | 494 passed, 185 skipped; vitest 62 passed; 9 of 9 automated 01b scenarios |
 | Not yet run | CI, deploy, demo on the real file, OsmAnd on the tablet |
+
+### Slice 02 quality gates (2026-11-09, before the last push)
+
+| Gate | Result |
+|---|---|
+| Spike S4 | Replaced by a 30-minute Mac timing probe (D214): `spike/s4-property-budget-probe.md`. The HC properties run at budget 100 (D215); A-6 is `@slow` in its own CI job (D216) |
+| RED binding | `e6279b4`: 15 cases RED (MISSING_FUNCTIONALITY), 5 ALREADY_GREEN from 01b, each shown able to fail with throwaway mutations; Stale scenario fixed by D217 (`d4a0ee2`) |
+| Roadmap | Phase 05, 12 steps, 30 h against the brief's 1 day; quality gate and `--roadmap-only` integrity pass; review APPROVED on the first pass, findings applied with D217-D220 (`a0918f0`) |
+| Steps | 05-01 to 05-12 committed (`86f77e5` .. `44b0ebc`); test-oracle fixes `0391a87` and `3325621` (UI-DELIVER-6) |
+| Refactor L1-L6 | 15 commits `9b888ef` .. `0366a21`; OpenAPI snapshot unchanged; four follow-ups done |
+| Adversarial review | Pass 1 NEEDS_REVISION: F1 rejected (the 01b writer always stored every stop key), F6 kept, F2-F5 and F7-F9 fixed (`c6092b7` .. `582e352`). Pass 2 NEEDS_REVISION: the F2 remainder (string and bool speeds) fixed in `19d65f7`; LOW items in `15ce360` .. `fc793e3`. The orchestrator verified the golden fingerprint independently (sha256 of the reviewer's derived canonical text) |
+| Mutation | `make mutate BASE=slice-01b`: 95.0 % (1155/1216), then 98.9 % (1211/1224) after the gap tests, over 21 domain and application files. Remaining survivors are equivalent (`_evidence_of`, `zip(strict=)`, `_place_violations` leg_km, the thread name, `report` while every wording equals its code words), plus the `ignore_memo` default, pinned since in `fc793e3`. InvariantGuard and SolverModelBuilder have no real survivor |
+| Integrity | `des-verify-integrity`: exit 0, all 49 steps traced. 05-01's PREPARE and RED_ACCEPTANCE share one timestamp, and its stop validation did not run (UI-DELIVER-5) |
+| Suite | 567 passed, 165 skipped, 0 failed (`-m "not slow"`); A-6 `-m slow` passes locally in about 400 s; vitest 78 passed; pre-push 2m03s |
+| CI so far | `02fba5c` (run 42577553911) and `01237e5` (run 42580730014): every test job green, but job 5 trivy (3 attempts) and job 1 lint failed on HTTP 504 downloads from GitHub releases; nothing published. Job 2: 596 s and 655 s, still without slice 02's scenarios; job 8: 272 s and 3669 s |
+| Not yet run | Last push (05-12, refactor, fixes), job 2 after-figure against 11 minutes, slow-properties duration, deploy (0005 -> 0006), dogfood, OsmAnd (no device, US-02b still NOT RUN) |
