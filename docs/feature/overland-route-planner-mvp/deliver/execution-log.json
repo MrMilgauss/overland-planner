@@ -1758,6 +1758,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-09T01:21:18Z"
+    },
+    {
+      "sid": "05-09",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:25:32Z"
+    },
+    {
+      "sid": "05-09",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: the rule-breaking scenario is green since 05-08 and must stay green; this step adds the ignore_memo flag that keeps it green once 05-10 adds the memo; RED is carried by the registry and route unit tests",
+      "t": "2026-11-09T01:25:43Z"
+    },
+    {
+      "sid": "05-09",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-09T01:27:46Z"
+    },
+    {
+      "sid": "05-09",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:32:51Z"
+    },
+    {
+      "sid": "05-09",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-09T01:33:06Z"
     }
   ]
 }
