@@ -226,7 +226,7 @@
         "type": "object"
       },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops; a Failed run has none and names its `failure_reason`.",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither and names its `failure_reason`. A run\nstored before the totals were (0006) shows `totals` null.",
         "properties": {
           "failure_reason": {
             "anyOf": [
@@ -265,6 +265,16 @@
             },
             "title": "Stops",
             "type": "array"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TotalsResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -273,7 +283,8 @@
           "number",
           "status",
           "failure_reason",
-          "stops"
+          "stops",
+          "totals"
         ],
         "title": "PlanRunDetailResource",
         "type": "object"
@@ -464,6 +475,45 @@
         ],
         "title": "ProjectUpdate",
         "type": "object"
+      },
+      "TotalsResource": {
+        "description": "The plan's road, off-road and total driving (FR-6.2), in km and seconds, unrounded: rounding is the web's.",
+        "properties": {
+          "offroad_km": {
+            "title": "Offroad Km",
+            "type": "number"
+          },
+          "offroad_s": {
+            "title": "Offroad S",
+            "type": "number"
+          },
+          "road_km": {
+            "title": "Road Km",
+            "type": "number"
+          },
+          "road_s": {
+            "title": "Road S",
+            "type": "integer"
+          },
+          "total_km": {
+            "title": "Total Km",
+            "type": "number"
+          },
+          "total_s": {
+            "title": "Total S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "road_km",
+          "road_s",
+          "offroad_km",
+          "offroad_s",
+          "total_km",
+          "total_s"
+        ],
+        "title": "TotalsResource",
+        "type": "object"
       }
     }
   },
@@ -545,7 +595,7 @@
     },
     "/api/plan-runs/{plan_run_id}": {
       "get": {
-        "description": "The stops in order, track stops with their entry and exit; a Failed run has no stops and names its reason.",
+        "description": "The stops in order, track stops with their entry and exit, and the unrounded totals; a Failed run has no\nstops and no totals and names its reason; a run stored before the totals were shows `totals` null.",
         "operationId": "plan_run_api_plan_runs__plan_run_id__get",
         "parameters": [
           {

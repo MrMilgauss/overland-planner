@@ -1,10 +1,12 @@
 """`PlanRunRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`.
 
-The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary (SQL NULL).
+The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary and no
+totals (SQL NULL), nor has a run stored before 0006.
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from sqlalchemy import Connection, func, null, select
@@ -12,7 +14,7 @@ from sqlalchemy import Connection, func, null, select
 from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.planning.plan_run import PlanRun, PlanStop
+from overland_planner.domain.planning.plan_run import PlanRun, PlanStop, Totals
 
 
 class SqlAlchemyPlanRunRepository:
@@ -42,6 +44,7 @@ class SqlAlchemyPlanRunRepository:
             status=row["status"],
             failure_reason=row["failure_reason"],
             stops=_stops(row["itinerary"]),
+            totals=None if row["totals"] is None else Totals(**row["totals"]),
         )
 
     def next_number(self, project_id: str) -> int:
@@ -62,6 +65,7 @@ class SqlAlchemyPlanRunRepository:
                 objective=run.objective,
                 inputs=dict(run.inputs),
                 itinerary={"stops": [_stop_json(stop) for stop in run.stops]} if run.stops else null(),
+                totals=null() if run.totals is None else asdict(run.totals),
             )
         )
 

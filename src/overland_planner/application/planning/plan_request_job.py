@@ -36,7 +36,7 @@ from overland_planner.domain.planning.invariant_guard import (
     GuardViolation,
     InvariantGuard,
 )
-from overland_planner.domain.planning.plan_run import PlanStop
+from overland_planner.domain.planning.plan_run import PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
@@ -55,6 +55,7 @@ class _Finding:
     """The run a finished plan stores. `invariants` is what the guard said, `None` when no plan reached it."""
 
     stops: tuple[PlanStop, ...] = ()
+    totals: Totals | None = None
     failure_reason: str | None = None
     invariants: str | None = None
     plan_run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -96,7 +97,7 @@ class PlanRequestJob:
         broken_plan = guard.check_plan(stops, self._canonical_files(project.snapshot))
         if broken_plan is not None:
             return self._store_violation(project, broken_plan)
-        return self._store(project, _Finding(stops=stops, invariants="ok"))
+        return self._store(project, _Finding(stops=stops, totals=Totals.of(stops), invariants="ok"))
 
     def _store_violation(self, project: _PlannedProject, violation: GuardViolation) -> StoredRun:
         finding = _Finding(failure_reason=INVARIANT_VIOLATION_REASON, invariants="violated")
@@ -164,6 +165,7 @@ class PlanRequestJob:
             objective=project.stamp.objective,
             inputs=self._inputs(project.snapshot),
             stops=finding.stops,
+            totals=finding.totals,
         )
 
     def _inputs(self, snapshot: ProjectSnapshot) -> dict[str, object]:

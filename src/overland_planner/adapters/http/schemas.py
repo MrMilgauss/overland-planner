@@ -12,7 +12,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
-from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, StopKind
+from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
 
 
 class ErrorEnvelope(BaseModel):
@@ -169,8 +169,31 @@ class PlanStopResource(BaseModel):
         return cls(name=stop.name, type=stop.kind, leg_km=stop.leg_km, entry=entry, exit=exit_)
 
 
+class TotalsResource(BaseModel):
+    """The plan's road, off-road and total driving (FR-6.2), in km and seconds, unrounded: rounding is the web's."""
+
+    road_km: float
+    road_s: int
+    offroad_km: float
+    offroad_s: float
+    total_km: float
+    total_s: float
+
+    @classmethod
+    def of(cls, totals: Totals) -> TotalsResource:
+        return cls(
+            road_km=totals.road_km,
+            road_s=totals.road_s,
+            offroad_km=totals.offroad_km,
+            offroad_s=totals.offroad_s,
+            total_km=totals.total_km,
+            total_s=totals.total_s,
+        )
+
+
 class PlanRunDetailResource(BaseModel):
-    """A plan run with its ordered stops; a Failed run has none and names its `failure_reason`."""
+    """A plan run with its ordered stops and totals; a Failed run has neither and names its `failure_reason`. A run
+    stored before the totals were (0006) shows `totals` null."""
 
     id: str
     project_id: str
@@ -178,6 +201,7 @@ class PlanRunDetailResource(BaseModel):
     status: PlanRunStatus
     failure_reason: str | None
     stops: list[PlanStopResource]
+    totals: TotalsResource | None
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -188,6 +212,7 @@ class PlanRunDetailResource(BaseModel):
             status=run.status,
             failure_reason=run.failure_reason,
             stops=[PlanStopResource.of(stop) for stop in run.stops],
+            totals=None if run.totals is None else TotalsResource.of(run.totals),
         )
 
 

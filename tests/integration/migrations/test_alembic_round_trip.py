@@ -18,6 +18,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from overland_planner.adapters.persistence.database import SqliteDatabase, database_file
+from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
 from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -283,6 +284,64 @@ def test_downgrading_0005_drops_the_plan_runs_and_keeps_every_project_and_item(
 
     command.upgrade(config, "0005")
     assert (_trip(file), _tables(file), _revision(file)) == (SEEDED_TRIP, HEAD_TABLES, ["0005"])
+
+
+RUN_COLUMNS_OF_0006 = {"totals", "report", "fingerprint", "memo_hit"}
+
+
+def _plan_run_columns(file: Path) -> set[str]:
+    with sqlite3.connect(file) as connection:
+        rows = connection.execute("PRAGMA table_info(plan_runs)").fetchall()
+    connection.close()
+    return {row[1] for row in rows}
+
+
+def _plan_runs(file: Path) -> list[tuple[Any, ...]]:
+    with sqlite3.connect(file) as connection:
+        rows = connection.execute("SELECT id, project_id, number, status, inputs FROM plan_runs ORDER BY 1").fetchall()
+    connection.close()
+    return rows
+
+
+SEEDED_RUNS = [("r1", "p1", 1, "ready", "{}")]
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_0006_keeps_every_run_stored_before_it_with_no_totals_and_its_downgrade_keeps_them_too(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0005")
+    _seed_trip_at_head(file)
+
+    command.upgrade(config, "0006")
+    assert (_trip(file), _plan_runs(file), _revision(file)) == (SEEDED_TRIP, SEEDED_RUNS, ["0006"])
+    assert _plan_run_columns(file) >= RUN_COLUMNS_OF_0006, f"plan_runs has {sorted(_plan_run_columns(file))}"
+    with sqlite3.connect(file) as connection:
+        added = connection.execute("SELECT totals, report, fingerprint, memo_hit FROM plan_runs").fetchall()
+    connection.close()
+    assert added == [(None, None, None, 0)]
+    database = SqliteDatabase(data_dir)
+    try:
+        with SqlAlchemyPlanningUnitOfWork(database) as uow:
+            shown = uow.plan_runs.get("r1")
+    finally:
+        database.engine.dispose()
+    assert shown is not None
+    assert (shown.id, shown.project_id, shown.totals) == ("r1", "p1", None)
+
+    downgrade(config, data_dir, monkeypatch, "0005")
+
+    assert (_trip(file), _plan_runs(file), _revision(file)) == (SEEDED_TRIP, SEEDED_RUNS, ["0005"])
+    assert RUN_COLUMNS_OF_0006 & _plan_run_columns(file) == set()
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+    command.upgrade(config, "head")
+    assert (_plan_runs(file), _revision(file)) == (SEEDED_RUNS, ["0006"])
+    assert _plan_run_columns(file) >= RUN_COLUMNS_OF_0006
 
 
 def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:

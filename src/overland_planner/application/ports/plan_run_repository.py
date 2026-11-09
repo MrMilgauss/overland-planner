@@ -9,12 +9,12 @@ from typing import Protocol
 
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
-from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop
+from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, Totals
 
 
 @dataclass(frozen=True)
 class PlanRunDetail:
-    """A stored plan run with its itinerary; a Failed run has no stops."""
+    """A stored plan run with its itinerary and totals; a Failed run, or one stored before 0006, has no totals."""
 
     id: str
     project_id: str
@@ -22,6 +22,7 @@ class PlanRunDetail:
     status: PlanRunStatus
     failure_reason: str | None
     stops: tuple[PlanStop, ...]
+    totals: Totals | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class NewPlanRun:
     objective: str
     inputs: Mapping[str, object]
     stops: tuple[PlanStop, ...]
+    totals: Totals | None = None
 
 
 class PlanRunRepository(Protocol):

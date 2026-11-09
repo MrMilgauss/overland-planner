@@ -129,7 +129,7 @@ def test_each_start_logs_one_app_started_line(data_dir: Path) -> None:
         assert started[0]["app_version"] == "0123456789ab"
         assert started[0]["routing_provider"] == "mock"
         assert started[0]["python_version"] == platform.python_version()
-        assert started[0]["alembic_revision"] == "0005"
+        assert started[0]["alembic_revision"] == "0006"
 
 
 def _planner(data_dir: Path) -> TestClient:

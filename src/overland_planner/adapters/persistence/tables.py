@@ -17,6 +17,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
 )
 
 metadata = MetaData()
@@ -77,7 +78,8 @@ pois = Table(
     Column("lon", Float, nullable=False),
 )
 
-# One row per numbered plan run (brief §9); a job still running has none. Later slices add the columns they fill.
+# One row per numbered plan run (brief §9); a job still running has none. `totals` is NULL for a Failed run and for one
+# stored before 0006; `report` (05-08), `fingerprint` and `memo_hit` (05-10) are filled by later steps.
 plan_runs = Table(
     "plan_runs",
     metadata,
@@ -92,5 +94,9 @@ plan_runs = Table(
     Column("objective", Text, nullable=False),
     Column("inputs", JSON, nullable=False),
     Column("itinerary", JSON, nullable=True),
+    Column("totals", JSON, nullable=True),
+    Column("report", JSON, nullable=True),
+    Column("fingerprint", Text, nullable=True),
+    Column("memo_hit", Boolean, nullable=False, server_default=false()),
     UniqueConstraint("project_id", "number", name="uq_plan_runs_project_id_number"),
 )

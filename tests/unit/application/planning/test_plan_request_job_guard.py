@@ -3,9 +3,9 @@
 Driving ports: `PlanRequestJob.run` and, for the job's end, `PlanJobRegistry`. Driven ports: `PlanningUnitOfWork`,
 `RoutingProvider`, `TourSolver` (scripted), `FileStore`, `EventLog`. Removing the guard from the job fails these tests.
 Observable universe: `plan_runs`, `items`, `projects` as planning reads them and `files` as the store holds them.
-Test Budget: 5 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
-solver's broken order ends the same way, job done; the size of a real track; canonical file round trip) x 2 = 10;
-5 used.
+Test Budget: 6 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
+solver's broken order ends the same way, job done; the size of a real track; canonical file round trip; a ready run
+stores and shows the totals of its stops, a Failed run none) x 2 = 12; 6 used.
 """
 
 from __future__ import annotations
@@ -22,15 +22,23 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.catalog.facade import canonical_points_file, parse_canonical_points_file
-from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, StoredRun
+from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries, StoredRun
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
-from overland_planner.application.ports.tour_solver import TourFound, TourOutcome
+from overland_planner.application.ports.tour_solver import (
+    TourFound,
+    TourNoRoute,
+    TourOptimizerFailed,
+    TourOutcome,
+    TourTimedOut,
+)
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStats, TrackStatsCalculator
+from overland_planner.domain.planning.plan_run import Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
@@ -88,7 +96,7 @@ class Harness:
 
 
 def _row(run: NewPlanRun) -> tuple[Any, ...]:
-    return (run.number, run.status, run.failure_reason, tuple(stop.item_id for stop in run.stops))
+    return (run.number, run.status, run.failure_reason, tuple(stop.item_id for stop in run.stops), run.totals)
 
 
 def _harness(
@@ -113,7 +121,9 @@ def _harness_of(trip: Trip, outcome: TourOutcome | None = None) -> Harness:
 
 def _assert_one_failed_run_only(harness: Harness, before: dict[str, Any], stored: StoredRun, check: str) -> None:
     """A failing plan changes only `plan_runs`, with one Failed row, and the log names the broken rule."""
-    assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained((1, "failed", REASON, ()))}, strict=True)
+    assert_state_delta(
+        before, harness.view(), UNIVERSE, {"plan_runs": gained((1, "failed", REASON, (), None))}, strict=True
+    )
     assert stored == StoredRun(harness.planning.runs[-1].id, REASON)
     violations = harness.log.fields_of("invariant.violation")
     assert len(violations) == 1
@@ -133,11 +143,48 @@ def test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok(trip: Trip
 
     stored = harness.run()
 
-    row = (1, "ready", None, (trip.start.id, *visited, trip.end.id))
+    totals = Totals.of(PlanRunAssembler(trip.snapshot, trip.legs).assemble(visited))
+    row = (1, "ready", None, (trip.start.id, *visited, trip.end.id), totals)
     assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
     assert stored.reason is None
     assert harness.log.fields_of("invariant.violation") == []
     assert [c["invariants"] for c in harness.log.fields_of("plan.run.completed")] == ["ok"]
+
+
+FAILED_OUTCOMES = st.sampled_from(
+    [TourNoRoute(), TourTimedOut(), TourOptimizerFailed(exit_code=1, signal=None), TourOptimizerFailed(None, 9)]
+)
+STORED_INPUTS = {"start_item_id", "end_item_id", "included_item_ids", "solver_budget"}
+
+
+@settings(deadline=None)
+@given(trip=trips(), data=st.data(), failure=FAILED_OUTCOMES)
+def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_none(
+    trip: Trip, data: st.DataObject, failure: TourOutcome
+) -> None:
+    visited = data.draw(st.permutations([item.id for item in trip.items]), label="order")
+    order = (trip.start.id, *visited, trip.end.id)
+    totals = Totals.of(PlanRunAssembler(trip.snapshot, trip.legs).assemble(visited))
+    for outcome, row in (
+        (TourFound(order), (1, "ready", None, order, totals)),
+        (failure, (1, "failed", getattr(failure, "reason", None), (), None)),
+    ):
+        harness = _harness_of(trip, outcome)
+        before = harness.view()
+
+        stored = harness.run()
+
+        assert_state_delta(before, harness.view(), UNIVERSE, {"plan_runs": gained(row)}, strict=True)
+        shown = PlanRunQueries(harness.planning.unit_of_work).get(stored.plan_run_id)
+        assert shown is not None
+        assert (shown.id, shown.project_id, shown.number, shown.totals) == (stored.plan_run_id, PROJECT, 1, row[-1])
+        inputs = harness.planning.runs[-1].inputs
+        assert set(inputs) == STORED_INPUTS, f"the stored inputs are {sorted(inputs)}"
+        assert (inputs["start_item_id"], inputs["end_item_id"], inputs["solver_budget"]) == (
+            trip.start.id,
+            trip.end.id,
+            BUDGET,
+        )
 
 
 def _damages(track: TrackItem) -> st.SearchStrategy[bytes | None]:

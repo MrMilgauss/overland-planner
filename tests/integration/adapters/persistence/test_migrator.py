@@ -25,7 +25,7 @@ from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS = REPO_ROOT / "migrations"
-HEAD = "0005"  # this planner's Alembic head
+HEAD = "0006"  # this planner's Alembic head
 LATER = "9999"  # a no-op revision above any real head
 STUB = """revision = "{revision}"
 down_revision = "{down}"

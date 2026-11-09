@@ -111,7 +111,9 @@ class _Runs:
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         for row in self._rows:
             if row.id == plan_run_id:
-                return PlanRunDetail(row.id, row.project_id, row.number, row.status, row.failure_reason, row.stops)
+                return PlanRunDetail(
+                    row.id, row.project_id, row.number, row.status, row.failure_reason, row.stops, row.totals
+                )
         return None
 
     def next_number(self, project_id: str) -> int:
