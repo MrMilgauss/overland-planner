@@ -6,7 +6,8 @@ drawn order, so a reused order is told apart from a fresh one), `FileStore`, `Ev
 Observable universe: `plan_runs` as the database double holds them (order, totals, `memo_hit`) and `solver_calls`.
 Test Budget: 2 behaviors (the solver is asked iff no ready run of the project has the inputs' fingerprint or
 `ignore_memo` is set, otherwise the run reuses that order with recomputed totals and says `memo_hit`; a reused order is
-judged by the guard, a violation stores a Failed run that is never a memo source) x 2 = 4; 2 used.
+judged by the guard, a violation stores a Failed run that is never a memo source) x 2 = 4; 3 used (the third pins the
+settings the drawn sequences may not reach: road map, budget and solver identity, each on every example, D212).
 """
 
 from __future__ import annotations
@@ -268,6 +269,33 @@ def test_a_reused_order_is_judged_by_the_guard_and_a_failed_run_is_never_a_memo_
     fresh = (PROJECT, 4, "ready", None, stops, totals, False)
     expected = {"plan_runs": gained(fresh), "solver_calls": set_to(before["solver_calls"] + 1)}
     assert_state_delta(before, desk.view(), UNIVERSE, expected, strict=True)
+
+
+SOLVE_SETTINGS = ("road map", "budget", "solver identity")
+
+
+@settings(deadline=None, max_examples=30)
+@given(trip=trips(), data=st.data())
+def test_another_road_map_budget_or_solver_alone_misses_the_memo_and_solves_again(
+    trip: Trip, data: st.DataObject
+) -> None:
+    desk = Desk(trip)
+    visited = tuple(data.draw(st.permutations([item.id for item in trip.items]), label="order"))
+    snapshot = desk.project_as(PROJECT, "same", trip.snapshot.offroad_speed)
+    stops = (snapshot.start_item_id, *visited, snapshot.end_item_id)
+    for number, changed in enumerate(("same", *SOLVE_SETTINGS), start=1):
+        job, leg_m = desk.job(changed)
+        desk.solver.answers = [TourFound(visited)]
+        before = desk.view()
+
+        job.run(PROJECT, _Progress())
+
+        row = (PROJECT, number, "ready", None, stops, planned_totals(snapshot, leg_m, visited), False)
+        expected = {"plan_runs": gained(row), "solver_calls": set_to(before["solver_calls"] + 1)}
+        try:
+            assert_state_delta(before, desk.view(), UNIVERSE, expected, strict=True)
+        except AssertionError as error:
+            raise AssertionError(f"another {changed} reused an order: {error}") from error
 
 
 class _Progress:
