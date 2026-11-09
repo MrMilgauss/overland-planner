@@ -4689,3 +4689,23 @@ Release `c81c426` (`sha256:272b30ee…`, CI run 42609468929), schema 0005 -> 000
 | **US-02b "The first plan opens in OsmAnd"** | manual | **still NOT RUN: no tablet and no phone (2026-11-09). K6 stays unproven** |
 
 Not matched to the pitch text: the pitches quote the 34.2 km synthetic Assietta and "Set the Start before optimizing". The real file is the whole 224.8 km Bardonecchia-Sommelier-Jafferau-Assietta route, named from its GPX `<name>`, and the product says "calculating" (D220 e). Track rows still show coordinates, not place names (D219, FR-2.4 open). The two demo projects stay on the Pi because no project delete exists.
+
+### Slice 03-ops gate on pi-host (2026-11-09, user start "Start now"; orchestrator-run)
+
+Steps 06-01 to 06-05 (`cc06073` .. `9a1e970`), DES log `d023a24`, MD018 fix `7212915`, 30-minute reference `3b34827`.
+
+| Gate | Result |
+|---|---|
+| Local mutation | `make mutate BASE=slice-02`: 97.2 % (738/759) over 6 application files. Survivors judged equivalent: `_evidence_of` x4 (as slice 02), thread name x2, `second_pass_pairs or 1`. Real gaps for the slice-end mutation phase, all in `diagnostics_service.py`: nearest-rank p95 `+99 -> +100` (n a multiple of 20 never drawn), `version` not asserted, window `>=` boundary, `astimezone(DAY_ZONE)` vs host zone, unknown-project id, `isinstance(...) or True` |
+| CI, first main run | `d023a24`, run 42671191888: failed at start with 0 jobs on main (no reason exposed by the API); the feat/slice-03 run of the same SHA started normally and showed `lint-docs` failing on `distill/red-classification.md:201` (MD018, a line starting `#16's`, written by the orchestrator in `c5a3d53`; pre-commit has no markdownlint). Fixed in `7212915` (docs-only: every code job skipped) |
+| CI, re-run (once, code unchanged) | run 42671191888 attempt 2: every code job green and published; `lint-docs` red on that SHA only. Job 2 14m01s, slow-properties 13m44s, golden-order 76 s (I1 and I2 give the Mac's shas on amd64), job 8 mutation 43m15s (limit 75), arm64 solver probe passed first time. `make deploy` refuses it (run conclusion failure) |
+| CI, `3b34827` | run 42690501308: success and published; job 2 **17m25s** (also 17m10s on the branch run of `d023a24`): over the 15-minute target (D221) in 2 of 3 runs, timeout 20. New 03-ops tests cost about 66 s locally at profile ci. To be rebalanced at 06-12, before slice 03 adds about a minute more |
+| Deploy | `make deploy SHA=3b34827…` from a clean worktree: ok, `sha256:dc555e94…`, alembic 0006 -> 0007, `releases.log` copied back |
+| User's projects | snapshot (names, item counts, plan-run numbers and states) before deploy, after deploy and after perf-pi: identical (4 projects) |
+| Golden order on the Pi (D175) | I1 and I2 on planner-perf: both pass, so the golden hash is identical on Mac, amd64 CI and the Pi (arm64 image) |
+| `make perf-pi` N=10, 60 items, `cpus: 1` (D159, D167) | **pass**: solve 47.50-50.11 s, slowest **50.11 s** <= 55 s; stage slowest matrix 0.11 s, reach_model 0.01 s, guard_persist 0.03 s; all 10 runs done; 12 min total. No cpus 1.5 fallback needed (D223 c) |
+| "A plan found on the Pi is nearly as good as a long search" | pass: within 10 % of the 30-minute Mac reference, 1,058.9 road km |
+| After | planner-perf container removed (volume `overland_planner-perf-data` kept); planner 75.7 MiB of 1 GiB; report `.data/perf/20261109T203822Z.json` |
+| Not run here (D223, user 2026-11-09) | `POINTS=20000` guard check and `ITEMS=70` re-calibration: at the slice-03 gate |
+
+Process notes: 06-01 logged PREPARE and RED_ACCEPTANCE at the same second (kept as written, as UI-DELIVER-5); 06-03 logged its two RED phases one second apart; 06-04 was cut off by an API rate limit and resumed, and may have written production code before RED_UNIT was logged. All for the adversarial review.
