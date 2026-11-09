@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from overland_planner.adapters.http.schemas import (
@@ -20,7 +20,6 @@ from overland_planner.adapters.http.schemas import (
 from overland_planner.adapters.http.upload_limits import FILES_FIELD, UploadLimits, read_track_files
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.domain.catalog.item import ItemType
-from overland_planner.domain.catalog.project import OffroadSpeedNotDrivableError
 
 # The body is read by `read_track_files` (bounded, never spooled to disk), so the schema is declared here.
 _TRACK_UPLOAD_BODY: dict[str, Any] = {
@@ -74,10 +73,7 @@ def catalog_routes(use_cases: CatalogUseCases, limits: UploadLimits) -> APIRoute
     @router.patch("/{project_id}")
     def update_project(project_id: str, body: ProjectUpdate) -> ProjectResource:
         """Sets the off-road speed (one more revision); 0 or less, or not finite, answers 422 and nothing changes."""
-        try:
-            return ProjectResource.of(catalog.set_offroad_speed(project_id, body.offroad_speed_kmh))
-        except OffroadSpeedNotDrivableError as refused:
-            raise HTTPException(status_code=422, detail=str(refused)) from refused
+        return ProjectResource.of(catalog.set_offroad_speed(project_id, body.offroad_speed_kmh))
 
     @router.post("/{project_id}/tracks", status_code=201, openapi_extra=_TRACK_UPLOAD_BODY)
     async def import_tracks(project_id: str, request: Request) -> list[ItemResource]:

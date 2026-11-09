@@ -24,7 +24,7 @@ from overland_planner.application.ports.event_log import EventLog
 from overland_planner.domain.catalog.anchors import AnchorNotAPlaceError
 from overland_planner.domain.catalog.coordinate import CoordinateOutOfRangeError
 from overland_planner.domain.catalog.poi import PoiNameRequiredError
-from overland_planner.domain.catalog.project import ProjectNameRequiredError
+from overland_planner.domain.catalog.project import OffroadSpeedNotDrivableError, ProjectNameRequiredError
 
 _CODE_BY_STATUS = {
     401: "unauthorized",
@@ -46,6 +46,7 @@ _REFUSED_WITH_REASON: dict[type[Exception], int] = {
     PoiNameRequiredError: _INVALID,
     CoordinateOutOfRangeError: _INVALID,
     AnchorNotAPlaceError: _INVALID,
+    OffroadSpeedNotDrivableError: _INVALID,
     TrackDataInconsistentError: _INVALID,
     FailedRunExportError: _INVALID,
     UploadFormError: _INVALID,
