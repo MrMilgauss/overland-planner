@@ -39,12 +39,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from overland_planner.adapters.solver.ortools_tour_solver import SOLVER_IDENTITY
 from tests.acceptance.overland_route_planner_mvp.steps.browser import REPO_ROOT
 from tests.acceptance.overland_route_planner_mvp.steps.places import Place, distance_m
 from tests.perf.western_alps_places import WESTERN_ALPS
+
+if TYPE_CHECKING:  # performance_steps imports this module: the steps are imported where they run
+    from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
 
 SEED = 20261101
 I1_DENSE = "i1-dense"
@@ -348,9 +351,22 @@ def bless(folder: Path, kind: str, *, plan: Plan | None = None, rebless: bool = 
     return order
 
 
+@dataclass(frozen=True)
+class PlannedOrder:
+    """The stop names of a finished plan, the last poll of its job (`elapsed_s`; `stage_ms` from 06-03) and the wall
+    seconds from Calculate to the end seen by the poll (an in-process planner runs on a fake clock)."""
+
+    names: tuple[str, ...]
+    job: dict[str, Any]
+    wall_s: float
+
+
 def plan_through_api(trip: TripData, road_map: Path | None) -> list[str]:
+    return list(plan_in_fresh_planner(trip, road_map).names)
+
+
+def plan_in_fresh_planner(trip: TripData, road_map: Path | None) -> PlannedOrder:
     """A fresh in-process planner, the real OR-Tools child, the default budget; Calculate with ignore_memo."""
-    from tests.acceptance.overland_route_planner_mvp.steps import performance_steps as steps
     from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
     from tests.common.fakes import FakeClock, FakeMountTable
     from tests.common.workspace import workspace_data_dir
@@ -361,15 +377,23 @@ def plan_through_api(trip: TripData, road_map: Path | None) -> list[str]:
             environ["MOCK_PLAN"] = str(road_map)
         world = PlannerWorld(data_dir.parent, data_dir, environ, FakeClock(), FakeMountTable())
         try:
-            steps.bring_trip(world, "golden", trip)
-            steps.press(world, ignore_memo=True)
-            job = steps.finish(world, PLAN_DEADLINE_S)
-            assert job["state"] == "done", f"the plan did not finish: {job}"
-            detail = steps.latest_run(world)
-            steps.assert_ready(detail)
-            return steps.stop_names(detail)
+            return plan_on(world, "golden", trip)
         finally:
             world.shutdown()
+
+
+def plan_on(world: PlannerWorld, project: str, trip: TripData) -> PlannedOrder:
+    """Bring the trip as a new project to the world's planner and plan it once (the bless and the golden check)."""
+    from tests.acceptance.overland_route_planner_mvp.steps import performance_steps as steps
+
+    steps.bring_trip(world, project, trip)
+    steps.press(world, ignore_memo=True)
+    job = steps.finish(world, PLAN_DEADLINE_S)
+    assert job["state"] == "done", f"the plan did not finish: {job}"
+    detail = steps.latest_run(world)
+    steps.assert_ready(detail)
+    wall_s = float(world.scratch["ended_at"] - world.scratch["pressed_at"])
+    return PlannedOrder(tuple(steps.stop_names(detail)), job, wall_s)
 
 
 # ---------------------------------------------------------------------------------------------------- CLI

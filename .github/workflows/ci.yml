@@ -1,4 +1,5 @@
-# Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169).
+# Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169); step 06-02
+# job 3 golden-order (I1 and I2 against their blessed order, D96), which gates publish (D160).
 # Step 01-08: jobs 5 image-amd64 and 6 image-arm64 on main pushes and manual runs only. Step 01-09: job 7 e2e on the
 # loaded amd64 image, job 8 scoped mutation (main pushes touching domain/application), job 9 publish (D160).
 # Actions pinned by commit SHA (D85), runners pinned (D178). Weekly scans live in weekly.yml (never gate deploys).
@@ -235,7 +236,7 @@ jobs:
       - name: pytest (coverage >= 80 %)
         run: |
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
-          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not slow and not heavy_property" \
+          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not slow and not heavy_property and not golden_order" \
             --cov=overland_planner --cov-report=term --cov-fail-under=80
       - name: Domain coverage (>= 90 %)
         run: uv run coverage report --include='*/overland_planner/domain/*' --fail-under=90
@@ -278,6 +279,44 @@ jobs:
           # D221: the HC-1, HC-5 and A-2 properties (1,000 cases each at profile ci) overran job 2's timeout.
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
           uv run pytest -q $PENDING_FLAGS -m "slow or heavy_property"
+
+  golden-order:
+    name: "3 golden-order"
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10 # target under 3 min (DEVOPS row 3)
+    env:
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: Filesystem type of the test data folders (D168)
+        run: |
+          # PLANNER_TEST_WORKSPACE is the root of every test data folder, DATA_DIR among them.
+          mkdir -p "$DATA_DIR"
+          df -T "$PLANNER_TEST_WORKSPACE"
+          {
+            echo "### Test data folder filesystem"
+            echo '```'
+            df -T "$PLANNER_TEST_WORKSPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: pytest -m golden_order (I1 and I2 against their blessed order, D96; selecting nothing exits 5)
+        run: |
+          # A different order sha fails the job; the solve seconds in the job summary are advisory.
+          # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
+          uv run pytest -q $PENDING_FLAGS -m golden_order
 
   test-web:
     name: "4 test-web"
@@ -677,8 +716,9 @@ jobs:
 
   publish:
     name: "9 publish"
-    needs: [image-amd64, image-arm64, e2e, slow-properties, mutation]
-    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && needs.slow-properties.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
+    # D160: every gate succeeded (mutation may be skipped); job 3 golden-order joined at step 06-02.
+    needs: [image-amd64, image-arm64, e2e, slow-properties, golden-order, mutation]
+    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && needs.slow-properties.result == 'success' && needs.golden-order.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: # D161, D195

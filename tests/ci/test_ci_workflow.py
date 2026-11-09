@@ -46,6 +46,7 @@ JOB_RUNNERS = {
     "e2e": RUNNER,
     "mutation": RUNNER,
     "slow-properties": RUNNER,
+    "golden-order": RUNNER,
     "publish": RUNNER,
 }
 REGISTRY_WRITERS = (*IMAGE_JOBS, "publish")  # D161
@@ -138,8 +139,8 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
 
     command = pytest_step["run"]
     assert "$PENDING_FLAGS" in command
-    # A-6 (step 05-12) and the three slice-02 HC properties (D221) run in slow-properties.
-    assert '-m "not real_provider and not pi and not slow and not heavy_property"' in command
+    # A-6 (step 05-12) and the three slice-02 HC properties (D221) run in slow-properties, the golden order in job 3.
+    assert '-m "not real_provider and not pi and not slow and not heavy_property and not golden_order"' in command
     assert "--cov-fail-under=80" in command
     assert not pytest_step.get("continue-on-error")
     domain_gate = job["steps"][job["steps"].index(pytest_step) + 1]
@@ -358,6 +359,7 @@ D160_PUBLISH_IF = (
     " && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success'"
     " && needs.e2e.result == 'success'"
     " && needs.slow-properties.result == 'success'"  # D220 h: the A-6 property gates publish (step 05-12)
+    " && needs.golden-order.result == 'success'"  # job 3: a different golden order never publishes (step 06-02)
     """ && contains(fromJSON('["success","skipped"]'), needs.mutation.result)"""
 )
 
@@ -510,7 +512,7 @@ def test_publish_gating_matches_d160() -> None:
     workflow = _workflow()
     job = _job(workflow, "publish")
 
-    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "slow-properties", "mutation"}
+    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "slow-properties", "golden-order", "mutation"}
     assert job["if"] == D160_PUBLISH_IF
     assert _needs(_job(workflow, "mutation")) & {"image-amd64", "image-arm64", "e2e"} == set()
 
@@ -922,3 +924,33 @@ def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:
     assert A_6 not in collected.stdout and IDENTICAL_INPUTS not in collected.stdout
     missing = [name for name in SLICE_02_PROPERTIES if f"{MODULE_02}::{name}" not in collected.stdout]
     assert missing == []
+
+
+# ------------------------------------------------------------------- step 06-02: job 3 golden-order gates publish
+GOLDEN_TESTS = ("test_the_reference_projects_plan_to_their_committed_golden_order",)
+
+
+def test_golden_order_job_runs_exactly_the_golden_tests_and_job_2_none_of_them() -> None:
+    """DEVOPS row 3, D96: I1 and I2 against their blessed order on every code change; a real child, so not job 2."""
+    workflow = _workflow()
+    job = _job(workflow, "golden-order")
+    pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
+    job_2 = re.search(r'-m "(?P<expression>[^"]+)"', _main_pytest(_job(workflow, "test-python"))["run"])
+    assert job_2 is not None
+
+    assert job["name"] == "3 golden-order"
+    assert _needs(job) == {"changes"} and job["if"] == "needs.changes.outputs.code == 'true'"
+    assert job["timeout-minutes"] == 10
+    assert job["env"] == {**_job(workflow, "slow-properties")["env"]}, "the set-up of slow-properties (D168)"
+    assert _uses(job, "astral-sh/setup-uv") and "uv sync --frozen" in _runs(job)
+    assert not _uses(job, "actions/setup-node"), "no web build and no browser"
+    assert _index(job, "df -T") < job["steps"].index(pytest_steps[0]), "D168: the data folder's filesystem is shown"
+    assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]
+    assert len(pytest_steps) == 1 and not pytest_steps[0].get("continue-on-error")
+    command = pytest_steps[0]["run"]
+    # A bare pytest run: selecting nothing exits 5 and fails the job (no pytest-selection.sh, no `|| true`).
+    assert "uv run pytest -q $PENDING_FLAGS -m golden_order\n" in command + "\n"
+    assert "pytest-selection.sh" not in command and "||" not in command
+
+    assert _collected_everywhere("golden_order") == sorted(GOLDEN_TESTS)
+    assert set(_collected_everywhere(job_2["expression"])).isdisjoint(GOLDEN_TESTS)
