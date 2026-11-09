@@ -80,6 +80,11 @@ def road_time_s(distance_m: int) -> int:
     return max(1, distance_m * 3 // 50)
 
 
+def leg_table(leg_m: dict[tuple[Coordinate, Coordinate], int]) -> LegTable:
+    """The road legs of these distances, each driven in its `road_time_s`."""
+    return LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
+
+
 def track_points(entry: Coordinate, exit_: Coordinate, point_count: int) -> tuple[TrackPoint, ...]:
     """A recorded sequence from entry to exit; the points between are made up, their identity is all that matters."""
     between = (TrackPoint.at(45.9, 7.9 + i / 1000, 1000.0 + i) for i in range(point_count - 2))
@@ -130,6 +135,5 @@ def trips(draw: st.DrawFn) -> Trip:
         st.lists(st.integers(1, 400_000), min_size=len(POINT_PAIRS), max_size=len(POINT_PAIRS), unique=True)
     )
     leg_m = dict(zip(POINT_PAIRS, distances, strict=True))
-    legs = LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
     snapshot = ProjectSnapshot(start.id, end.id, tuple(listed), draw(offroad_speeds))
-    return Trip(snapshot, legs, leg_m, start, end, items)
+    return Trip(snapshot, leg_table(leg_m), leg_m, start, end, items)

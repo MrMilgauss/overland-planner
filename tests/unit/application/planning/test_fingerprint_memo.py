@@ -30,7 +30,7 @@ from overland_planner.domain.planning.plan_run import Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
-from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
+from overland_planner.domain.routing.road_leg import LegTable
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -41,7 +41,7 @@ from tests.unit.application.planning.planning_doubles import (
     RecordingRoadMap,
     job_when_ended,
 )
-from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, road_time_s, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, leg_table, trips
 
 UNIVERSE = {"plan_runs", "solver_calls"}
 OTHER_PROJECT = "q"
@@ -119,8 +119,7 @@ class Desk:
             self.files,
             memo=FingerprintMemo(IDENTITY + "-next" if changed == "solver identity" else IDENTITY),
         )
-        legs = LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
-        return job, legs
+        return job, leg_table(leg_m)
 
     def project_as(self, project: str, changed: str, speed: OffroadSpeed) -> ProjectSnapshot:
         snapshot = replace(self.trip.snapshot, offroad_speed=speed)
@@ -173,9 +172,8 @@ def calculates(draw: st.DrawFn, trip: Trip) -> Calculate:
 def _round_trip_with_nothing_to_visit() -> Trip:
     start = PoiItem(id="start", project_id=PROJECT, name="Casa Marco", location=POINTS[0])
     leg_m = {pair: metres for metres, pair in enumerate(POINT_PAIRS, start=1)}
-    legs = LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
     snapshot = ProjectSnapshot(start.id, start.id, (start,), DEFAULT_OFFROAD_SPEED)
-    return Trip(snapshot, legs, leg_m, start, start, ())
+    return Trip(snapshot, leg_table(leg_m), leg_m, start, start, ())
 
 
 def _press(answer: TourOutcome) -> Calculate:
