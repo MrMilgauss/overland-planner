@@ -48,6 +48,10 @@ class LegTable:
     def distance_km(self, origin: Coordinate, destination: Coordinate) -> float:
         return self.distance_m(origin, destination) / _METRES_PER_KM
 
+    def km_and_s(self, origin: Coordinate, destination: Coordinate) -> tuple[float, int]:
+        """The leg as a plan stop carries it: road distance in km and road time in seconds."""
+        return self.distance_km(origin, destination), self.duration_s(origin, destination)
+
     def _measure(self, origin: Coordinate, destination: Coordinate) -> RoadMeasure:
         if origin == destination:
             return NOTHING_TO_DRIVE

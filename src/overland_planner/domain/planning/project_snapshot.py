@@ -11,6 +11,7 @@ from typing import Literal
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
+from overland_planner.domain.routing.road_leg import RoadPair
 
 Anchor = Literal["Start", "End"]
 
@@ -21,6 +22,11 @@ def reached_at(item: CatalogItem) -> Coordinate:
 
 def left_at(item: CatalogItem) -> Coordinate:
     return item.exit if isinstance(item, TrackItem) else item.location
+
+
+def road_between(previous: CatalogItem, item: CatalogItem) -> RoadPair:
+    """The road driven from `previous` to `item`: from where the one is left to where the other is reached (HC-1)."""
+    return left_at(previous), reached_at(item)
 
 
 @dataclass(frozen=True)

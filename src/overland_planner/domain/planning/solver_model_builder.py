@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, left_at, reached_at
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
 from overland_planner.domain.routing.road_leg import LegTable, RoadPair
 
 
@@ -45,7 +45,7 @@ class SolverModelBuilder:
         )
 
     def _pair(self, origin: int, destination: int) -> RoadPair:
-        return left_at(self._nodes[origin]), reached_at(self._nodes[destination])
+        return road_between(self._nodes[origin], self._nodes[destination])
 
     def _arcs(self) -> list[tuple[int, int]]:
         last = len(self._nodes) - 1

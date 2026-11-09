@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from overland_planner.domain.catalog.item import CatalogItem
 from overland_planner.domain.planning.plan_run import PlanStop
-from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, left_at, reached_at
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
 from overland_planner.domain.routing.road_leg import LegTable
 
 _PRODUCT_WORDS = {
@@ -52,8 +52,5 @@ class PlanRunAssembler:
         return None if failure_reason is None else PlanReport(_PRODUCT_WORDS[failure_reason])
 
     def _stop(self, item: CatalogItem, previous: CatalogItem | None) -> PlanStop:
-        if previous is None:
-            return PlanStop.driving(item, None, self._snapshot.offroad_speed)
-        origin, destination = left_at(previous), reached_at(item)
-        leg = self._legs.distance_km(origin, destination), self._legs.duration_s(origin, destination)
+        leg = None if previous is None else self._legs.km_and_s(*road_between(previous, item))
         return PlanStop.driving(item, leg, self._snapshot.offroad_speed)

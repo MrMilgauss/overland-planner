@@ -17,7 +17,7 @@ from typing import Literal
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.planning.plan_run import PlanStop, stored_length_km
-from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, left_at, reached_at
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
 from overland_planner.domain.routing.road_leg import LegTable
 
 INVARIANT_VIOLATION_REASON = "internal_invariant_violation"  # the reason code of ADR-015
@@ -117,10 +117,9 @@ class InvariantGuard:
 
     def _road(self, previous: PlanStop, stop: PlanStop) -> tuple[float, int] | None:
         """The leg's km and seconds in this job's table, or None for a pair nobody measured."""
-        origin = left_at(self._snapshot.item(previous.item_id))
-        destination = reached_at(self._snapshot.item(stop.item_id))
+        road = road_between(self._snapshot.item(previous.item_id), self._snapshot.item(stop.item_id))
         try:
-            return self._legs.distance_km(origin, destination), self._legs.duration_s(origin, destination)
+            return self._legs.km_and_s(*road)
         except KeyError:
             return None
 
