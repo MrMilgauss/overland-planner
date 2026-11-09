@@ -138,7 +138,8 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
 
     command = pytest_step["run"]
     assert "$PENDING_FLAGS" in command
-    assert '-m "not real_provider and not pi and not slow"' in command  # A-6 runs in slow-properties (step 05-12)
+    # A-6 (step 05-12) and the three slice-02 HC properties (D221) run in slow-properties.
+    assert '-m "not real_provider and not pi and not slow and not heavy_property"' in command
     assert "--cov-fail-under=80" in command
     assert not pytest_step.get("continue-on-error")
     domain_gate = job["steps"][job["steps"].index(pytest_step) + 1]
@@ -869,8 +870,23 @@ def test_slice_02_scenarios_run_without_being_enabled() -> None:
     assert [line for line in lines if line.startswith("@")] == ["@slice-02"]
 
 
-def test_slow_properties_job_runs_exactly_a_6_at_profile_ci_and_job_2_does_not() -> None:
-    """D220: A-6 (200 cases at profile ci) would push job 2 past its 11-minute target, so it runs in its own job."""
+def _collected_everywhere(expression: str) -> list[str]:
+    """Test names the expression selects in the whole suite, as the slow-properties job runs it (no module)."""
+    pending = _workflow()["env"]["PENDING_FLAGS"].split()
+    collected = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", *pending, "-m", expression],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert collected.returncode in (0, 5), collected.stdout + collected.stderr
+    return sorted(line.rsplit("::", 1)[1] for line in collected.stdout.splitlines() if "::" in line)
+
+
+def test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_job_2_does_not() -> None:
+    """D220, D221: A-6 (200 cases) and the HC properties (1,000 cases each) at profile ci overran job 2's timeout."""
     workflow = _workflow()
     job = _job(workflow, "slow-properties")
     pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
@@ -889,12 +905,13 @@ def test_slow_properties_job_runs_exactly_a_6_at_profile_ci_and_job_2_does_not()
     assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]
     assert "GITHUB_STEP_SUMMARY" in _runs(job)[_index(job, "df -T")]
     command = pytest_steps[0]["run"]
-    assert "uv run pytest -q $PENDING_FLAGS -m slow" in command  # pytest exits 5 when it selects nothing
-    expression = re.search(r"-m (?P<expression>\S+)", command)
+    assert 'uv run pytest -q $PENDING_FLAGS -m "slow or heavy_property"' in command  # selecting nothing exits 5
+    assert "D221" in pytest_steps[0]["name"]
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', command)
     assert expression is not None
 
-    assert _collected_slice_02(expression["expression"]) == [A_6]
-    assert A_6 not in _collected_slice_02(job_2["expression"])
+    assert _collected_everywhere(expression["expression"]) == sorted([A_6, *SLICE_02_PROPERTIES])
+    assert set(_collected_slice_02(job_2["expression"])).isdisjoint({A_6, *SLICE_02_PROPERTIES})
 
 
 def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:

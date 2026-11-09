@@ -3,7 +3,9 @@
 Markers per scenario (D199 precedent): the scenarios that run real OR-Tools solves in the solver child, or a browser,
 are `solver_child`, so pre-push (`-m "not slow and not solver_child"`) leaves them to CI job 2. The HC-1, HC-5 and A-2
 properties solve in-process at layer 1-2 (D192, D215) and stay in pre-push with Hypothesis profile dev; the A-6
-property is `@slow` in the feature file (D216). The refusals and settings scenarios never reach a solve.
+property is `@slow` in the feature file (D216). The three properties are `heavy_property` (D221): at profile ci
+(1,000 cases each) they overran CI job 2, so they run in the slow-properties job instead; pre-push keeps them.
+The refusals and settings scenarios never reach a solve.
 """
 
 import pytest
@@ -69,6 +71,24 @@ def test_the_offroad_speed_changes_track_durations() -> None:
 @scenario(FEATURE, "Giulia reads the itinerary on her phone")
 def test_giulia_reads_the_itinerary_on_her_phone() -> None:
     """Real server, four real solves and a browser."""
+
+
+@pytest.mark.heavy_property
+@scenario(FEATURE, "No generated plan ever drives a track in reverse")
+def test_no_generated_plan_ever_drives_a_track_in_reverse() -> None:
+    """HC-1 property, in-process."""
+
+
+@pytest.mark.heavy_property
+@scenario(FEATURE, "Tracks are always driven in full")
+def test_tracks_are_always_driven_in_full() -> None:
+    """HC-5 property, in-process."""
+
+
+@pytest.mark.heavy_property
+@scenario(FEATURE, "The trip always starts at Start and ends at End")
+def test_the_trip_always_starts_at_start_and_ends_at_end() -> None:
+    """A-2 property, in-process."""
 
 
 scenarios(FEATURE)  # the rest: the properties and the scenarios that never reach a solve
