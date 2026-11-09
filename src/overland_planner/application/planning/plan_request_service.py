@@ -2,7 +2,8 @@
 
 A refused request creates no job and no plan run and logs one `plan.job.refused` line. The optimizer's readiness is the
 start-up probe outcome of the component `tour_solver`; nothing probes it again. A request that passes every pre-check
-starts a plan job and answers at once with its id. The registry decides the active job check again as it starts the job,
+starts a plan job and answers at once with its id. `ignore_memo` ("Re-optimise", ADR-015) changes no pre-check: it only
+travels with the job. The registry decides the active job check again as it starts the job,
 atomically, so of two fast presses that both passed the pre-checks only one gets a job.
 """
 
@@ -65,13 +66,13 @@ class PlanRequestService:
         self._event_log = event_log
         self._jobs = jobs
 
-    def request(self, project_id: str) -> str:
+    def request(self, project_id: str, *, ignore_memo: bool = False) -> str:
         """The started job's id. Raises `ProjectNotFoundError` or the `PlanRefusedError` of the failed pre-check."""
         with self._unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
         refusal = self._first_refusal(project_id, snapshot)
         if refusal is None:
-            job_id = self._jobs.start(project_id)
+            job_id = self._jobs.start(project_id, ignore_memo=ignore_memo)
             if job_id is not None:
                 return job_id
             refusal = JobActiveError()

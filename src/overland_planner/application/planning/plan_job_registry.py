@@ -14,7 +14,8 @@ names no answer for a third project, so its job is accepted and waits for the sl
 
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
-fields owned by later slices are null. A failed job names only the exception's class (D197).
+fields owned by later slices are null. A failed job names only the exception's class (D197). A job carries the
+`ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is false until the memo (05-10).
 """
 
 from __future__ import annotations
@@ -43,8 +44,6 @@ _NULL_UNTIL_NOTED = (
     "points_new",
     "second_pass_pairs",
     "retried",
-    "memo_hit",
-    "ignore_memo",
     "stage_ms",
     "solver_solutions",
     "incumbents",
@@ -67,6 +66,8 @@ class PlanJobView:
     message: str | None
     plan_run_id: str | None
     elapsed_s: float
+    ignore_memo: bool = False
+    memo_hit: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ class PlanJobProgress(Protocol):
 
 
 class PlanWork(Protocol):
-    def run(self, project_id: str, progress: PlanJobProgress) -> StoredRun: ...
+    def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun: ...
 
 
 @dataclass(frozen=True)
@@ -103,12 +104,15 @@ class _Ending:
 
 
 class _Job:
-    def __init__(self, job_id: str, project_id: str, started_s: float, slot: threading.Lock) -> None:
+    def __init__(
+        self, job_id: str, project_id: str, started_s: float, slot: threading.Lock, *, ignore_memo: bool
+    ) -> None:
         self.id = job_id
         self.project_id = project_id
         self.started_s = started_s
+        self.ignore_memo = ignore_memo
         self._slot = slot
-        self.facts: dict[str, object] = {}
+        self.facts: dict[str, object] = {"ignore_memo": ignore_memo, "memo_hit": False}
         self.ending: _Ending | None = None
         self._state: PlanJobState = "queued"
 
@@ -141,11 +145,25 @@ class _Job:
         if ending is None:
             elapsed_s = now_s - self.started_s
             return PlanJobView(
-                self.id, self.project_id, self._state, reason=None, message=None, plan_run_id=None, elapsed_s=elapsed_s
+                self.id,
+                self.project_id,
+                self._state,
+                reason=None,
+                message=None,
+                plan_run_id=None,
+                elapsed_s=elapsed_s,
+                ignore_memo=self.ignore_memo,
             )
         elapsed_s = ending.ended_s - self.started_s
         return PlanJobView(
-            self.id, self.project_id, ending.state, ending.reason, ending.message, ending.plan_run_id, elapsed_s
+            self.id,
+            self.project_id,
+            ending.state,
+            ending.reason,
+            ending.message,
+            ending.plan_run_id,
+            elapsed_s,
+            ignore_memo=self.ignore_memo,
         )
 
 
@@ -162,9 +180,9 @@ class PlanJobRegistry:
         with self._lock:
             return self._active_in(project_id)
 
-    def start(self, project_id: str) -> str | None:
+    def start(self, project_id: str, *, ignore_memo: bool = False) -> str | None:
         """Start the job on its own thread and answer at once with its id; `None` if the project has an active job."""
-        job = _Job(uuid.uuid4().hex, project_id, self._clock.monotonic(), self._solver_slot)
+        job = _Job(uuid.uuid4().hex, project_id, self._clock.monotonic(), self._solver_slot, ignore_memo=ignore_memo)
         with self._lock:
             if self._active_in(project_id):
                 return None
@@ -197,7 +215,7 @@ class PlanJobRegistry:
 
     def _ending_of(self, job: _Job) -> _Ending:
         try:
-            stored = self._work.run(job.project_id, job)
+            stored = self._work.run(job.project_id, job, ignore_memo=job.ignore_memo)
         except BaseException as error:
             job.note(error_class=type(error).__name__)
             return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic())

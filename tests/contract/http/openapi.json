@@ -162,11 +162,19 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset slice 01b fills; later fields are additive.",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is false until the\nmemo (05-10).",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
             "type": "number"
+          },
+          "ignore_memo": {
+            "title": "Ignore Memo",
+            "type": "boolean"
+          },
+          "memo_hit": {
+            "title": "Memo Hit",
+            "type": "boolean"
           },
           "message": {
             "anyOf": [
@@ -220,7 +228,9 @@
           "reason",
           "message",
           "plan_run_id",
-          "elapsed_s"
+          "elapsed_s",
+          "memo_hit",
+          "ignore_memo"
         ],
         "title": "PlanJobResource",
         "type": "object"
@@ -1208,7 +1218,7 @@
         "summary": "Project Plan Runs"
       },
       "post": {
-        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503\n`optimizer_unavailable`: no job and no plan run.",
+        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503\n`optimizer_unavailable`: no job and no plan run. `ignore_memo=true` (\"Re-optimise (ignore previous result)\")\nhas the same refusals; a value that is not a boolean answers 422 `validation_error`.",
         "operationId": "calculate_api_projects__project_id__plan_runs_post",
         "parameters": [
           {
@@ -1218,6 +1228,16 @@
             "schema": {
               "title": "Project Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ignore_memo",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Ignore Memo",
+              "type": "boolean"
             }
           }
         ],
@@ -1260,7 +1280,7 @@
                 }
               }
             },
-            "description": "missing_anchor"
+            "description": "missing_anchor, validation_error"
           },
           "503": {
             "content": {

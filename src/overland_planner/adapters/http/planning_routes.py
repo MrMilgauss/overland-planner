@@ -38,10 +38,11 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     @router.post("/projects/{project_id}/plan-runs", status_code=202, responses=CALCULATE_ERROR_RESPONSES)
-    def calculate(project_id: str) -> PlanJobAccepted:
+    def calculate(project_id: str, ignore_memo: bool = False) -> PlanJobAccepted:
         """Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503
-        `optimizer_unavailable`: no job and no plan run."""
-        return PlanJobAccepted(job_id=requests.request(project_id))
+        `optimizer_unavailable`: no job and no plan run. `ignore_memo=true` ("Re-optimise (ignore previous result)")
+        has the same refusals; a value that is not a boolean answers 422 `validation_error`."""
+        return PlanJobAccepted(job_id=requests.request(project_id, ignore_memo=ignore_memo))
 
     @router.get("/plan-jobs/{job_id}", responses=ERROR_RESPONSES)
     def plan_job(job_id: str) -> PlanJobResource:

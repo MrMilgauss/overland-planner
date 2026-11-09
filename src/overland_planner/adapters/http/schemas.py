@@ -134,13 +134,16 @@ class PlanJobAccepted(BaseModel):
 
 
 class PlanJobResource(BaseModel):
-    """The poll payload (brief §5): the subset slice 01b fills; later fields are additive."""
+    """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is false until the
+    memo (05-10)."""
 
     state: PlanJobState
     reason: str | None
     message: str | None
     plan_run_id: str | None
     elapsed_s: float
+    memo_hit: bool
+    ignore_memo: bool
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:
@@ -150,6 +153,8 @@ class PlanJobResource(BaseModel):
             message=job.message,
             plan_run_id=job.plan_run_id,
             elapsed_s=job.elapsed_s,
+            memo_hit=job.memo_hit,
+            ignore_memo=job.ignore_memo,
         )
 
 
@@ -249,6 +254,6 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 CALCULATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     **ERROR_RESPONSES,
     409: {"model": ErrorEnvelope, "description": "job_active"},
-    422: {"model": ErrorEnvelope, "description": "missing_anchor"},
+    422: {"model": ErrorEnvelope, "description": "missing_anchor, validation_error"},
     503: {"model": ErrorEnvelope, "description": "optimizer_unavailable"},
 }

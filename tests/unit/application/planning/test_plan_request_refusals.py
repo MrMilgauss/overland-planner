@@ -50,7 +50,7 @@ def _planning(numbers: set[int], start: str | None = None, end: str | None = Non
 class _NoWork:
     """Calculate's pre-checks are under test here; the plan job itself is in test_plan_job_registry.py."""
 
-    def run(self, project_id: str, progress: PlanJobProgress) -> StoredRun:
+    def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
         return StoredRun(plan_run_id="not-stored", reason=None)
 
 

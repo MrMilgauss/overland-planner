@@ -5,10 +5,11 @@ real `PlanRequestJob` and `LegResolver`. Driven ports: `PlanningUnitOfWork`, `Ro
 `Clock` (`FakeClock`, which never moves by itself) and `EventLog`.
 Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them; for
 several projects (`PlanDesk`) `plan_runs`, `jobs` as polled and `refusals_logged`.
-Test Budget: 7 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
+Test Budget: 8 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
 always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
-by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past) x 2 = 14; 12 used.
+by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past; Calculate reports
+the `ignore_memo` it was given and refuses alike with or without it) x 2 = 16; 13 used.
 """
 
 from __future__ import annotations
@@ -110,8 +111,20 @@ FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
     "legs_total",
     "provider_id",
     "elapsed_ms",
+    "memo_hit",
+    "ignore_memo",
 }
-RUN_FIELDS = {"plan_run_id", "number", "status", "failure_reason", "report_items", "project_items", "invariants"}
+RUN_FIELDS = {
+    "plan_run_id",
+    "number",
+    "status",
+    "failure_reason",
+    "report_items",
+    "project_items",
+    "invariants",
+    "memo_hit",
+    "ignore_memo",
+}
 
 
 @dataclass(frozen=True)
@@ -385,6 +398,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
         job.plan_run_id,
     )
     assert all(fields[name] is None for name in FIELDS_OF_LATER_SLICES)
+    assert (fields["memo_hit"], fields["ignore_memo"]) == (False, False)  # a plain Calculate, and no memo until 05-10
     assert fields["elapsed_ms"] == 0
     assert (fields["legs_total"], fields["provider_id"]) == (
         len(_distinct_pairs(plan.trip)),
@@ -409,6 +423,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     assert completed[0]["project_items"] == len(plan.trip.snapshot.items)
     assert completed[0]["report_items"] is None
     assert completed[0]["invariants"] == ("ok" if stored.status == "ready" else None)
+    assert (completed[0]["memo_hit"], completed[0]["ignore_memo"]) == (False, False)
 
 
 @settings(deadline=None)
@@ -508,6 +523,7 @@ class PlanDesk:
 
     planning: InMemoryPlanning
     solver: SolverOnCue
+    clock: FakeClock
     log: RecordingEventLog
     registry: PlanJobRegistry
     service: PlanRequestService
@@ -517,9 +533,11 @@ class PlanDesk:
     def service_with(self, health: HealthService) -> PlanRequestService:
         return PlanRequestService(self.planning.unit_of_work, health, self.log, self.registry)
 
-    def press(self, project_id: str, service: PlanRequestService | None = None) -> str | PlanRefusedError:
+    def press(
+        self, project_id: str, service: PlanRequestService | None = None, *, ignore_memo: bool = False
+    ) -> str | PlanRefusedError:
         try:
-            job_id = (service or self.service).request(project_id)
+            job_id = (service or self.service).request(project_id, ignore_memo=ignore_memo)
         except PlanRefusedError as refused:
             return refused
         self.accepted.append((job_id, project_id))
@@ -584,7 +602,7 @@ def _plan_desk(trip: Trip, health: HealthService | None = None) -> PlanDesk:
     job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
     registry = PlanJobRegistry(clock, job, log)
     service = PlanRequestService(planning.unit_of_work, health or _optimizer(), log, registry)
-    return PlanDesk(planning, solver, log, registry, service, PlanRunQueries(planning.unit_of_work))
+    return PlanDesk(planning, solver, clock, log, registry, service, PlanRunQueries(planning.unit_of_work))
 
 
 def _endings() -> st.SearchStrategy[Script]:
@@ -786,3 +804,100 @@ def test_two_fast_presses_start_one_job(trip: Trip) -> None:
     desk.solver.cue(None)
     desk.until_ended(job_id)
     assert desk.solver.solves == 1
+
+
+# --------------------------------------------------------------- ignore_memo on Calculate (ADR-015 line 21, D74, D218)
+FLAG_UNIVERSE = {"plan_runs", "jobs", "refusals_logged"}
+MISSING_START = ("missing_anchor", 422, "Set the Start before calculating")
+OPTIMIZER_UNAVAILABLE = ("optimizer_unavailable", 503, "Optimizer unavailable - nothing was changed")
+REFUSED_PROJECTS = ("project-1", "project-2", "project-3")  # busy, without anchors, with the optimizer down
+KEPT_UNDER_S = 60.0  # each wait stays short, so no finished job of the sequence expires (KEPT_FOR_S) while polled
+
+
+@dataclass(frozen=True)
+class FlaggedPress:
+    """One accepted Calculate: the flag it sends, how its solve ends, and how long the job runs by the clock."""
+
+    ignore_memo: bool
+    ending: Script
+    waited_ms: int
+
+
+@st.composite
+def flagged_presses(draw: st.DrawFn) -> list[FlaggedPress]:
+    """A sequence holding both flag values, so every rule runs on every example (D212)."""
+    flags = [*draw(st.permutations([False, True])), *draw(st.lists(st.booleans(), max_size=2))]
+    waited_ms = st.integers(1, int(KEPT_UNDER_S * 1000))
+    return [FlaggedPress(flag, draw(_endings()), draw(waited_ms)) for flag in flags]
+
+
+def _flag_view(desk: PlanDesk) -> dict[str, Any]:
+    """The desk's universe, each job also with the `ignore_memo` and `memo_hit` its poll shows."""
+    view = desk.view()
+    polls = {job_id: desk.poll(job_id) for job_id, _ in desk.accepted}
+    view["jobs"] = tuple((*row, polls[row[0]].ignore_memo, polls[row[0]].memo_hit) for row in view["jobs"])
+    return view
+
+
+def _refusals_alike(desk: PlanDesk, unavailable: PlanRequestService) -> dict[bool, list[object]]:
+    """Each pre-check refuses a press, once with and once without the flag."""
+    answers: dict[bool, list[object]] = {}
+    for flag in (False, True):
+        presses = [
+            desk.press("project-1", ignore_memo=flag),
+            desk.press("project-2", ignore_memo=flag),
+            desk.press("project-3", unavailable, ignore_memo=flag),
+        ]
+        answers[flag] = [_refusal_of(answer) if isinstance(answer, PlanRefusedError) else answer for answer in presses]
+    return answers
+
+
+@settings(deadline=None, max_examples=25)
+@given(trip=trips(), presses=flagged_presses())
+def test_calculate_reports_the_ignore_memo_it_was_given_and_refuses_alike_with_or_without_it(
+    trip: Trip, presses: list[FlaggedPress]
+) -> None:
+    desk = _plan_desk(trip)
+    desk.planning.snapshots["project-2"] = ProjectSnapshot()
+    unavailable = desk.service_with(_optimizer("degraded-unhealthy"))
+    refusals = tuple(
+        (project_id, status, reason)
+        for project_id, (reason, status, _) in zip(
+            REFUSED_PROJECTS, (JOB_ACTIVE, MISSING_START, OPTIMIZER_UNAVAILABLE), strict=True
+        )
+    )
+    for press in presses:
+        before = _flag_view(desk)
+        job_id = desk.press("project-1", ignore_memo=press.ignore_memo)
+        assert isinstance(job_id, str), f"a Calculate with ignore_memo={press.ignore_memo} was refused: {job_id}"
+        desk.until_settled()
+
+        answers = _refusals_alike(desk, unavailable)
+
+        assert answers[False] == answers[True] == [JOB_ACTIVE, MISSING_START, OPTIMIZER_UNAVAILABLE]
+        accepted = (job_id, "project-1", "solving", None, press.ignore_memo, False)
+        expected = {
+            "jobs": set_to((*before["jobs"], accepted)),
+            "refusals_logged": set_to((*before["refusals_logged"], *refusals, *refusals)),
+        }
+        assert_state_delta(before, _flag_view(desk), FLAG_UNIVERSE, expected, strict=True)
+
+        before = _flag_view(desk)
+        desk.clock.advance(press.waited_ms / 1000)
+        desk.solver.cue(press.ending)
+        ended = desk.until_ended(job_id)
+
+        state, reason, stored = _ending_of(press.ending)
+        finished = (job_id, "project-1", state, ended.plan_run_id, press.ignore_memo, False)
+        delta: dict[str, Any] = {"jobs": set_to((*before["jobs"][:-1], finished))}
+        if stored:
+            number = sum(run.project_id == "project-1" for run in desk.planning.runs)
+            delta["plan_runs"] = gained(("project-1", number, "ready" if reason is None else "failed", reason))
+        assert_state_delta(before, _flag_view(desk), FLAG_UNIVERSE, delta, strict=True)
+        logged = desk.log.fields_of("plan.job.finished")[-1]
+        assert (logged["job_id"], logged["ignore_memo"], logged["memo_hit"]) == (job_id, press.ignore_memo, False)
+        assert logged["elapsed_ms"] == press.waited_ms, "plan.job.finished counts elapsed time in milliseconds"
+        assert round(ended.elapsed_s * 1000) == press.waited_ms, "the poll counts elapsed time in seconds"
+        completed = [f for f in desk.log.fields_of("plan.run.completed") if f["plan_run_id"] == ended.plan_run_id]
+        expected_completed = [(press.ignore_memo, False)] if stored else []
+        assert [(fields["ignore_memo"], fields["memo_hit"]) for fields in completed] == expected_completed

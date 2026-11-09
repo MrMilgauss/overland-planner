@@ -48,6 +48,7 @@ class _PlannedProject:
     id: str
     snapshot: ProjectSnapshot
     stamp: ProjectStamp
+    ignore_memo: bool
 
 
 @dataclass(frozen=True)
@@ -71,8 +72,9 @@ class PlanRequestJob:
     event_log: EventLog
     files: FileStore
 
-    def run(self, project_id: str, progress: PlanJobProgress) -> StoredRun:
-        project = self._read(project_id)
+    def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
+        """`ignore_memo` is reported on the stored run's event; with no memo yet (05-10) it changes nothing else."""
+        project = self._read(project_id, ignore_memo)
         progress.enter("computing_legs")
         legs = self._resolve_legs(project.snapshot, progress)
         with progress.solver_slot():
@@ -116,10 +118,10 @@ class PlanRequestJob:
             if not isinstance(content, CanonicalPointsMissing)
         }
 
-    def _read(self, project_id: str) -> _PlannedProject:
+    def _read(self, project_id: str, ignore_memo: bool) -> _PlannedProject:
         with self.unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
-            return _PlannedProject(project_id, snapshot, uow.project_snapshots.stamp(project_id))
+            return _PlannedProject(project_id, snapshot, uow.project_snapshots.stamp(project_id), ignore_memo)
 
     def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
         pairs = SolverModelBuilder(snapshot).required_pairs()
@@ -149,6 +151,8 @@ class PlanRequestJob:
             report_items=None,
             project_items=len(project.snapshot.items),
             invariants=finding.invariants,
+            memo_hit=False,
+            ignore_memo=project.ignore_memo,
         )
         return StoredRun(run.id, finding.failure_reason)
 

@@ -91,10 +91,25 @@ def press_calculate(world: PlannerWorld) -> None:
     """Marco presses Calculate; the plan is not awaited. A refused press keeps the job it was refused for."""
     assert world.project_id is not None, "no project is open"
     world.before = world.planning_view()
-    answer = world.note(world.marco().calculate(world.project_id))
+    armed = _rule_breaking_optimizer_is_armed(world)
+    answer = world.note(_calculate_ignoring_memo(world) if armed else world.marco().calculate(world.project_id))
     if answer.status_code == 202:
         world.scratch["job_id"] = str(answer.json()["job_id"])
+        if armed:
+            job = _plan_job(world, world.scratch["job_id"])
+            assert job["ignore_memo"] is True, f"the armed Calculate did not ignore the memo: {job}"
     world.after = world.planning_view()
+
+
+def _rule_breaking_optimizer_is_armed(world: PlannerWorld) -> bool:
+    """The W1 Given keeps its first, real plan as `previous_success`, then arms the rule-breaking optimizer (D218)."""
+    return "previous_success" in world.scratch
+
+
+def _calculate_ignoring_memo(world: PlannerWorld) -> Any:
+    """Calculate with `?ignore_memo=true` (D218), so the armed optimizer is really asked to propose an order rather than
+    the memo answering from plan run #1. `PlannerSession.calculate` takes no parameters, so this press is made here."""
+    return world.marco()._request("POST", f"/api/projects/{world.project_id}/plan-runs", params={"ignore_memo": "true"})
 
 
 def wait_for_plan(world: PlannerWorld) -> None:

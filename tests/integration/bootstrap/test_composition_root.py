@@ -280,3 +280,30 @@ def test_a_second_calculate_is_refused_until_the_job_has_ended_even_when_it_fail
         assert time.monotonic() < deadline, f"the job did not fail: {job}"
     assert job["plan_run_id"] is None
     assert client.post(calculate).status_code == 202
+
+
+def _ended_job(client: TestClient, job_id: str) -> dict[str, Any]:
+    deadline = time.monotonic() + 30
+    while (job := client.get(f"/api/plan-jobs/{job_id}").json())["state"] not in {"done", "failed"}:
+        assert time.monotonic() < deadline, f"the job did not end: {job}"
+    return dict(job)
+
+
+def test_calculate_takes_ignore_memo_as_a_boolean_and_its_poll_shows_it(data_dir: Path) -> None:
+    client = TestClient(
+        create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=ScriptedTourSolver()))
+    )
+    project_id, place_id = _project_with_a_place(client)
+    client.put(f"/api/projects/{project_id}/anchors", json={"start_item_id": place_id, "end_item_id": place_id})
+    calculate = f"/api/projects/{project_id}/plan-runs"
+
+    refused = client.post(calculate, params={"ignore_memo": "perhaps"})
+
+    assert (refused.status_code, refused.json().get("code")) == (422, "validation_error")
+    assert client.get(f"/api/projects/{project_id}/plan-runs").json() == [], "a refused Calculate stored a run"
+    for sent, shown in ((None, False), ("true", True)):
+        params = {} if sent is None else {"ignore_memo": sent}
+        accepted = client.post(calculate, params=params)  # 202, not 409: the refused press started no job
+        assert accepted.status_code == 202, accepted.text
+        job = _ended_job(client, accepted.json()["job_id"])
+        assert (job["state"], job["ignore_memo"], job["memo_hit"]) == ("done", shown, False)
