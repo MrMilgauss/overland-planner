@@ -39,8 +39,8 @@ from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.catalog.track_stats_calculator import TrackStats, TrackStatsCalculator
-from overland_planner.domain.planning.plan_run import Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanReport, PlanRunAssembler
+from overland_planner.domain.planning.plan_run import PlanReport, Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock

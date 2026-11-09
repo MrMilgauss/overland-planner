@@ -12,8 +12,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
-from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanReport
+from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
 
 
 class ErrorEnvelope(BaseModel):

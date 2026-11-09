@@ -125,6 +125,13 @@ class Totals:
         )
 
 
+@dataclass(frozen=True)
+class PlanReport:
+    """The minimal consideration report (US-07b completes it): why a Failed run has no plan, in product words."""
+
+    reason: str
+
+
 def stored_length_km(track: TrackItem) -> float:
     """The track's stored length, the off-road km a stop of it drives (HC-5, ADR-009 check 4)."""
     return track.length_m / _METRES_PER_KM

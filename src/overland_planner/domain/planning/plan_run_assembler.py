@@ -12,10 +12,9 @@ warnings arrive with later slices.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from overland_planner.domain.catalog.item import CatalogItem
-from overland_planner.domain.planning.plan_run import PlanStop
+from overland_planner.domain.planning.plan_run import PlanReport, PlanStop
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
 from overland_planner.domain.routing.road_leg import LegTable
 
@@ -25,13 +24,6 @@ _PRODUCT_WORDS = {
     "optimizer_failed": "optimizer failed",
     "timeout": "timeout",
 }
-
-
-@dataclass(frozen=True)
-class PlanReport:
-    """The minimal consideration report (US-07b completes it): why a Failed run has no plan."""
-
-    reason: str
 
 
 class PlanRunAssembler:

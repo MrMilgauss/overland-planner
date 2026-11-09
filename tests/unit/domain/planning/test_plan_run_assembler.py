@@ -21,8 +21,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
-from overland_planner.domain.planning.plan_run import PlanStop, Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanReport, PlanRunAssembler
+from overland_planner.domain.planning.plan_run import PlanReport, PlanStop, Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.domain.planning.trips import Trip, left_at, reached_at, trips
 

@@ -9,8 +9,7 @@ from typing import Protocol
 
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
-from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanReport
+from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, Totals
 
 
 @dataclass(frozen=True)

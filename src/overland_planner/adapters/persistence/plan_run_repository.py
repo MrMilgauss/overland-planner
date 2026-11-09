@@ -17,8 +17,7 @@ from sqlalchemy import Connection, RowMapping, func, null, select
 from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.planning.plan_run import PlanRun, PlanStop, Totals
-from overland_planner.domain.planning.plan_run_assembler import PlanReport
+from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanStop, Totals
 
 _STOP_FIELDS = tuple(field.name for field in fields(PlanStop))
 _POINT_FIELDS = frozenset({"location", "entry", "exit"})
