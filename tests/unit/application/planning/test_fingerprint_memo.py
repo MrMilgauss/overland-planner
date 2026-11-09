@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.planning.facade import FingerprintMemo, PlanJobRegistry, PlanRequestJob
@@ -25,7 +25,7 @@ from overland_planner.application.ports.tour_solver import TourFound, TourNoRout
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.poi import PoiItem
-from overland_planner.domain.catalog.project import OffroadSpeed
+from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
 from overland_planner.domain.planning.plan_run import Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
@@ -41,7 +41,7 @@ from tests.unit.application.planning.planning_doubles import (
     RecordingRoadMap,
     job_when_ended,
 )
-from tests.unit.domain.planning.trips import PROJECT, Trip, road_time_s, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, road_time_s, trips
 
 UNIVERSE = {"plan_runs", "solver_calls"}
 OTHER_PROJECT = "q"
@@ -161,14 +161,31 @@ def calculates(draw: st.DrawFn, trip: Trip) -> Calculate:
     )
 
 
+def _round_trip_with_nothing_to_visit() -> Trip:
+    start = PoiItem(id="start", project_id=PROJECT, name="Casa Marco", location=POINTS[0])
+    leg_m = {pair: metres for metres, pair in enumerate(POINT_PAIRS, start=1)}
+    legs = LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
+    snapshot = ProjectSnapshot(start.id, start.id, (start,), DEFAULT_OFFROAD_SPEED)
+    return Trip(snapshot, legs, leg_m, start, start, ())
+
+
+def _press(answer: TourOutcome) -> Calculate:
+    return Calculate(PROJECT, "same", ignore_memo=False, speed=OffroadSpeed(1.0), answer=answer)
+
+
+PRESSES = trips().flatmap(lambda trip: st.tuples(st.just(trip), st.lists(calculates(trip), min_size=1, max_size=8)))
+
+
 @settings(deadline=None, max_examples=60)
-@given(data=st.data(), trip=trips())
+@given(case=PRESSES)
+@example(case=(_round_trip_with_nothing_to_visit(), [_press(TourFound(())), _press(TourNoRoute())]))  # an empty order
 def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint_or_the_memo_is_ignored(
-    data: st.DataObject, trip: Trip
+    case: tuple[Trip, list[Calculate]],
 ) -> None:
+    trip, presses = case
     desk = Desk(trip)
     memo: dict[tuple[str, str], tuple[str, ...]] = {}  # (project, changed input) -> order of its latest ready run
-    for press in data.draw(st.lists(calculates(trip), min_size=1, max_size=8), label="calculates"):
+    for press in presses:
         snapshot = desk.project_as(press.project, press.changed, press.speed)
         job, legs = desk.job(press.changed)
         desk.solver.answers = [press.answer]
@@ -182,7 +199,7 @@ def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint
 
         visiting = tuple(item.id for item in snapshot.visited_items())
         fresh = _proposed(press.answer.order, visiting) if isinstance(press.answer, TourFound) else None
-        order = reused or fresh
+        order = reused if reused is not None else fresh
         number = sum(1 for row in before["plan_runs"] if row[0] == press.project) + 1
         if order is None:
             row = (press.project, number, "failed", getattr(press.answer, "reason", None), (), None, False)
