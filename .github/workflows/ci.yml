@@ -261,6 +261,17 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: uv sync --frozen
         run: uv sync --frozen
+      - name: Filesystem type of the test data folders (D168)
+        run: |
+          # PLANNER_TEST_WORKSPACE is the root of every test data folder, DATA_DIR among them.
+          mkdir -p "$DATA_DIR"
+          df -T "$PLANNER_TEST_WORKSPACE"
+          {
+            echo "### Test data folder filesystem"
+            echo '```'
+            df -T "$PLANNER_TEST_WORKSPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: pytest -m slow (A-6 in-process; selecting nothing exits 5 and fails the job)
         run: |
           mkdir -p "$DATA_DIR"

@@ -885,6 +885,9 @@ def test_slow_properties_job_runs_exactly_a_6_at_profile_ci_and_job_2_does_not()
         assert job["env"][name] == _job(workflow, "test-python")["env"][name]
     assert _uses(job, "astral-sh/setup-uv") and "uv sync --frozen" in _runs(job)
     assert len(pytest_steps) == 1 and not pytest_steps[0].get("continue-on-error")
+    assert _index(job, "df -T") < job["steps"].index(pytest_steps[0]), "D168: the data folder's filesystem is shown"
+    assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]
+    assert "GITHUB_STEP_SUMMARY" in _runs(job)[_index(job, "df -T")]
     command = pytest_steps[0]["run"]
     assert "uv run pytest -q $PENDING_FLAGS -m slow" in command  # pytest exits 5 when it selects nothing
     expression = re.search(r"-m (?P<expression>\S+)", command)
