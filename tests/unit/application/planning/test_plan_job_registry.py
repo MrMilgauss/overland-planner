@@ -352,7 +352,11 @@ def test_the_project_stays_readable_while_the_optimizer_works(trip: Trip) -> Non
 
 
 @settings(deadline=None)
-@given(trip=trips(), waited_s=st.floats(0, 2 * KEPT_FOR_S, allow_nan=False), ended=st.booleans())
+@given(
+    trip=trips(),
+    waited_s=st.one_of(st.just(KEPT_FOR_S), st.floats(0, 2 * KEPT_FOR_S, allow_nan=False)),  # ten minutes is gone
+    ended=st.booleans(),
+)
 def test_a_finished_job_is_kept_for_ten_minutes_and_a_running_one_as_long_as_it_runs(
     trip: Trip, waited_s: float, ended: bool
 ) -> None:
@@ -372,6 +376,7 @@ def test_a_finished_job_is_kept_for_ten_minutes_and_a_running_one_as_long_as_it_
         assert job is None, "an expired job is not known any more"
     else:
         assert job is not None, "the job was forgotten too early"
+        assert (job.id, job.project_id) == (job_id, PROJECT), "the poll names its job and project"
         assert job.elapsed_s == (0.0 if ended else waited), "elapsed time runs until the job ends"
     assert planner.registry.get("no-such-job") is None
     planner.held.release()
