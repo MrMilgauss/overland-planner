@@ -2,7 +2,8 @@
 
 Points come from a small pool so that different items often share a point. Every ordered pair of different points has
 its own distance, so an arc or a leg taken from the wrong end of a track shows up. Pairs of identical points are left
-out of the table on purpose: no router answers them.
+out of the table on purpose: no router answers them. Track lengths and the project's off-road speed are drawn too, the
+default 15 km/h among them.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from overland_planner.application.catalog.facade import canonical_points_file
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
 from overland_planner.domain.catalog.track import TrackPoint
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
@@ -29,6 +31,8 @@ NAMES = ("Casa Marco", "Briancon", "Strada dell'Assietta")  # few on purpose: na
 
 points = st.sampled_from(POINTS)
 names = st.sampled_from(NAMES)
+track_lengths_m = st.floats(min_value=1.0, max_value=200_000.0, allow_nan=False, allow_infinity=False)
+offroad_speeds = st.one_of(st.just(DEFAULT_OFFROAD_SPEED), st.floats(0.5, 120.0).map(OffroadSpeed))
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,14 @@ class Trip:
     def road_m(self, origin: Coordinate, destination: Coordinate) -> int:
         """The road between two points: nothing to drive between identical points."""
         return 0 if origin == destination else self.leg_m[origin, destination]
+
+    def road_s(self, origin: Coordinate, destination: Coordinate) -> int:
+        """The road time between two points, as the leg table was given it."""
+        return 0 if origin == destination else road_time_s(self.leg_m[origin, destination])
+
+    @property
+    def speed(self) -> OffroadSpeed:
+        return self.snapshot.offroad_speed
 
     def tracks(self) -> tuple[TrackItem, ...]:
         """The Included tracks to place, the ones a plan must drive."""
@@ -61,6 +73,11 @@ def reached_at(item: CatalogItem) -> Coordinate:
 
 def left_at(item: CatalogItem) -> Coordinate:
     return item.exit if isinstance(item, TrackItem) else item.location
+
+
+def road_time_s(distance_m: int) -> int:
+    """A made-up road time, about 72 km/h, never 0 for a road that is driven."""
+    return max(1, distance_m * 3 // 50)
 
 
 def track_points(entry: Coordinate, exit_: Coordinate, point_count: int) -> tuple[TrackPoint, ...]:
@@ -91,7 +108,7 @@ def _track(draw: st.DrawFn, item_id: str, included: bool = True) -> TrackItem:
         point_count=point_count,
         entry=entry,
         exit=exit_,
-        length_m=1000.0,
+        length_m=draw(track_lengths_m),
         included=included,
     )
 
@@ -113,5 +130,6 @@ def trips(draw: st.DrawFn) -> Trip:
         st.lists(st.integers(1, 400_000), min_size=len(POINT_PAIRS), max_size=len(POINT_PAIRS), unique=True)
     )
     leg_m = dict(zip(POINT_PAIRS, distances, strict=True))
-    legs = LegTable(RoadLeg(origin, destination, m, max(1, m * 3 // 50)) for (origin, destination), m in leg_m.items())
-    return Trip(ProjectSnapshot(start.id, end.id, tuple(listed)), legs, leg_m, start, end, items)
+    legs = LegTable(RoadLeg(origin, destination, m, road_time_s(m)) for (origin, destination), m in leg_m.items())
+    snapshot = ProjectSnapshot(start.id, end.id, tuple(listed), draw(offroad_speeds))
+    return Trip(snapshot, legs, leg_m, start, end, items)

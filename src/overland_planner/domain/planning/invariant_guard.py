@@ -2,8 +2,8 @@
 
 It only judges: the job reads and hashes the canonical files, hands the evidence over and does the logging. The first
 violation found is the result, and it names the rule. Slice 01b runs HC-2, HC-3 without the report, HC-1, HC-5 by
-full-sequence hash and the legs against this job's table. Track length against totals, Unconfirmed legs and retraces
-arrive with their slices.
+full-sequence hash and the legs against this job's table; slice 02 adds check 4's track length and the leg time of
+check 5. Unconfirmed legs and retraces arrive with their slices.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
-from overland_planner.domain.planning.plan_run import PlanStop
+from overland_planner.domain.planning.plan_run import PlanStop, stored_length_km
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, left_at, reached_at
 from overland_planner.domain.routing.road_leg import LegTable
 
@@ -101,21 +101,26 @@ class InvariantGuard:
             yield GuardViolation("HC-5", f"track {item.id}: canonical file v{item.direction_version} is missing")
         if found != CanonicalFileEvidence(item.canonical_sha256, item.point_count, item.entry, item.exit):
             yield GuardViolation("HC-5", f"track {item.id}: canonical file v{item.direction_version} has changed")
+        if stop.track_km != stored_length_km(item):
+            yield GuardViolation(
+                "HC-5", f"track {item.id}: {stop.track_km} km driven, not its stored {item.length_m} m"
+            )
 
     def _leg_violations(self, stops: tuple[PlanStop, ...]) -> Iterator[GuardViolation]:
         # A consistency check between the stops and this job's leg table; it does not prove the table right.
-        if stops[0].leg_km is not None:
+        if (stops[0].leg_km, stops[0].leg_s) != (None, None):
             yield GuardViolation("leg_consistency", f"the first stop {stops[0].item_id} has a road leg")
         for previous, stop in pairwise(stops):
-            road_km = self._road_km(previous, stop)
-            if road_km is None or stop.leg_km != road_km:
+            road = self._road(previous, stop)
+            if road is None or (stop.leg_km, stop.leg_s) != road:
                 yield GuardViolation("leg_consistency", f"the leg into {stop.item_id} is not the road map's")
 
-    def _road_km(self, previous: PlanStop, stop: PlanStop) -> float | None:
+    def _road(self, previous: PlanStop, stop: PlanStop) -> tuple[float, int] | None:
+        """The leg's km and seconds in this job's table, or None for a pair nobody measured."""
         origin = left_at(self._snapshot.item(previous.item_id))
         destination = reached_at(self._snapshot.item(stop.item_id))
         try:
-            return self._legs.distance_km(origin, destination)
+            return self._legs.distance_km(origin, destination), self._legs.duration_s(origin, destination)
         except KeyError:
             return None
 

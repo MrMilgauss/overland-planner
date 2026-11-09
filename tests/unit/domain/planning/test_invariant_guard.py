@@ -1,5 +1,5 @@
-"""The HC guard on a plan (ADR-009 with Amendments 1 and 2, slice 01b scope): every assembled plan passes, every broken
-one fails naming its rule.
+"""The HC guard on a plan (ADR-009 with Amendments 1 and 2, slice 01b scope plus slice 02's track length and leg time):
+every assembled plan passes, every broken one fails naming its rule.
 
 Driving port: `InvariantGuard` (`check_order`, `check_plan` are its public interface; it is pure).
 Observable universe = the guard's result, the stops it judged and the snapshot read.
@@ -212,6 +212,28 @@ def _first_stop_has_a_road_leg(plan: Plan, _: st.DrawFn) -> Broken:
     return Broken(plan.with_stop(0, leg_km=0.0), plan.files, "leg_consistency", plan.stops[0].item_id)
 
 
+def _track_length_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    """ADR-009 check 4, its length part: the stop drives other than the stored length, or no length at all."""
+    at = draw(st.sampled_from(plan.track_positions()))
+    stop = plan.stops[at]
+    assert stop.track_km is not None
+    length = draw(st.sampled_from((stop.track_km + 0.001, stop.track_km / 2, None)))
+    return Broken(plan.with_stop(at, track_km=length), plan.files, "HC-5", stop.item_id)
+
+
+def _leg_time_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    """ADR-009 check 5, its time part: the distance is the table's, the time is not."""
+    at = draw(st.integers(1, len(plan.stops) - 1))
+    stop = plan.stops[at]
+    assert stop.leg_s is not None
+    leg_s = draw(st.sampled_from((stop.leg_s + 1, None)))
+    return Broken(plan.with_stop(at, leg_s=leg_s), plan.files, "leg_consistency", stop.item_id)
+
+
+def _first_stop_has_a_leg_time(plan: Plan, _: st.DrawFn) -> Broken:
+    return Broken(plan.with_stop(0, leg_s=0), plan.files, "leg_consistency", plan.stops[0].item_id)
+
+
 def _road_leg_nobody_measured(plan: Plan, _: st.DrawFn) -> Broken:
     """A snapshot whose leg table lacks the pair: the guard reports it, it does not crash."""
     return Broken(plan.stops, plan.files, "leg_consistency", legs=LegTable(()))
@@ -228,10 +250,19 @@ def _breakings(plan: Plan) -> list[Breaking]:
         _unknown_item_added,
         _road_leg_differs,
         _first_stop_has_a_road_leg,
+        _leg_time_differs,
+        _first_stop_has_a_leg_time,
     ]
     with_items: list[Breaking] = [_item_dropped, _item_repeated] if plan.later_positions else []
     tracks: list[Breaking] = (
-        [_other_direction_version, _stop_shows_other_point_count, _stop_shows_other_hash, _file_vanished, _file_differs]
+        [
+            _other_direction_version,
+            _stop_shows_other_point_count,
+            _stop_shows_other_hash,
+            _file_vanished,
+            _file_differs,
+            _track_length_differs,
+        ]
         if plan.track_positions()
         else []
     )

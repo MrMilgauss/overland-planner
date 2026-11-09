@@ -10,6 +10,7 @@ from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
 
 Anchor = Literal["Start", "End"]
 
@@ -27,6 +28,7 @@ class ProjectSnapshot:
     start_item_id: str | None = None
     end_item_id: str | None = None
     items: tuple[CatalogItem, ...] = ()
+    offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED
 
     def missing_anchor(self) -> Anchor | None:
         """The anchor to set first: with both missing, the Start."""
