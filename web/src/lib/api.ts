@@ -32,12 +32,34 @@ export interface NewPlace {
   lon: number;
 }
 
+/** One stop (FR-6.1), km and seconds unrounded; a run stored before the per-stop columns (05-07) shows them null, and
+ * `track_km` and `offroad_s` are null on a place. */
 export interface PlanStop {
   name: string;
   type: 'track' | 'poi';
   leg_km: number | null;
+  leg_s: number | null;
+  cumulative_km: number | null;
+  cumulative_s: number | null;
+  track_km: number | null;
+  offroad_s: number | null;
   entry: Point | null;
   exit: Point | null;
+}
+
+/** The plan's road, off-road and total driving (FR-6.2), unrounded: rounding is the web's. */
+export interface PlanTotals {
+  road_km: number;
+  road_s: number;
+  offroad_km: number;
+  offroad_s: number;
+  total_km: number;
+  total_s: number;
+}
+
+/** Why a Failed run has no plan, in product words (D206). */
+export interface PlanReport {
+  reason: string;
 }
 
 export interface PlanRun {
@@ -46,11 +68,14 @@ export interface PlanRun {
   status: 'ready' | 'failed';
 }
 
-/** A plan run with its stops; a Failed run has none and names its `failure_reason`. */
+/** A plan run with its stops and totals; a Failed run has neither, names its `failure_reason` code and its `report`.
+ * A run stored before the totals (0006) shows `totals` null; one stored before the report (05-08) `report` null. */
 export interface PlanRunDetail extends PlanRun {
   project_id: string;
   failure_reason: string | null;
   stops: PlanStop[];
+  totals: PlanTotals | null;
+  report: PlanReport | null;
 }
 
 export type PlanJobState =

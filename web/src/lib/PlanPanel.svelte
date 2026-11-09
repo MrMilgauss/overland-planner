@@ -1,6 +1,6 @@
 <script lang="ts">
   // The plan of a project: Calculate, the running job's state (polled every 500 ms), then the latest ready run with
-  // its Itinerary and Export GPX. Every refusal shows the planner's own message, verbatim.
+  // its Itinerary, Totals and Export GPX. Every refusal shows the planner's own message, verbatim.
   //
   // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
   // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
@@ -64,6 +64,12 @@
     } catch (error) {
       problem = failureText(error);
     }
+  }
+
+  /** The report's reason in product words (D211); the code only for a run stored without a report. */
+  function failedReason(run: PlanRunDetail): string {
+    const reason = run.report?.reason ?? run.failure_reason;
+    return reason ? ` (${reason})` : '';
   }
 
   function stopWatching(): void {
@@ -151,14 +157,12 @@
   <p role="alert">{pollProblem}</p>
 {/if}
 {#if failedRun}
-  <p role="alert">
-    This plan run failed{failedRun.failure_reason ? ` (${failedRun.failure_reason})` : ''}
-  </p>
+  <p role="alert">This plan run failed{failedReason(failedRun)}</p>
 {/if}
 
 {#if readyRun}
   <p class="run">Run {readyRun.number}</p>
-  <Itinerary stops={readyRun.stops} />
+  <Itinerary stops={readyRun.stops} totals={readyRun.totals} />
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}

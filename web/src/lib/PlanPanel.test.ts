@@ -1,7 +1,7 @@
-// The plan of a project (slice 01b): Calculate, polling every 500 ms, the Itinerary and Export GPX, each job state and
-// each refusal. The fetch stub stands in for the planner's HTTP API (the port of the page); only setTimeout is faked,
+// The plan of a project (slices 01b and 02): Calculate, polling every 500 ms, the Itinerary with its Totals and Export
+// GPX, each job state, each refusal and a Failed run's report. The fetch stub stands in for the planner's HTTP API (the port of the page); only setTimeout is faked,
 // so the polling clock is the test's.
-// bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, step 04-10); the job's states are property-tested on
+// bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11); the job's states are property-tested on
 // the server (steps 04-04, 04-09), and the journey runs in a real browser (test_slice_01b.py).
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
@@ -29,7 +29,21 @@ function listed(...runs: [string, number, string][]): Reply {
   return { status: 200, body: runs.map(([id, number, status]) => ({ id, number, status })) };
 }
 
-function readyRun(id: string, number: number, stopName = 'Briancon'): Reply {
+const TOTALS = {
+  road_km: 412.25,
+  road_s: 34_800,
+  offroad_km: 98.75,
+  offroad_s: 29_400,
+  total_km: 511.0,
+  total_s: 64_200,
+};
+
+function readyRun(
+  id: string,
+  number: number,
+  stopName = 'Briancon',
+  totals: typeof TOTALS | null = null,
+): Reply {
   const stop = { ...CASA, name: stopName, leg_km: 12.25 };
   return {
     status: 200,
@@ -40,14 +54,26 @@ function readyRun(id: string, number: number, stopName = 'Briancon'): Reply {
       status: 'ready',
       failure_reason: null,
       stops: [CASA, stop],
+      totals,
+      report: null,
     },
   };
 }
 
-function failedRun(id: string, number: number, reason: string): Reply {
+/** A Failed run names its code; one stored before the report (05-08) has none. */
+function failedRun(id: string, number: number, code: string, report: string | null = null): Reply {
   return {
     status: 200,
-    body: { id, project_id: 'p1', number, status: 'failed', failure_reason: reason, stops: [] },
+    body: {
+      id,
+      project_id: 'p1',
+      number,
+      status: 'failed',
+      failure_reason: code,
+      stops: [],
+      totals: null,
+      report: report === null ? null : { reason: report },
+    },
   };
 }
 
@@ -167,7 +193,7 @@ describe('Plan panel: calculating', () => {
 
     const itinerary = screen.getByRole('list', { name: 'Itinerary' });
     expect(within(itinerary).getAllByRole('listitem')).toHaveLength(2);
-    expect(within(itinerary).getByText('12.2 km')).toBeInTheDocument();
+    expect(itinerary).toHaveTextContent('12.2 km');
     const link = exportLink();
     expect(link).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
     expect(link).not.toHaveAttribute('download');
@@ -261,6 +287,40 @@ describe('Plan panel: refusals and failures', () => {
     expect(exportLink()).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Itinerary' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+  });
+
+  it('reads a Failed run by its report reason rather than its code', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'failed']),
+      'GET /api/plan-runs/r1': failedRun(
+        'r1',
+        1,
+        'invariant_violation',
+        'internal invariant violation',
+      ),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('This plan run failed (internal invariant violation)');
+    expect(alert).not.toHaveTextContent('invariant_violation');
+  });
+
+  it('shows the Totals of the ready run under its itinerary', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    const totals = screen.getByLabelText('Totals');
+    expect(totals).toHaveTextContent('Road 412.2 km, 9h40');
+    expect(totals).toHaveTextContent('Off-road 98.8 km, 8h10');
+    expect(totals).toHaveTextContent('Total 511.0 km, 17h50');
   });
 
   it('keeps asking through a lost connection, with Calculate usable, until the job answers again', async () => {
