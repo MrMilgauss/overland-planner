@@ -3,7 +3,8 @@
 Production: `uvicorn --factory overland_planner.bootstrap.app_factory:create_app` (reads `os.environ`).
 Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the same `.env` keys (brief §12)
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
-Order: settings -> wire -> probe every registered component in wiring order (the database probe migrates it to head
+Order: settings -> the `MOCK_PLAN` road map, read once (a bad file refuses the start for `routing_provider`) -> wire
+-> probe every registered component in wiring order (the database probe migrates it to head
 first; then the file store round trip, the mount table, the `DATA_DIR` persistence verdict (D121), the GPX
 parser's embedded-sample and billion-laughs check, the GPX writer's write and re-parse and the road map's known pair)
 -> mount routes
@@ -48,7 +49,12 @@ from overland_planner.adapters.persistence.catalog_unit_of_work import SqlAlchem
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
-from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider
+from overland_planner.adapters.routing.mock_routing_provider import (
+    InvalidRoadMapError,
+    MockRoutingProvider,
+    RoadMapScript,
+    read_road_map,
+)
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.application.export.facade import GpxExportService
@@ -84,7 +90,14 @@ class ExternalPorts:
 class _Wiring:
     """The driven adapters of one planner process, built once from the validated settings."""
 
-    def __init__(self, settings: Settings, clock: Clock, event_log: EventLog, ports: ExternalPorts) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        clock: Clock,
+        event_log: EventLog,
+        ports: ExternalPorts,
+        road_map: RoadMapScript | None,
+    ) -> None:
         self._settings = settings
         self._clock = clock
         self._event_log = event_log
@@ -94,7 +107,8 @@ class _Wiring:
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
         self._gpx_writer = GpxpyWriter()
-        self._routing_provider = MockRoutingProvider()  # the only ROUTING_PROVIDER value until slice 06a
+        # the only ROUTING_PROVIDER value until slice 06a
+        self._routing_provider = MockRoutingProvider(script=road_map)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
@@ -180,7 +194,7 @@ def create_app(
         settings = Settings.from_environ(source)
     except InvalidSettingsError as invalid:
         gate.refuse("settings", str(invalid))
-    wiring = _Wiring(settings, clock, event_log, ports)
+    wiring = _Wiring(settings, clock, event_log, ports, _road_map(settings, gate))
     health = gate.probe_in_order(wiring.probe_registry().components())
     _log_degraded(health, event_log)
 
@@ -204,6 +218,16 @@ def create_app(
         auth_enabled=auth_enabled,
     )
     return app
+
+
+def _road_map(settings: Settings, gate: StartupGate) -> RoadMapScript | None:
+    """The `MOCK_PLAN` script, read and validated once; a file that cannot be used refuses the start."""
+    if settings.mock_plan is None:
+        return None
+    try:
+        return read_road_map(settings.mock_plan)
+    except InvalidRoadMapError as invalid:
+        gate.refuse("routing_provider", str(invalid))
 
 
 def _event_log(source: Mapping[str, str], clock: Clock) -> EventLog:

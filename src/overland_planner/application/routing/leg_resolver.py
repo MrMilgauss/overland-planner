@@ -1,8 +1,8 @@
 """Leg resolver (brief section 8): the road legs of a plan, from the road map.
 
 The seam for the confidence ladder and the leg cache (slices 05 and 06b). Today it asks for the required pairs: each
-distinct pair once, grouped by origin so that no pair outside the request is asked. Identical points need no road map,
-because nothing is driven between them (`LegTable` answers 0 m).
+distinct pair once, grouped by origin so that no pair outside the request is asked, and hands on each pair's distance
+and road time. Identical points need no road map, because nothing is driven between them (`LegTable` answers 0 m, 0 s).
 """
 
 from __future__ import annotations
@@ -32,5 +32,5 @@ class LegResolver:
 
     def _legs(self, origin: Coordinate, targets: list[Coordinate]) -> Iterator[RoadLeg]:
         (row,) = self._provider.matrix([origin], targets)
-        for target, distance_m in zip(targets, row, strict=True):
-            yield RoadLeg(origin, target, distance_m)
+        for target, measure in zip(targets, row, strict=True):
+            yield RoadLeg(origin, target, measure.distance_m, measure.duration_s)

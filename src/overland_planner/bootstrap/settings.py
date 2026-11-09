@@ -6,6 +6,8 @@ The shared household password (PLANNER_BASIC_AUTH_USER / _PASSWORD, brief §12) 
 empty value counts as unset (a `KEY=` line). The password is a `SecretStr`, so no repr or error message shows it.
 The upload caps (MAX_UPLOAD_FILE_MB, MAX_UPLOAD_REQUEST_MB in MiB, MAX_UPLOAD_FILES) must be positive (ADR-011 Am. 1);
 an empty cap (compose passes `${MAX_UPLOAD_...:-}`) is its default.
+MOCK_PLAN is the path of the offline road map's script (brief sections 6 and 12); empty or absent means no script. The
+composition root reads and validates the file once at start-up; a bad file refuses the start for `routing_provider`.
 """
 
 from __future__ import annotations
@@ -51,8 +53,9 @@ class Settings(BaseSettings):
     max_upload_files: Annotated[int, Field(validation_alias="MAX_UPLOAD_FILES", gt=0)] = 50
     basic_auth_user: Annotated[str | None, Field(validation_alias="PLANNER_BASIC_AUTH_USER")] = None
     basic_auth_password: Annotated[SecretStr | None, Field(validation_alias="PLANNER_BASIC_AUTH_PASSWORD")] = None
+    mock_plan: Annotated[Path | None, Field(validation_alias="MOCK_PLAN")] = None
 
-    @field_validator("basic_auth_user", "basic_auth_password", mode="before")
+    @field_validator("basic_auth_user", "basic_auth_password", "mock_plan", mode="before")
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value

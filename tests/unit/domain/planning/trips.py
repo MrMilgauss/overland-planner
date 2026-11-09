@@ -113,5 +113,5 @@ def trips(draw: st.DrawFn) -> Trip:
         st.lists(st.integers(1, 400_000), min_size=len(POINT_PAIRS), max_size=len(POINT_PAIRS), unique=True)
     )
     leg_m = dict(zip(POINT_PAIRS, distances, strict=True))
-    legs = LegTable(RoadLeg(origin, destination, m) for (origin, destination), m in leg_m.items())
+    legs = LegTable(RoadLeg(origin, destination, m, max(1, m * 3 // 50)) for (origin, destination), m in leg_m.items())
     return Trip(ProjectSnapshot(start.id, end.id, tuple(listed)), legs, leg_m, start, end, items)

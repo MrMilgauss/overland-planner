@@ -21,6 +21,7 @@ from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.tour_solver import TourNoRoute
 from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
+from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.acceptance.overland_route_planner_mvp.steps.places import trail_file_bytes
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.common.fakes import FakeClock, FakeMountTable
@@ -149,6 +150,21 @@ def test_a_refused_start_exits_non_zero_after_one_refusal_line_and_answers_nothi
     ], record.tail()
     assert "ROUTING_PROVIDER" in record.json_lines()[0]["reason"]
     assert len(record.stdout) == 1, "stdout must hold only the refusal line"
+
+
+def test_a_missing_road_map_file_refuses_the_start_with_one_routing_provider_line(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    road_map = data_dir / "no-such-road-map.yaml"
+
+    with pytest.raises(StartupRefusedError):
+        _client({"DATA_DIR": str(data_dir), "MOCK_PLAN": str(road_map)})
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    refused = [line for line in lines if line["event"] == "health.startup.refused"]
+    assert [line["component"] for line in refused] == ["routing_provider"]
+    assert str(road_map) in refused[0]["reason"]
+    assert "app.started" not in [line["event"] for line in lines]
 
 
 def _project_with_a_trail_between_two_places(client: TestClient) -> tuple[str, dict[str, str]]:

@@ -23,6 +23,7 @@ from overland_planner.application.ports.project_snapshot_reader import ProjectSt
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
+from overland_planner.domain.routing.road_leg import RoadMeasure
 
 MAX_WAIT_S = 30.0
 POLL_S = 0.0005
@@ -161,19 +162,34 @@ class InMemoryPlanningUnitOfWork:
 
 
 class RecordingRoadMap:
-    """Road legs from a table; `asked` counts every pair the road map was asked for."""
+    """Road legs from a table; `asked` counts every pair the road map was asked for.
+
+    The road time of a leg is `leg_s[pair]` when given, else the distance driven at about 60 km/h (at least 1 s).
+    """
 
     provider_id = "road-map-double"
 
-    def __init__(self, leg_m: Mapping[tuple[Coordinate, Coordinate], int], *, gate: Gate | None = None) -> None:
+    def __init__(
+        self,
+        leg_m: Mapping[tuple[Coordinate, Coordinate], int],
+        *,
+        leg_s: Mapping[tuple[Coordinate, Coordinate], int] | None = None,
+        gate: Gate | None = None,
+    ) -> None:
         self._leg_m = leg_m
+        self._leg_s = leg_s
         self.gate = gate or Gate()
         self.asked: Counter[tuple[Coordinate, Coordinate]] = Counter()
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[int]]:
+    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
         self.gate.passing()
         self.asked.update((source, target) for source in sources for target in targets)
-        return [[self._leg_m[source, target] for target in targets] for source in sources]
+        return [[self._measure(source, target) for target in targets] for source in sources]
+
+    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure:
+        metres = self._leg_m[source, target]
+        seconds = max(1, metres * 3 // 50) if self._leg_s is None else self._leg_s[source, target]
+        return RoadMeasure(metres, seconds)

@@ -19,6 +19,8 @@ dependencies = [
     "structlog>=24",
     "python-multipart>=0.0.9",
     "ortools==9.15.6755",
+    # The offline road map's MOCK_PLAN script (brief section 6, D220 f), parsed with yaml.safe_load only.
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
@@ -28,7 +30,6 @@ dev = [
     "hypothesis>=6.100",
     "respx>=0.21",
     "xmlschema>=3.3",
-    "pyyaml>=6.0",
     # State-delta port (Mandate 8). Re-exported by tests/common/state_delta.py.
     "nwave-ai>=3.21",
     # Tooling (DELIVER 01-01, D85): exact pins.

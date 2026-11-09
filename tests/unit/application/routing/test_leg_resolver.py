@@ -2,9 +2,12 @@
 
 Driving ports: `LegResolver` from the routing facade, with the required pairs of the real `SolverModelBuilder`, and
 `PlanJobRegistry` over the real `PlanRequestJob` for what a bad answer does to a job. Driven port: `RoutingProvider`
-(recording double). Observable universe: `road_map.asked`, the pairs asked with their counts.
-Test Budget: 2 behaviors (the required legs come from the road map, each distinct pair asked once; a row that does not
-match its targets is refused, so no leg goes missing silently) x 2 = 4; 3 used.
+(recording double, and the offline road map `MockRoutingProvider` over an in-memory script, behind a counting spy).
+Observable universe: `road_map.asked`, the pairs asked with their counts, and `plan.legs`, the distance and road time
+the table hands to planning for each required pair.
+Test Budget: 3 behaviors (the required legs come from the road map with distance and road time, each distinct pair
+asked once; a scripted road map answers its script on listed pairs and straight line x detour factor at 60 km/h
+elsewhere; a row that does not match its targets is refused, so no leg goes missing silently) x 2 = 6; 4 used.
 """
 
 from __future__ import annotations
@@ -17,10 +20,12 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
+from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, RoadMapScript
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
+from overland_planner.domain.routing.road_leg import LegTable, RoadMeasure, RoadPair
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
@@ -28,26 +33,111 @@ from tests.unit.application.planning.planning_doubles import InMemoryPlanning, R
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT, Trip, trips
 
-UNIVERSE = {"road_map.asked"}
-Row = list[int]
+UNIVERSE = {"road_map.asked", "plan.legs"}
+Row = list[RoadMeasure]
 BUDGET = 500
+DETOUR_FACTOR = 1.3
+METRES_PER_SECOND_AT_60_KMH = 60 / 3.6
 
 
-def _view(road_map: RecordingRoadMap) -> dict[str, Any]:
-    return {"road_map.asked": Counter(road_map.asked)}
+def _view(asked: Counter[RoadPair], table: LegTable | None, pairs: Sequence[RoadPair]) -> dict[str, Any]:
+    legs = {} if table is None else {pair: (table.distance_m(*pair), table.duration_s(*pair)) for pair in pairs}
+    return {"road_map.asked": Counter(asked), "plan.legs": legs}
+
+
+def _distinct_roads(pairs: Sequence[RoadPair]) -> Counter[RoadPair]:
+    return Counter(pair for pair in set(pairs) if pair[0] != pair[1])
 
 
 @given(trip=trips())
-def test_each_distinct_required_pair_is_asked_exactly_once_and_the_table_covers_them_all(trip: Trip) -> None:
+def test_each_distinct_required_pair_is_asked_exactly_once_and_the_table_carries_its_distance_and_road_time(
+    trip: Trip,
+) -> None:
     pairs = SolverModelBuilder(trip.snapshot).required_pairs()
-    road_map = RecordingRoadMap(trip.leg_m)
-    before = _view(road_map)
+    leg_s = {pair: metres // 7 + 11 for pair, metres in trip.leg_m.items()}  # unlike the metres, so no field swaps
+    road_map = RecordingRoadMap(trip.leg_m, leg_s=leg_s)
+    before = _view(road_map.asked, None, pairs)
 
     table = LegResolver(road_map).resolve(pairs)
 
-    distinct_roads = Counter(pair for pair in set(pairs) if pair[0] != pair[1])
-    assert_state_delta(before, _view(road_map), UNIVERSE, {"road_map.asked": set_to(distinct_roads)}, strict=True)
-    assert [table.distance_m(*pair) for pair in pairs] == [trip.road_m(*pair) for pair in pairs]
+    expected_legs = {pair: (trip.road_m(*pair), 0 if pair[0] == pair[1] else leg_s[pair]) for pair in pairs}
+    assert_state_delta(
+        before,
+        _view(road_map.asked, table, pairs),
+        UNIVERSE,
+        {"road_map.asked": set_to(_distinct_roads(pairs)), "plan.legs": set_to(expected_legs)},
+        strict=True,
+    )
+
+
+class _CountingRoadMap:
+    """Spy in front of a road map: `asked` counts every pair the resolver asked for."""
+
+    def __init__(self, road_map: MockRoutingProvider) -> None:
+        self._road_map = road_map
+        self.provider_id = road_map.provider_id
+        self.asked: Counter[RoadPair] = Counter()
+
+    def probe(self) -> Any:
+        return self._road_map.probe()
+
+    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+        self.asked.update((source, target) for source in sources for target in targets)
+        return self._road_map.matrix(sources, targets)
+
+
+alpine_points = st.builds(
+    Coordinate,
+    st.floats(44.0, 46.5).map(lambda lat: round(lat, 6)),
+    st.floats(6.5, 8.5).map(lambda lon: round(lon, 6)),
+)
+
+
+@st.composite
+def scripted_trips(draw: st.DrawFn) -> tuple[list[RoadPair], dict[RoadPair, RoadMeasure]]:
+    """Required pairs over Alpine points, with a script over some of them: every example has a listed pair, an
+    unlisted pair between distinct points and a pair of identical points (D212)."""
+    points = draw(st.lists(alpine_points, min_size=3, max_size=6, unique=True))
+    roads = draw(st.lists(st.sampled_from(points), min_size=2, max_size=2, unique=True).map(tuple))
+    others = draw(st.lists(st.tuples(st.sampled_from(points), st.sampled_from(points)), max_size=12))
+    pairs: list[RoadPair] = [roads, (roads[1], roads[0]), (points[2], points[2]), *others]  # type: ignore[list-item]
+    listed = [roads, *draw(st.lists(st.sampled_from([p for p in pairs[3:] if p[0] != p[1]] or [roads])))]
+    measure = st.builds(RoadMeasure, st.integers(1, 900_000), st.integers(1, 60_000))
+    script = {pair: draw(measure) for pair in listed if pair != (roads[1], roads[0])}
+    return draw(st.permutations(pairs)), script
+
+
+def _straight_line_default(origin: Coordinate, destination: Coordinate) -> tuple[int, int]:
+    """Brief section 6 and D220 f: straight line x 1.3, driven at 60 km/h; nothing to drive between identical points."""
+    if origin == destination:
+        return 0, 0
+    metres = max(1, round(origin.great_circle_distance_m(destination) * DETOUR_FACTOR))
+    return metres, max(1, round(metres / METRES_PER_SECOND_AT_60_KMH))
+
+
+@given(case=scripted_trips())
+def test_a_scripted_road_map_answers_its_script_on_listed_pairs_and_the_default_elsewhere(
+    case: tuple[list[RoadPair], dict[RoadPair, RoadMeasure]],
+) -> None:
+    pairs, script = case
+    road_map = _CountingRoadMap(MockRoutingProvider(script=RoadMapScript(DETOUR_FACTOR, script, "sha256-of-script")))
+    before = _view(road_map.asked, None, pairs)
+
+    table = LegResolver(road_map).resolve(pairs)
+
+    expected_legs = {
+        pair: (script[pair].distance_m, script[pair].duration_s) if pair in script else _straight_line_default(*pair)
+        for pair in pairs
+    }
+    after = _view(road_map.asked, table, pairs)
+    assert_state_delta(
+        before,
+        after,
+        UNIVERSE,
+        {"road_map.asked": set_to(_distinct_roads(pairs)), "plan.legs": set_to(expected_legs)},
+        strict=True,
+    )
+    assert all((0 in legs) == (pair[0] == pair[1]) for pair, legs in after["plan.legs"].items()), "0 m or 0 s apart"
 
 
 class _RoadMapAnsweringTheWrongShape(RecordingRoadMap):
@@ -55,7 +145,7 @@ class _RoadMapAnsweringTheWrongShape(RecordingRoadMap):
         super().__init__(trip.leg_m)
         self._wrong_shape = wrong_shape
 
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[int]]:
+    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
         return [self._wrong_shape(list(row)) for row in super().matrix(sources, targets)]
 
 
@@ -64,7 +154,7 @@ def _one_leg_short(row: Row) -> Row:
 
 
 def _one_leg_too_many(row: Row) -> Row:
-    return [*row, 1]
+    return [*row, RoadMeasure(1, 1)]
 
 
 def _road_to_drive(trip: Trip) -> bool:
