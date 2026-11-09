@@ -211,3 +211,38 @@ def test_pi_preflight_fails_without_planner_bind_not_without_stored_login(pi_hom
     assert result.returncode == 1
     assert "FAIL  .env has no PLANNER_BIND" in result.stdout and "1 check(s) failed" in result.stdout
     assert "ok    registry access: per-deploy login (D196)" in result.stdout
+
+
+PERF_SCRIPT = REPO / "deploy/scripts/perf-pi.sh"
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ((), ("N=10", "ITEMS=60", "POINTS= ")),
+        (("N=30", "ITEMS=70"), ("N=30", "ITEMS=70")),
+        (("POINTS=20000",), ("POINTS=20000",)),
+    ],
+)
+def test_perf_pi_hands_its_mode_to_the_mac_side_script(variables: tuple[str, ...], expected: tuple[str, ...]) -> None:
+    # bypass: a Makefile recipe is wiring; one dry run per mode shows the variables reach the script.
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "perf-pi", *variables], capture_output=True, text=True, timeout=30
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "bash deploy/scripts/perf-pi.sh" in result.stdout and "PI_HOST=deploy@pi.example" in result.stdout
+    assert all(part in result.stdout + " " for part in expected), result.stdout
+
+
+def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name_only_planner_perf() -> None:
+    help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("perf-pi:"))
+    script = PERF_SCRIPT.read_text()
+    commands = docker_commands(script)
+
+    assert "orchestrator" in help_line and "start time" in help_line
+    assert commands and all(command.startswith("compose -p overland --profile perf") for command in commands), commands
+    for command in commands:
+        if MUTATING.search(command):
+            assert "planner-perf" in command, f"a mutating command must name planner-perf: docker {command}"
+    assert "overland_planner-data" not in script and "prune" not in script

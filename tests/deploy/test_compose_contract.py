@@ -27,6 +27,22 @@ FAIL_CLOSED_PORTS = "${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER
 INTERPOLATION = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?P<rest>[^}]*)\}")
 SECRET_SETTINGS = ("PLANNER_BASIC_AUTH_PASSWORD",)
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")  # ADR-011 Am. 1
+HARDENING = (
+    "image",
+    "init",
+    "cpus",
+    "mem_limit",
+    "memswap_limit",
+    "pids_limit",
+    "oom_score_adj",
+    "cap_drop",
+    "security_opt",
+    "read_only",
+    "tmpfs",
+    "healthcheck",
+    "logging",
+)
+PERF_VOLUMES = {"planner-perf-data": {"name": "overland_planner-perf-data"}}
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -68,7 +84,8 @@ def test_only_the_planner_is_published_on_the_fail_closed_home_address() -> None
     planner = compose["services"]["planner"]
 
     assert compose["name"] == "overland"
-    assert set(compose["services"]) == {"planner"}
+    assert set(compose["services"]) == {"planner", "planner-perf"}
+    assert "profiles" not in planner, "the default profile starts the planner"
     assert planner["ports"] == [FAIL_CLOSED_PORTS], "PLANNER_BIND has no default: compose refuses to start without it"
     assert planner["networks"] == ["edge"] and set(compose["networks"]) == {"edge"}
     assert planner["image"].startswith("${PLANNER_IMAGE:?"), "the image comes from release.env (deploy.sh)"
@@ -98,7 +115,7 @@ def test_data_volume_log_rotation_and_curl_free_healthcheck() -> None:
     planner = compose["services"]["planner"]
 
     assert planner["volumes"] == ["planner-data:/data"]
-    assert compose["volumes"] == {"planner-data": {"name": "overland_planner-data"}}
+    assert compose["volumes"] == {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES
     assert planner["logging"] == {"driver": "json-file", "options": {"max-size": "10m", "max-file": "5"}}
     probe = " ".join(planner["healthcheck"]["test"])
     assert "/healthz" in probe and "curl" not in probe and planner["healthcheck"]["test"][0] == "CMD"
@@ -133,6 +150,38 @@ def test_ci_override_runs_the_loaded_image_on_loopback_only() -> None:
     assert planner["pull_policy"] == "never"
     assert planner["ports"] == ["127.0.0.1:8080:8080"]
     assert re.search(r"^\s*ports:\s*!override\b", COMPOSE_CI.read_text(), re.MULTILINE), "replaces, not appends"
+
+
+def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loopback_only() -> None:
+    # bypass: a compose file is one document; this is a single-example wiring check (D164, D167, D173).
+    compose = _load(COMPOSE)
+    planner, perf = compose["services"]["planner"], compose["services"]["planner-perf"]
+
+    assert perf["profiles"] == ["perf"], "only `--profile perf` starts planner-perf"
+    assert {key: perf.get(key) for key in HARDENING} == {key: planner.get(key) for key in HARDENING}
+    assert perf["ports"] == ["127.0.0.1:18080:8080"], "reached only through the ssh tunnel of make perf-pi"
+    assert perf["networks"] == ["edge"]
+    assert perf["volumes"] == ["planner-perf-data:/data", "./perf:/perf:ro"]
+    assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
+    assert perf["environment"] == planner["environment"] | {"MOCK_PLAN": "${PERF_MOCK_PLAN:-}"}
+    assert perf.get("restart", "no") == "no", "a measurement planner never comes back by itself"
+
+
+@pytest.mark.compose
+@pytest.mark.skipif(shutil.which("docker") is None, reason="Docker is not available on this host")
+def test_the_perf_profile_adds_only_planner_perf() -> None:
+    env = os.environ | {"PLANNER_IMAGE": "overland-planner:unused", "PLANNER_BIND": "127.0.0.1"}
+    base = ["docker", "compose", "-p", "overland", "--env-file", os.devnull, "-f", str(COMPOSE)]
+
+    def services(*profile: str) -> list[str]:
+        done = subprocess.run(
+            [*base, *profile, "config", "--services"], env=env, capture_output=True, text=True, timeout=60, check=False
+        )
+        assert done.returncode == 0, done.stderr
+        return sorted(done.stdout.split())
+
+    assert services() == ["planner"]
+    assert services("--profile", "perf") == ["planner", "planner-perf"]
 
 
 @pytest.mark.compose

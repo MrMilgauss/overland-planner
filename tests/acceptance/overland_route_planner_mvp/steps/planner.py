@@ -288,14 +288,23 @@ class ServerPlanner:
 
 class RemotePlanner:
     """A planner already running elsewhere, reached over real HTTP: `planner-perf` on the Pi through the loopback
-    tunnel of `make perf-pi` (D96, slice 03-ops). Only `@requires_external @pi` scenarios use it."""
+    tunnel of `make perf-pi` (D96, slice 03-ops). Only `@requires_external @pi` scenarios use it.
 
-    def __init__(self, base_url: str) -> None:
+    With PLANNER_PERF_USER and PLANNER_PERF_PASSWORD set (perf-pi reads them from the Pi's .env, 06-05) every request
+    carries them as Basic auth: the household password guards the whole API."""
+
+    USER_KEY = "PLANNER_PERF_USER"
+    PASSWORD_KEY = "PLANNER_PERF_PASSWORD"  # noqa: S105 - the name of the variable, not a password
+
+    def __init__(self, base_url: str, environ: Mapping[str, str] | None = None) -> None:
         self.base_url = base_url
+        source = os.environ if environ is None else environ
+        user, password = source.get(self.USER_KEY, ""), source.get(self.PASSWORD_KEY, "")
+        self._auth = httpx.BasicAuth(user, password) if user and password else None
         self._client: httpx.Client | None = None
 
     def start(self) -> None:
-        self._client = httpx.Client(base_url=self.base_url, timeout=60.0)
+        self._client = httpx.Client(base_url=self.base_url, timeout=60.0, auth=self._auth)
         health = self._client.get("/healthz")
         assert health.status_code == 200, f"the planner at {self.base_url} is not healthy: {health.status_code}"
 

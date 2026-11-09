@@ -6,10 +6,15 @@
 # deploy.sh) holds PLANNER_IMAGE. Only the planner is published, on PLANNER_BIND, which has no default: compose
 # refuses to start without it (fail-closed, D174). The routing engine (valhalla, slice 06a) joins later on an
 # internal `routing` network and is never published.
+#
+# planner-perf (profile `perf`, slice 03-ops; D96, D164, D167, D173): the planner's image (the deployed digest of
+# release.env), environment, caps, hardening and healthcheck, on its own volume overland_planner-perf-data and only on
+# 127.0.0.1:18080, reached by `make perf-pi` through an ssh tunnel. MOCK_PLAN comes from PERF_MOCK_PLAN (I2's road map,
+# copied by perf-pi into ./perf, read-only). The default profile never starts it.
 name: overland
 
 services:
-  planner:
+  planner: &planner
     image: ${PLANNER_IMAGE:?PLANNER_IMAGE must be set (release.env from deploy.sh)}
     init: true
     restart: unless-stopped
@@ -19,7 +24,7 @@ services:
       - edge
     # Settings reach the container by interpolation from .env; nothing is baked into the image. WEB_DIST_DIR,
     # MIGRATIONS_DIR and PLANNER_GIT_SHA are set by the image itself.
-    environment:
+    environment: &planner-environment
       DATA_DIR: /data
       ROUTING_PROVIDER: mock
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -59,9 +64,26 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  planner-perf:
+    <<: *planner
+    profiles: ["perf"]
+    restart: "no"
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      - edge
+    environment:
+      <<: *planner-environment
+      MOCK_PLAN: ${PERF_MOCK_PLAN:-}
+    volumes:
+      - planner-perf-data:/data
+      - ./perf:/perf:ro
+
 networks:
   edge: {}
 
 volumes:
   planner-data:
     name: overland_planner-data
+  planner-perf-data:
+    name: overland_planner-perf-data

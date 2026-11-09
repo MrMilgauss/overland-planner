@@ -29,6 +29,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -86,6 +87,7 @@ GIVEN_DEADLINE_S = 60.0
 POLL_EVERY_S = 0.1
 RUN_TIME = r" (?:\d+ h )?(?:\d+ min )?\d+(?:\.\d+)? s"  # "Planned 60 items in 3 s", "... in 1 min 05 s"
 PI_URL_KEY = "PLANNER_PERF_URL"  # set by make perf-pi (slice 03-ops, D96): the planner-perf tunnel on loopback 18080
+PERF_REPORT_KEY = "PERF_REPORT"  # set by make perf-pi for the K5 gate: the file its report reads the runs from
 
 
 # ------------------------------------------------------------------------------------------- the trip data
@@ -365,6 +367,16 @@ def is_running(pid: int) -> bool:
     return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
 
 
+def record_perf_run(job: dict[str, Any]) -> None:
+    """make perf-pi (06-05, D147): every measured run's terminal state and stage times go to its report."""
+    report = os.environ.get(PERF_REPORT_KEY)
+    if not report:
+        return
+    run = {"state": job.get("state"), "stage_ms": job.get("stage_ms"), "retried": job.get("retried")}
+    with Path(report).open("a", encoding="utf-8") as runs:
+        runs.write(json.dumps(run) + "\n")
+
+
 def on_the_pi(world: PlannerWorld, trip: TripData) -> None:
     url = os.environ.get(PI_URL_KEY)
     assert url, f"{PI_URL_KEY} is not set: this scenario runs only through make perf-pi (slice 03-ops, D96)"
@@ -578,6 +590,7 @@ def when_marco_presses_calculate_ten_times_on_the_pi(world: PlannerWorld) -> Non
     for _ in range(10):
         press(world, ignore_memo=bool(world.scratch.get("ignore_memo")))
         jobs.append(finish(world, 600.0))
+        record_perf_run(jobs[-1])
     world.scratch["pi_jobs"] = jobs
 
 

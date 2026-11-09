@@ -1,6 +1,6 @@
 # Developer entry points (Mac and Pi).
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
-	pi-preflight status logs diag image-gc uninstall purge dora
+	pi-preflight status logs diag image-gc uninstall purge dora perf-pi
 
 PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -30,6 +30,10 @@ PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
 PI_COMPOSE := docker compose -p overland --env-file .env --env-file release.env
 PURGE_WORD := purge overland
+# make perf-pi (D96, D146, D135): N measured runs of ITEMS items; POINTS (points per track) empty = the committed 12.
+N ?= 10
+ITEMS ?= 60
+POINTS ?=
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -154,6 +158,9 @@ purge: ## Remove project overland with its overland_* volumes and planner images
 	  docker image ls --digests --format "{{.Repository}}@{{.Digest}}" $(PLANNER_REPO) | while read -r ref; do \
 	    case "$${ref#*@}" in "<none>"|"") ;; *) docker image rm "$$ref" ;; esac; \
 	  done'
+
+perf-pi: ## K5 on planner-perf (deployed digest; deploy first): golden I1 + I2, warm-up, N runs (N=10 ITEMS=60 gate; POINTS=20000 guard gate); report in .data/perf/. Run by the orchestrator at a start time the user names, never by the crafter
+	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) N=$(N) ITEMS=$(ITEMS) POINTS=$(POINTS) bash deploy/scripts/perf-pi.sh
 
 dora: ## DORA metrics (deployment frequency, lead time, change failure rate, time to restore) from RELEASES_LOG
 	uv run python deploy/scripts/dora.py $(RELEASES_LOG)
