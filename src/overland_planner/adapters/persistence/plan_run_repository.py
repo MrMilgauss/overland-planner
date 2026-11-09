@@ -9,7 +9,7 @@ before has a null fingerprint and is never a memo source.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any
 
 from sqlalchemy import Connection, RowMapping, func, null, select
@@ -19,6 +19,10 @@ from overland_planner.application.ports.plan_run_repository import NewPlanRun, P
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanReport
+
+_STOP_FIELDS = tuple(field.name for field in fields(PlanStop))
+_POINT_FIELDS = frozenset({"location", "entry", "exit"})
+_DRIVING_FIELDS = frozenset({"leg_s", "track_km", "offroad_s", "cumulative_km", "cumulative_s"})
 
 
 class SqlAlchemyPlanRunRepository:
@@ -95,23 +99,9 @@ def _detail(row: RowMapping | None) -> PlanRunDetail | None:
 
 
 def _stop_json(stop: PlanStop) -> dict[str, Any]:
-    return {
-        "item_id": stop.item_id,
-        "name": stop.name,
-        "kind": stop.kind,
-        "leg_km": stop.leg_km,
-        "location": _point_json(stop.location),
-        "entry": _point_json(stop.entry),
-        "exit": _point_json(stop.exit),
-        "direction_version": stop.direction_version,
-        "point_count": stop.point_count,
-        "canonical_sha256": stop.canonical_sha256,
-        "leg_s": stop.leg_s,
-        "track_km": stop.track_km,
-        "offroad_s": stop.offroad_s,
-        "cumulative_km": stop.cumulative_km,
-        "cumulative_s": stop.cumulative_s,
-    }
+    """Every field of the stop under its own name, in field order; points as {lat, lon}."""
+    values = {name: getattr(stop, name) for name in _STOP_FIELDS}
+    return {name: _point_json(value) if name in _POINT_FIELDS else value for name, value in values.items()}
 
 
 def _point_json(point: Coordinate | None) -> dict[str, float] | None:
@@ -122,24 +112,11 @@ def _stops(itinerary: dict[str, Any] | None) -> tuple[PlanStop, ...]:
     return () if itinerary is None else tuple(_stop(stop) for stop in itinerary["stops"])
 
 
-def _stop(stop: dict[str, Any]) -> PlanStop:
-    return PlanStop(
-        item_id=stop["item_id"],
-        name=stop["name"],
-        kind=stop["kind"],
-        leg_km=stop["leg_km"],
-        location=_point(stop["location"]),
-        entry=_point(stop["entry"]),
-        exit=_point(stop["exit"]),
-        direction_version=stop["direction_version"],
-        point_count=stop["point_count"],
-        canonical_sha256=stop["canonical_sha256"],
-        leg_s=stop.get("leg_s"),
-        track_km=stop.get("track_km"),
-        offroad_s=stop.get("offroad_s"),
-        cumulative_km=stop.get("cumulative_km"),
-        cumulative_s=stop.get("cumulative_s"),
-    )
+def _stop(stored: dict[str, Any]) -> PlanStop:
+    """A stop stored before the driving fields (05-07) reads them as `None`; every other field must be there."""
+    values = {name: stored.get(name) if name in _DRIVING_FIELDS else stored[name] for name in _STOP_FIELDS}
+    read: dict[str, Any] = {name: _point(value) if name in _POINT_FIELDS else value for name, value in values.items()}
+    return PlanStop(**read)
 
 
 def _point(point: dict[str, float] | None) -> Coordinate | None:
