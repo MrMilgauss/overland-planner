@@ -29,7 +29,7 @@ from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, Offro
 from overland_planner.domain.planning.plan_run import Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.solver_model_builder import TourModel
+from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
@@ -136,6 +136,15 @@ class Desk:
         return snapshot
 
 
+def _as_the_solver_sees_it(snapshot: ProjectSnapshot, changed: str) -> str:
+    """The input `changed`, or "same" when it changes no solver input: longer legs change nothing when every leg the
+    job asks for joins a point to itself (nothing is driven there, so the leg stays 0 m)."""
+    pairs = SolverModelBuilder(snapshot).required_pairs()
+    if changed == "leg distance" and all(origin == destination for origin, destination in pairs):
+        return "same"
+    return changed
+
+
 def _place(item_id: str, location: Coordinate) -> PoiItem:
     return PoiItem(id=item_id, project_id=PROJECT, name="Rifugio", location=location)
 
@@ -179,6 +188,12 @@ PRESSES = trips().flatmap(lambda trip: st.tuples(st.just(trip), st.lists(calcula
 @settings(deadline=None, max_examples=60)
 @given(case=PRESSES)
 @example(case=(_round_trip_with_nothing_to_visit(), [_press(TourFound(())), _press(TourNoRoute())]))  # an empty order
+@example(  # longer legs where no leg is driven: the same inputs, so the memo gives the order
+    case=(
+        _round_trip_with_nothing_to_visit(),
+        [_press(TourFound(())), replace(_press(TourNoRoute()), changed="leg distance")],
+    )
+)
 def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint_or_the_memo_is_ignored(
     case: tuple[Trip, list[Calculate]],
 ) -> None:
@@ -189,7 +204,8 @@ def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint
         snapshot = desk.project_as(press.project, press.changed, press.speed)
         job, legs = desk.job(press.changed)
         desk.solver.answers = [press.answer]
-        reused = None if press.ignore_memo else memo.get((press.project, press.changed))
+        inputs = (press.project, _as_the_solver_sees_it(snapshot, press.changed))
+        reused = None if press.ignore_memo else memo.get(inputs)
         registry = PlanJobRegistry(desk.clock, job, desk.log)
         before = desk.view()
 
@@ -207,7 +223,7 @@ def test_the_solver_is_asked_iff_no_ready_run_of_the_project_has_the_fingerprint
             totals = Totals.of(PlanRunAssembler(snapshot, legs).assemble(order))
             stops = (snapshot.start_item_id, *order, snapshot.end_item_id)
             row = (press.project, number, "ready", None, stops, totals, reused is not None)
-            memo[press.project, press.changed] = order
+            memo[inputs] = order
         expected = {
             "plan_runs": gained(row),
             "solver_calls": unchanged() if reused is not None else set_to(before["solver_calls"] + 1),
