@@ -5,9 +5,9 @@ Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the sa
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> the `MOCK_PLAN` road map, read once (a bad file refuses the start for `routing_provider`) -> wire
 -> probe every registered component in wiring order (the database probe migrates it to head
-first; then the file store round trip, the mount table, the `DATA_DIR` persistence verdict (D121), the GPX
-parser's embedded-sample and billion-laughs check, the GPX writer's write and re-parse and the road map's known pair)
--> mount routes
+first; then the `plan_job_log` write-and-read round trip, the file store round trip, the mount table, the `DATA_DIR`
+persistence verdict (D121), the GPX parser's embedded-sample and billion-laughs check, the GPX writer's write and
+re-parse and the road map's known pair) -> mount routes
 (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
@@ -48,6 +48,7 @@ from overland_planner.adapters.logging.structlog_event_log import StructlogEvent
 from overland_planner.adapters.persistence.catalog_unit_of_work import SqlAlchemyCatalogUnitOfWork
 from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
+from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
 from overland_planner.adapters.routing.mock_routing_provider import (
     InvalidRoadMapError,
@@ -104,6 +105,7 @@ class _Wiring:
         self._event_log = event_log
         self._database = SqliteDatabase(settings.data_dir)
         self.migrator = AlembicMigrator(self._database, settings.migrations_dir)
+        self._plan_job_log = SqlAlchemyPlanJobLog(self._database, app_version=settings.planner_git_sha)
         self._file_store = LocalFileStore(settings.data_dir)
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
@@ -123,6 +125,9 @@ class _Wiring:
         registry.register("clock", self._clock)
         registry.register("event_log", self._event_log)
         registry.register("database", DatabaseStartup(self._database, self.migrator, self._clock))
+        registry.register(
+            "plan_job_log", self._plan_job_log
+        )  # a round trip on the migrated table; fatal like the database
         registry.register("file_store", self._file_store)
         registry.register("mount_table", self._mount_table)
         # Symlinks resolved here, so a link onto tmpfs is classified by where the data really lands (D121).
@@ -166,7 +171,7 @@ class _Wiring:
             files=self._file_store,
             memo=FingerprintMemo(self._tour_solver.identity),
         )
-        jobs = PlanJobRegistry(self._clock, job, self._event_log)
+        jobs = PlanJobRegistry(self._clock, job, self._event_log, job_log=self._plan_job_log)
         return planning_routes(
             PlanningUseCases(
                 requests=PlanRequestService(self._planning_unit_of_work, health, self._event_log, jobs),

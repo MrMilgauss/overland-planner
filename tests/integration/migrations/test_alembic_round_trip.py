@@ -7,6 +7,7 @@ Integration level: single examples on a real SQLite file in a workspace data fol
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,13 +19,17 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from overland_planner.adapters.persistence.database import SqliteDatabase, database_file
+from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from overland_planner.application.ports.probe import ProbeResult
 from tests.common.catalog_fakes import RecordingEventLog
+from tests.common.fakes import FakeClock
 from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
-HEAD_TABLES = {"projects", "items", "tracks", "pois", "plan_runs"}
+TABLES_OF_0006 = {"projects", "items", "tracks", "pois", "plan_runs"}
+HEAD_TABLES = TABLES_OF_0006 | {"plan_job_log"}
 
 
 @pytest.fixture
@@ -280,11 +285,11 @@ def test_downgrading_0005_drops_the_plan_runs_and_keeps_every_project_and_item(
     downgrade(config, data_dir, monkeypatch, "0004")
 
     assert (_trip(file), _revision(file)) == (SEEDED_TRIP, ["0004"])
-    assert _tables(file) == HEAD_TABLES - {"plan_runs"}
+    assert _tables(file) == TABLES_OF_0006 - {"plan_runs"}
     assert {"start_item_id", "end_item_id"} <= _columns(file, "projects"), "the anchors stay at 0004"
 
     command.upgrade(config, "0005")
-    assert (_trip(file), _tables(file), _revision(file)) == (SEEDED_TRIP, HEAD_TABLES, ["0005"])
+    assert (_trip(file), _tables(file), _revision(file)) == (SEEDED_TRIP, TABLES_OF_0006, ["0005"])
 
 
 RUN_COLUMNS_OF_0006 = {"totals", "report", "fingerprint", "memo_hit"}
@@ -333,9 +338,72 @@ def test_0006_keeps_every_run_stored_before_it_with_no_totals_and_its_downgrade_
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0006")
     assert (_plan_runs(file), _revision(file)) == (SEEDED_RUNS, ["0006"])
     assert _columns(file, "plan_runs") >= RUN_COLUMNS_OF_0006
+
+
+SEEDED_JOB_ROW = (
+    "INSERT INTO plan_job_log (job_id, project_id, started_at, ended_at, terminal_state, plan_run_id, memo_hit, "
+    "ignore_memo, app_version, elapsed_ms) VALUES ('j1', 'p1', '2026-11-09 07:00:00', '2026-11-09 07:00:42', 'done', "
+    "'r1', 0, 0, 'dev', 42000)"
+)
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_0007_adds_the_plan_job_log_and_its_round_trip_keeps_every_project_item_and_run(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0006")
+    _seed_trip_at_head(file)
+
+    command.upgrade(config, "0007")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0007"],
+    )
+    with sqlite3.connect(file) as connection:
+        connection.execute(SEEDED_JOB_ROW)
+    connection.close()
+
+    downgrade(config, data_dir, monkeypatch, "0006")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        TABLES_OF_0006,
+        ["0006"],
+    )
+
+    command.upgrade(config, "0007")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0007"],
+    )
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("SELECT count(*) FROM plan_job_log").fetchone() == (0,), "the log starts empty"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_a_0006_release_refuses_a_0007_database(data_dir: Path, tmp_path: Path) -> None:
+    file = database_file(data_dir)
+    command.upgrade(_config(f"sqlite:///{file}"), "0007")
+    release_0006 = data_dir.parent / "migrations_0006"
+    shutil.copytree(REPO_ROOT / "migrations", release_0006, ignore=shutil.ignore_patterns("__pycache__", "0007_*.py"))
+    database = SqliteDatabase(data_dir)
+    try:
+        refused = DatabaseStartup(database, AlembicMigrator(database, release_0006), FakeClock()).probe()
+    finally:
+        database.engine.dispose()
+
+    assert refused == ProbeResult(outcome="fatal", reason="db_newer_than_app")
+    assert _revision(file) == ["0007"]
 
 
 def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:

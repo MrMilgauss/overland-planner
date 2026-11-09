@@ -7,6 +7,7 @@ the aggregation invariants live in tests/unit/application/platform/test_health_s
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -121,6 +122,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
                 "gpx_parser": {"outcome": "ok", "reason": None},
                 "gpx_writer": {"outcome": "ok", "reason": None},
                 "mount_table": {"outcome": "ok", "reason": None},
+                "plan_job_log": {"outcome": "ok", "reason": None},
                 "routing_provider": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},
             },
@@ -223,8 +225,16 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
 
     job = _plan(client, project_id)
 
-    assert set(job) == {"state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"}
+    assert set(job) == {
+        *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
+        *("stage_ms", "legs_total", "items_included"),
+    }
     assert (job["state"], job["reason"], job["message"]) == ("done", None, None)
+    assert set(job["stage_ms"]) == {"snapshot", "matrix", "reach_model", "solve", "guard_persist"}
+    with sqlite3.connect(data_dir / "db" / "planner.sqlite") as connection:
+        logged = connection.execute("SELECT project_id, terminal_state, plan_run_id FROM plan_job_log").fetchall()
+    connection.close()
+    assert logged == [(project_id, "done", job["plan_run_id"])], "the job writes its one plan_job_log row"
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
     assert set(shown) == {"id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"}
     assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)

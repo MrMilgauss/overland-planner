@@ -101,3 +101,39 @@ plan_runs = Table(
     Column("memo_hit", Boolean, nullable=False, server_default=false()),
     UniqueConstraint("project_id", "number", name="uq_plan_runs_project_id_number"),
 )
+
+# One append-only row per plan job that reached its end (ADR-015 DV-2, D93; 0007): the values of its
+# `plan.job.finished` line plus start, end, `solver_wait_s` and `app_version`. Fields owned by later slices are NULL.
+# No foreign key: the log outlives a deleted project or run.
+plan_job_log = Table(
+    "plan_job_log",
+    metadata,
+    Column("job_id", Text, primary_key=True),
+    Column("project_id", Text, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("ended_at", DateTime(timezone=True), nullable=False),
+    Column("terminal_state", Text, nullable=False),
+    Column("memo_hit", Boolean, nullable=False),
+    Column("ignore_memo", Boolean, nullable=False),
+    Column("app_version", Text, nullable=False),
+    Column("elapsed_ms", Integer, nullable=False),
+    Column("plan_run_id", Text, nullable=True),
+    Column("items_included", Integer, nullable=True),
+    Column("legs_total", Integer, nullable=True),
+    Column("legs_new", Integer, nullable=True),
+    Column("legs_cached", Integer, nullable=True),
+    Column("points_new", Integer, nullable=True),
+    Column("second_pass_pairs", Integer, nullable=True),
+    Column("retried", Boolean, nullable=True),
+    Column("stage_ms", JSON, nullable=True),
+    Column("solver_solutions", Integer, nullable=True),
+    Column("incumbents", Integer, nullable=True),
+    Column("reproducible", Boolean, nullable=True),
+    Column("not_fully_optimised_reason", Text, nullable=True),
+    Column("unconfirmed_legs", Integer, nullable=True),
+    Column("retraces", Integer, nullable=True),
+    Column("solver_wait_s", Float, nullable=True),
+    Column("provider_id", Text, nullable=True),
+    Column("error_class", Text, nullable=True),
+    Column("reason", Text, nullable=True),
+)

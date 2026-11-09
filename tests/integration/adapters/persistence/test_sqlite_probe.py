@@ -50,7 +50,7 @@ def test_a_fresh_data_folder_gets_a_database_at_head_with_wal_foreign_keys_and_b
         }
     assert pragmas == {"journal_mode": "wal", "foreign_keys": 1, "busy_timeout": 5000}
     assert (data_dir / "db" / "planner.sqlite").is_file()
-    assert migrator.current() == migrator.head() == "0006"
+    assert migrator.current() == migrator.head() == "0007"
 
 
 def test_wal_silently_off_is_fatal(data_dir: Path) -> None:

@@ -14,9 +14,12 @@ names no answer for a third project, so its job is accepted and waits for the sl
 
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
-fields owned by later slices are null. A failed job names only the exception's class (D197). A job carries the
-`ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work noted, false until
-the memo gives the order.
+fields owned by later slices are null. A failed job names only the exception's class (D197). With a `PlanJobLog`, the
+line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the run is stored and before
+the end is published; a row that cannot be written changes nothing of the ending and logs `plan.job.log_failed` at
+warning with the error's class. The poll shows `stage_ms`, `legs_total` and `items_included` once the work noted them.
+A job carries the `ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work
+noted, false until the memo gives the order.
 """
 
 from __future__ import annotations
@@ -26,10 +29,12 @@ import uuid
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol
 
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
+from overland_planner.application.ports.plan_job_log import PlanJobLog, PlanJobLogEntry
 
 PlanJobState = Literal["queued", "computing_legs", "waiting_for_optimizer", "solving", "finalising", "done", "failed"]
 
@@ -69,6 +74,9 @@ class PlanJobView:
     elapsed_s: float
     ignore_memo: bool = False
     memo_hit: bool = False
+    stage_ms: dict[str, int] | None = None
+    legs_total: int | None = None
+    items_included: int | None = None
 
 
 @dataclass(frozen=True)
@@ -102,15 +110,22 @@ class _Ending:
     message: str | None
     plan_run_id: str | None
     ended_s: float
+    ended_at: datetime | None = None
 
 
 class _Job:
     def __init__(
-        self, job_id: str, project_id: str, started_s: float, slot: threading.Lock, *, ignore_memo: bool
+        self,
+        job_id: str,
+        project_id: str,
+        started: tuple[float, datetime],
+        slot: threading.Lock,
+        *,
+        ignore_memo: bool,
     ) -> None:
         self.id = job_id
         self.project_id = project_id
-        self.started_s = started_s
+        self.started_s, self.started_at = started
         self.ignore_memo = ignore_memo
         self._slot = slot
         self.facts: dict[str, object] = {"ignore_memo": ignore_memo, "memo_hit": False}
@@ -153,7 +168,14 @@ class _Job:
             elapsed_s=shown.ended_s - self.started_s,
             ignore_memo=self.ignore_memo,
             memo_hit=self.memo_hit(),
+            stage_ms=self._fact("stage_ms", dict),
+            legs_total=self._fact("legs_total", int),
+            items_included=self._fact("items_included", int),
         )
+
+    def _fact[T](self, name: str, kind: type[T]) -> T | None:
+        value = self.facts.get(name)
+        return value if isinstance(value, kind) else None
 
     def _so_far(self, now_s: float) -> _Ending:
         """A running job as a poll at `now_s` shows it: its state, nothing more yet."""
@@ -164,7 +186,8 @@ class _Job:
 
 
 class PlanJobRegistry:
-    def __init__(self, clock: Clock, work: PlanWork, event_log: EventLog) -> None:
+    def __init__(self, clock: Clock, work: PlanWork, event_log: EventLog, *, job_log: PlanJobLog | None = None) -> None:
+        self._job_log = job_log
         self._clock = clock
         self._work = work
         self._event_log = event_log
@@ -178,7 +201,8 @@ class PlanJobRegistry:
 
     def start(self, project_id: str, *, ignore_memo: bool = False) -> str | None:
         """Start the job on its own thread and answer at once with its id; `None` if the project has an active job."""
-        job = _Job(uuid.uuid4().hex, project_id, self._clock.monotonic(), self._solver_slot, ignore_memo=ignore_memo)
+        started = (self._clock.monotonic(), self._clock.now())
+        job = _Job(uuid.uuid4().hex, project_id, started, self._solver_slot, ignore_memo=ignore_memo)
         with self._lock:
             if self._active_in(project_id):
                 return None
@@ -205,7 +229,10 @@ class PlanJobRegistry:
     def _run(self, job: _Job) -> None:
         ending = self._ending_of(job)
         try:
-            self._log_finished(job, ending)
+            fields = self._finished_fields(job, ending)
+            log = self._event_log.warning if ending.state == "failed" else self._event_log.info
+            log("plan.job.finished", **fields)
+            self._write_row(job, ending, fields)
         finally:
             job.ending = ending
 
@@ -214,18 +241,29 @@ class PlanJobRegistry:
             stored = self._work.run(job.project_id, job, ignore_memo=job.ignore_memo)
         except BaseException as error:
             job.note(error_class=type(error).__name__)
-            return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic())
-        return _Ending("done", stored.reason, None, stored.plan_run_id, self._clock.monotonic())
+            return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic(), self._clock.now())
+        ended_s, ended_at = self._clock.monotonic(), self._clock.now()
+        return _Ending("done", stored.reason, None, stored.plan_run_id, ended_s, ended_at)
 
-    def _log_finished(self, job: _Job, ending: _Ending) -> None:
-        log = self._event_log.warning if ending.state == "failed" else self._event_log.info
-        fields = {**dict.fromkeys(_NULL_UNTIL_NOTED), **job.facts}
-        log(
-            "plan.job.finished",
-            **fields,
-            job_id=job.id,
-            project_id=job.project_id,
-            terminal_state=ending.state,
-            plan_run_id=ending.plan_run_id,
-            elapsed_ms=round((ending.ended_s - job.started_s) * _MILLISECONDS_PER_SECOND),
-        )
+    def _finished_fields(self, job: _Job, ending: _Ending) -> dict[str, object]:
+        """The `plan.job.finished` fields, which the job's row holds too."""
+        return {
+            **dict.fromkeys(_NULL_UNTIL_NOTED),
+            **job.facts,
+            "job_id": job.id,
+            "project_id": job.project_id,
+            "terminal_state": ending.state,
+            "plan_run_id": ending.plan_run_id,
+            "elapsed_ms": round((ending.ended_s - job.started_s) * _MILLISECONDS_PER_SECOND),
+        }
+
+    def _write_row(self, job: _Job, ending: _Ending, fields: dict[str, object]) -> None:
+        if self._job_log is None:
+            return
+        entry = PlanJobLogEntry(job.started_at, ending.ended_at or job.started_at, fields)
+        try:
+            self._job_log.append(entry)
+        except Exception as error:  # a full disk must not change the ending, its run or its poll
+            self._event_log.warning(
+                "plan.job.log_failed", job_id=job.id, project_id=job.project_id, error_class=type(error).__name__
+            )

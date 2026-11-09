@@ -162,7 +162,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve.",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known.",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -171,6 +171,28 @@
           "ignore_memo": {
             "title": "Ignore Memo",
             "type": "boolean"
+          },
+          "items_included": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items Included"
+          },
+          "legs_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legs Total"
           },
           "memo_hit": {
             "title": "Memo Hit",
@@ -209,6 +231,20 @@
             ],
             "title": "Reason"
           },
+          "stage_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Ms"
+          },
           "state": {
             "enum": [
               "queued",
@@ -230,7 +266,10 @@
           "plan_run_id",
           "elapsed_s",
           "memo_hit",
-          "ignore_memo"
+          "ignore_memo",
+          "stage_ms",
+          "legs_total",
+          "items_included"
         ],
         "title": "PlanJobResource",
         "type": "object"

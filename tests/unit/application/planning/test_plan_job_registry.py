@@ -3,13 +3,15 @@
 Driving ports: `PlanRequestService`, `PlanJobRegistry` (polling) and `PlanRunQueries` from the planning facade, over the
 real `PlanRequestJob` and `LegResolver`. Driven ports: `PlanningUnitOfWork`, `RoutingProvider`, `TourSolver` (scripted),
 `Clock` (`FakeClock`, which never moves by itself) and `EventLog`.
-Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them; for
-several projects (`PlanDesk`) `plan_runs`, `jobs` as polled and `refusals_logged`.
+Observable universe: `plan_runs` as the database double holds them, `items` and `projects` as planning reads them, and
+`plan_job_log` as the `PlanJobLog` double holds it (ADR-015 DV-2); for several projects (`PlanDesk`) `plan_runs`, `jobs`
+as polled and `refusals_logged`.
 Test Budget: 8 behaviors (any solver outcome ends the job in one terminal state with at most one stored run; the request
 answers before the job is done and no run is named until stored; finished jobs are kept for 10 minutes and running ones
 always; each job logs its events; one active job per project, whatever the presses and endings; one solver slot, freed
 by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past; Calculate reports
-the `ignore_memo` it was given and refuses alike with or without it) x 2 = 16; 13 used.
+the `ignore_memo` it was given and refuses alike with or without it; every ending writes one `plan_job_log` row with
+the values of its line, a refusal none, and a failing write changes nothing else) x 2 = 18; 15 used.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
@@ -42,6 +44,7 @@ from overland_planner.application.planning.facade import (
     PlanRunQueries,
 )
 from overland_planner.application.platform.facade import HealthDetail, HealthService
+from overland_planner.application.ports.plan_job_log import PLAN_JOB_LOG_FIELDS
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 from overland_planner.application.ports.tour_solver import (
@@ -49,6 +52,7 @@ from overland_planner.application.ports.tour_solver import (
     TourNoRoute,
     TourOptimizerFailed,
     TourOutcome,
+    TourSolver,
     TourTimedOut,
 )
 from overland_planner.application.routing.facade import LegResolver
@@ -66,6 +70,7 @@ from tests.unit.application.planning.planning_doubles import (
     MAX_WAIT_S,
     TERMINAL_STATES,
     Gate,
+    InMemoryPlanJobLog,
     InMemoryPlanning,
     RecordingRoadMap,
     job_when_ended,
@@ -104,6 +109,7 @@ KPI_FIELDS = {  # docs/product/kpi-contracts.yaml, plan.job.finished, without th
     "elapsed_ms",
 }
 FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
+    "stage_ms",
     "job_id",
     "project_id",
     "terminal_state",
@@ -140,13 +146,14 @@ class Planner:
     """The real plan job and its services over the doubles of the driven ports. `held` is the gate the job stops at."""
 
     planning: InMemoryPlanning
-    solver: ScriptedTourSolver
+    solver: Any
     clock: FakeClock
     log: RecordingEventLog
     registry: PlanJobRegistry
     service: PlanRequestService
     queries: PlanRunQueries
     held: Gate
+    job_log: InMemoryPlanJobLog
 
     def view(self) -> dict[str, Any]:
         snapshot = self.planning.snapshots[PROJECT]
@@ -155,6 +162,17 @@ class Planner:
             "plan_runs": tuple(_row(run) for run in self.planning.runs if run.project_id == PROJECT),
             "items": tuple(item.id for item in snapshot.items),
             "projects": (PROJECT, stamp, snapshot.start_item_id, snapshot.end_item_id),
+        }
+
+    def logged_view(self) -> dict[str, Any]:
+        rows = (entry.columns() for entry in self.job_log.rows)
+        return {
+            **self.view(),
+            "plan_job_log": tuple(tuple(row[name] for name in LOG_ROW_KEY) for row in rows),
+            "log_failures_warned": tuple(
+                (fields["job_id"], fields["project_id"], fields["error_class"])
+                for fields in self.log.fields_of("plan.job.log_failed")
+            ),
         }
 
     def poll(self, job_id: str) -> PlanJobView:
@@ -180,7 +198,10 @@ class _HeldBehindThePreCheck(Gate):
             super().passing()
 
 
-def _planner(trip: Trip, script: Script = None, *, held_at: str | None = None) -> Planner:
+def _planner(
+    trip: Trip, script: Script = None, *, held_at: str | None = None, scripts: list[Script] | None = None
+) -> Planner:
+    """`scripts`: one script per solve, in turn, instead of `script` for every solve."""
     gates = {
         "queued": _HeldBehindThePreCheck() if held_at == "queued" else Gate(),
         "computing_legs": Gate(held=held_at == "computing_legs"),
@@ -190,17 +211,43 @@ def _planner(trip: Trip, script: Script = None, *, held_at: str | None = None) -
     planning = InMemoryPlanning(reading=gates["queued"], storing=gates["finalising"])
     planning.add_project(PROJECT, trip.snapshot)
     road_map = RecordingRoadMap(trip.leg_m, gate=gates["computing_legs"])
-    solver = ScriptedTourSolver(script, gate=gates["solving"])
+    solver: TourSolver = (
+        ScriptedTourSolver(script, gate=gates["solving"])
+        if scripts is None
+        else _ScriptsInTurn(scripts, gates["solving"])
+    )
     clock = FakeClock()
     log = RecordingEventLog()
     files = InMemoryFileStore()
     trip.seed_canonical_files(files)
     job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
-    registry = PlanJobRegistry(clock, job, log)
+    job_log = InMemoryPlanJobLog(planning)
+    registry = PlanJobRegistry(clock, job, log, job_log=job_log)
     health = HealthService({"tour_solver": ProbeResult("ok")})
     service = PlanRequestService(planning.unit_of_work, health, log, registry)
     queries = PlanRunQueries(planning.unit_of_work)
-    return Planner(planning, solver, clock, log, registry, service, queries, gates.get(held_at or "", Gate()))
+    held = gates.get(held_at or "", Gate())
+    return Planner(planning, solver, clock, log, registry, service, queries, held, job_log)
+
+
+class _ScriptsInTurn:
+    """Answers each solve like `ScriptedTourSolver` with the next of its scripts."""
+
+    identity = "scripts-in-turn"
+
+    def __init__(self, scripts: list[Script], gate: Gate) -> None:
+        self._scripts = list(scripts)
+        self._gate = gate
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
+
+    def solve(self, model: TourModel, budget: int) -> TourOutcome:
+        self._gate.passing()
+        script = self._scripts.pop(0)
+        if isinstance(script, BaseException):
+            raise script
+        return script if script is not None else TourFound(order=model.node_item_ids)
 
 
 def _row(run: NewPlanRun) -> tuple[Any, ...]:
@@ -470,6 +517,136 @@ def test_an_optimizer_failure_logs_both_the_exit_code_and_the_signal_of_the_chil
 
     (fields,) = planner.log.fields_of("plan.job.finished")
     assert (fields["reason"], fields["exit_code"], fields["signal"]) == ("optimizer_failed", exit_code, signal)
+
+
+# ------------------------------------------------------------------------ the job log (ADR-015 DV-2, D93)
+LOG_UNIVERSE = UNIVERSE | {"plan_job_log", "log_failures_warned"}
+LOG_ROW_KEY = ("job_id", "project_id", "terminal_state", "plan_run_id", "reason", "error_class")
+DISK_FULL = OSError(28, "No space left on device")
+
+
+@dataclass(frozen=True)
+class Press:
+    """A Calculate press: one that ends (`script`, and whether its log row cannot be written) or one refused."""
+
+    kind: Literal["ending", "optimizer_unavailable", "no_anchors"]
+    script: Script = None
+    write_fails: bool = False
+
+
+def _presses() -> st.SearchStrategy[list[Press]]:
+    ending = st.builds(
+        Press,
+        kind=st.just("ending"),
+        script=st.none() | _failures(),
+        write_fails=st.booleans(),
+    )
+    refused = st.sampled_from([Press("optimizer_unavailable"), Press("no_anchors")])
+    return st.lists(ending | refused, min_size=1, max_size=5)
+
+
+def _log_row(job_id: str, script: Script, job: PlanJobView) -> tuple[Any, ...]:
+    state, reason, _ = _ending_of(script)
+    error_class = type(script).__name__ if isinstance(script, BaseException) else None
+    return (job_id, PROJECT, state, job.plan_run_id, reason, error_class)
+
+
+def _refuse(planner: Planner, press: Press) -> PlanRefusedError:
+    optimizer = _optimizer("degraded-unhealthy" if press.kind == "optimizer_unavailable" else "ok")
+    snapshot = planner.planning.snapshots[PROJECT]
+    if press.kind == "no_anchors":
+        planner.planning.snapshots[PROJECT] = ProjectSnapshot()
+    try:
+        PlanRequestService(planner.planning.unit_of_work, optimizer, planner.log, planner.registry).request(PROJECT)
+    except PlanRefusedError as refused:
+        return refused
+    finally:
+        planner.planning.snapshots[PROJECT] = snapshot
+    raise AssertionError(f"the press was not refused: {press}")
+
+
+@settings(deadline=None, max_examples=40)
+@given(trip=trips(), contended=st.booleans(), presses=_presses())
+def test_every_ending_writes_one_log_row_a_refusal_none_and_a_failing_write_changes_nothing_else(
+    trip: Trip, contended: bool, presses: list[Press]
+) -> None:
+    endings = [press for press in presses if press.kind == "ending"]
+    first = Press("ending", None, write_fails=False)
+    planner = _planner(
+        trip,
+        held_at="solving" if contended else None,
+        scripts=[press.script for press in ([first] if contended else []) + endings],
+    )
+    before = planner.logged_view()
+    rows: list[tuple[Any, ...]] = []
+    runs: list[tuple[Any, ...]] = []
+    warned: list[tuple[Any, ...]] = []
+
+    def end(job_id: str, press: Press) -> None:
+        job = planner.wait_until_ended(job_id)
+        state, reason, stored = _ending_of(press.script)
+        assert (job.state, job.reason, job.message) == (state, reason, None if stored else FAILED_MESSAGE)
+        assert (job.plan_run_id is not None) == stored, f"a run is named iff one is stored: {job}"
+        if stored:
+            runs.append((len(runs) + 1, "ready" if reason is None else "failed", reason))
+        (warned if press.write_fails else rows).append(_log_row(job_id, press.script, job))
+        assert planner.poll(job_id) == job, "the write does not change the ending"
+
+    if contended:
+        held_job = planner.service.request(PROJECT)
+        planner.wait_until_held()
+        with_one_active = PlanRequestService(planner.planning.unit_of_work, _optimizer(), planner.log, planner.registry)
+        try:
+            with_one_active.request(PROJECT)
+            raise AssertionError("a second job started while one was active")
+        except PlanRefusedError as refused:
+            assert _refusal_of(refused) == JOB_ACTIVE
+        planner.held.release()
+        end(held_job, first)
+    for press in presses:
+        if press.kind != "ending":
+            assert _refuse(planner, press).http_status == (503 if press.kind == "optimizer_unavailable" else 422)
+            continue
+        planner.job_log.failing = DISK_FULL if press.write_fails else None
+        end(planner.service.request(PROJECT), press)
+
+    after = planner.logged_view()
+    assert tuple(row[:3] for row in after["plan_runs"]) == tuple(runs), "the runs are what they would have been"
+    assert_state_delta(
+        before,
+        after,
+        LOG_UNIVERSE,
+        {
+            "plan_runs": gained(*after["plan_runs"]) if runs else set_to(()),
+            "plan_job_log": gained(*rows) if rows else set_to(()),
+            "log_failures_warned": gained(*((row[0], PROJECT, "OSError") for row in warned)) if warned else set_to(()),
+        },
+        strict=True,
+    )
+
+
+@settings(deadline=None)
+@given(plan=plans(), took_s=st.integers(0, 3_600_000).map(lambda ms: ms / 1000))
+def test_a_job_row_holds_the_values_of_its_finished_line_with_its_start_and_end(plan: Plan, took_s: float) -> None:
+    planner = _planner(plan.trip, plan.script, held_at="solving")
+    started_at = planner.clock.now()
+
+    job_id = planner.service.request(PROJECT)
+    planner.wait_until_held()
+    planner.clock.advance(took_s)
+    planner.held.release()
+    planner.wait_until_ended(job_id)
+
+    (line,) = planner.log.fields_of("plan.job.finished")
+    (entry,) = planner.job_log.rows
+    row = entry.columns()
+    assert set(row) == {*PLAN_JOB_LOG_FIELDS, "started_at", "ended_at"}
+    assert {name: row[name] for name in PLAN_JOB_LOG_FIELDS if name in line} == {
+        name: line[name] for name in PLAN_JOB_LOG_FIELDS if name in line
+    }
+    assert all(row[name] is None for name in PLAN_JOB_LOG_FIELDS if name not in line), "absent from the line: null"
+    assert (row["job_id"], row["started_at"], row["ended_at"]) == (job_id, started_at, planner.clock.now())
+    assert row["elapsed_ms"] == round(took_s * 1000)
 
 
 def _fields_of_the_ending(script: Script) -> set[str]:

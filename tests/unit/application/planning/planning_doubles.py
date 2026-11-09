@@ -1,8 +1,11 @@
 """In-memory doubles of planning's driven ports for unit tests (they honour the production Protocols and preconditions).
 
 `InMemoryPlanning` stands for the database: a unit of work holds the one writer lock and stages its changes, and only
-`commit()` publishes them. `RecordingRoadMap` answers from a table of road legs and refuses identical points, which no
-router answers. A `Gate` holds a double at one point of the job until the test releases it.
+`commit()` publishes them. `InMemoryPlanJobLog` stands for the `plan_job_log` table of the same database: it writes
+under that writer lock, can be made to fail like a full disk, and refuses a row naming a run that is not stored.
+`RecordingRoadMap` answers from a table of road legs and refuses identical points, which no
+router answers. A `Gate` holds a double at one point of the job until the test releases it; a `Taking` gate also
+moves a `FakeClock` on by its duration at every passing after the first `free` ones.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from types import TracebackType
 from typing import Self
 
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanJobView
+from overland_planner.application.ports.plan_job_log import PlanJobLogEntry
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
@@ -24,6 +28,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import RoadMeasure
+from tests.common.fakes import FakeClock
 
 MAX_WAIT_S = 30.0
 POLL_S = 0.0005
@@ -64,6 +69,25 @@ class Gate:
         self._open.set()
 
 
+class Taking(Gate):
+    """A gate whose passings take `seconds` on the clock, but the first `free`; `passings` counts those that took."""
+
+    def __init__(self, clock: FakeClock, seconds: float, *, free: int = 0, held: bool = False) -> None:
+        super().__init__(held=held)
+        self._clock = clock
+        self._seconds = seconds
+        self._free = free
+        self.passings = 0
+
+    def passing(self) -> None:
+        super().passing()
+        if self._free > 0:
+            self._free -= 1
+            return
+        self.passings += 1
+        self._clock.advance(self._seconds)
+
+
 @dataclass
 class InMemoryPlanning:
     snapshots: dict[str, ProjectSnapshot] = field(default_factory=dict)
@@ -97,6 +121,27 @@ class InMemoryPlanning:
                 stops=(),
             )
         )
+
+
+@dataclass
+class InMemoryPlanJobLog:
+    planning: InMemoryPlanning
+    rows: list[PlanJobLogEntry] = field(default_factory=list)
+    failing: Exception | None = None
+
+    def append(self, entry: PlanJobLogEntry) -> None:
+        assert self.planning.writer_lock.acquire(timeout=MAX_WAIT_S), "another unit of work kept the writer lock"
+        try:
+            if self.failing is not None:
+                raise self.failing
+            run_id = entry.fields.get("plan_run_id")
+            assert run_id is None or any(run.id == run_id for run in self.planning.runs), "the row names no stored run"
+            self.rows.append(entry)
+        finally:
+            self.planning.writer_lock.release()
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
 
 
 class _Runs:

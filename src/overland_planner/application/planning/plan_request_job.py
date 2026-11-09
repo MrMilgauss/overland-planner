@@ -8,12 +8,18 @@ Before anything is stored the guard judges the solver's order, then the assemble
 holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
 fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
 totals are recomputed. Later slices add the snapping, ladder, Stop and limits to this sequence.
+
+Each stage notes its whole milliseconds, truncated, by the `Clock` port's monotonic time, as it ends (`stage_ms`,
+ADR-015 DV-2, K5): `snapshot`, `matrix` (the road legs), `reach_model` (the model, its fingerprint and the memo lookup),
+`solve` (the solver from its start to its end, child spawn included, and not the wait for the slot; none on a memo hit)
+and `guard_persist` (guard, assemble, store). Truncating keeps their sum within the job's elapsed time.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
 from overland_planner.application.catalog.facade import (
@@ -43,6 +49,8 @@ from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable
+
+_MILLISECONDS_PER_SECOND = 1000
 
 
 @dataclass(frozen=True)
@@ -80,20 +88,25 @@ class PlanRequestJob:
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
         """With a memo, a ready run of the project with the inputs' fingerprint gives the order and the solver is not
         asked, unless `ignore_memo`; the guard judges a reused order like a solved one."""
-        project = self._read(project_id, ignore_memo)
+        stages = _Stages(self.clock, progress)
+        with stages.timing("snapshot"):
+            project = self._read(project_id, ignore_memo)
         progress.enter("computing_legs")
-        legs = self._resolve_legs(project.snapshot, progress)
-        model = SolverModelBuilder(project.snapshot).build(legs)
-        progress.note(items_included=len(set(model.node_item_ids)))
-        project, reused = self._recall(project, model)
+        with stages.timing("matrix"):
+            legs = self._resolve_legs(project.snapshot, progress)
+        with stages.timing("reach_model"):
+            model = SolverModelBuilder(project.snapshot).build(legs)
+            progress.note(items_included=len(set(model.node_item_ids)))
+            project, reused = self._recall(project, model)
         if reused is not None:
             progress.note(memo_hit=True)
             outcome: TourOutcome = TourFound(order=reused)
         else:
-            with progress.solver_slot():
+            with progress.solver_slot(), stages.timing("solve"):
                 outcome = self._solve(model, progress)
         progress.enter("finalising")
-        stored = self._finish(project, legs, outcome)
+        with stages.timing("guard_persist"):
+            stored = self._finish(project, legs, outcome)
         if stored.reason is not None:
             progress.note(reason=stored.reason)
         return stored
@@ -210,6 +223,22 @@ class PlanRequestJob:
             "included_item_ids": [item.id for item in snapshot.visited_items()],
             "solver_budget": self.budget,
         }
+
+
+class _Stages:
+    """The whole milliseconds of each stage that ended, noted as `stage_ms` on the job's progress."""
+
+    def __init__(self, clock: Clock, progress: PlanJobProgress) -> None:
+        self._clock = clock
+        self._progress = progress
+        self._ms: dict[str, int] = {}
+
+    @contextmanager
+    def timing(self, stage: str) -> Iterator[None]:
+        began_s = self._clock.monotonic()
+        yield
+        self._ms[stage] = int((self._clock.monotonic() - began_s) * _MILLISECONDS_PER_SECOND)
+        self._progress.note(stage_ms=dict(self._ms))
 
 
 def _evidence_of(content: bytes) -> CanonicalFileEvidence:

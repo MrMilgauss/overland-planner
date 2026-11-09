@@ -135,7 +135,9 @@ class PlanJobAccepted(BaseModel):
 
 class PlanJobResource(BaseModel):
     """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is true when the
-    order came from the fingerprint memo (05-10) instead of a solve."""
+    order came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each
+    stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
+    `legs_total` and `items_included` are null until known."""
 
     state: PlanJobState
     reason: str | None
@@ -144,6 +146,9 @@ class PlanJobResource(BaseModel):
     elapsed_s: float
     memo_hit: bool
     ignore_memo: bool
+    stage_ms: dict[str, int] | None
+    legs_total: int | None
+    items_included: int | None
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:
