@@ -35,6 +35,7 @@ _SUSA = Coordinate(45.1383, 7.0500)
 _TORINO_SUSA_STRAIGHT_M = 50_554.67  # haversine, mean Earth radius
 _TORINO_SUSA_ROAD_M = 65_721  # x 1.3
 _KNOWN_PAIR_TOLERANCE_M = 1
+_KNOWN_PAIR_TOLERANCE_S = 1
 _PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s"})
 _TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs"})
 
@@ -154,20 +155,19 @@ class MockRoutingProvider:
         if (_TORINO, _SUSA) in self._pairs:
             return True
         expected_m = _TORINO_SUSA_ROAD_M if self._script is None else _TORINO_SUSA_STRAIGHT_M * self._detour_factor
-        (row,) = self.matrix([_TORINO], [_SUSA])
+        ((answered,),) = self.matrix([_TORINO], [_SUSA])
         expected_s = expected_m / _METRES_PER_SECOND
-        return (
-            abs(row[0].distance_m - expected_m) <= _KNOWN_PAIR_TOLERANCE_M and abs(row[0].duration_s - expected_s) <= 1
-        )
+        distance_right = abs(answered.distance_m - expected_m) <= _KNOWN_PAIR_TOLERANCE_M
+        return distance_right and abs(answered.duration_s - expected_s) <= _KNOWN_PAIR_TOLERANCE_S
 
     def _identical_points_are_zero(self) -> bool:
-        (row,) = self.matrix([_SUSA], [_SUSA])
-        return row[0] == NOTHING_TO_DRIVE
+        ((answered,),) = self.matrix([_SUSA], [_SUSA])
+        return answered == NOTHING_TO_DRIVE
 
     def _answers_its_script(self) -> bool:
         listed = next(iter(self._pairs.items()), None)
         if listed is None:
             return True
         (origin, destination), scripted = listed
-        (row,) = self.matrix([origin], [destination])
-        return row[0] == scripted
+        ((answered,),) = self.matrix([origin], [destination])
+        return answered == scripted
