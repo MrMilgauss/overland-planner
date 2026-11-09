@@ -79,7 +79,8 @@ pois = Table(
 )
 
 # One row per numbered plan run (brief §9); a job still running has none. `totals` is NULL for a Failed run and for one
-# stored before 0006; `report` (05-08), `fingerprint` and `memo_hit` (05-10) are filled by later steps.
+# stored before 0006; `report` is NULL for a ready run and for one stored before 05-08; `fingerprint` is NULL for a run
+# stored before the memo (05-10) and `memo_hit` false.
 plan_runs = Table(
     "plan_runs",
     metadata,
