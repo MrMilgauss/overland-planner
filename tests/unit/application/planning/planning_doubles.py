@@ -123,6 +123,14 @@ class _Runs:
                 )
         return None
 
+    def latest_ready(self, project_id: str, fingerprint: str) -> PlanRunDetail | None:
+        sources = [
+            row
+            for row in self._rows
+            if (row.project_id, row.status, row.fingerprint) == (project_id, "ready", fingerprint)
+        ]
+        return None if not sources else self.get(max(sources, key=lambda row: row.number).id)
+
     def next_number(self, project_id: str) -> int:
         return max((row.number for row in self._rows if row.project_id == project_id), default=0) + 1
 

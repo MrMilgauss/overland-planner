@@ -13,7 +13,8 @@ ended like any other, and its message counts: the exit code then only shows the 
 The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). Past
 `safety_bound_s` the parent ends it with SIGTERM, then SIGKILL after 2 s: without the bound a hung child would hold the
 project in 409 until a restart. The bound is the FEASIBILITY_LIMIT_S default, not the configurable limits of slice 03,
-and the normal stop is the budget, never the clock.
+and the normal stop is the budget, never the clock. `SOLVER_IDENTITY` is the constant the composition root hands to the
+fingerprint memo.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 import multiprocessing
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import version
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from typing import Any
@@ -55,6 +57,9 @@ PROBE_TIMEOUT_S = 30.0  # bounds a hung child; a cold first import of OR-Tools t
 _PROBE_SOLUTION_LIMIT = 100
 _REAP_TIMEOUT_S = 2.0
 SOLVE_SAFETY_BOUND_S = 600.0  # the FEASIBILITY_LIMIT_S default (D200)
+# What makes this solver's orders what they are, for the fingerprint memo (ADR-014 sections 3 and 5): the installed
+# OR-Tools release, read from its metadata without importing it (G1), and the search `tour_child` runs.
+SOLVER_IDENTITY = f"ortools=={version('ortools')};PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH"
 _SIGTERM_GRACE_S = 2.0
 
 

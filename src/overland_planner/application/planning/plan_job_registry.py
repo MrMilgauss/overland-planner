@@ -15,7 +15,8 @@ names no answer for a third project, so its job is accepted and waits for the sl
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
 fields owned by later slices are null. A failed job names only the exception's class (D197). A job carries the
-`ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is false until the memo (05-10).
+`ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work noted, false until
+the memo gives the order.
 """
 
 from __future__ import annotations
@@ -153,6 +154,7 @@ class _Job:
                 plan_run_id=None,
                 elapsed_s=elapsed_s,
                 ignore_memo=self.ignore_memo,
+                memo_hit=self.memo_hit(),
             )
         elapsed_s = ending.ended_s - self.started_s
         return PlanJobView(
@@ -164,7 +166,11 @@ class _Job:
             ending.plan_run_id,
             elapsed_s,
             ignore_memo=self.ignore_memo,
+            memo_hit=self.memo_hit(),
         )
+
+    def memo_hit(self) -> bool:
+        return self.facts.get("memo_hit") is True
 
 
 class PlanJobRegistry:

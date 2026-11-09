@@ -3,7 +3,8 @@
 The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary and no
 totals (SQL NULL), nor has a run stored before 0006. A stop stored before its driving columns were (05-07) reads them
 as `None`: runs are not recomputed. `report` holds a Failed run's reason in product words; a ready run, and any run
-stored before 05-08, has none (SQL NULL).
+stored before 05-08, has none (SQL NULL). `fingerprint` and `memo_hit` (05-10) are stored on every run; a run stored
+before has a null fingerprint and is never a memo source.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from sqlalchemy import Connection, func, null, select
+from sqlalchemy import Connection, RowMapping, func, null, select
 
 from overland_planner.adapters.persistence.tables import plan_runs
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
@@ -37,19 +38,20 @@ class SqlAlchemyPlanRunRepository:
 
     def get(self, plan_run_id: str) -> PlanRunDetail | None:
         query = select(plan_runs).where(plan_runs.c.id == plan_run_id)
-        row = self._connection.execute(query).mappings().first()
-        if row is None:
-            return None
-        return PlanRunDetail(
-            id=row["id"],
-            project_id=row["project_id"],
-            number=row["number"],
-            status=row["status"],
-            failure_reason=row["failure_reason"],
-            stops=_stops(row["itinerary"]),
-            totals=None if row["totals"] is None else Totals(**row["totals"]),
-            report=None if row["report"] is None else PlanReport(reason=row["report"]["reason"]),
+        return _detail(self._connection.execute(query).mappings().first())
+
+    def latest_ready(self, project_id: str, fingerprint: str) -> PlanRunDetail | None:
+        query = (
+            select(plan_runs)
+            .where(
+                plan_runs.c.project_id == project_id,
+                plan_runs.c.fingerprint == fingerprint,
+                plan_runs.c.status == "ready",
+            )
+            .order_by(plan_runs.c.number.desc())
+            .limit(1)
         )
+        return _detail(self._connection.execute(query).mappings().first())
 
     def next_number(self, project_id: str) -> int:
         query = select(func.max(plan_runs.c.number)).where(plan_runs.c.project_id == project_id)
@@ -71,8 +73,25 @@ class SqlAlchemyPlanRunRepository:
                 itinerary={"stops": [_stop_json(stop) for stop in run.stops]} if run.stops else null(),
                 totals=null() if run.totals is None else asdict(run.totals),
                 report=null() if run.report is None else asdict(run.report),
+                fingerprint=run.fingerprint,
+                memo_hit=run.memo_hit,
             )
         )
+
+
+def _detail(row: RowMapping | None) -> PlanRunDetail | None:
+    if row is None:
+        return None
+    return PlanRunDetail(
+        id=row["id"],
+        project_id=row["project_id"],
+        number=row["number"],
+        status=row["status"],
+        failure_reason=row["failure_reason"],
+        stops=_stops(row["itinerary"]),
+        totals=None if row["totals"] is None else Totals(**row["totals"]),
+        report=None if row["report"] is None else PlanReport(reason=row["report"]["reason"]),
+    )
 
 
 def _stop_json(stop: PlanStop) -> dict[str, Any]:

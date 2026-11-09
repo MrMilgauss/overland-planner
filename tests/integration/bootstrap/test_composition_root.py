@@ -307,3 +307,26 @@ def test_calculate_takes_ignore_memo_as_a_boolean_and_its_poll_shows_it(data_dir
         assert accepted.status_code == 202, accepted.text
         job = _ended_job(client, accepted.json()["job_id"])
         assert (job["state"], job["ignore_memo"], job["memo_hit"]) == ("done", shown, False)
+
+
+def test_identical_inputs_after_a_restart_reuse_the_stored_order_through_sqlite(data_dir: Path) -> None:
+    """The fingerprint and memo_hit round trip through SQLite (05-10): one solve, then a memo hit after a restart."""
+    first_solver, second_solver = ScriptedTourSolver(), ScriptedTourSolver()
+    client = TestClient(create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=first_solver)))
+    project_id, place_id = _project_with_a_place(client)
+    client.put(f"/api/projects/{project_id}/anchors", json={"start_item_id": place_id, "end_item_id": place_id})
+    calculate = f"/api/projects/{project_id}/plan-runs"
+    solved = _ended_job(client, client.post(calculate).json()["job_id"])
+    restarted = TestClient(create_app({"DATA_DIR": str(data_dir)}, external=ExternalPorts(tour_solver=second_solver)))
+
+    reused = _ended_job(restarted, restarted.post(calculate).json()["job_id"])
+
+    assert (solved["memo_hit"], reused["memo_hit"]) == (False, True)
+    assert (len(first_solver.models), len(second_solver.models)) == (1, 0)
+    connection = sqlite3.connect(database_file(data_dir))
+    rows = connection.execute("SELECT number, status, fingerprint, memo_hit FROM plan_runs ORDER BY number").fetchall()
+    connection.close()
+    assert [(number, status, memo_hit) for number, status, _, memo_hit in rows] == [(1, "ready", 0), (2, "ready", 1)]
+    assert rows[0][2] == rows[1][2] and str(rows[0][2]).startswith("fp1:"), f"the fingerprints are {rows}"
+    first, second = (restarted.get(f"/api/plan-runs/{job['plan_run_id']}").json() for job in (solved, reused))
+    assert (first["stops"], first["totals"]) == (second["stops"], second["totals"])

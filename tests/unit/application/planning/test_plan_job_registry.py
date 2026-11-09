@@ -398,7 +398,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
         job.plan_run_id,
     )
     assert all(fields[name] is None for name in FIELDS_OF_LATER_SLICES)
-    assert (fields["memo_hit"], fields["ignore_memo"]) == (False, False)  # a plain Calculate, and no memo until 05-10
+    assert (fields["memo_hit"], fields["ignore_memo"]) == (False, False)  # a plain Calculate of a job without a memo
     assert fields["elapsed_ms"] == 0
     assert (fields["legs_total"], fields["provider_id"]) == (
         len(_distinct_pairs(plan.trip)),

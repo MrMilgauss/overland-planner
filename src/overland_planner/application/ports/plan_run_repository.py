@@ -29,7 +29,10 @@ class PlanRunDetail:
 
 @dataclass(frozen=True)
 class NewPlanRun:
-    """The row a finished plan writes: its number comes from the same transaction (brief section 8)."""
+    """The row a finished plan writes: its number comes from the same transaction (brief section 8).
+
+    `fingerprint` is the solver inputs' memo key, null for a job without a memo; `memo_hit` says the order was reused.
+    """
 
     id: str
     project_id: str
@@ -44,6 +47,8 @@ class NewPlanRun:
     stops: tuple[PlanStop, ...]
     totals: Totals | None = None
     report: PlanReport | None = None
+    fingerprint: str | None = None
+    memo_hit: bool = False
 
 
 class PlanRunRepository(Protocol):
@@ -58,6 +63,10 @@ class PlanRunRepository(Protocol):
         ...
 
     def add(self, run: NewPlanRun) -> None: ...
+
+    def latest_ready(self, project_id: str, fingerprint: str) -> PlanRunDetail | None:
+        """The project's ready run of the highest number stored with `fingerprint`: the memo source (ADR-014 §5)."""
+        ...
 
 
 class PlanningUnitOfWork(UnitOfWork, Protocol):

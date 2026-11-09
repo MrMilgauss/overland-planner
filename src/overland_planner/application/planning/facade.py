@@ -1,5 +1,6 @@
 """Planning module facade (brief §3, §11 contract 6): the only `application.planning` import other modules may use."""
 
+from overland_planner.application.planning.fingerprint_memo import FingerprintMemo
 from overland_planner.application.planning.plan_job_registry import (
     PlanJobProgress,
     PlanJobRegistry,
@@ -17,6 +18,7 @@ from overland_planner.application.planning.plan_request_service import (
 from overland_planner.application.planning.plan_run_queries import PlanRunNotFoundError, PlanRunQueries
 
 __all__ = [
+    "FingerprintMemo",
     "MissingAnchorError",
     "OptimizerUnavailableError",
     "PlanJobProgress",

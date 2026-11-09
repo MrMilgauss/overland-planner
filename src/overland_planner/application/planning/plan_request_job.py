@@ -5,21 +5,23 @@ Runs on the job's own thread, never the request's. The snapshot is read under th
 Solver-side outcomes all store a run (D122); an exception stores nothing, because the data folder may be going away.
 Before anything is stored the guard judges the solver's order, then the assembled plan against the canonical files
 (ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). The solve runs
-holding the job's solver slot (D133) and no unit of work. Later slices add the snapping, ladder, memo, Stop and limits
-to this sequence.
+holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
+fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
+totals are recomputed. Later slices add the snapping, ladder, Stop and limits to this sequence.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from overland_planner.application.catalog.facade import (
     InvalidCanonicalPointsFileError,
     canonical_file_sha256,
     parse_canonical_points_file,
 )
+from overland_planner.application.planning.fingerprint_memo import FingerprintMemo
 from overland_planner.application.planning.plan_job_registry import PlanJobProgress, StoredRun
 from overland_planner.application.planning.plan_run_queries import existing_snapshot
 from overland_planner.application.ports.clock import Clock
@@ -39,7 +41,7 @@ from overland_planner.domain.planning.invariant_guard import (
 from overland_planner.domain.planning.plan_run import PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
+from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable
 
 
@@ -49,6 +51,8 @@ class _PlannedProject:
     snapshot: ProjectSnapshot
     stamp: ProjectStamp
     ignore_memo: bool
+    fingerprint: str | None = None
+    memo_hit: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,14 +75,23 @@ class PlanRequestJob:
     clock: Clock
     event_log: EventLog
     files: FileStore
+    memo: FingerprintMemo | None = None
 
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
-        """`ignore_memo` is reported on the stored run's event; with no memo yet (05-10) it changes nothing else."""
+        """With a memo, a ready run of the project with the inputs' fingerprint gives the order and the solver is not
+        asked, unless `ignore_memo`; the guard judges a reused order like a solved one."""
         project = self._read(project_id, ignore_memo)
         progress.enter("computing_legs")
         legs = self._resolve_legs(project.snapshot, progress)
-        with progress.solver_slot():
-            outcome = self._solve(project.snapshot, legs, progress)
+        model = SolverModelBuilder(project.snapshot).build(legs)
+        progress.note(items_included=len(set(model.node_item_ids)))
+        project, reused = self._recall(project, model)
+        if reused is not None:
+            progress.note(memo_hit=True)
+            outcome: TourOutcome = TourFound(order=reused)
+        else:
+            with progress.solver_slot():
+                outcome = self._solve(model, progress)
         progress.enter("finalising")
         stored = self._finish(project, legs, outcome)
         if stored.reason is not None:
@@ -129,9 +142,24 @@ class PlanRequestJob:
         progress.note(legs_total=len(set(pairs)), provider_id=self.legs.provider_id)
         return legs
 
-    def _solve(self, snapshot: ProjectSnapshot, legs: LegTable, progress: PlanJobProgress) -> TourOutcome:
-        model = SolverModelBuilder(snapshot).build(legs)
-        progress.note(items_included=len(set(model.node_item_ids)))
+    def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, tuple[str, ...] | None]:
+        """The project with its fingerprint and memo hit, and the reused order, `None` when the solver is asked."""
+        if self.memo is None:
+            return project, None
+        fingerprint = self.memo.fingerprint(
+            project.snapshot,
+            model,
+            objective=project.stamp.objective,
+            provider_id=self.legs.provider_id,
+            budget=self.budget,
+        )
+        reused = None
+        if not project.ignore_memo:
+            with self.unit_of_work() as uow:
+                reused = self.memo.reused_order(uow, project.id, fingerprint)
+        return replace(project, fingerprint=fingerprint.value, memo_hit=reused is not None), reused
+
+    def _solve(self, model: TourModel, progress: PlanJobProgress) -> TourOutcome:
         outcome = self.solver.solve(model, self.budget)
         if isinstance(outcome, TourOptimizerFailed):
             progress.note(exit_code=outcome.exit_code, signal=outcome.signal)
@@ -151,7 +179,7 @@ class PlanRequestJob:
             report_items=None,
             project_items=len(project.snapshot.items),
             invariants=finding.invariants,
-            memo_hit=False,
+            memo_hit=project.memo_hit,
             ignore_memo=project.ignore_memo,
         )
         return StoredRun(run.id, finding.failure_reason)
@@ -171,6 +199,8 @@ class PlanRequestJob:
             stops=finding.stops,
             totals=finding.totals,
             report=PlanRunAssembler.report(finding.failure_reason),
+            fingerprint=project.fingerprint,
+            memo_hit=project.memo_hit,
         )
 
     def _inputs(self, snapshot: ProjectSnapshot) -> dict[str, object]:
