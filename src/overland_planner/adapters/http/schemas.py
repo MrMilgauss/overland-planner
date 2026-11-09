@@ -13,6 +13,7 @@ from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackIte
 from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
+from overland_planner.domain.planning.plan_run_assembler import PlanReport
 
 
 class ErrorEnvelope(BaseModel):
@@ -147,15 +148,7 @@ class PlanJobResource(BaseModel):
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:
-        return cls(
-            state=job.state,
-            reason=job.reason,
-            message=job.message,
-            plan_run_id=job.plan_run_id,
-            elapsed_s=job.elapsed_s,
-            memo_hit=job.memo_hit,
-            ignore_memo=job.ignore_memo,
-        )
+        return cls.model_validate(job, from_attributes=True)
 
 
 class PlanStopResource(BaseModel):
@@ -203,20 +196,17 @@ class TotalsResource(BaseModel):
 
     @classmethod
     def of(cls, totals: Totals) -> TotalsResource:
-        return cls(
-            road_km=totals.road_km,
-            road_s=totals.road_s,
-            offroad_km=totals.offroad_km,
-            offroad_s=totals.offroad_s,
-            total_km=totals.total_km,
-            total_s=totals.total_s,
-        )
+        return cls.model_validate(totals, from_attributes=True)
 
 
 class PlanReportResource(BaseModel):
     """Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`."""
 
     reason: str
+
+    @classmethod
+    def of(cls, report: PlanReport) -> PlanReportResource:
+        return cls.model_validate(report, from_attributes=True)
 
 
 class PlanRunDetailResource(BaseModel):
@@ -243,7 +233,7 @@ class PlanRunDetailResource(BaseModel):
             failure_reason=run.failure_reason,
             stops=[PlanStopResource.of(stop) for stop in run.stops],
             totals=None if run.totals is None else TotalsResource.of(run.totals),
-            report=None if run.report is None else PlanReportResource(reason=run.report.reason),
+            report=None if run.report is None else PlanReportResource.of(run.report),
         )
 
 
