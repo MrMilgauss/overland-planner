@@ -151,6 +151,27 @@ def _sql(data_dir: Path, statement: str, *parameters: str | None) -> None:
     connection.close()
 
 
+def _stored_settings(data_dir: Path, project_id: str) -> Any:
+    connection = sqlite3.connect(database_file(data_dir))
+    (settings,) = connection.execute("SELECT settings FROM projects WHERE id = ?", (project_id,)).fetchone()
+    connection.close()
+    return json.loads(settings)
+
+
+def test_a_project_stored_before_its_settings_drives_at_15_kmh_and_a_set_speed_is_kept(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    _sql(data_dir, "UPDATE projects SET settings = '{}' WHERE id = ?", project_id)  # as written before slice 02
+    assert client.get(f"/api/projects/{project_id}").json()["offroad_speed_kmh"] == 15
+
+    changed = client.patch(f"/api/projects/{project_id}", json={"offroad_speed_kmh": 22.5})
+
+    assert (changed.status_code, changed.json()["offroad_speed_kmh"]) == (200, 22.5)
+    assert _stored_settings(data_dir, project_id) == {"offroad_speed_kmh": 22.5}
+    reopened = _planner(data_dir).get(f"/api/projects/{project_id}")
+    assert reopened.json()["offroad_speed_kmh"] == 22.5, "read back by a new planner process from the database"
+
+
 def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(data_dir: Path) -> None:
     client = _planner(data_dir)
     project_id, _ = _project_with_a_place(client)
