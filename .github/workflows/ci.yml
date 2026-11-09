@@ -20,7 +20,7 @@ permissions:
 env:
   # D170, user decision 2026-11-02: started empty; 02-07 added --run-pending=slice-00b, 03-10 --run-pending=slice-01a,
   # 04-11 --run-pending=slice-01b, each in the commit that turns the slice GREEN.
-  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b"
+  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
   UV_VERSION: "0.11.16"
   # Trivy as a sha256-verified binary (like the lint binaries) rather than aquasecurity/trivy-action, whose tags were
   # rewritten in the March 2026 supply-chain incident.
@@ -235,10 +235,37 @@ jobs:
       - name: pytest (coverage >= 80 %)
         run: |
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
-          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi" \
+          uv run pytest -q $PENDING_FLAGS -m "not real_provider and not pi and not slow" \
             --cov=overland_planner --cov-report=term --cov-fail-under=80
       - name: Domain coverage (>= 90 %)
         run: uv run coverage report --include='*/overland_planner/domain/*' --fail-under=90
+
+  slow-properties:
+    name: "10 slow-properties"
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40 # A-6 at profile ci (200 cases) took 254-293 s at 100 cases on the Mac
+    env:
+      PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
+      DATA_DIR: ${{ github.workspace }}/.data/ci/data
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: pytest -m slow (A-6 in-process; selecting nothing exits 5 and fails the job)
+        run: |
+          mkdir -p "$DATA_DIR"
+          # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
+          uv run pytest -q $PENDING_FLAGS -m slow
 
   test-web:
     name: "4 test-web"
@@ -638,8 +665,8 @@ jobs:
 
   publish:
     name: "9 publish"
-    needs: [image-amd64, image-arm64, e2e, mutation]
-    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
+    needs: [image-amd64, image-arm64, e2e, slow-properties, mutation]
+    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success' && needs.e2e.result == 'success' && needs.slow-properties.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.mutation.result)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: # D161, D195

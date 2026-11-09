@@ -4,7 +4,7 @@
 # Mandate 9) with InvariantGuard as the oracle (ADR-009). Pinned readable cases are Hypothesis @example()s in the
 # step code, not Gherkin examples (review L-02, D188). The guard scenario uses waiver W1.
 
-@slice-02 @pending
+@slice-02
 Feature: Direction-safe plans with fixed Start and End
   As Marco, I want every plan to drive each trail whole and the way it was recorded, from my Start to my End,
   and to give the same answer for the same choices, so that I can trust it on the mountain.

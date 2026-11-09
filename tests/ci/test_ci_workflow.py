@@ -45,6 +45,7 @@ JOB_RUNNERS = {
     "image-arm64": ARM64_RUNNER,
     "e2e": RUNNER,
     "mutation": RUNNER,
+    "slow-properties": RUNNER,
     "publish": RUNNER,
 }
 REGISTRY_WRITERS = (*IMAGE_JOBS, "publish")  # D161
@@ -124,8 +125,10 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     env = {**workflow.get("env", {}), **job.get("env", {})}
     pytest_step = _main_pytest(job)
 
-    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11).
-    assert workflow["env"]["PENDING_FLAGS"] == "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b"
+    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12).
+    assert workflow["env"]["PENDING_FLAGS"] == (
+        "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
+    )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
     assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]  # root of every test data folder
@@ -135,7 +138,7 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
 
     command = pytest_step["run"]
     assert "$PENDING_FLAGS" in command
-    assert '-m "not real_provider and not pi"' in command
+    assert '-m "not real_provider and not pi and not slow"' in command  # A-6 runs in slow-properties (step 05-12)
     assert "--cov-fail-under=80" in command
     assert not pytest_step.get("continue-on-error")
     domain_gate = job["steps"][job["steps"].index(pytest_step) + 1]
@@ -353,6 +356,7 @@ D160_PUBLISH_IF = (
     f"always() && !cancelled() && {MAIN_PUSH}"
     " && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success'"
     " && needs.e2e.result == 'success'"
+    " && needs.slow-properties.result == 'success'"  # D220 h: the A-6 property gates publish (step 05-12)
     """ && contains(fromJSON('["success","skipped"]'), needs.mutation.result)"""
 )
 
@@ -505,7 +509,7 @@ def test_publish_gating_matches_d160() -> None:
     workflow = _workflow()
     job = _job(workflow, "publish")
 
-    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "mutation"}
+    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "slow-properties", "mutation"}
     assert job["if"] == D160_PUBLISH_IF
     assert _needs(_job(workflow, "mutation")) & {"image-amd64", "image-arm64", "e2e"} == set()
 
@@ -771,9 +775,9 @@ FEATURE_01B = "tests/acceptance/overland_route_planner_mvp/slice-01b-skeleton-pl
 MODULE_01B = "tests/acceptance/overland_route_planner_mvp/test_slice_01b.py"
 
 
-def _collect(*selection: str) -> subprocess.CompletedProcess[str]:
+def _collect(*selection: str, module: str = MODULE_01B) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", *selection, MODULE_01B],
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", *selection, module],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -837,3 +841,64 @@ def test_weekly_deep_properties_selects_the_solves_but_not_the_browser_scenario(
     assert "test_marco_plans_the_assietta_day_trip_in_his_browser" not in collected.stdout
     assert "test_marco_gets_a_first_ordered_itinerary" in collected.stdout
     assert not any("playwright install" in script for script in _runs(job)), "with a browser, select the scenario again"
+
+
+# ------------------------------------------------------------------------- step 05-12: slice 02 blocking in CI
+FEATURE_02 = "tests/acceptance/overland_route_planner_mvp/slice-02-directional-optimizer.feature"
+MODULE_02 = "tests/acceptance/overland_route_planner_mvp/test_slice_02.py"
+A_6 = "test_any_project_planned_twice_from_scratch_gets_the_same_plan"
+IDENTICAL_INPUTS = "test_identical_inputs_produce_identical_plans"
+SLICE_02_PROPERTIES = (
+    "test_no_generated_plan_ever_drives_a_track_in_reverse",  # HC-1
+    "test_tracks_are_always_driven_in_full",  # HC-5
+    "test_the_trip_always_starts_at_start_and_ends_at_end",  # A-2
+)
+
+
+def _collected_slice_02(expression: str) -> list[str]:
+    pending = _workflow()["env"]["PENDING_FLAGS"].split()
+    collected = _collect(*pending, "-m", expression, module=MODULE_02)
+    assert collected.returncode in (0, 5), collected.stdout + collected.stderr
+    return [line.split("::", 1)[1] for line in collected.stdout.splitlines() if line.startswith(f"{MODULE_02}::")]
+
+
+def test_slice_02_scenarios_run_without_being_enabled() -> None:
+    """Step 05-12: the feature-level tags are what conftest reads to skip a slice; `@pending` must be gone from them."""
+    lines = (REPO_ROOT / FEATURE_02).read_text().splitlines()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-02"]
+
+
+def test_slow_properties_job_runs_exactly_a_6_at_profile_ci_and_job_2_does_not() -> None:
+    """D220: A-6 (200 cases at profile ci) would push job 2 past its 11-minute target, so it runs in its own job."""
+    workflow = _workflow()
+    job = _job(workflow, "slow-properties")
+    pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
+    job_2 = re.search(r'-m "(?P<expression>[^"]+)"', _main_pytest(_job(workflow, "test-python"))["run"])
+    assert job_2 is not None
+
+    assert job["name"] == "10 slow-properties"
+    assert _needs(job) == {"changes"} and job["if"] == "needs.changes.outputs.code == 'true'"
+    assert job["timeout-minutes"] == 40
+    assert job["env"]["HYPOTHESIS_PROFILE"] == "ci"
+    for name in ("DATA_DIR", "PLANNER_TEST_WORKSPACE"):
+        assert job["env"][name] == _job(workflow, "test-python")["env"][name]
+    assert _uses(job, "astral-sh/setup-uv") and "uv sync --frozen" in _runs(job)
+    assert len(pytest_steps) == 1 and not pytest_steps[0].get("continue-on-error")
+    command = pytest_steps[0]["run"]
+    assert "uv run pytest -q $PENDING_FLAGS -m slow" in command  # pytest exits 5 when it selects nothing
+    expression = re.search(r"-m (?P<expression>\S+)", command)
+    assert expression is not None
+
+    assert _collected_slice_02(expression["expression"]) == [A_6]
+    assert A_6 not in _collected_slice_02(job_2["expression"])
+
+
+def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:
+    """D199: pre-push stays under five minutes; it runs the in-process properties, never A-6 or the real solves."""
+    collected = _collect("-m", "not slow and not solver_child", module=MODULE_02)
+
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert A_6 not in collected.stdout and IDENTICAL_INPUTS not in collected.stdout
+    missing = [name for name in SLICE_02_PROPERTIES if f"{MODULE_02}::{name}" not in collected.stdout]
+    assert missing == []
