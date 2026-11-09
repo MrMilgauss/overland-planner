@@ -172,6 +172,28 @@ def test_a_project_stored_before_its_settings_drives_at_15_kmh_and_a_set_speed_i
     assert reopened.json()["offroad_speed_kmh"] == 22.5, "read back by a new planner process from the database"
 
 
+def test_a_stored_speed_that_is_not_drivable_reads_15_kmh_with_a_warning_and_a_patch_repairs_it(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    _sql(data_dir, "UPDATE projects SET settings = '{\"offroad_speed_kmh\": 0}' WHERE id = ?", project_id)  # by hand
+    capsys.readouterr()
+
+    listed = client.get("/api/projects")
+
+    assert listed.status_code == 200
+    assert [project["offroad_speed_kmh"] for project in listed.json() if project["id"] == project_id] == [15]
+    (invalid,) = [r for r in _json_lines(capsys.readouterr().out) if r.get("event") == "catalog.settings.invalid"]
+    assert (invalid["level"], invalid["project_id"], invalid["field"]) == ("warning", project_id, "offroad_speed_kmh")
+    assert client.get(f"/api/projects/{project_id}").json()["offroad_speed_kmh"] == 15
+
+    repaired = client.patch(f"/api/projects/{project_id}", json={"offroad_speed_kmh": 20})
+
+    assert (repaired.status_code, repaired.json()["offroad_speed_kmh"]) == (200, 20)
+    assert _stored_settings(data_dir, project_id) == {"offroad_speed_kmh": 20}
+
+
 def test_the_plan_run_list_is_empty_until_a_run_exists_then_ordered_by_number(data_dir: Path) -> None:
     client = _planner(data_dir)
     project_id, _ = _project_with_a_place(client)

@@ -135,7 +135,7 @@ class _Wiring:
         return registry
 
     def _catalog_unit_of_work(self) -> SqlAlchemyCatalogUnitOfWork:
-        return SqlAlchemyCatalogUnitOfWork(self._database)
+        return SqlAlchemyCatalogUnitOfWork(self._database, self._event_log)
 
     def catalog_router(self) -> APIRouter:
         use_cases = CatalogUseCases(
@@ -153,7 +153,7 @@ class _Wiring:
         return catalog_routes(use_cases, self._upload_limits)
 
     def _planning_unit_of_work(self) -> SqlAlchemyPlanningUnitOfWork:
-        return SqlAlchemyPlanningUnitOfWork(self._database)
+        return SqlAlchemyPlanningUnitOfWork(self._database, self._event_log)
 
     def planning_router(self, health: HealthService) -> APIRouter:
         job = PlanRequestJob(

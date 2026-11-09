@@ -7,20 +7,22 @@ from sqlalchemy import Connection, select
 from overland_planner.adapters.persistence.item_repository import SqlAlchemyItemRepository
 from overland_planner.adapters.persistence.project_repository import SqlAlchemyProjectRepository
 from overland_planner.adapters.persistence.tables import projects
+from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 
 
 class SqlAlchemyProjectSnapshotReader:
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: Connection, event_log: EventLog) -> None:
         self._connection = connection
+        self._event_log = event_log
 
     def read(self, project_id: str) -> ProjectSnapshot | None:
         """Items in the order they were added (`items.position`): node order follows it, so solves are deterministic.
 
         The anchors and the off-road speed (`projects.settings`, 15 km/h when unset) are read as the project has them.
         """
-        project = SqlAlchemyProjectRepository(self._connection).get(project_id)
+        project = SqlAlchemyProjectRepository(self._connection, self._event_log).get(project_id)
         if project is None:
             return None
         items = tuple(SqlAlchemyItemRepository(self._connection).list(project_id))

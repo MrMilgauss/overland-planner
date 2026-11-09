@@ -26,6 +26,7 @@ from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.planning.plan_run import PlanStop
 from tests.acceptance.overland_route_planner_mvp.steps.places import trail_file_bytes
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
+from tests.common.catalog_fakes import RecordingEventLog
 from tests.common.fakes import FakeClock, FakeMountTable
 from tests.common.workspace import workspace_data_dir
 from tests.unit.application.planning.scripted_tour_solver import Script, ScriptedTourSolver
@@ -238,7 +239,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     assert shown["stops"][0]["leg_km"] is None
 
     database = SqliteDatabase(data_dir)
-    with SqlAlchemyPlanningUnitOfWork(database) as uow:
+    with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
         stored = uow.plan_runs.get(str(job["plan_run_id"]))
         items = uow.project_snapshots.read(project_id)
         row = uow.connection.execute(select(plan_runs)).mappings().one()
@@ -272,7 +273,8 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     assert row["inputs"]["included_item_ids"] == [item_ids["Briancon"], item_ids[ASSIETTA]]
 
     before_columns = [{key: value for key, value in stop.items() if key not in COLUMNS} for stop in saved]
-    with SqlAlchemyPlanningUnitOfWork(database) as uow:  # as a run stored before the columns were (01b, 05-06)
+    # as a run stored before the columns were (01b, 05-06)
+    with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
         uow.connection.execute(plan_runs.update().values(itinerary={"stops": before_columns}))
         uow.commit()
     older = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()

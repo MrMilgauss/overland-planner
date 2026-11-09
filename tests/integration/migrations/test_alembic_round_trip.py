@@ -19,6 +19,7 @@ from alembic.script import ScriptDirectory
 
 from overland_planner.adapters.persistence.database import SqliteDatabase, database_file
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from tests.common.catalog_fakes import RecordingEventLog
 from tests.common.workspace import workspace_data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -317,7 +318,7 @@ def test_0006_keeps_every_run_stored_before_it_with_no_totals_and_its_downgrade_
     assert added == [(None, None, None, 0)]
     database = SqliteDatabase(data_dir)
     try:
-        with SqlAlchemyPlanningUnitOfWork(database) as uow:
+        with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
             shown = uow.plan_runs.get("r1")
     finally:
         database.engine.dispose()
