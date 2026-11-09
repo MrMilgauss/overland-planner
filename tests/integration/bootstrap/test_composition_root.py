@@ -314,10 +314,28 @@ def test_calculate_answers_the_missing_anchor_read_from_the_database(data_dir: P
     assert _refusal(client, calculate) == (422, start_message)
 
 
-@pytest.mark.parametrize("method", ["GET", "POST"])
-def test_the_plan_runs_of_an_unknown_project_are_not_found(data_dir: Path, method: str) -> None:
-    answer = _planner(data_dir).request(method, f"/api/projects/{'0' * 32}/plan-runs")
-    assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+UNKNOWN = "0" * 32
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "message"),
+    [
+        ("GET", f"/api/projects/{UNKNOWN}/plan-runs", "Project not found"),
+        ("POST", f"/api/projects/{UNKNOWN}/plan-runs", "Project not found"),
+        ("GET", f"/api/plan-runs/{UNKNOWN}", "Plan run not found"),
+        ("GET", f"/api/plan-jobs/{UNKNOWN}", "Plan job not found"),
+    ],
+)
+def test_an_unknown_id_is_not_found_with_a_fixed_message(data_dir: Path, method: str, path: str, message: str) -> None:
+    answer = _planner(data_dir).request(method, path)
+    assert (answer.status_code, answer.json()) == (404, {"code": "not_found", "message": message})
+
+
+def test_an_unknown_item_of_a_known_project_is_not_found_with_a_fixed_message(data_dir: Path) -> None:
+    client = _planner(data_dir)
+    project_id, _ = _project_with_a_place(client)
+    answer = client.delete(f"/api/projects/{project_id}/items/{UNKNOWN}")
+    assert (answer.status_code, answer.json()) == (404, {"code": "not_found", "message": "Item not found"})
 
 
 def test_a_second_calculate_is_refused_until_the_job_has_ended_even_when_it_failed(data_dir: Path) -> None:
