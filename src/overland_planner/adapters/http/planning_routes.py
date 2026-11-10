@@ -41,8 +41,10 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
     def calculate(project_id: str, ignore_memo: bool = False) -> PlanJobAccepted:
         """Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503
         `optimizer_unavailable`: no job and no plan run. `ignore_memo=true` ("Re-optimise (ignore previous result)")
-        has the same refusals; a value that is not a boolean answers 422 `validation_error`."""
-        return PlanJobAccepted(job_id=requests.request(project_id, ignore_memo=ignore_memo))
+        has the same refusals; a value that is not a boolean answers 422 `validation_error`. `notices` holds the
+        large-project notice above 60 Included items (D146): the plan is calculated all the same."""
+        job_id = requests.request(project_id, ignore_memo=ignore_memo)
+        return PlanJobAccepted(job_id=job_id, notices=list(runs.notices(project_id)))
 
     @router.get("/plan-jobs/{job_id}", responses=ERROR_RESPONSES)
     def plan_job(job_id: str) -> PlanJobResource:

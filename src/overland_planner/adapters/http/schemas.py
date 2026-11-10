@@ -143,7 +143,11 @@ class PlanRunResource(BaseModel):
 
 
 class PlanJobAccepted(BaseModel):
+    """Calculate's answer: the job to poll and the notices of the project planned, such as "Large project -
+    calculation may take longer than 3 minutes" above 60 Included items (D146)."""
+
     job_id: str
+    notices: list[str]
 
 
 class IncumbentResource(BaseModel):
@@ -164,7 +168,7 @@ class PlanJobResource(BaseModel):
     `legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);
     `incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the
     run has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every
-    state before `finalising` and false from then on (D136)."""
+    state before `finalising` and false from then on (D136). `notices` repeats Calculate's, once the project is read."""
 
     state: PlanJobState
     reason: str | None
@@ -180,6 +184,7 @@ class PlanJobResource(BaseModel):
     items_included: int | None
     incumbent: IncumbentResource | None
     stoppable: bool
+    notices: list[str]
 
     @classmethod
     def of(cls, job: PlanJobView) -> PlanJobResource:
@@ -248,9 +253,11 @@ class PlanRunDetailResource(BaseModel):
     """A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the
     reason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run
     stored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run
-    flags (`not_fully_optimised`: `optimizer_failed` or `time_limit`); `messages` the lines the results show in words,
-    such as "not fully optimised (time limit)" or, for a run failed on the feasibility limit, "No valid route found
-    within the time limit - plan run #N failed" (D151)."""
+    flags (`not_fully_optimised`: `optimizer_failed`, `time_limit` or `stopped`); `messages` the lines the results show
+    in words, composed from the run's stored facts, such as "Planned 60 items in 2 min 41 s", "not fully optimised
+    (time limit)", "Reused the identical plan of run #N" or, for a run failed on the feasibility limit, "No valid route
+    found within the time limit - plan run #N failed" (D151); a run stored before 06-10 has no run time line.
+    `memo_hit` is true when the run reused an earlier run's plan: "Re-optimise (ignore previous result)" is offered."""
 
     id: str
     project_id: str
@@ -263,6 +270,7 @@ class PlanRunDetailResource(BaseModel):
     reproducible: bool
     not_fully_optimised: NotFullyOptimised | None
     messages: list[str]
+    memo_hit: bool
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -278,6 +286,7 @@ class PlanRunDetailResource(BaseModel):
             reproducible=run.reproducible,
             not_fully_optimised=run.not_fully_optimised,
             messages=list(run.messages),
+            memo_hit=run.memo_hit,
         )
 
 

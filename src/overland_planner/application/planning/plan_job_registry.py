@@ -36,7 +36,7 @@ the end is published; a row that cannot be written changes nothing of the ending
 warning with the error's class. The poll shows `stage_ms`, `legs_total`, `legs_new`, `legs_cached` (the road legs asked
 of the road map and those known without asking, as they arrive) and `items_included` once the work noted them,
 and `incumbent` (null until the first valid route): the last incumbent the solve streamed, which the line leaves out
-(it counts them in `incumbents`).
+(it counts them in `incumbents`), and `notices` (the large-project notice, D146), which the line leaves out too.
 A job carries the `ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work
 noted, false until the memo gives the order.
 """
@@ -98,7 +98,7 @@ _NULL_UNTIL_NOTED = (
     "retraces",
     "provider_id",
 )
-_POLL_ONLY = ("incumbent",)
+_POLL_ONLY = ("incumbent", "notices")
 
 
 @dataclass(frozen=True)
@@ -121,6 +121,7 @@ class PlanJobView:
     items_included: int | None = None
     incumbent: dict[str, float] | None = None
     stoppable: bool = True
+    notices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -332,6 +333,7 @@ class _Job:
 
     def view(self, now_s: float) -> PlanJobView:
         shown = self.ending or self._so_far(now_s)
+        facts = self.fact_values()  # one copy under the guard per poll
         return PlanJobView(
             self.id,
             self.project_id,
@@ -341,26 +343,25 @@ class _Job:
             shown.plan_run_id,
             elapsed_s=shown.ended_s - self.started_s,
             ignore_memo=self.ignore_memo,
-            memo_hit=self.memo_hit(),
-            stage_ms=self._fact("stage_ms", dict),
-            legs_total=self._fact("legs_total", int),
-            legs_new=self._fact("legs_new", int),
-            legs_cached=self._fact("legs_cached", int),
-            items_included=self._fact("items_included", int),
-            incumbent=self._fact("incumbent", dict),
+            memo_hit=facts.get("memo_hit") is True,
+            stage_ms=_fact(facts, "stage_ms", dict),
+            legs_total=_fact(facts, "legs_total", int),
+            legs_new=_fact(facts, "legs_new", int),
+            legs_cached=_fact(facts, "legs_cached", int),
+            items_included=_fact(facts, "items_included", int),
+            incumbent=_fact(facts, "incumbent", dict),
             stoppable=shown.state not in _NOT_STOPPABLE,
+            notices=_fact(facts, "notices", tuple) or (),
         )
-
-    def _fact[T](self, name: str, kind: type[T]) -> T | None:
-        value = self.fact_values().get(name)
-        return value if isinstance(value, kind) else None
 
     def _so_far(self, now_s: float) -> _Ending:
         """A running job as a poll at `now_s` shows it: its state, nothing more yet."""
         return _Ending(self._state, reason=None, message=None, plan_run_id=None, ended_s=now_s)
 
-    def memo_hit(self) -> bool:
-        return self.facts.get("memo_hit") is True
+
+def _fact[T](facts: dict[str, object], name: str, kind: type[T]) -> T | None:
+    value = facts.get(name)
+    return value if isinstance(value, kind) else None
 
 
 class PlanJobRegistry:

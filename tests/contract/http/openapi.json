@@ -418,20 +418,29 @@
         "type": "object"
       },
       "PlanJobAccepted": {
+        "description": "Calculate's answer: the job to poll and the notices of the project planned, such as \"Large project -\ncalculation may take longer than 3 minutes\" above 60 Included items (D146).",
         "properties": {
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
           }
         },
         "required": [
-          "job_id"
+          "job_id",
+          "notices"
         ],
         "title": "PlanJobAccepted",
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and\n`legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);\n`incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the\nrun has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every\nstate before `finalising` and false from then on (D136).",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and\n`legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);\n`incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the\nrun has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every\nstate before `finalising` and false from then on (D136). `notices` repeats Calculate's, once the project is read.",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -510,6 +519,13 @@
             ],
             "title": "Message"
           },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
           "plan_run_id": {
             "anyOf": [
               {
@@ -580,7 +596,8 @@
           "legs_cached",
           "items_included",
           "incumbent",
-          "stoppable"
+          "stoppable",
+          "notices"
         ],
         "title": "PlanJobResource",
         "type": "object"
@@ -600,7 +617,7 @@
         "type": "object"
       },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags (`not_fully_optimised`: `optimizer_failed` or `time_limit`); `messages` the lines the results show in words,\nsuch as \"not fully optimised (time limit)\" or, for a run failed on the feasibility limit, \"No valid route found\nwithin the time limit - plan run #N failed\" (D151).",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags (`not_fully_optimised`: `optimizer_failed`, `time_limit` or `stopped`); `messages` the lines the results show\nin words, composed from the run's stored facts, such as \"Planned 60 items in 2 min 41 s\", \"not fully optimised\n(time limit)\", \"Reused the identical plan of run #N\" or, for a run failed on the feasibility limit, \"No valid route\nfound within the time limit - plan run #N failed\" (D151); a run stored before 06-10 has no run time line.\n`memo_hit` is true when the run reused an earlier run's plan: \"Re-optimise (ignore previous result)\" is offered.",
         "properties": {
           "failure_reason": {
             "anyOf": [
@@ -616,6 +633,10 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "memo_hit": {
+            "title": "Memo Hit",
+            "type": "boolean"
           },
           "messages": {
             "items": {
@@ -699,7 +720,8 @@
           "report",
           "reproducible",
           "not_fully_optimised",
-          "messages"
+          "messages",
+          "memo_hit"
         ],
         "title": "PlanRunDetailResource",
         "type": "object"
@@ -1771,7 +1793,7 @@
         "summary": "Project Plan Runs"
       },
       "post": {
-        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503\n`optimizer_unavailable`: no job and no plan run. `ignore_memo=true` (\"Re-optimise (ignore previous result)\")\nhas the same refusals; a value that is not a boolean answers 422 `validation_error`.",
+        "description": "Answers at once with the job to poll. Refused with 422 `missing_anchor`, 409 `job_active` or 503\n`optimizer_unavailable`: no job and no plan run. `ignore_memo=true` (\"Re-optimise (ignore previous result)\")\nhas the same refusals; a value that is not a boolean answers 422 `validation_error`. `notices` holds the\nlarge-project notice above 60 Included items (D146): the plan is calculated all the same.",
         "operationId": "calculate_api_projects__project_id__plan_runs_post",
         "parameters": [
           {

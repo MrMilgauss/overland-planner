@@ -30,6 +30,11 @@ and `guard_persist` (guard, assemble, store). Truncating keeps their sum within 
 The road legs come from the leg resolver, which keeps those found for the process's life (06-09): the job notes
 `legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. A job its registry ended
 during the look-up raises that ending at its next fact or state, so a late road-map answer stores no run.
+
+Every run stores its `run_time_ms`, from the start of the job's work to the run stored, by the `Clock` port's monotonic
+time, rounded (06-10). A memo hit stores the run it reused (`memo_source_run_id`) and inherits its label and
+`reproducible` flag (ADR-014 section 5, D74). Once the snapshot is read the job notes its `notices` for the poll: the
+large-project notice above 60 Included items other than the anchors (D146).
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ from overland_planner.application.catalog.facade import (
     canonical_file_sha256,
     parse_canonical_points_file,
 )
-from overland_planner.application.planning.fingerprint_memo import FingerprintMemo
+from overland_planner.application.planning.fingerprint_memo import FingerprintMemo, MemoSource
 from overland_planner.application.planning.plan_job_registry import PlanJobProgress, StoredRun
 from overland_planner.application.planning.plan_run_queries import existing_snapshot
 from overland_planner.application.ports.clock import Clock
@@ -73,7 +78,7 @@ from overland_planner.domain.planning.invariant_guard import (
 from overland_planner.domain.planning.plan_run import PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.run_messages import NotFullyOptimised, job_message
+from overland_planner.domain.planning.run_messages import NotFullyOptimised, job_message, project_notices
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable
 
@@ -86,8 +91,13 @@ class _PlannedProject:
     snapshot: ProjectSnapshot
     stamp: ProjectStamp
     ignore_memo: bool
+    started_s: float
     fingerprint: str | None = None
-    memo_hit: bool = False
+    memo_source: MemoSource | None = None
+
+    @property
+    def memo_hit(self) -> bool:
+        return self.memo_source is not None
 
 
 @dataclass(frozen=True)
@@ -121,7 +131,8 @@ class PlanRequestJob:
         started_s = self.clock.monotonic()
         stages = _Stages(self.clock, progress)
         with stages.timing("snapshot"):
-            project = self._read(project_id, ignore_memo)
+            project = self._read(project_id, ignore_memo, started_s)
+        progress.note(notices=project_notices(len(project.snapshot.visited_items())))
         progress.enter("computing_legs")
         with stages.timing("matrix"):
             legs = self._resolve_legs(project.snapshot, progress)
@@ -131,7 +142,7 @@ class PlanRequestJob:
             project, reused = self._recall(project, model)
         if reused is not None:
             progress.note(memo_hit=True)
-            outcome: TourOutcome = TourFound(order=reused)
+            outcome: TourOutcome = reused
         else:
             with progress.solver_slot() as stop, stages.timing("solve"):
                 outcome = self._solve(model, progress, started_s, stop or NEVER_STOPPED)
@@ -184,10 +195,11 @@ class PlanRequestJob:
             if not isinstance(content, CanonicalPointsMissing)
         }
 
-    def _read(self, project_id: str, ignore_memo: bool) -> _PlannedProject:
+    def _read(self, project_id: str, ignore_memo: bool, started_s: float) -> _PlannedProject:
         with self.unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
-            return _PlannedProject(project_id, snapshot, uow.project_snapshots.stamp(project_id), ignore_memo)
+            stamp = uow.project_snapshots.stamp(project_id)
+            return _PlannedProject(project_id, snapshot, stamp, ignore_memo, started_s)
 
     def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
         """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09)."""
@@ -196,8 +208,9 @@ class PlanRequestJob:
         progress.note(legs_total=len(set(pairs)), provider_id=self.legs.provider_id)
         return legs
 
-    def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, tuple[str, ...] | None]:
-        """The project with its fingerprint and memo hit, and the reused order, `None` when the solver is asked."""
+    def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, TourFound | None]:
+        """The project with its fingerprint and memo source, and the reused tour, `None` when the solver is asked. The
+        reused tour ends as its source's search did, so the run inherits its label and `reproducible` flag (D74)."""
         if self.memo is None:
             return project, None
         fingerprint = self.memo.fingerprint(
@@ -207,11 +220,12 @@ class PlanRequestJob:
             provider_id=self.legs.provider_id,
             budget=self.budget,
         )
-        reused = None
+        source = None
         if not project.ignore_memo:
             with self.unit_of_work() as uow:
-                reused = self.memo.reused_order(uow, project.id, fingerprint)
-        return replace(project, fingerprint=fingerprint.value, memo_hit=reused is not None), reused
+                source = self.memo.source(uow, project.id, fingerprint)
+        recalled = replace(project, fingerprint=fingerprint.value, memo_source=source)
+        return recalled, None if source is None else TourFound(source.order, source.not_fully_optimised or "budget")
 
     def _solve(self, model: TourModel, progress: PlanJobProgress, started_s: float, stop: StopSignal) -> TourOutcome:
         incumbents = _Incumbents(self.clock, progress, started_s)
@@ -261,6 +275,8 @@ class PlanRequestJob:
             memo_hit=project.memo_hit,
             reproducible=finding.reproducible,
             not_fully_optimised=finding.not_fully_optimised,
+            run_time_ms=round((self.clock.monotonic() - project.started_s) * _MILLISECONDS_PER_SECOND),
+            memo_source_run_id=None if project.memo_source is None else project.memo_source.plan_run_id,
         )
 
     def _inputs(self, snapshot: ProjectSnapshot) -> dict[str, object]:

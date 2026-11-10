@@ -4,10 +4,12 @@ Driving ports: `PlanJobRegistry` (start and poll) over the real `PlanRequestJob`
 `PlanRequestJob.run`. Driven ports: `PlanningUnitOfWork`, `RoutingProvider`, `TourSolver` (a script that proposes a
 drawn order, so a reused order is told apart from a fresh one), `FileStore`, `EventLog`.
 Observable universe: `plan_runs` as the database double holds them (order, totals, `memo_hit`) and `solver_calls`.
-Test Budget: 2 behaviors (the solver is asked iff no ready run of the project has the inputs' fingerprint or
+Test Budget: 3 behaviors (the solver is asked iff no ready run of the project has the inputs' fingerprint or
 `ignore_memo` is set, otherwise the run reuses that order with recomputed totals and says `memo_hit`; a reused order is
-judged by the guard, a violation stores a Failed run that is never a memo source) x 2 = 4; 3 used (the third pins the
-settings the drawn sequences may not reach: road map, budget and solver identity, each on every example, D212).
+judged by the guard, a violation stores a Failed run that is never a memo source; a memo hit names its source run,
+inherits its label and reproducible flag and stores its own run time, ADR-014 section 5, D74) x 2 = 6; 4 used (the
+third pins the settings the drawn sequences may not reach: road map, budget and solver identity, each on every example,
+D212).
 """
 
 from __future__ import annotations
@@ -19,7 +21,12 @@ from typing import Any
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from overland_planner.application.planning.facade import FingerprintMemo, PlanJobRegistry, PlanRequestJob
+from overland_planner.application.planning.facade import (
+    FingerprintMemo,
+    PlanJobRegistry,
+    PlanRequestJob,
+    PlanRunQueries,
+)
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
 from overland_planner.application.ports.tour_solver import (
@@ -322,3 +329,105 @@ class _Progress:
 
     def solver_slot(self) -> AbstractContextManager[None]:
         return nullcontext()
+
+
+ENDINGS = ("budget", "time_limit", "stopped", "optimizer_failed")
+LABEL = {"time_limit": "time limit", "stopped": "stopped", "optimizer_failed": "optimizer failed"}
+
+
+class _TimedSolver(_ProposingSolver):
+    """Proposes like `_ProposingSolver`, keeps how the scripted search ended and takes `took_ms` on the job's clock."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__()
+        self.clock = clock
+        self.took_ms = 0
+
+    def solve(
+        self,
+        model: TourModel,
+        budget: int,
+        _on_incumbent: IncumbentObserver = ignore_incumbents,
+        *,
+        deadlines: object = None,
+        stop: object = None,
+    ) -> TourOutcome:
+        ending = self.answers[0].ending if isinstance(self.answers[0], TourFound) else None
+        answer = super().solve(model, budget, _on_incumbent, deadlines=deadlines, stop=stop)
+        self.clock.advance(self.took_ms / 1000)
+        return answer if ending is None or not isinstance(answer, TourFound) else replace(answer, ending=ending)
+
+
+@dataclass(frozen=True)
+class Timed:
+    ignore_memo: bool
+    answer: TourOutcome
+    took_ms: int
+
+
+def _timed_row(run: NewPlanRun) -> tuple[Any, ...]:
+    order = tuple(stop.item_id for stop in run.stops)
+    flags = (run.reproducible, run.not_fully_optimised)
+    return (run.number, run.status, order, run.memo_hit, run.memo_source_run_id, *flags, run.run_time_ms)
+
+
+@st.composite
+def timed_presses(draw: st.DrawFn, trip: Trip) -> Timed:
+    visited = list(item.id for item in trip.items)
+    found = st.tuples(st.permutations(visited), st.sampled_from(ENDINGS)).map(
+        lambda drawn: TourFound(tuple(drawn[0]), ending=drawn[1])
+    )
+    return Timed(
+        ignore_memo=draw(st.booleans()),
+        answer=draw(st.one_of(found, found, found, st.just(TourNoRoute()))),
+        took_ms=draw(st.integers(min_value=0, max_value=4 * 3_600_000)),
+    )
+
+
+TIMED = trips().flatmap(lambda trip: st.tuples(st.just(trip), st.lists(timed_presses(trip), min_size=1, max_size=5)))
+
+
+@settings(deadline=None, max_examples=30)
+@given(case=TIMED)
+def test_a_memo_hit_names_its_source_and_inherits_its_label_and_reproducible_flag_and_re_optimise_solves_afresh(
+    case: tuple[Trip, list[Timed]],
+) -> None:
+    trip, presses = case
+    desk = Desk(trip)
+    solver = _TimedSolver(desk.clock)
+    desk.solver = solver
+    snapshot = desk.project_as(PROJECT, "same", trip.snapshot.offroad_speed)
+    visiting = tuple(item.id for item in snapshot.visited_items())
+    source: tuple[Any, ...] | None = None  # the latest ready run: its row as `_timed_row` shows it, and its id
+    for number, press in enumerate(presses, start=1):
+        job, _ = desk.job("same")
+        solver.answers, solver.took_ms = [press.answer], press.took_ms
+        before = {"plan_runs": tuple(_timed_row(run) for run in desk.planning.runs), "solver_calls": solver.calls}
+
+        job.run(PROJECT, _Progress(), ignore_memo=press.ignore_memo)
+
+        after = {"plan_runs": tuple(_timed_row(run) for run in desk.planning.runs), "solver_calls": solver.calls}
+        hit = source is not None and not press.ignore_memo
+        if hit:
+            assert source is not None
+            _, _, order, _, _, reproducible, label, _ = source[0]
+            row = (number, "ready", order, True, source[1], reproducible, label, 0)
+        elif isinstance(press.answer, TourFound):
+            ending = press.answer.ending
+            order = (snapshot.start_item_id, *_proposed(press.answer.order, visiting), snapshot.end_item_id)
+            label = None if ending == "budget" else ending
+            row = (number, "ready", order, False, None, ending == "budget", label, press.took_ms)
+        else:
+            row = (number, "failed", (), False, None, True, None, press.took_ms)
+        calls = unchanged() if hit else set_to(before["solver_calls"] + 1)
+        assert_state_delta(before, after, UNIVERSE, {"plan_runs": gained(row), "solver_calls": calls}, strict=True)
+
+        stored = desk.planning.runs[-1]
+        detail = PlanRunQueries(desk.planning.unit_of_work).get(stored.id)
+        assert detail is not None and detail.memo_hit is hit
+        reuse_lines = [line for line in detail.messages if line.startswith("Reused the identical plan of run")]
+        assert reuse_lines == ([f"Reused the identical plan of run #{source[0][0]}"] if hit and source else [])
+        labelled = [line for line in detail.messages if line.startswith("not fully optimised")]
+        assert labelled == ([f"not fully optimised ({LABEL[row[6]]})"] if row[6] else [])
+        if row[1] == "ready":
+            source = (row, stored.id)

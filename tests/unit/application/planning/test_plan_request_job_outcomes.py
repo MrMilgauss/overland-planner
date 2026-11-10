@@ -9,7 +9,8 @@ Observable universe: `plan_runs` as stored and shown (status, reason, order, rep
 seconds from the job's start on the `Clock` port (ADR-014 section 2, D58), for any pair of limits, and `stop.answer`:
 the state and `stoppable` a Stop pressed while solving answers (D136), null when nobody pressed it. A Stop while solving
 reaches the solve through the port's stop signal (brief section 6) and ends it like the adapter does: the last incumbent
-labelled `stopped`, or Failed `stopped` without one (ADR-015, D122).
+labelled `stopped`, or Failed `stopped` without one (ADR-015, D122). A ready run's lines start with its run time line
+(06-10), checked here by its pattern; its words are test_run_messages'.
 Test Budget: 4 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
 incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start;
 a Stop while solving ends the solve through its stop signal with the best so far) x 2 = 8; 1 property test used, every
@@ -18,6 +19,7 @@ behavior on every example (D212). The label texts are written here as the produc
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +27,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries
+from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
     SolveLimits,
@@ -58,6 +61,7 @@ TIME_LIMIT_LABEL = ("not fully optimised (time limit)",)
 TIMEOUT_TEXT = "No valid route found within the time limit - plan run #1 failed"
 STOPPED_LABEL = ("not fully optimised (stopped)",)
 STOPPED_TEXT = "stopped before a valid route was found"
+RUN_TIME = r" (?:\d+ h )?(?:\d+ min )?\d+(?:\.\d+)? s"  # the acceptance binding's pattern
 NOT_AN_ITEM = "reversed:item"
 FAILED = "optimizer_failed"
 
@@ -144,7 +148,7 @@ def _view(
                 tuple(stop.item_id for stop in run.stops),
                 run.reproducible,
                 run.not_fully_optimised,
-                detail.messages if detail is not None else None,
+                _after_the_run_time(run, detail.messages) if detail is not None else None,
             )
             for run, detail in zip(planning.runs, shown, strict=True)
         ),
@@ -162,6 +166,15 @@ def _view(
         "solve.deadlines": deadlines,
         "stop.answer": stop_answer,
     }
+
+
+def _after_the_run_time(run: NewPlanRun, lines: tuple[str, ...]) -> tuple[str, ...]:
+    """A ready run's lines after its run time line, which names the Included items it planned."""
+    if run.status != "ready":
+        return lines
+    items = len(run.inputs["included_item_ids"])  # type: ignore[arg-type]
+    assert lines and re.fullmatch(rf"Planned {items} items in{RUN_TIME}", lines[0]), f"no run time line: {lines}"
+    return lines[1:]
 
 
 @settings(deadline=None)

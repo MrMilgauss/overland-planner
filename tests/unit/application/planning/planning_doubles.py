@@ -177,6 +177,10 @@ class _Runs:
                     row.report,
                     reproducible=row.reproducible,
                     not_fully_optimised=row.not_fully_optimised,
+                    memo_hit=row.memo_hit,
+                    run_time_ms=row.run_time_ms,
+                    memo_source_run_id=row.memo_source_run_id,
+                    items_planned=_items_planned(row.inputs),
                 )
         return None
 
@@ -199,6 +203,11 @@ class _Runs:
         assert run.provider_id, "plan_runs.provider_id is NOT NULL"
         assert run.objective, "plan_runs.objective is NOT NULL"
         self._rows.append(replace(run))
+
+
+def _items_planned(inputs: Mapping[str, object]) -> int | None:
+    included = inputs.get("included_item_ids")
+    return len(included) if isinstance(included, list | tuple) else None
 
 
 class _Snapshots:

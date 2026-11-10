@@ -6,6 +6,8 @@ as `None`: runs are not recomputed. `report` holds a Failed run's reason in prod
 stored before 05-08, has none (SQL NULL). `fingerprint` and `memo_hit` (05-10) are stored on every run; a run stored
 before has a null fingerprint and is never a memo source. The run flags `reproducible` and `not_fully_optimised` (0008)
 are stored on every run and shown in the list and the detail; a run stored before reads reproducible and no label.
+`run_time_ms` and `memo_source_run_id` (0008) are written since 06-10; a run stored before reads them null. The detail
+counts the Included items it was planned with from its stored inputs.
 """
 
 from __future__ import annotations
@@ -96,6 +98,8 @@ class SqlAlchemyPlanRunRepository:
                 memo_hit=run.memo_hit,
                 reproducible=run.reproducible,
                 not_fully_optimised=run.not_fully_optimised,
+                run_time_ms=run.run_time_ms,
+                memo_source_run_id=run.memo_source_run_id,
             )
         )
 
@@ -114,7 +118,16 @@ def _detail(row: RowMapping | None) -> PlanRunDetail | None:
         report=None if row["report"] is None else PlanReport(reason=row["report"]["reason"]),
         reproducible=row["reproducible"],
         not_fully_optimised=row["not_fully_optimised"],
+        memo_hit=bool(row["memo_hit"]),
+        run_time_ms=row["run_time_ms"],
+        memo_source_run_id=row["memo_source_run_id"],
+        items_planned=_items_planned(row["inputs"]),
     )
+
+
+def _items_planned(inputs: dict[str, Any] | None) -> int | None:
+    included = None if inputs is None else inputs.get("included_item_ids")
+    return None if included is None else len(included)
 
 
 def _stop_json(stop: PlanStop) -> dict[str, Any]:

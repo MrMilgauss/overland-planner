@@ -16,8 +16,10 @@ from overland_planner.domain.planning.run_messages import NotFullyOptimised
 @dataclass(frozen=True)
 class PlanRunDetail:
     """A stored plan run with its itinerary and totals; a Failed run, or one stored before 0006, has no totals. A run
-    stored before 0008 reads `reproducible` true and no `not_fully_optimised`. `messages` are the lines the run shows,
-    which the run queries fill (D223 b); the repository reads none."""
+    stored before 0008 reads `reproducible` true and no `not_fully_optimised`. `memo_hit` is the stored column, which
+    the run queries derive from `memo_source_run_id` for a run with a `run_time_ms` (06-10); a run stored before has
+    neither. `items_planned` counts the Included items other than the anchors it was planned with. `messages` are the
+    lines the run shows, which the run queries fill (D223 b); the repository reads none."""
 
     id: str
     project_id: str
@@ -30,6 +32,10 @@ class PlanRunDetail:
     reproducible: bool = True
     not_fully_optimised: NotFullyOptimised | None = None
     messages: tuple[str, ...] = ()
+    memo_hit: bool = False
+    run_time_ms: int | None = None
+    memo_source_run_id: str | None = None
+    items_planned: int | None = None
 
 
 @dataclass(frozen=True)
@@ -37,7 +43,9 @@ class NewPlanRun:
     """The row a finished plan writes: its number comes from the same transaction (brief section 8).
 
     `fingerprint` is the solver inputs' memo key, null for a job without a memo; `memo_hit` says the order was reused.
-    `reproducible` and `not_fully_optimised` are the run flags of how its search ended (brief section 8).
+    `reproducible` and `not_fully_optimised` are the run flags of how its search ended (brief section 8); a memo hit
+    inherits its source's. `run_time_ms` is from the job's start to the run stored; `memo_source_run_id` names the run
+    a memo hit reused (06-10).
     """
 
     id: str
@@ -57,6 +65,8 @@ class NewPlanRun:
     memo_hit: bool = False
     reproducible: bool = True
     not_fully_optimised: NotFullyOptimised | None = None
+    run_time_ms: int | None = None
+    memo_source_run_id: str | None = None
 
 
 class PlanRunRepository(Protocol):

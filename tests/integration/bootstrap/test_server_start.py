@@ -210,7 +210,8 @@ def _plan_job(client: TestClient, project_id: str) -> tuple[str, dict[str, objec
     """The ended job's id and its last poll."""
     accepted = client.post(f"/api/projects/{project_id}/plan-runs")
     assert accepted.status_code == 202, accepted.text
-    assert set(accepted.json()) == {"job_id"}
+    assert set(accepted.json()) == {"job_id", "notices"}
+    assert accepted.json()["notices"] == [], "a project of 60 Included items or fewer gets no notice (D146)"
     job_id = str(accepted.json()["job_id"])
     deadline = time.monotonic() + PLAN_DEADLINE_S
     while True:
@@ -235,6 +236,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     assert set(job) == {
         *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
         *("stage_ms", "legs_total", "legs_new", "legs_cached", "items_included", "incumbent", "stoppable"),
+        "notices",
     }
     assert (job["state"], job["reason"], job["message"], job["stoppable"]) == ("done", None, None, False)
     stop = client.post(f"/api/plan-jobs/{job_id}/stop")
@@ -247,11 +249,12 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     shown = client.get(f"/api/plan-runs/{job['plan_run_id']}").json()
     assert set(shown) == {
         *("id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"),
-        *("reproducible", "not_fully_optimised", "messages"),
+        *("reproducible", "not_fully_optimised", "messages", "memo_hit"),
     }
     assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)
     assert (shown["status"], shown["failure_reason"]) == ("ready", None)
-    assert (shown["reproducible"], shown["not_fully_optimised"], shown["messages"]) == (True, None, [])
+    assert (shown["reproducible"], shown["not_fully_optimised"], shown["memo_hit"]) == (True, None, False)
+    assert shown["messages"] == ["Planned 2 items in 0.0 s"], "Briancon and the trail, on a clock that never moves"
     assert [(stop["name"], stop["type"]) for stop in shown["stops"]] == [
         ("Casa Marco", "poi"),
         ("Briancon", "poi"),
