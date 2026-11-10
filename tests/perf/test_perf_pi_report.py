@@ -54,7 +54,7 @@ def expected_gate(n: int, items: int, points: int | None) -> tuple[str, int] | N
     if points is None:
         return "solve", 55_000  # US-06a, D159: slowest of 10
     if points == 20_000:
-        return "guard_persist", 3_000  # D135, D223 d
+        return "guard_persist", 5_000  # D135, D223 d, D230: about 4.5 s accepted for 20,000-point tracks
     return None
 
 
