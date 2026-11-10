@@ -41,7 +41,9 @@ OTHER = "project-other"
 TERMINAL = {"done", "failed", "cancelled", "timed_out"}
 
 
-def deaf_child(answer: Connection, model: TourModel, budget: int, *, incumbent: bool, ready: str) -> None:
+def deaf_child(
+    answer: Connection, model: TourModel, budget: int, time_limit_s: float, *, incumbent: bool, ready: str
+) -> None:
     """Ignores SIGTERM, sends one valid incumbent if asked, says it is ready (its pid in `ready`), then keeps
     "searching" without a final message."""
     signal.signal(signal.SIGTERM, signal.SIG_IGN)

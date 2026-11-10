@@ -26,6 +26,7 @@ from typing import Any
 from overland_planner.adapters.solver.ortools_tour_solver import (
     OrToolsTourSolver,
     TourChildObservation,
+    child_time_limit_s,
     incumbent_of,
     tour_outcome,
 )
@@ -169,7 +170,7 @@ class InProcessOrToolsTourSolver:
         """In-process, so no deadline and no Stop can end it early; it takes them like the production adapter does."""
         assert deadlines.feasibility_s <= deadlines.optimisation_s, "deadlines out of order"
         answer = _CapturedAnswer()
-        run_tour_child(answer, model, budget)  # type: ignore[arg-type]
+        run_tour_child(answer, model, budget, child_time_limit_s(deadlines))  # type: ignore[arg-type]
         for message in answer.messages:  # after the search, not as found: only the hosting differs from the child
             incumbent = incumbent_of(message, model)
             if incumbent is not None:
@@ -183,7 +184,14 @@ SCRIPTS = ("improving", "silent", "no_route", "finish")
 
 
 def scripted_tour_child(
-    answer: Connection, model: TourModel, budget: int, *, script: str, record: str, life_s: float
+    answer: Connection,
+    model: TourModel,
+    budget: int,
+    time_limit_s: float,
+    *,
+    script: str,
+    record: str,
+    life_s: float,
 ) -> None:
     """A solve child that speaks the child protocol without OR-Tools (waiver W1), started by the real parent.
 

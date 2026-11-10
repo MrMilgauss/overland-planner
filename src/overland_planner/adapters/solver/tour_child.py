@@ -10,7 +10,11 @@ the search already holds and changes nothing of the search (the golden orders ar
 
 A child dies with its parent in two ways (ADR-015, spike check j): on Linux `PR_SET_PDEATHSIG`, and everywhere a daemon
 thread that waits for end-of-file on multiprocessing's parent sentinel pipe. PDEATHSIG fires when the thread that
-spawned the child ends; `OrToolsTourSolver.solve` blocks that thread for the child's whole life.
+spawned the child ends; `OrToolsTourSolver.solve` blocks that thread for the child's whole life. The watchdog needs the
+GIL, which the C++ search holds between solution callbacks, so on macOS a child could outlive its parent for days
+(review F4): the search also stops at its own time limit, which the parent gives it (the optimisation limit left plus a
+margin, `ortools_tour_solver.child_time_limit_s`) and which ends the search only after the parent would have ended the
+child; a budget search ends on its solution count long before, so the time limit changes no order (the golden orders).
 """
 
 from __future__ import annotations
@@ -28,13 +32,14 @@ from typing import Any
 
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
-TourChildMain = Callable[[Connection, TourModel, int], None]
+TourChildMain = Callable[[Connection, TourModel, int, float], None]  # pipe, model, budget, the child's own time limit
 
 FINAL = "final"
 INCUMBENT = "incumbent"
 _NO_ARC_COST = 0  # never travelled: every missing arc is removed from the model
 _PR_SET_PDEATHSIG = 1
 _EXIT_PARENT_GONE = 70
+_MILLISECONDS_PER_SECOND = 1000
 
 
 def first_solution_search_parameters(solution_limit: int) -> Any:
@@ -47,14 +52,16 @@ def first_solution_search_parameters(solution_limit: int) -> Any:
     return parameters
 
 
-def tour_child_entry(main: TourChildMain, answer: Connection, model: TourModel, budget: int) -> None:
+def tour_child_entry(
+    main: TourChildMain, answer: Connection, model: TourModel, budget: int, time_limit_s: float
+) -> None:
     """Spawn target: every solve child, real or scripted, is tied to its parent before it does anything else."""
     _die_with_parent()
-    main(answer, model, budget)
+    main(answer, model, budget, time_limit_s)
 
 
-def run_tour_child(answer: Connection, model: TourModel, budget: int) -> None:
-    answer.send((FINAL, _solve(model, budget, answer)))
+def run_tour_child(answer: Connection, model: TourModel, budget: int, time_limit_s: float) -> None:
+    answer.send((FINAL, _solve(model, budget, time_limit_s, answer)))
     answer.close()
 
 
@@ -71,7 +78,7 @@ def _exit_once_gone(parent: BaseProcess) -> None:
     os._exit(_EXIT_PARENT_GONE)
 
 
-def _solve(model: TourModel, budget: int, answer: Connection) -> tuple[int, ...] | None:
+def _solve(model: TourModel, budget: int, time_limit_s: float, answer: Connection) -> tuple[int, ...] | None:
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
     manager = pywrapcp.RoutingIndexManager(len(model.arc_m), 1, [model.start_node], [model.end_node])
@@ -93,6 +100,7 @@ def _solve(model: TourModel, budget: int, answer: Connection) -> tuple[int, ...]
     routing.AddAtSolutionCallback(send_improving_incumbent)
     parameters = first_solution_search_parameters(budget)
     parameters.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+    parameters.time_limit.FromMilliseconds(round(time_limit_s * _MILLISECONDS_PER_SECOND))  # the backstop, see above
     solution = routing.SolveWithParameters(parameters)
     return None if solution is None else _node_order(routing, manager, solution.Value)
 

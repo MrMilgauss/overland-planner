@@ -75,6 +75,10 @@ _PROBE_SOLUTION_LIMIT = 100
 _REAP_TIMEOUT_S = 2.0
 _SIGTERM_GRACE_S = 2.0
 _WAIT_STEP_S = 0.25  # the longest wait on the pipe before the deadlines are checked again on the Clock port
+# The child's own search time limit is the optimisation limit left at its spawn plus this margin: past the parent's
+# deadline, SIGTERM and its grace, so a parent alive always ends the child first, and a child whose parent is gone and
+# whose watchdog cannot run (macOS: no PDEATHSIG, the C++ search holds the GIL) still ends by itself (review F4).
+CHILD_TIME_LIMIT_MARGIN_S = 30.0
 _DRAINED_AT_MOST = 1000  # messages read without waiting once overran or stopped: a child that keeps sending is cut off
 # What makes this solver's orders what they are, for the fingerprint memo (ADR-014 sections 3 and 5): the installed
 # OR-Tools release, read from its metadata without importing it (G1), and the search `tour_child` runs.
@@ -141,7 +145,7 @@ class OrToolsTourSolver:
     ) -> TourChildObservation:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
-        arguments = (self._tour_child_main, sender, model, budget)
+        arguments = (self._tour_child_main, sender, model, budget, child_time_limit_s(bounds.deadlines))
         child = context.Process(target=tour_child_entry, args=arguments, name="tour-solver-solve", daemon=True)
         try:
             child.start()
@@ -179,6 +183,11 @@ class OrToolsTourSolver:
                 child.kill()
                 child.join()
         return ProbeObservation(exit_code=child.exitcode, solves=_solves(answer))
+
+
+def child_time_limit_s(deadlines: SolveDeadlines) -> float:
+    """The search time limit a solve child is given: the optimisation limit left now, plus the margin."""
+    return max(0.0, deadlines.remaining_s(found=True)) + CHILD_TIME_LIMIT_MARGIN_S
 
 
 @dataclass(frozen=True)

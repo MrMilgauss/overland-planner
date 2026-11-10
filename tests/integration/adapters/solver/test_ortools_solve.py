@@ -26,8 +26,8 @@ from pathlib import Path
 import pytest
 
 from overland_planner.adapters.clock.system_clock import SystemClock
-from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
-from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child
+from overland_planner.adapters.solver.ortools_tour_solver import CHILD_TIME_LIMIT_MARGIN_S, OrToolsTourSolver
+from overland_planner.adapters.solver.tour_child import FINAL, run_tour_child, tour_child_entry
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
     SolveDeadlines,
@@ -38,6 +38,7 @@ from overland_planner.application.ports.tour_solver import (
     TourTimedOut,
 )
 from overland_planner.domain.planning.solver_model_builder import TourModel
+from tests.common.fakes import FakeClock
 from tests.common.workspace import workspace_data_dir
 
 pytestmark = pytest.mark.solver_child
@@ -134,49 +135,49 @@ def _best_order(model: TourModel) -> tuple[str, ...]:
     return tuple(model.node_item_ids[node] for node in best_path)
 
 
-def _crashing_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _crashing_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     os._exit(3)
 
 
-def _killed_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _killed_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     os.kill(os.getpid(), signal.SIGKILL)
 
 
-def _raising_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _raising_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     raise RuntimeError("deliberate failure in the solve child")
 
 
-def _silent_child(answer: Connection, _model: TourModel, _budget: int) -> None:
+def _silent_child(answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     answer.close()
 
 
-def _garbling_child(answer: Connection, _model: TourModel, _budget: int) -> None:
+def _garbling_child(answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     answer.send_bytes(b"this is not a pickled message")
     answer.close()
 
 
-def _hanging_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _hanging_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     time.sleep(60)
 
 
-def _final_then_crashing_child(answer: Connection, model: TourModel, _budget: int) -> None:
+def _final_then_crashing_child(answer: Connection, model: TourModel, _budget: int, _time_limit_s: float) -> None:
     answer.send((FINAL, tuple(range(len(model.node_item_ids)))))
     os._exit(3)
 
 
-def _final_then_hanging_child(answer: Connection, model: TourModel, _budget: int) -> None:
+def _final_then_hanging_child(answer: Connection, model: TourModel, _budget: int, _time_limit_s: float) -> None:
     """A complete answer, then an interpreter teardown that does not finish in time, as on a loaded Pi."""
     answer.send((FINAL, tuple(range(len(model.node_item_ids)))))
     time.sleep(60)
 
 
-def _sigterm_ignoring_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _sigterm_ignoring_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     Path(os.environ[PID_FILE_VARIABLE]).touch()  # from here on SIGTERM cannot end this child
     time.sleep(SIGTERM_IGNORING_CHILD_LIVES_S)
 
 
-def _sigterm_recording_child(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _sigterm_recording_child(_answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float) -> None:
     listening = Path(os.environ[PID_FILE_VARIABLE])
 
     def record_and_exit(_signal_number: int, _frame: object) -> None:
@@ -188,7 +189,7 @@ def _sigterm_recording_child(_answer: Connection, _model: TourModel, _budget: in
     time.sleep(60)
 
 
-def _real_child_reporting_its_pid(answer: Connection, model: TourModel, budget: int) -> None:
+def _real_child_reporting_its_pid(answer: Connection, model: TourModel, budget: int, time_limit_s: float) -> None:
     """The real solve, reporting its pid at the search's first solution, so the test kills the parent mid-search.
 
     The report rides on the solve's own callback, the only one there is: it adds no other handover of the GIL, and a
@@ -206,7 +207,7 @@ def _real_child_reporting_its_pid(answer: Connection, model: TourModel, budget: 
         add_callback(routing, report_then_call)
 
     pywrapcp.RoutingModel.AddAtSolutionCallback = add_reporting
-    run_tour_child(answer, model, budget)
+    run_tour_child(answer, model, budget, time_limit_s)
 
 
 def _report_pid_once(pid_file: Path) -> None:
@@ -216,7 +217,9 @@ def _report_pid_once(pid_file: Path) -> None:
         whole.replace(pid_file)
 
 
-def _child_reporting_its_death_signal(_answer: Connection, _model: TourModel, _budget: int) -> None:
+def _child_reporting_its_death_signal(
+    _answer: Connection, _model: TourModel, _budget: int, _time_limit_s: float
+) -> None:
     import ctypes
 
     pr_get_pdeathsig = 2
@@ -430,6 +433,62 @@ def test_child_dies_with_its_parent(tmp_path: Path) -> None:
         parent.wait()
         if child_pid is not None and _is_alive(child_pid):
             os.kill(child_pid, signal.SIGKILL)
+
+
+CHILD_OWN_LIMIT_S = 2.0
+CHILD_OWN_LIMIT_SLACK_S = 20.0  # the spawn and OR-Tools' first import (over 10 s once on the Mac), and a loaded machine
+
+
+def test_a_child_ends_its_search_at_its_own_time_limit() -> None:
+    """Review F4: on macOS (no PDEATHSIG) the watchdog needs the GIL that the C++ search holds, so a child once
+    searched for days after its parent. With a budget it would not reach in hours, the child's own time limit ends
+    the search: it sends its final and exits by itself, unasked."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    arguments = (run_tour_child, sender, _complete_model(60), 10**9, CHILD_OWN_LIMIT_S)
+    child = context.Process(target=tour_child_entry, args=arguments, name="own-limit-child", daemon=True)
+    started = time.monotonic()
+    child.start()
+    sender.close()
+    final = None
+
+    def left_s() -> float:
+        return max(0.0, started + CHILD_OWN_LIMIT_S + CHILD_OWN_LIMIT_SLACK_S - time.monotonic())
+
+    try:
+        while final is None and receiver.poll(left_s()):
+            message = receiver.recv()  # read and dropped, so that no full pipe holds the child
+            final = message if message[0] == FINAL else None
+        child.join(left_s())
+        took_s = time.monotonic() - started
+
+        assert final is not None, f"the child sent no final within {took_s:.1f} s: its search ignored its own limit"
+        assert child.exitcode == 0, f"the child did not end by itself (exit code {child.exitcode})"
+        assert sorted(final[1]) == list(range(62)), "the final is not a complete tour"
+    finally:
+        receiver.close()
+        if child.is_alive():
+            child.kill()
+        child.join()
+
+
+def _limit_recording_child(answer: Connection, model: TourModel, _budget: int, time_limit_s: float) -> None:
+    Path(os.environ[PID_FILE_VARIABLE]).write_text(repr(time_limit_s))
+    answer.send((FINAL, tuple(range(len(model.node_item_ids)))))
+    answer.close()
+
+
+def test_the_child_is_given_the_optimisation_limit_left_plus_a_margin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "time-limit"
+    monkeypatch.setenv(PID_FILE_VARIABLE, str(report))
+    clock = FakeClock()
+    deadlines = SolveDeadlines(clock, clock.monotonic() + 5, clock.monotonic() + 7)  # the clock stands still
+
+    OrToolsTourSolver(tour_child_main=_limit_recording_child).solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=deadlines)
+
+    assert float(report.read_text()) == 7 + CHILD_TIME_LIMIT_MARGIN_S
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="PR_SET_PDEATHSIG exists only on Linux")
