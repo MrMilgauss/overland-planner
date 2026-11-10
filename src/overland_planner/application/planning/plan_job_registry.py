@@ -33,10 +33,13 @@ the clock. Each job logs one `plan.job.finished` line before its end is publishe
 fields owned by later slices are null. A failed job names only the exception's class (D197). With a `PlanJobLog`, the
 line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the run is stored and before
 the end is published; a row that cannot be written changes nothing of the ending and logs `plan.job.log_failed` at
-warning with the error's class. The poll shows `stage_ms`, `legs_total`, `legs_new`, `legs_cached` (the road legs asked
-of the road map and those known without asking, as they arrive) and `items_included` once the work noted them,
-and `incumbent` (null until the first valid route): the last incumbent the solve streamed, which the line leaves out
-(it counts them in `incumbents`), and `notices` (the large-project notice, D146), which the line leaves out too.
+warning with the error's class. The row adds `solver_wait_s`, which the line leaves out (kpi-contracts): the seconds by
+the `Clock` port from the job asking for the solver slot to taking it, or to its wait giving up on Stop or at the
+feasibility limit; 0.0 when the slot was free; null for a job that ended before it asked (before the solve stage).
+The poll shows `stage_ms`, `legs_total`, `legs_new`, `legs_cached` (the road legs asked of the road map and those
+known without asking, as they arrive) and `items_included` once the work noted them, and `incumbent` (null until the
+first valid route): the last incumbent the solve streamed, which the line leaves out (it counts them in `incumbents`),
+and `notices` (the large-project notice, D146), which the line leaves out too.
 A job carries the `ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work
 noted, false until the memo gives the order.
 """
@@ -182,16 +185,24 @@ class _SolverSlot:
         self._lock = threading.Lock()
         self._clock = clock
 
-    def take(self, give_up_at_s: float, stop: threading.Event, waiting: Callable[[], None]) -> None:
-        """Takes the slot, calling `waiting` first when it is busy; raises the ending when the wait gives up."""
+    def take(
+        self, give_up_at_s: float, stop: threading.Event, waiting: Callable[[], None], waited: Callable[[float], None]
+    ) -> None:
+        """Takes the slot, calling `waiting` first when it is busy; raises the ending when the wait gives up. `waited`
+        is told the seconds of the wait by the `Clock` port as it ends either way: 0.0 when the slot was free."""
         if self._lock.acquire(blocking=False):
+            waited(0.0)
             return
-        waiting()
-        while not self._lock.acquire(timeout=_SLOT_WAIT_STEP_S):
-            if stop.is_set():
-                raise _cancelled()
-            if self._clock.monotonic() >= give_up_at_s:
-                raise _timed_out()
+        asked_s = self._clock.monotonic()
+        try:
+            waiting()
+            while not self._lock.acquire(timeout=_SLOT_WAIT_STEP_S):
+                if stop.is_set():
+                    raise _cancelled()
+                if self._clock.monotonic() >= give_up_at_s:
+                    raise _timed_out()
+        finally:
+            waited(self._clock.monotonic() - asked_s)
 
     def release(self) -> None:
         self._lock.release()
@@ -259,6 +270,7 @@ class _Job:
         self.facts: dict[str, object] = {"ignore_memo": ignore_memo, "memo_hit": False}
         self.ending: _Ending | None = None
         self.stopped_in: PlanJobState | None = None
+        self.solver_wait_s: float | None = None  # the row's own field (ADR-015): null until the job asks for the slot
         self._state: PlanJobState = "queued"
         self._stop = threading.Event()
         self.wake = threading.Event()  # set by a Stop and by the end of the work, for the job's thread
@@ -318,12 +330,15 @@ class _Job:
 
     @contextmanager
     def solver_slot(self) -> Iterator[StopSignal]:
-        self._slot.take(self.give_up_at_s, self._stop, lambda: self.enter("waiting_for_optimizer"))
+        self._slot.take(self.give_up_at_s, self._stop, lambda: self.enter("waiting_for_optimizer"), self._waited)
         try:
             self.enter("solving")
             yield self._stop
         finally:
             self._slot.release()
+
+    def _waited(self, seconds: float) -> None:
+        self.solver_wait_s = seconds
 
     def is_active(self) -> bool:
         return self.ending is None
@@ -485,7 +500,8 @@ class PlanJobRegistry:
     def _write_row(self, job: _Job, ending: _Ending, fields: dict[str, object]) -> None:
         if self._job_log is None:
             return
-        entry = PlanJobLogEntry(job.started_at, ending.ended_at or job.started_at, fields)
+        row = {**fields, "solver_wait_s": job.solver_wait_s}
+        entry = PlanJobLogEntry(job.started_at, ending.ended_at or job.started_at, row)
         try:
             self._job_log.append(entry)
         except Exception as error:  # a full disk must not change the ending, its run or its poll

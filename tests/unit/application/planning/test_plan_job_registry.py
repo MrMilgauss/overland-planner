@@ -683,7 +683,10 @@ def test_a_job_row_holds_the_values_of_its_finished_line_with_its_start_and_end(
     assert {name: row[name] for name in PLAN_JOB_LOG_FIELDS if name in line} == {
         name: line[name] for name in PLAN_JOB_LOG_FIELDS if name in line
     }
-    assert all(row[name] is None for name in PLAN_JOB_LOG_FIELDS if name not in line), "absent from the line: null"
+    row_only = {"solver_wait_s"}  # ADR-015: the row's own field, which the line leaves out
+    absent = [name for name in PLAN_JOB_LOG_FIELDS if name not in line and name not in row_only]
+    assert all(row[name] is None for name in absent), "absent from the line: null"
+    assert row["solver_wait_s"] == 0.0, "the job alone took the free solver slot without waiting"
     assert (row["job_id"], row["started_at"], row["ended_at"]) == (job_id, started_at, planner.clock.now())
     assert row["elapsed_ms"] == round(took_s * 1000)
 
@@ -1343,6 +1346,54 @@ def test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_count
         {"plan_job_log": gained((job_id, PROJECT, "timed_out", None, "timeout", None))},
         strict=True,
     )
+
+
+def _waited_rows(desk: StopDesk) -> dict[str, tuple[str, Any]]:
+    """Each project's (terminal state, `solver_wait_s`) as its `plan_job_log` row holds them."""
+    rows = (entry.columns() for entry in desk.job_log.rows)
+    return {row["project_id"]: (row["terminal_state"], row["solver_wait_s"]) for row in rows}
+
+
+@settings(deadline=None, max_examples=20)
+@given(
+    trip=trips(),
+    waited_ms=st.integers(1, (SolveLimits().feasibility_s - 1) * 1000),
+    stopped=st.booleans(),
+)
+def test_a_job_row_records_how_long_the_job_waited_for_the_solver_slot(
+    trip: Trip, waited_ms: int, stopped: bool
+) -> None:
+    """ADR-015: `plan_job_log` records `solver_wait_s`. The job holding the slot never waited (0.0); the one behind it
+    records the seconds from asking for the slot to taking it, or to giving up the wait on a Stop."""
+    desk = _stop_desk(trip, "waiting_for_optimizer", (), SolveLimits())
+    job_id = _reach(desk, "waiting_for_optimizer")
+
+    desk.clock.advance(waited_ms / 1000)
+    if stopped:
+        desk.registry.stop(job_id)
+        job_when_ended(desk.registry, job_id)
+    desk.gates["solving"].release()
+    _until(lambda: len(desk.job_log.rows) == 2, "every job's row")
+
+    ended_as = "cancelled" if stopped else "done"
+    assert _waited_rows(desk) == {
+        OTHER: ("done", 0.0),
+        PROJECT: (ended_as, pytest.approx(waited_ms / 1000, abs=1e-6)),
+    }
+
+
+@settings(deadline=None, max_examples=10)
+@given(trip=trips())
+def test_a_job_that_ended_before_asking_for_the_solver_slot_records_no_wait(trip: Trip) -> None:
+    desk = _stop_desk(trip, "queued", (), SolveLimits())
+    job_id = _reach(desk, "queued")
+
+    desk.registry.stop(job_id)
+    desk.gates["queued"].release()
+    job_when_ended(desk.registry, job_id)
+    _until(lambda: len(desk.job_log.rows) == 1, "the job's row")
+
+    assert _waited_rows(desk) == {PROJECT: ("cancelled", None)}
 
 
 # --------------------------------------- Stop and the feasibility limit during the road look-up (06-09, ADR-015, D157)
