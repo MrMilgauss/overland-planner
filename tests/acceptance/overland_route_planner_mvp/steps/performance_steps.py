@@ -84,6 +84,7 @@ LONG_SEARCH_BUDGET = "100000000"  # a real OR-Tools search that is still improvi
 STOP_DEADLINE_S = 15.0
 AT_ONCE_S = 10.0  # "at once": far below the 600 s feasibility limit, including the child's spawn
 GIVEN_DEADLINE_S = 60.0
+OPTIMIZER_START_DEADLINE_S = 10.0  # a spawned optimizer child appears shortly after the job reports "solving"
 POLL_EVERY_S = 0.1
 RUN_TIME = r" (?:\d+ h )?(?:\d+ min )?\d+(?:\.\d+)? s"  # "Planned 60 items in 3 s", "... in 1 min 05 s"
 PI_URL_KEY = "PLANNER_PERF_URL"  # set by make perf-pi (slice 03-ops, D96): the planner-perf tunnel on loopback 18080
@@ -355,6 +356,14 @@ def optimizer_processes(root_pid: int) -> list[int]:
             pending.append(pid)
             if "spawn_main" in command:
                 found.append(pid)
+    return found
+
+
+def running_optimizers(root_pid: int, deadline_s: float) -> list[int]:
+    """The optimizer children once at least one is up: the job reports "solving" just before its child is spawned."""
+    deadline = time.monotonic() + deadline_s
+    while not (found := optimizer_processes(root_pid)) and time.monotonic() < deadline:
+        time.sleep(POLL_EVERY_S)
     return found
 
 
@@ -645,7 +654,7 @@ def when_marco_chooses_reoptimise(world: PlannerWorld, action: str) -> None:
 def when_the_planner_is_stopped_abruptly(world: PlannerWorld) -> None:
     server = world.planner
     assert isinstance(server, ServerPlanner), "the planner is not a process of its own here"
-    world.scratch["optimizers"] = optimizer_processes(server.pid)
+    world.scratch["optimizers"] = running_optimizers(server.pid, OPTIMIZER_START_DEADLINE_S)
     assert world.scratch["optimizers"], "no optimizer process is running under the planner"
     server.kill_abruptly()
     world.scratch["killed_at"] = time.monotonic()
