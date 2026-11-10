@@ -4,10 +4,12 @@ Driving ports: `LegResolver` from the routing facade, with the required pairs of
 `PlanJobRegistry` over the real `PlanRequestJob` for what a bad answer does to a job. Driven port: `RoutingProvider`
 (recording double, and the offline road map `MockRoutingProvider` over an in-memory script, behind a counting spy).
 Observable universe: `road_map.asked`, the pairs asked with their counts, and `plan.legs`, the distance and road time
-the table hands to planning for each required pair.
-Test Budget: 3 behaviors (the required legs come from the road map with distance and road time, each distinct pair
+the table hands to planning for each required pair; for the leg cache (06-09) also `road_map.calls_and_reports`, the
+road map's calls and the resolver's reports of the legs found, in the order they happened.
+Test Budget: 4 behaviors (the required legs come from the road map with distance and road time, each distinct pair
 asked once; a scripted road map answers its script on listed pairs and straight line x detour factor at 60 km/h
-elsewhere; a row that does not match its targets is refused, so no leg goes missing silently) x 2 = 6; 4 used.
+elsewhere; a row that does not match its targets is refused, so no leg goes missing silently; the legs found are kept
+per road map for the resolver's life and reported, the held ones before any call) x 2 = 8; 5 used.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from hypothesis import strategies as st
 
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, RoadMapScript
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob
-from overland_planner.application.routing.facade import LegResolver
+from overland_planner.application.routing.facade import LegResolver, LegsFound
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
 from overland_planner.domain.routing.road_leg import LegTable, RoadMeasure, RoadPair
@@ -31,7 +33,7 @@ from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
-from tests.unit.domain.planning.trips import PROJECT, Trip, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, trips
 
 UNIVERSE = {"road_map.asked", "plan.legs"}
 Row = list[RoadMeasure]
@@ -198,3 +200,83 @@ def test_a_job_whose_road_map_answers_a_row_of_the_wrong_shape_ends_failed_with_
     assert solver.models == [], "a bad road map answer reached the solver"
     (fields,) = log.fields_of("plan.job.finished")
     assert fields["error_class"] == "ValueError"
+
+
+# ------------------------------------------------------------------- the leg cache (06-09: US-06b S3, D43, ADR-015)
+CACHE_UNIVERSE = {"road_map.asked", "plan.legs", "road_map.calls_and_reports"}
+ROAD_MAPS = ("road-map-a", "road-map-b")  # two road maps: legs are held per provider_id
+
+
+class _RoadMapOfManyNames(RecordingRoadMap):
+    """A recording road map whose provider_id the test sets; `events` lists its calls and the resolver's reports."""
+
+    def __init__(self, trip: Trip) -> None:
+        super().__init__(trip.leg_m, leg_s={pair: metres // 7 + 11 for pair, metres in trip.leg_m.items()})
+        self.provider_id = ROAD_MAPS[0]
+        self.events: list[tuple[Any, ...]] = []
+
+    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+        self.events.append(("asked", tuple((source, target) for source in sources for target in targets)))
+        return super().matrix(sources, targets)
+
+    def reported(self, found: LegsFound) -> None:
+        self.events.append(("found", found.new, found.cached, found.total))
+
+
+def _expected_calls_and_reports(pairs: Sequence[RoadPair], held: set[RoadPair]) -> list[tuple[Any, ...]]:
+    """One call per origin with all its missing targets (L5), in the order the origins first appear; the held legs
+    are reported before any call and the legs found after every call."""
+    distinct = list(dict.fromkeys(pairs))
+    missing: dict[Coordinate, list[RoadPair]] = {}
+    for pair in distinct:
+        if pair[0] != pair[1] and pair not in held:
+            missing.setdefault(pair[0], []).append(pair)
+    total, cached = len(distinct), len(distinct) - sum(map(len, missing.values()))
+    events: list[tuple[Any, ...]] = [("found", 0, cached, total)]
+    new = 0
+    for asked in missing.values():
+        new += len(asked)
+        events += [("asked", tuple(asked)), ("found", new, cached, total)]
+    return events
+
+
+requests = st.lists(
+    st.tuples(st.sampled_from(ROAD_MAPS), st.lists(st.sampled_from([*POINT_PAIRS, *((p, p) for p in POINTS)]))),
+    min_size=1,
+    max_size=6,
+)
+
+
+@given(trip=trips(), sequence=requests)
+def test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_asked_after_the_held_ones_are_reported(
+    trip: Trip, sequence: list[tuple[str, list[RoadPair]]]
+) -> None:
+    road_map = _RoadMapOfManyNames(trip)
+    resolver = LegResolver(road_map)
+    held: dict[str, set[RoadPair]] = {name: set() for name in ROAD_MAPS}  # the model of the cache
+    for provider_id, pairs in sequence:
+        road_map.provider_id = provider_id
+        road_map.events.clear()
+        before = {**_view(road_map.asked, None, pairs), "road_map.calls_and_reports": []}
+
+        table = resolver.resolve(pairs, road_map.reported)
+
+        expected_events = _expected_calls_and_reports(pairs, held[provider_id])
+        newly_asked = [pair for event in expected_events if event[0] == "asked" for pair in event[1]]
+        expected_legs = {pair: (trip.road_m(*pair), 0 if pair[0] == pair[1] else pair_s(trip, pair)) for pair in pairs}
+        assert_state_delta(
+            before,
+            {**_view(road_map.asked, table, pairs), "road_map.calls_and_reports": list(road_map.events)},
+            CACHE_UNIVERSE,
+            {
+                "road_map.asked": lambda old, new, asked=Counter(newly_asked): new - old == asked and old <= new,
+                "plan.legs": set_to(expected_legs),
+                "road_map.calls_and_reports": set_to(expected_events),
+            },
+            strict=True,
+        )
+        held[provider_id].update(newly_asked)
+
+
+def pair_s(trip: Trip, pair: RoadPair) -> int:
+    return trip.leg_m[pair] // 7 + 11

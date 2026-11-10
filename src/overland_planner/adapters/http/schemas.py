@@ -160,9 +160,11 @@ class PlanJobResource(BaseModel):
     """The poll payload (brief §5): the subset filled so far; later fields are additive. `memo_hit` is true when the
     order came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each
     stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
-    `legs_total` and `items_included` are null until known; `incumbent` is null until the first valid route. An ended
-    job's `message` names its Failed run in words when the run has them (D151), or says what a job without a run did
-    (`cancelled`, `timed_out`). `stoppable` is true in every state before `finalising` and false from then on (D136)."""
+    `legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and
+    `legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);
+    `incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the
+    run has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every
+    state before `finalising` and false from then on (D136)."""
 
     state: PlanJobState
     reason: str | None
@@ -173,6 +175,8 @@ class PlanJobResource(BaseModel):
     ignore_memo: bool
     stage_ms: dict[str, int] | None
     legs_total: int | None
+    legs_new: int | None
+    legs_cached: int | None
     items_included: int | None
     incumbent: IncumbentResource | None
     stoppable: bool

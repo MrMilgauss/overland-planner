@@ -234,7 +234,7 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
 
     assert set(job) == {
         *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
-        *("stage_ms", "legs_total", "items_included", "incumbent", "stoppable"),
+        *("stage_ms", "legs_total", "legs_new", "legs_cached", "items_included", "incumbent", "stoppable"),
     }
     assert (job["state"], job["reason"], job["message"], job["stoppable"]) == ("done", None, None, False)
     stop = client.post(f"/api/plan-jobs/{job_id}/stop")

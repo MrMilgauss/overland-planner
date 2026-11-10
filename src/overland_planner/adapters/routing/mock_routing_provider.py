@@ -2,21 +2,28 @@
 
 Without a script every road leg is the straight line x 1.3 in metres, and its road time that distance at the one
 default road speed (D220 f). A scripted road map (`MOCK_PLAN`, brief section 12) is a YAML file
-`{detour_factor, pairs: [{from: [lat, lon], to: [lat, lon], distance_m, duration_s}]}`: each listed pair answers its
-scripted distance and time (points matched at 6 decimals); every other pair keeps the default at the file's
-detour_factor. The file is read once, at start-up, with `yaml.safe_load` only; a missing, unreadable or malformed file
-(including a pair listed twice with different values) is `InvalidRoadMapError`, which names the path.
-Identical points are always 0 m and 0 s apart, and distinct points never are.
+`{detour_factor, pairs: [{from: [lat, lon], to: [lat, lon], distance_m, duration_s}], latency}`: each listed pair
+answers its scripted distance and time (points matched at 6 decimals); every other pair keeps the default at the file's
+detour_factor; `pairs` may be empty. The file is read once, at start-up, with `yaml.safe_load` only; a missing,
+unreadable or malformed file (including a pair listed twice with different values) is `InvalidRoadMapError`, which
+names the path. Identical points are always 0 m and 0 s apart, and distinct points never are.
+
+The optional `latency: {answered_at_once_pairs, then_each_call_s}` (06-09, brought forward from slice 06a) slows the
+look-up: the pairs answered are counted over the road map's life, and once those answered before a matrix call have
+reached `answered_at_once_pairs`, that call and every later one waits `then_each_call_s` before it answers. The probe's
+calls are never delayed nor counted. The wait holds no lock, so calls may wait side by side.
 
 `provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted.
 The start-up probe proves Torino -> Susa (when the script does not list it), identical points, and that one scripted
-pair answers as scripted. Snap classes, levels, unreachable points, the fault plan and latency arrive with slice 06a.
+pair answers as scripted. Snap classes, levels, unreachable points and the fault plan arrive with slice 06a.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,7 +44,8 @@ _TORINO_SUSA_ROAD_M = 65_721  # x 1.3
 _KNOWN_PAIR_TOLERANCE_M = 1
 _KNOWN_PAIR_TOLERANCE_S = 1
 _PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s"})
-_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs"})
+_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency"})
+_LATENCY_KEYS = frozenset({"answered_at_once_pairs", "then_each_call_s"})
 
 
 class InvalidRoadMapError(ValueError):
@@ -48,12 +56,21 @@ class InvalidRoadMapError(ValueError):
 
 
 @dataclass(frozen=True)
+class RoadLookUpLatency:
+    """How slow the look-up is: the pairs answered at once, then the wait of each further matrix call."""
+
+    answered_at_once_pairs: int
+    then_each_call_s: float
+
+
+@dataclass(frozen=True)
 class RoadMapScript:
-    """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file."""
+    """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file, its latency."""
 
     detour_factor: float
     pairs: Mapping[RoadPair, RoadMeasure]
     sha256: str
+    latency: RoadLookUpLatency | None = None
 
 
 def read_road_map(path: Path) -> RoadMapScript:
@@ -63,27 +80,40 @@ def read_road_map(path: Path) -> RoadMapScript:
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         raise InvalidRoadMapError(path, f"cannot be read ({type(error).__name__}: {error})") from None
     try:
-        detour_factor, pairs = _parse(document)
+        detour_factor, pairs, latency = _parse(document)
     except (ValueError, TypeError) as error:
         raise InvalidRoadMapError(path, str(error)) from None
-    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest())
+    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency)
 
 
-def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure]]:
+def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure], RoadLookUpLatency | None]:
     if not isinstance(document, dict) or not set(document) <= _TOP_LEVEL_KEYS or "pairs" not in document:
-        raise ValueError("must be a mapping with `pairs` and an optional `detour_factor`")
+        raise ValueError("must be a mapping with `pairs` and an optional `detour_factor` and `latency`")
     detour_factor = document.get("detour_factor", DETOUR_FACTOR)
     if not _is_number(detour_factor) or detour_factor < 1:
         raise ValueError("detour_factor must be a number of at least 1")
     listed = document["pairs"]
-    if not isinstance(listed, list) or not listed:
-        raise ValueError("pairs must be a non-empty list")
+    if not isinstance(listed, list):
+        raise ValueError("pairs must be a list")
     pairs: dict[RoadPair, RoadMeasure] = {}
     for index, entry in enumerate(listed):
         pair, measure = _pair(index, entry)
         if pairs.setdefault(pair, measure) != measure:
             raise ValueError(f"pairs[{index}] lists a pair again with different values")
-    return float(detour_factor), pairs
+    return float(detour_factor), pairs, _latency(document.get("latency"))
+
+
+def _latency(value: object) -> RoadLookUpLatency | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != _LATENCY_KEYS:
+        raise ValueError("latency must have exactly answered_at_once_pairs and then_each_call_s")
+    pairs, seconds = value["answered_at_once_pairs"], value["then_each_call_s"]
+    if not isinstance(pairs, int) or isinstance(pairs, bool) or pairs < 0:
+        raise ValueError("latency answered_at_once_pairs must be a whole number of at least 0")
+    if not _is_number(seconds) or seconds < 0:
+        raise ValueError("latency then_each_call_s must be a number of at least 0")
+    return RoadLookUpLatency(pairs, float(seconds))
 
 
 def _pair(index: int, entry: object) -> tuple[RoadPair, RoadMeasure]:
@@ -115,13 +145,49 @@ def _matched(point: Coordinate) -> Coordinate:
     return Coordinate(round(point.latitude, _MATCH_DECIMALS), round(point.longitude, _MATCH_DECIMALS))
 
 
-class MockRoutingProvider:
-    """The offline road map; with `script`, the script's detour factor replaces `detour_factor`."""
+class _LookUpPace:
+    """The script's latency over the road map's life: counts the pairs answered and says how long a call waits."""
 
-    def __init__(self, detour_factor: float = DETOUR_FACTOR, *, script: RoadMapScript | None = None) -> None:
+    def __init__(self, latency: RoadLookUpLatency | None) -> None:
+        self._latency = latency
+        self._answered = 0
+        self._lock = threading.Lock()
+        self._probing = threading.local()
+
+    def wait_s(self) -> float | None:
+        """The wait of the next call, `None` when it answers at once."""
+        if self._latency is None or getattr(self._probing, "on", False):
+            return None
+        with self._lock:
+            reached = self._answered >= self._latency.answered_at_once_pairs
+        return self._latency.then_each_call_s if reached else None
+
+    def answered(self, pairs: int) -> None:
+        if getattr(self._probing, "on", False):
+            return
+        with self._lock:
+            self._answered += pairs
+
+    def probing(self, on: bool) -> None:
+        self._probing.on = on
+
+
+class MockRoutingProvider:
+    """The offline road map; with `script`, the script's detour factor replaces `detour_factor`; `sleep` waits out the
+    script's latency."""
+
+    def __init__(
+        self,
+        detour_factor: float = DETOUR_FACTOR,
+        *,
+        script: RoadMapScript | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._detour_factor = detour_factor if script is None else script.detour_factor
         self._script = script
         self._pairs: Mapping[RoadPair, RoadMeasure] = {} if script is None else script.pairs
+        self._pace = _LookUpPace(None if script is None else script.latency)
+        self._sleep = sleep
 
     @property
     def provider_id(self) -> str:
@@ -129,18 +195,28 @@ class MockRoutingProvider:
         return default if self._script is None else f"{default}:script:{self._script.sha256}"
 
     def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
-        return [[self._measure(source, target) for target in targets] for source in sources]
+        wait_s = self._pace.wait_s()
+        if wait_s is not None:
+            self._sleep(wait_s)
+        answer = [[self._measure(source, target) for target in targets] for source in sources]
+        self._pace.answered(len(sources) * len(targets))
+        return answer
 
     def probe(self) -> ProbeResult:
-        """Fatal when it fails: nothing here can recover by itself, so a wrong answer is a defect (brief section 7)."""
-        return first_failure(
-            (
-                ProbeCheck("routing_known_pair_wrong", self._knows_the_pair),
-                ProbeCheck("routing_identical_points_not_zero", self._identical_points_are_zero),
-                ProbeCheck("routing_scripted_pair_wrong", self._answers_its_script),
-            ),
-            failing_errors=(),
-        )
+        """Fatal when it fails: nothing here can recover by itself, so a wrong answer is a defect (brief section 7).
+        Its calls are never delayed by the latency, nor counted."""
+        self._pace.probing(True)
+        try:
+            return first_failure(
+                (
+                    ProbeCheck("routing_known_pair_wrong", self._knows_the_pair),
+                    ProbeCheck("routing_identical_points_not_zero", self._identical_points_are_zero),
+                    ProbeCheck("routing_scripted_pair_wrong", self._answers_its_script),
+                ),
+                failing_errors=(),
+            )
+        finally:
+            self._pace.probing(False)
 
     def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure:
         if source == target:

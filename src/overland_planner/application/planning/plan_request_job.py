@@ -26,6 +26,10 @@ Each stage notes its whole milliseconds, truncated, by the `Clock` port's monoto
 ADR-015 DV-2, K5): `snapshot`, `matrix` (the road legs), `reach_model` (the model, its fingerprint and the memo lookup),
 `solve` (the solver from its start to its end, child spawn included, and not the wait for the slot; none on a memo hit)
 and `guard_persist` (guard, assemble, store). Truncating keeps their sum within the job's elapsed time.
+
+The road legs come from the leg resolver, which keeps those found for the process's life (06-09): the job notes
+`legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. A job its registry ended
+during the look-up raises that ending at its next fact or state, so a late road-map answer stores no run.
 """
 
 from __future__ import annotations
@@ -58,7 +62,7 @@ from overland_planner.application.ports.tour_solver import (
     TourOutcome,
     TourSolver,
 )
-from overland_planner.application.routing.facade import LegResolver
+from overland_planner.application.routing.facade import LegResolver, LegsFound
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.planning.invariant_guard import (
     INVARIANT_VIOLATION_REASON,
@@ -186,8 +190,9 @@ class PlanRequestJob:
             return _PlannedProject(project_id, snapshot, uow.project_snapshots.stamp(project_id), ignore_memo)
 
     def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
+        """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09)."""
         pairs = SolverModelBuilder(snapshot).required_pairs()
-        legs = self.legs.resolve(pairs)
+        legs = self.legs.resolve(pairs, lambda found: _note_legs(progress, found))
         progress.note(legs_total=len(set(pairs)), provider_id=self.legs.provider_id)
         return legs
 
@@ -301,6 +306,10 @@ class _Stages:
         yield
         self._ms[stage] = int((self._clock.monotonic() - began_s) * _MILLISECONDS_PER_SECOND)
         self._progress.note(stage_ms=dict(self._ms))
+
+
+def _note_legs(progress: PlanJobProgress, found: LegsFound) -> None:
+    progress.note(legs_new=found.new, legs_cached=found.cached)
 
 
 def _evidence_of(content: bytes) -> CanonicalFileEvidence:

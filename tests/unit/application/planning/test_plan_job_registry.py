@@ -13,8 +13,9 @@ always; each job logs its events; one active job per project, whatever the press
 by every ending; the active job check keeps its place in the pre-checks and cannot be slipped past; Calculate reports
 the `ignore_memo` it was given and refuses alike with or without it; every ending writes one `plan_job_log` row with
 the values of its line, a refusal none, and a failing write changes nothing else; a Stop ends the job as ADR-015's
-state table names and answers the current payload; a job waiting for the optimizer gives up at the feasibility limit)
-x 2 = 22; 17 used.
+state table names and answers the current payload; a job waiting for the optimizer gives up at the feasibility limit;
+a Stop or the feasibility limit during the road look-up ends the job at once, with no run and the legs found kept)
+x 2 = 24; 18 used.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import itertools
 import queue
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -123,6 +125,8 @@ FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
     "plan_run_id",
     "items_included",
     "legs_total",
+    "legs_new",  # 06-09 fills these two (the leg cache)
+    "legs_cached",
     "provider_id",
     "elapsed_ms",
     "memo_hit",
@@ -489,6 +493,8 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
         len(_distinct_pairs(plan.trip)),
         RecordingRoadMap.provider_id,
     )
+    roads = {pair for pair in _distinct_pairs(plan.trip) if pair[0] != pair[1]}
+    assert (fields["legs_new"], fields["legs_cached"]) == (len(roads), len(_distinct_pairs(plan.trip)) - len(roads))
     assert fields["items_included"] == len({plan.trip.start.id, plan.trip.end.id, *(i.id for i in plan.trip.items)})
     if isinstance(plan.script, TourOptimizerFailed):
         assert (fields["exit_code"], fields["signal"]) == (plan.script.exit_code, plan.script.signal)
@@ -1318,3 +1324,138 @@ def test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_count
         {"plan_job_log": gained((job_id, PROJECT, "timed_out", None, "timeout", None))},
         strict=True,
     )
+
+
+# --------------------------------------- Stop and the feasibility limit during the road look-up (06-09, ADR-015, D157)
+LOOK_UP_UNIVERSE = STOP_UNIVERSE | {"road_map.asked"}
+LOOK_UP_ENDINGS = {
+    "stop": ("cancelled", "stopped", CANCELLED_MESSAGE),
+    "feasibility_limit": ("timed_out", "timeout", WAITED_TOO_LONG),
+}
+
+
+class _HeldAtCall(Gate):
+    """Lets the first `free` road-map calls through and holds the next one until the test releases it."""
+
+    def __init__(self, free: int) -> None:
+        super().__init__(held=True)
+        self._free = free
+
+    def passing(self) -> None:
+        if self._free > 0:
+            self._free -= 1
+            return
+        super().passing()
+
+
+def _calls_of(trip: Trip) -> dict[Any, list[Any]]:
+    """The road-map calls of the trip's look-up: one per origin with a road to drive, all of its targets (L5)."""
+    calls: dict[Any, list[Any]] = {}
+    for pair in dict.fromkeys(SolverModelBuilder(trip.snapshot).required_pairs()):
+        if pair[0] != pair[1]:
+            calls.setdefault(pair[0], []).append(pair)
+    return calls
+
+
+def _look_up_view(desk: StopDesk, road_map: RecordingRoadMap) -> dict[str, Any]:
+    return {**desk.view(), "road_map.asked": Counter(road_map.asked)}
+
+
+def _asked_after_the_ending(late: set[Any], missing: set[Any]) -> Callable[[Any, Any], bool]:
+    """The late call's pairs once, and again by the next job if it read the cache before the late answer was kept;
+    every other pair still missing, once."""
+
+    def _predicate(old: Counter[Any], new: Counter[Any]) -> bool:
+        asked = new - old
+        late_ok = all(asked[pair] in (1, 2) for pair in late)
+        return (
+            old <= new
+            and late_ok
+            and {pair: n for pair, n in asked.items() if pair not in late} == dict.fromkeys(missing, 1)
+        )
+
+    _predicate.__name__ = "asked_after_the_ending"
+    return _predicate
+
+
+@settings(deadline=None, max_examples=20)
+@given(
+    trip=trips(),
+    data=st.data(),
+    ending=st.sampled_from(sorted(LOOK_UP_ENDINGS)),
+    feasibility=st.integers(1, 600),
+)
+def test_a_stop_or_the_feasibility_limit_during_the_road_look_up_ends_the_job_at_once_with_no_run_and_keeps_the_legs(
+    trip: Trip, data: st.DataObject, ending: str, feasibility: int
+) -> None:
+    calls = list(_calls_of(trip).values())
+    assume(calls)
+    held_at = data.draw(st.integers(0, len(calls) - 1), label="the road-map call under way at the ending")
+    road_map = RecordingRoadMap(trip.leg_m, gate=_HeldAtCall(held_at))
+    desk = _look_up_desk(trip, road_map, SolveLimits(feasibility, feasibility))
+    distinct = set(SolverModelBuilder(trip.snapshot).required_pairs())
+    roads = {pair for call in calls for pair in call}
+    found = {pair for call in calls[:held_at] for pair in call}  # answered before the ending
+    before = _look_up_view(desk, road_map)
+
+    job_id = desk.start(PROJECT)
+    assert road_map.gate.reached.wait(MAX_WAIT_S), "the look-up never reached the held road-map call"
+    looking_up = known_job(desk.registry, job_id)
+    if ending == "stop":
+        desk.registry.stop(job_id)
+    else:
+        desk.clock.advance(feasibility)
+    ended = job_when_ended(desk.registry, job_id)  # while the road-map call is still under way
+
+    state, reason, message = LOOK_UP_ENDINGS[ending]
+    assert (looking_up.state, looking_up.legs_new, looking_up.legs_cached) == (
+        "computing_legs",
+        len(found),
+        len(distinct - roads),
+    )
+    assert (ended.state, ended.reason, ended.message, ended.plan_run_id) == (state, reason, message, None)
+    assert ended.elapsed_s == (feasibility if ending == "feasibility_limit" else 0)
+    assert_state_delta(
+        before,
+        _look_up_view(desk, road_map),
+        LOOK_UP_UNIVERSE,
+        {
+            "plan_job_log": gained((job_id, PROJECT, state, None, reason, None)),
+            "stopped_logged": gained((job_id, PROJECT, "computing_legs")) if ending == "stop" else set_to(()),
+            "road_map.asked": set_to(Counter(found)),
+        },
+        strict=True,
+    )
+
+    road_map.gate.release()  # the late answer: kept as a leg, never a run
+    after_the_ending = _look_up_view(desk, road_map)
+    next_id = desk.start(PROJECT)
+    recalculated = job_when_ended(desk.registry, next_id)
+
+    assert recalculated.state == "done" and recalculated.legs_cached is not None
+    assert recalculated.legs_cached >= len(distinct - roads) + len(found), "the legs found so far were not reused"
+    assert recalculated.legs_new + recalculated.legs_cached == len(distinct)
+    _until(lambda: len(desk.job_log.rows) == 2, "the next job's row")
+    assert_state_delta(
+        after_the_ending,
+        _look_up_view(desk, road_map),
+        LOOK_UP_UNIVERSE,
+        {
+            "plan_runs": set_to(((1, "ready", None, True, None),)),
+            "plan_job_log": gained((next_id, PROJECT, "done", recalculated.plan_run_id, None, None)),
+            "road_map.asked": _asked_after_the_ending(set(calls[held_at]), roads - found - set(calls[held_at])),
+        },
+        strict=True,
+    )
+
+
+def _look_up_desk(trip: Trip, road_map: RecordingRoadMap, limits: SolveLimits) -> StopDesk:
+    """The real job and its real resolver over `road_map`; no gate of the desk is held."""
+    planning = InMemoryPlanning()
+    planning.add_project(PROJECT, trip.snapshot)
+    solver = ScriptedTourSolver(None)
+    clock, log, files = FakeClock(), RecordingEventLog(), InMemoryFileStore()
+    trip.seed_canonical_files(files)
+    job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files, limits=limits)
+    job_log = InMemoryPlanJobLog(planning)
+    return StopDesk(planning, solver, clock, log, PlanJobRegistry(clock, job, log, job_log=job_log), job_log, {})
