@@ -46,6 +46,7 @@ JOB_RUNNERS = {
     "e2e": RUNNER,
     "mutation": RUNNER,
     "slow-properties": RUNNER,
+    "slow-a6": RUNNER,
     "golden-order": RUNNER,
     "publish": RUNNER,
 }
@@ -360,7 +361,8 @@ D160_PUBLISH_IF = (
     f"always() && !cancelled() && {MAIN_PUSH}"
     " && needs.image-amd64.result == 'success' && needs.image-arm64.result == 'success'"
     " && needs.e2e.result == 'success'"
-    " && needs.slow-properties.result == 'success'"  # D220 h: the A-6 property gates publish (step 05-12)
+    " && needs.slow-properties.result == 'success'"  # D220 h: the slow properties gate publish (step 05-12)
+    " && needs.slow-a6.result == 'success'"  # D231: the A-6 property has its own job and still gates publish
     " && needs.golden-order.result == 'success'"  # job 3: a different golden order never publishes (step 06-02)
     """ && contains(fromJSON('["success","skipped"]'), needs.mutation.result)"""
 )
@@ -514,7 +516,15 @@ def test_publish_gating_matches_d160() -> None:
     workflow = _workflow()
     job = _job(workflow, "publish")
 
-    assert _needs(job) == {"image-amd64", "image-arm64", "e2e", "slow-properties", "golden-order", "mutation"}
+    assert _needs(job) == {
+        "image-amd64",
+        "image-arm64",
+        "e2e",
+        "slow-properties",
+        "slow-a6",
+        "golden-order",
+        "mutation",
+    }
     assert job["if"] == D160_PUBLISH_IF
     assert _needs(_job(workflow, "mutation")) & {"image-amd64", "image-arm64", "e2e"} == set()
 
@@ -1027,19 +1037,40 @@ def test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and
     assert '"$PLANNER_TEST_WORKSPACE"' in _runs(job)[_index(job, "df -T")]
     assert "GITHUB_STEP_SUMMARY" in _runs(job)[_index(job, "df -T")]
     command = pytest_steps[0]["run"]
-    assert 'uv run pytest -q $PENDING_FLAGS -m "slow or heavy_property"' in command  # selecting nothing exits 5
+    assert 'uv run pytest -q $PENDING_FLAGS -m "(slow or heavy_property) and not A_6"' in command  # empty exits 5
     assert "D221" in pytest_steps[0]["name"]
     expression = re.search(r'-m "(?P<expression>[^"]+)"', command)
     assert expression is not None
 
     moved = {f"{module}::{name}" for module, names in HEAVY_UNIT_AND_PERF.items() for name in names}
-    slow = {A_6, *SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES, *_names(sorted(moved))}
+    slow = {*SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES, *_names(sorted(moved))}
     job_10_ids = _collected_node_ids(expression["expression"])
     assert _names(job_10_ids) == sorted(slow)
     assert moved <= set(job_10_ids), "each moved unit or perf test is found under its own module"
-    assert set(_collected_everywhere(job_2["expression"])).isdisjoint(slow)
+    assert set(_collected_everywhere(job_2["expression"])).isdisjoint({A_6, *slow})
     others = set(_collected_slice_03()) - {*SLOW_SLICE_03, GOLDEN_SCENARIO, *PI_SCENARIOS}
     assert _collected_slice_03("-m", job_2["expression"]) == sorted(others)
+
+
+def test_slow_a6_job_runs_the_a6_property_alone_at_profile_ci_in_parallel_with_job_10() -> None:
+    """D231: A-6 (about 9.5 min on the Mac, about 20 min on a runner) split out of slow-properties, which took 34.4 min
+    of its 40-minute timeout once; both jobs run in parallel and both gate publish."""
+    workflow = _workflow()
+    job = _job(workflow, "slow-a6")
+    sibling = _job(workflow, "slow-properties")
+    pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
+
+    assert job["name"] == "11 slow-a6"
+    assert _needs(job) == {"changes"} == _needs(sibling) and job["if"] == sibling["if"]
+    assert job["timeout-minutes"] == 40
+    assert job["env"] == sibling["env"] and job["env"]["HYPOTHESIS_PROFILE"] == "ci"
+    assert _uses(job, "astral-sh/setup-uv") and "uv sync --frozen" in _runs(job)
+    assert len(pytest_steps) == 1 and not pytest_steps[0].get("continue-on-error")
+    assert _index(job, "df -T") < job["steps"].index(pytest_steps[0]), "D168: the data folder's filesystem is shown"
+    assert 'uv run pytest -q $PENDING_FLAGS -m "slow and A_6"' in pytest_steps[0]["run"]
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', pytest_steps[0]["run"])
+    assert expression is not None
+    assert _collected_everywhere(expression["expression"]) == [A_6], "the job runs A-6 and nothing else"
 
 
 def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:
