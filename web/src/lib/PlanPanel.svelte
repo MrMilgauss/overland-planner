@@ -7,8 +7,9 @@
   // a page reload during a job it offers the latest ready run's export, since nothing on the page says a job runs.
   //
   // While the job is stoppable (ADR-015) 'Stop and use best so far' is offered, and posted once per job; polling then
-  // shows how the job ended. The run's messages (run time, label, reuse) and the job's notices are the planner's lines,
-  // shown verbatim: the web composes no wording (D211, D223 b). A reused plan (memo_hit) offers Re-optimise.
+  // shows how the job ended. The run's messages (run time, label, reuse, a Failed run's failure) and the job's notices
+  // are the planner's lines, shown verbatim: the web composes no wording (D211, D223 b), but for a Failed run stored
+  // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import {
@@ -75,7 +76,8 @@
     }
   }
 
-  /** The report's reason in product words (D211); the code only for a run stored without a report. */
+  /** The report's reason in product words (D211); the code only for a run stored without a report. Only for a Failed
+   * run stored without its messages: one with them shows the planner's words verbatim. */
   function failedReason(run: PlanRunDetail): string {
     const reason = run.report?.reason ?? run.failure_reason;
     return reason ? ` (${reason})` : '';
@@ -199,7 +201,13 @@
 {#if pollProblem}
   <p role="alert">{pollProblem}</p>
 {/if}
-{#if failedRun}
+{#if failedRun?.messages?.length}
+  <div role="alert">
+    {#each failedRun.messages as message, index (index)}
+      <p>{message}</p>
+    {/each}
+  </div>
+{:else if failedRun}
   <p role="alert">This plan run failed{failedReason(failedRun)}</p>
 {/if}
 

@@ -64,8 +64,14 @@ function readyRun(
   };
 }
 
-/** A Failed run names its code; one stored before the report (05-08) has none. */
-function failedRun(id: string, number: number, code: string, report: string | null = null): Reply {
+/** A Failed run names its code; one stored before the report (05-08) has none, one stored before the messages none. */
+function failedRun(
+  id: string,
+  number: number,
+  code: string,
+  report: string | null = null,
+  messages?: string[],
+): Reply {
   return {
     status: 200,
     body: {
@@ -77,6 +83,7 @@ function failedRun(id: string, number: number, code: string, report: string | nu
       stops: [],
       totals: null,
       report: report === null ? null : { reason: report },
+      ...(messages === undefined ? {} : { messages }),
     },
   };
 }
@@ -290,6 +297,30 @@ describe('Plan panel: refusals and failures', () => {
     );
     expect(exportLink()).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Itinerary' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+  });
+
+  // The planner's words for a Failed run (run_messages._FAILED), shown verbatim instead of the composed line.
+  it.each([
+    ['timeout', 'No valid route found within the time limit - plan run #2 failed'],
+    ['stopped', 'stopped before a valid route was found'],
+  ])('shows the words of a Failed %s run on a done job, not its code', async (code, words) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: [NO_RUNS, listed(['r2', 2, 'failed'])],
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('done', { reason: code, message: words, plan_run_id: 'r2' }),
+      'GET /api/plan-runs/r2': failedRun('r2', 2, code, null, [words]),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    await tick();
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(words);
+    expect(alert).not.toHaveTextContent('This plan run failed');
+    expect(alert).not.toHaveTextContent(`(${code})`);
+    expect(exportLink()).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
   });
 
@@ -631,8 +662,8 @@ describe('Plan panel: Stop and use best so far', () => {
   });
 
   it.each([
-    ['cancelled', 'Stopped before the solve - no plan run was made'],
-    ['timed_out', 'The calculation took too long - no plan run was made'],
+    ['cancelled', 'Stopped - nothing was changed'],
+    ['timed_out', 'No valid route found within the time limit - nothing was changed'],
   ])(
     'shows the message of a job that ended %s without a run, and stops asking',
     async (state, message) => {
