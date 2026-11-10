@@ -134,9 +134,7 @@ class _Wiring:
         registry.register("clock", self._clock)
         registry.register("event_log", self._event_log)
         registry.register("database", DatabaseStartup(self._database, self.migrator, self._clock))
-        registry.register(
-            "plan_job_log", self._plan_job_log
-        )  # a round trip on the migrated table; fatal like the database
+        registry.register("plan_job_log", self._plan_job_log)  # a write-and-read round trip; fatal like the database
         registry.register("diagnostics_reader", self._diagnostics_reader)  # one read on an empty window
         registry.register("file_store", self._file_store)
         registry.register("mount_table", self._mount_table)
