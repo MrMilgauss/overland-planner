@@ -85,6 +85,8 @@ STOP_DEADLINE_S = 15.0
 AT_ONCE_S = 10.0  # "at once": far below the 600 s feasibility limit, including the child's spawn
 GIVEN_DEADLINE_S = 60.0
 OPTIMIZER_START_DEADLINE_S = 10.0  # a spawned optimizer child appears shortly after the job reports "solving"
+PI_PLAN_DEADLINE_S = 600.0  # a measured plan on the Pi: as long as the default feasibility limit
+REAL_SOLVE_DEADLINE_S = 90.0  # a server process spawning its real OR-Tools child until the job is solving
 POLL_EVERY_S = 0.1
 RUN_TIME = r" (?:\d+ h )?(?:\d+ min )?\d+(?:\.\d+)? s"  # "Planned 60 items in 3 s", "... in 1 min 05 s"
 PI_URL_KEY = "PLANNER_PERF_URL"  # set by make perf-pi (slice 03-ops, D96): the planner-perf tunnel on loopback 18080
@@ -164,6 +166,11 @@ def follow_job(
 
 def is_terminal(job: dict[str, Any]) -> bool:
     return job["state"] in TERMINAL_JOB_STATES
+
+
+def ended_or_in(state: str) -> Callable[[dict[str, Any]], bool]:
+    """Until the job ended or is in `state`."""
+    return lambda job: is_terminal(job) or job["state"] == state
 
 
 def press(world: PlannerWorld, *, ignore_memo: bool = False) -> None:
@@ -329,7 +336,7 @@ def a_long_real_optimisation(world: PlannerWorld) -> None:
     server.start()
     ensure_trip(world)
     press(world)
-    job, _ = follow_job(world, world.scratch["job_id"], lambda j: is_terminal(j) or j["state"] == "solving", 90.0)
+    job, _ = follow_job(world, world.scratch["job_id"], ended_or_in("solving"), REAL_SOLVE_DEADLINE_S)
     assert job["state"] == "solving", f"the 60-item plan is not being optimised: {job}"
     world.scratch["sixty"] = (world.project_id, world.scratch["job_id"])
 
@@ -432,7 +439,7 @@ def given_the_reference_project_on_the_pi(
 @given("its road distances are already known")
 def given_its_road_distances_are_already_known(world: PlannerWorld) -> None:
     press(world, ignore_memo=True)  # a first plan fetches every road leg; it is not one of the measured runs
-    job = finish(world, 600.0)
+    job = finish(world, PI_PLAN_DEADLINE_S)
     assert job["state"] == "done", f"the warm-up plan did not finish: {job}"
 
 
@@ -503,9 +510,7 @@ def given_no_valid_route_yet(world: PlannerWorld) -> None:
     use_scripted_optimizer(world, "silent")
     ensure_trip(world)
     press(world)
-    job, _ = follow_job(
-        world, world.scratch["job_id"], lambda j: is_terminal(j) or j["state"] == "solving", GIVEN_DEADLINE_S
-    )
+    job, _ = follow_job(world, world.scratch["job_id"], ended_or_in("solving"), GIVEN_DEADLINE_S)
     assert job["state"] == "solving", f"the plan is not being optimised: {job}"
     assert job.get("incumbent") is None, f"a valid route was already found: {job}"
 
@@ -585,12 +590,7 @@ def given_a_second_project_waits_for_the_optimizer(world: PlannerWorld, project:
     require_success(world, "set Cortina as Start and Lago di Braies as End")
     press(world)
     world.scratch.setdefault("jobs", {})[project] = (world.project_id, world.scratch["job_id"])
-    job, _ = follow_job(
-        world,
-        world.scratch["job_id"],
-        lambda j: is_terminal(j) or j["state"] == "waiting_for_optimizer",
-        GIVEN_DEADLINE_S,
-    )
+    job, _ = follow_job(world, world.scratch["job_id"], ended_or_in("waiting_for_optimizer"), GIVEN_DEADLINE_S)
     assert job["state"] == "waiting_for_optimizer", f"{project} does not wait for the optimizer: {job}"
 
 
@@ -616,7 +616,7 @@ def when_marco_presses_calculate_ten_times_on_the_pi(world: PlannerWorld) -> Non
     jobs = []
     for _ in range(10):
         press(world, ignore_memo=bool(world.scratch.get("ignore_memo")))
-        jobs.append(finish(world, 600.0))
+        jobs.append(finish(world, PI_PLAN_DEADLINE_S))
         record_perf_run(jobs[-1])
     world.scratch["pi_jobs"] = jobs
 
@@ -631,7 +631,7 @@ def when_marco_calculates_a_plan_for_the_project(world: PlannerWorld, items: int
 @when("Marco calculates a plan for the same project on the Pi with the default search budget")
 def when_marco_calculates_on_the_pi(world: PlannerWorld) -> None:
     press(world, ignore_memo=True)
-    finish(world, 600.0)
+    finish(world, PI_PLAN_DEADLINE_S)
 
 
 @when("the planner plans it with the default search budget")
@@ -721,14 +721,14 @@ def then_a_complete_plan_is_shown_within(world: PlannerWorld, seconds: int) -> N
 @then(parsers.re(r'it is labelled "(?P<label>[^"]+)"'))
 def then_it_is_labelled(world: PlannerWorld, label: str) -> None:
     detail = latest_run(world)
-    assert detail["status"] == "ready", f"plan run #{detail['number']} is {detail['status']}"
+    assert_ready(detail)
     assert_labelled(detail, label)
 
 
 @then(parsers.re(r'the results show "(?P<text>[^"]+)" followed by the run time'))
 def then_the_results_show_the_run_time(world: PlannerWorld, text: str) -> None:
     detail = latest_run(world)
-    assert detail["status"] == "ready", f"plan run #{detail['number']} is {detail['status']}"
+    assert_ready(detail)
     shown = [t for t in run_texts(ended_job(world), detail) if t.startswith(text)]
     assert shown, f"the results do not show {text!r}: {run_texts(ended_job(world), detail)}"
     assert re.fullmatch(RUN_TIME, shown[0][len(text) :]), f"no run time after {text!r}: {shown[0]!r}"
@@ -738,7 +738,7 @@ def then_the_results_show_the_run_time(world: PlannerWorld, text: str) -> None:
 def then_the_plan_is_calculated(world: PlannerWorld) -> None:
     detail = latest_run_after_existing_press(world)
     trip: TripData = world.scratch["trip"]
-    assert detail["status"] == "ready", f"plan run #{detail['number']} is {detail['status']}"
+    assert_ready(detail)
     assert len(detail["stops"]) == trip.item_count + 2, f"{len(detail['stops'])} stops for {trip.item_count} items"
 
 
