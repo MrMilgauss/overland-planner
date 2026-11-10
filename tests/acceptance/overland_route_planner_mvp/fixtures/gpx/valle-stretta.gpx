@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC (DISTILL slice 03b, D198): a dead-end valley trail from Bardonecchia up to the Rifugio III Alpini, 9.6 km by haversine, recorded uphill. Not a real recording. -->
+<gpx version="1.1" creator="overland-planner DISTILL fixture (slice 03b, synthetic)" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Valle Stretta</name>
+    <trkseg>
+      <trkpt lat="45.078000" lon="6.704000"><ele>1330.0</ele></trkpt>
+      <trkpt lat="45.076625" lon="6.699296"><ele>1348.8</ele></trkpt>
+      <trkpt lat="45.075250" lon="6.694592"><ele>1367.5</ele></trkpt>
+      <trkpt lat="45.073875" lon="6.689887"><ele>1386.2</ele></trkpt>
+      <trkpt lat="45.072500" lon="6.685183"><ele>1405.0</ele></trkpt>
+      <trkpt lat="45.071125" lon="6.680479"><ele>1423.8</ele></trkpt>
+      <trkpt lat="45.069750" lon="6.675775"><ele>1442.5</ele></trkpt>
+      <trkpt lat="45.068375" lon="6.671071"><ele>1461.2</ele></trkpt>
+      <trkpt lat="45.067000" lon="6.666367"><ele>1480.0</ele></trkpt>
+      <trkpt lat="45.065625" lon="6.661663"><ele>1498.8</ele></trkpt>
+      <trkpt lat="45.064250" lon="6.656958"><ele>1517.5</ele></trkpt>
+      <trkpt lat="45.062875" lon="6.652254"><ele>1536.2</ele></trkpt>
+      <trkpt lat="45.061500" lon="6.647550"><ele>1555.0</ele></trkpt>
+      <trkpt lat="45.060125" lon="6.642846"><ele>1573.8</ele></trkpt>
+      <trkpt lat="45.058750" lon="6.638142"><ele>1592.5</ele></trkpt>
+      <trkpt lat="45.057375" lon="6.633437"><ele>1611.2</ele></trkpt>
+      <trkpt lat="45.056000" lon="6.628733"><ele>1630.0</ele></trkpt>
+      <trkpt lat="45.054625" lon="6.624029"><ele>1648.8</ele></trkpt>
+      <trkpt lat="45.053250" lon="6.619325"><ele>1667.5</ele></trkpt>
+      <trkpt lat="45.051875" lon="6.614621"><ele>1686.2</ele></trkpt>
+      <trkpt lat="45.050500" lon="6.609917"><ele>1705.0</ele></trkpt>
+      <trkpt lat="45.049125" lon="6.605213"><ele>1723.8</ele></trkpt>
+      <trkpt lat="45.047750" lon="6.600508"><ele>1742.5</ele></trkpt>
+      <trkpt lat="45.046375" lon="6.595804"><ele>1761.2</ele></trkpt>
+      <trkpt lat="45.045000" lon="6.591100"><ele>1780.0</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

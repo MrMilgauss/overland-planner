@@ -42,6 +42,11 @@ PLACES = {
         Place("Misurina", 46.5819, 12.2531),
         Place("Passo Valparola", 46.5317, 11.9917),
         Place("Cuneo", 44.3845, 7.5427),
+        # slice 03b (synthetic dead-end trails, D198): Rochemolles -> Colle del Sommeiller 12.4 km, Bardonecchia ->
+        # Rifugio III Alpini (the Valle Stretta trail) 9.6 km
+        Place("Rochemolles", 45.1180, 6.8870),
+        Place("Colle del Sommeiller", 45.1520, 7.0376),
+        Place("Rifugio III Alpini", 45.0450, 6.5911),
     )
 }
 
@@ -65,6 +70,9 @@ TRAIL_FILES = {
     # slice 02 (D198: synthetic, generated for the scenarios' numbers; never a third party's recording)
     "jafferau-loop.gpx": TrailFile("jafferau-loop.gpx", "Jafferau loop", 18.9),
     "maira-varaita-ridge.gpx": TrailFile("maira-varaita-ridge.gpx", "Maira-Varaita ridge", 69.5),
+    # slice 03b (D198: synthetic dead-end trails, recorded uphill)
+    "colle-del-sommeiller.gpx": TrailFile("colle-del-sommeiller.gpx", "Colle del Sommeiller", 12.4),
+    "valle-stretta.gpx": TrailFile("valle-stretta.gpx", "Valle Stretta", 9.6),
 }
 
 

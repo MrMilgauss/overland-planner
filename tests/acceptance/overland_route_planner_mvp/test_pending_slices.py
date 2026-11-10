@@ -1,11 +1,10 @@
-"""pytest-bdd binding: scenarios of slices 03b-11. All @pending: their step definitions and RED scaffolds are written
+"""pytest-bdd binding: scenarios of slices 04-11. All @pending: their step definitions and RED scaffolds are written
 when DELIVER reaches each slice (user decision 2026-11-02). Collected here so the Gherkin is parsed in every run.
 """
 
 from pytest_bdd import scenarios
 
 for _feature in (
-    "slice-03b-out-and-back-retrace.feature",
     "slice-04-consideration-list.feature",
     "slice-05-incremental-recalculation.feature",
     "slice-06a-valhalla-on-the-pi.feature",

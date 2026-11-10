@@ -84,6 +84,10 @@ class GeneratedProject:
     def _repr_pretty_(self, printer: Any, cycle: bool) -> None:  # how Hypothesis prints a falsifying example
         printer.text(repr(self))
 
+    def road_map_provider(self) -> MockRoutingProvider:
+        """The offline road map this project is planned on: straight line x 1.3 unless a project overrides it."""
+        return MockRoutingProvider()
+
     def tracks_to_drive(self) -> tuple[TrackItem, ...]:
         return tuple(item for item in self.snapshot.visited_items() if isinstance(item, TrackItem))
 
@@ -275,7 +279,7 @@ class InMemoryComposition:
         self.log = RecordingEventLog()
         self.job = PlanRequestJob(
             unit_of_work=self.planning.unit_of_work,
-            legs=LegResolver(MockRoutingProvider()),
+            legs=LegResolver(project.road_map_provider()),
             solver=InProcessOrToolsTourSolver(),
             budget=budget,
             clock=FakeClock(),
@@ -320,6 +324,6 @@ def plan_from_scratch(
 def guard_finds_nothing(plan: GeneratedPlan) -> None:
     """ADR-009's guard as the oracle, run again here on what was stored, against the test's own reading of the files."""
     snapshot = plan.project.snapshot
-    legs = LegResolver(MockRoutingProvider()).resolve(SolverModelBuilder(snapshot).required_pairs())
+    legs = LegResolver(plan.project.road_map_provider()).resolve(SolverModelBuilder(snapshot).required_pairs())
     violation = InvariantGuard(snapshot, legs).check_plan(plan.stops, plan.project.evidence())
     assert violation is None, f"the stored plan breaks {violation.check}: {violation.detail}"

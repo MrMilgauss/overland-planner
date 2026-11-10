@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC (DISTILL slice 03b, D198): a dead-end trail from Rochemolles up to the Colle del Sommeiller, 12.4 km by haversine, recorded uphill. Not a real recording. -->
+<gpx version="1.1" creator="overland-planner DISTILL fixture (slice 03b, synthetic)" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Colle del Sommeiller</name>
+    <trkseg>
+      <trkpt lat="45.118000" lon="6.887000"><ele>1600.0</ele></trkpt>
+      <trkpt lat="45.119417" lon="6.893275"><ele>1657.9</ele></trkpt>
+      <trkpt lat="45.120833" lon="6.899550"><ele>1715.8</ele></trkpt>
+      <trkpt lat="45.122250" lon="6.905825"><ele>1773.8</ele></trkpt>
+      <trkpt lat="45.123667" lon="6.912100"><ele>1831.7</ele></trkpt>
+      <trkpt lat="45.125083" lon="6.918375"><ele>1889.6</ele></trkpt>
+      <trkpt lat="45.126500" lon="6.924650"><ele>1947.5</ele></trkpt>
+      <trkpt lat="45.127917" lon="6.930925"><ele>2005.4</ele></trkpt>
+      <trkpt lat="45.129333" lon="6.937200"><ele>2063.3</ele></trkpt>
+      <trkpt lat="45.130750" lon="6.943475"><ele>2121.2</ele></trkpt>
+      <trkpt lat="45.132167" lon="6.949750"><ele>2179.2</ele></trkpt>
+      <trkpt lat="45.133583" lon="6.956025"><ele>2237.1</ele></trkpt>
+      <trkpt lat="45.135000" lon="6.962300"><ele>2295.0</ele></trkpt>
+      <trkpt lat="45.136417" lon="6.968575"><ele>2352.9</ele></trkpt>
+      <trkpt lat="45.137833" lon="6.974850"><ele>2410.8</ele></trkpt>
+      <trkpt lat="45.139250" lon="6.981125"><ele>2468.8</ele></trkpt>
+      <trkpt lat="45.140667" lon="6.987400"><ele>2526.7</ele></trkpt>
+      <trkpt lat="45.142083" lon="6.993675"><ele>2584.6</ele></trkpt>
+      <trkpt lat="45.143500" lon="6.999950"><ele>2642.5</ele></trkpt>
+      <trkpt lat="45.144917" lon="7.006225"><ele>2700.4</ele></trkpt>
+      <trkpt lat="45.146333" lon="7.012500"><ele>2758.3</ele></trkpt>
+      <trkpt lat="45.147750" lon="7.018775"><ele>2816.2</ele></trkpt>
+      <trkpt lat="45.149167" lon="7.025050"><ele>2874.2</ele></trkpt>
+      <trkpt lat="45.150583" lon="7.031325"><ele>2932.1</ele></trkpt>
+      <trkpt lat="45.152000" lon="7.037600"><ele>2990.0</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

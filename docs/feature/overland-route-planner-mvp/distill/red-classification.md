@@ -201,3 +201,61 @@ Every failure is an `AssertionError` reached through a driving port; none is `IM
 The second Then of #16 ("no plan run after the restart") was not mutated by the binding agent; the orchestrator showed it able to fail afterwards (a real plan run started after the restart made it fail with "the interrupted plan left a plan run"), and reverted the mutation.
 
 **Markers and CI cost.** `solver_child` on every scenario that spawns a solve child (scripted or real) or a planner process. Four scenarios are long when green (#2 about 21 s, #6 22 s, #10 and #13 about 31 s each: the 20 s / 30 s limits are the scenario text, and #6 solves 60 items at budget 10,000) and should be `slow`; `slow` is not set because `tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_job_2_does_not` pins the slow population to A-6 + the slice 02 HC properties (D221). Without them, slice 03 adds about 50 s to CI job 2 when enabled (13.6 of 15 min today).
+
+## Slice 03b (DISTILL of 2026-11-10)
+
+Host: dev-mac (macOS 26.2 arm64, Python 3.12.13, OR-Tools 9.15). Steps: `steps/retrace_steps.py` (new; all 7 scenarios). Small shared edits: `steps/places.py` (places Rochemolles, Colle del Sommeiller, Rifugio III Alpini; the two trail files in `TRAIL_FILES`), `steps/in_memory_planning.py` (`GeneratedProject.road_map_provider()`, default the plain offline road map; `InMemoryComposition` and `guard_finds_nothing` ask the project for it), `conftest.py` (registers the module). New data: `fixtures/gpx/colle-del-sommeiller.gpx` (Rochemolles -> Colle del Sommeiller, 12.4 km) and `fixtures/gpx/valle-stretta.gpx` (Bardonecchia -> Rifugio III Alpini, 9.6 km), synthetic (D198), 25 points each. Binding `test_slice_03b.py`; slice 03b left `test_pending_slices.py`. The feature is unchanged and keeps `@slice-03b @pending`. No RED scaffold; nothing under `src/`, `migrations/` or `web/src` changed.
+
+Doubles: none new. The planner is the production app; the offline road map is scripted per pair through `MOCK_PLAN` (brief section 6 already lists "per-pair level (`confirmed`, `unconfirmed:<reason>`, `none`)"; the atdd policy lists "scripted per-pair levels"). The slice-02 `MOCK_PLAN` reader accepts only `{from, to, distance_m, duration_s}`, so a road map with levels is refused at start-up: that is the first RED of every scenario.
+
+Proposed contract (DISTILL's proposal, DELIVER owns the shapes; the steps ask only for what the scenarios read):
+- `MOCK_PLAN` pair: `{from: [lat, lon], to: [lat, lon], distance_m, duration_s, level}`; `level` absent or `confirmed` = Confirmed, `unconfirmed:<reason>` = an Unconfirmed leg (with distance and time), `none` = no road at any level (no distance or time). Unlisted pairs keep straight line x 1.3, Confirmed.
+- plan run stops: a retrace is its own row directly after its track: `type: "retrace"`, `name: "Retrace <track>"`, `entry` = where it starts (the track's exit), `exit` = where it ends (the track's entry), `track_km`/`offroad_s` = the real retrace km and time, `leg_km: null`, `confidence: "unconfirmed"`, `reason: "retraces the trail backwards; check it is drivable in reverse"`. The Gherkin's row text is composed from these fields and the place names (the steps compare coordinates and the reason, not a rendered string).
+- every stop reached by road: `leg_confidence: "confirmed" | "unconfirmed"`.
+- totals keep exactly the six slice 02 keys; `road_*` hold road legs only, `offroad_*` hold tracks and retraces; no penalty anywhere.
+- an unreachable item: Failed run with `failure_reason: "unreachable"`, no stops, no totals, export 422; its report reason or the job message names the item.
+- in memory (layer 1-2): `PlanStop.kind == "retrace"`, `item_id` = its track's, `entry`/`exit` as above.
+
+```
+uv run pytest tests/acceptance/overland_route_planner_mvp/test_slice_03b.py --run-pending=slice-03b -p no:cacheprovider
+  -> 7 failed, 0 passed, 0 errors, 2 s (Hypothesis profile dev)
+uv run pytest -q tests -p no:cacheprovider
+  -> 668 passed, 149 skipped, 0 failed, 641 s (profile dev; the first run failed once on the CI pin test, see Markers)
+uv run ruff check tests ; uv run ruff format --check tests
+  -> All checks passed ; files already formatted
+```
+
+Static binding check (scratch script over pytest-bdd's step registry): the 27 distinct step lines of `slice-03b-out-and-back-retrace.feature` each match exactly one definition (0 unbound, 0 ambiguous); slices 00b, 01a, 01b, 02, 03 and the walking skeleton re-checked: 0 ambiguous (the unbound ones are the outline placeholders, as before).
+
+| # | Scenario | Result | Class | Where it fails and why | Local s | Markers |
+|---|---|---|---|---|---|---|
+| 1 | A dead-end trail is driven in full and then retraced | FAIL | MISSING_FUNCTIONALITY | Given "no road leg leaves its exit ...": `AssertionError: the planner refused to start with the scripted road map (StartupRefusedError(1)): the offline road map does not read the per-pair level` (log: `pairs[0] must have exactly from, to, distance_m and duration_s`) | 0.3 | solver_child |
+| 2 | A trail is never entered from its exit | FAIL | MISSING_FUNCTIONALITY | Given "track Valle Stretta whose entry cannot be reached ...": same | 0.2 | none (a Failed run at the reachability check, before any solve) |
+| 3 | No retrace when a road leaves the exit | FAIL | MISSING_FUNCTIONALITY | Given "an Unconfirmed road leg leaves its exit ...": same (`unconfirmed:<reason>` level) | 0.2 | solver_child |
+| 4 | A retrace is its own leg and counts as off-road driving | FAIL | MISSING_FUNCTIONALITY | Given "a plan of ... retraces ...": same (chains #1's Givens) | 0.2 | solver_child |
+| 5 | A dead-end trail just before the End is retraced to reach the End | FAIL | MISSING_FUNCTIONALITY | Given "no road leg leaves its exit at any confidence level ...": same | 0.2 | solver_child |
+| 6 | An order with fewer retraces wins over a shorter order | FAIL | MISSING_FUNCTIONALITY | Given "two dead-end trails ...": same (the Given first proves its own premise: the Confirmed order is 30 km longer than the best retrace order) | 0.3 | solver_child |
+| 7 | No track item is ever driven backwards, retraces included | FAIL | MISSING_FUNCTIONALITY | Then "no track item is ever driven from exit to entry": the pinned readable examples (Sommeiller round trip, Sommeiller on the way to Briancon) fail first: `AssertionError: the offline road map does not read the per-pair level: none of slice 03b: ... pairs[0] must have exactly from, to, distance_m and duration_s` | 0.1 | `property` (feature tag); `heavy_property` recommended, not set (below) |
+
+Every failure is an `AssertionError` reached through a driving port (the in-process planner's start-up for #1-#6, the layer 1-2 composition for #7); none is `IMPORT_ERROR`, `FIXTURE_BROKEN`, `SETUP_FAILURE`, `WRONG_ASSERTION` or `OBSERVABLE_NOT_AT_PORT`. No scenario is ALREADY_GREEN and none is skipped: every Given needs a road without a leg, an Unconfirmed leg or both.
+
+**Because RED stops at the road map, the Thens were run against a throwaway stand-in** (a pytest plugin outside the repository that answered Calculate, the poll and the plan run from a hand-made plan built from the real catalog and the scripted road map, with MUT=<name> breaking it). Correct stand-in: #1-#6 pass. Each mutation below makes the named scenario fail on the named check (all reverted; the plugin is not committed):
+
+| Mutation of the stand-in | Fails | On |
+|---|---|---|
+| the track row runs exit -> entry | #1, #3 | "Colle del Sommeiller is entered 12403 m from Rochemolles" |
+| the retrace km carry the 10 km penalty | #1, #4 | "the retrace is 22.4 km, not 12.4 km" |
+| the retrace row is after the next stop / missing | #1, #4, #5 | "the row after 'Colle del Sommeiller' is ..." / "the plan is [..]" |
+| the road into the next stop starts at the exit (150 km, not 64 km) | #1, #4, #5 | "the road into Briancon is 150.0 km, not 64.0 km" |
+| the retrace is not flagged Unconfirmed / carries a shorter reason | #1 | "the retrace is None, not Unconfirmed" / "the retrace says '...', not '...'" |
+| totals gain a `retrace_km` key | #4 | "the totals show [..]: a retrace has no breakdown of its own" |
+| road km include the retrace (+10) | #4 | "road is 132.0 km, not 122.0 km" |
+| a retrace is planned although a road leaves the exit | #3 | "the plan retraces: ['Retrace Colle del Sommeiller']" |
+| the Unconfirmed leg is not flagged / starts at the entry | #3 | "the road leg is 'confirmed'" / "the road into Casa Marco, Torino is 64.0 km, not 150.0 km" |
+| the unreachable run names no item / has another reason / shows stops / is not Failed | #2 | "nothing Marco read names 'Valle Stretta'" / "plan run #1 fails with 'timeout'" / the stops and delta checks |
+| the plan retraces both trails | #6 | "the plan is ['Casa Marco, Torino', 'Valle Stretta', 'Retrace Valle Stretta', ...]" |
+| the scripted Confirmed order is 33 km longer (not 30) | #6 | Given: "the scripted Confirmed order is 155.0 km, the retrace order 122.0 km: not 30 km longer" |
+
+The property's two oracles (`retraced_tracks`, `reversed_track_stops`) were run on hand-made plans: a reversed track, a retrace before its track, a retrace of another item and a retrace entry -> exit instead of exit -> entry each fail; a missing retrace fails the second Then (retraced tracks must equal the dead-end tracks driven).
+
+**Markers and CI cost.** `solver_child` on #1, #3-#6 (a real OR-Tools child per Calculate; each about 2 s when green). #2 stays in pre-push (no solve). #7 solves in-process and is `heavy_property` (D221): a stand-in run of the same generator and solve (without retrace arcs, which the planner cannot plan yet) took 0.9 s for 100 cases (profile dev) and 7.5 s for 1,000 cases (profile ci) of planning alone, so it is above the 3 s line at ci and should be `heavy_property`. The marker is not set: `tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and_job_2_does_not` pins job 10's population by name (it failed once the marker was set), so the orchestrator sets the marker and adds the test to that pin together before slice 03b is enabled. At profile dev it stays in pre-push. Re-measure once retrace arcs exist.
