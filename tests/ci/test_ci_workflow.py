@@ -874,8 +874,8 @@ def test_slice_02_scenarios_run_without_being_enabled() -> None:
     assert [line for line in lines if line.startswith("@")] == ["@slice-02"]
 
 
-def _collected_everywhere(expression: str) -> list[str]:
-    """Test names the expression selects in the whole suite, as the slow-properties job runs it (no module)."""
+def _collected_node_ids(expression: str) -> list[str]:
+    """Node ids the expression selects in the whole suite, as the slow-properties job runs it (no module)."""
     pending = _workflow()["env"]["PENDING_FLAGS"].split()
     collected = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", *pending, "-m", expression],
@@ -886,7 +886,16 @@ def _collected_everywhere(expression: str) -> list[str]:
         check=False,
     )
     assert collected.returncode in (0, 5), collected.stdout + collected.stderr
-    return sorted(line.rsplit("::", 1)[1] for line in collected.stdout.splitlines() if "::" in line)
+    return sorted(line for line in collected.stdout.splitlines() if "::" in line)
+
+
+def _names(node_ids: list[str]) -> list[str]:
+    return sorted(node_id.rsplit("::", 1)[1] for node_id in node_ids)
+
+
+def _collected_everywhere(expression: str) -> list[str]:
+    """Test names the expression selects in the whole suite, as the slow-properties job runs it (no module)."""
+    return _names(_collected_node_ids(expression))
 
 
 # ---------------------------------------------------------------- step 06-12: CI placement of the slice 03 scenarios
@@ -909,6 +918,75 @@ HEAVY_REGISTRY_PROPERTIES = (  # the five at about 5 s or more each at profile c
     "test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_counted_from_its_start",
 )
 
+HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit its timeout (run 42840993896)
+    "tests/unit/application/planning/test_plan_job_registry.py": (
+        "test_calculate_reports_the_ignore_memo_it_was_given_and_refuses_alike_with_or_without_it",
+        "test_whatever_the_work_raises_the_job_ends_failed_and_calculate_is_accepted_again",
+        "test_a_job_row_holds_the_values_of_its_finished_line_with_its_start_and_end",
+        "test_a_failed_job_logs_its_end_at_warning_and_a_done_job_at_info",
+        "test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event",
+        "test_any_solver_outcome_ends_in_one_terminal_state_with_a_run_named_iff_one_was_stored",
+        "test_the_project_stays_readable_while_the_optimizer_works",
+        "test_the_request_answers_before_the_job_is_done_and_no_run_is_named_until_stored",
+        "test_a_finished_job_is_kept_for_ten_minutes_and_a_running_one_as_long_as_it_runs",
+    ),
+    "tests/unit/adapters/http/test_basic_auth_credentials.py": (
+        "test_a_change_is_made_only_with_the_configured_user_and_exact_password",
+    ),
+    "tests/perf/test_golden_instances.py": (
+        "test_every_instance_keeps_its_shape",
+        "test_the_sparse_road_map_turns_about_five_percent_of_its_own_pairs_into_one_way_detours",
+    ),
+    "tests/unit/application/export/test_gpx_export_service.py": (
+        "test_failed_run_export_is_refused_with_422_and_its_message",
+        "test_the_file_and_the_document_are_named_from_the_project_and_the_run",
+        "test_inconsistent_file_logs_invariant_violation",
+        "test_each_export_logs_one_event_with_the_kpi_fields",
+        "test_inconsistent_file_refuses_with_the_verbatim_message",
+        "test_export_changes_nothing_and_unknown_run_is_not_found",
+        "test_the_document_holds_every_track_with_its_name_and_its_stored_points_in_order",
+    ),
+    "tests/unit/application/planning/test_plan_request_job_guard.py": (
+        "test_a_track_of_real_size_passes_and_one_altered_point_anywhere_fails",
+        "test_a_ready_run_stores_and_shows_each_stop_with_its_columns_and_a_failed_run_no_stops",
+        "test_a_failed_run_stores_and_shows_its_reason_in_product_words_and_a_ready_run_no_report",
+        "test_a_track_whose_file_changed_or_vanished_stores_one_failed_run_and_no_itinerary",
+        "test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_none",
+        "test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok",
+    ),
+    "tests/perf/test_reference_search.py": (
+        "test_a_short_search_writes_a_complete_reference_better_than_the_listed_order",
+    ),
+    "tests/unit/domain/planning/test_invariant_guard.py": (
+        "test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule",
+        "test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule",
+    ),
+    "tests/unit/bootstrap/test_settings.py": (
+        "test_valid_settings_parse_to_their_values_and_unrelated_keys_are_ignored",
+        "test_an_empty_upload_cap_falls_back_to_its_default",
+    ),
+    "tests/unit/application/planning/test_plan_request_job_outcomes.py": (
+        "test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving",
+    ),
+    "tests/unit/application/routing/test_leg_resolver.py": (
+        "test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_asked_after_the_held_ones_are_reported",
+        "test_a_job_whose_road_map_answers_a_row_of_the_wrong_shape_ends_failed_with_no_run",
+        "test_a_scripted_road_map_answers_its_script_on_listed_pairs_and_the_default_elsewhere",
+    ),
+    "tests/unit/application/planning/test_plan_job_stage_timings.py": (
+        "test_an_ended_job_reports_each_stage_in_whole_ms_within_its_elapsed_time_and_a_memo_hit_no_solve",
+        "test_a_running_job_shows_its_finished_stages_and_its_legs_and_items_once_known",
+    ),
+    "tests/unit/domain/planning/test_fingerprint.py": (
+        "test_changing_any_single_solver_input_gives_another_fingerprint",
+        "test_rebuilding_the_same_inputs_or_changing_only_what_totals_use_keeps_the_fingerprint",
+    ),
+    "tests/unit/domain/planning/test_plan_run_assembler.py": (
+        "test_a_failed_run_reports_its_reason_in_product_words_and_a_ready_run_has_no_report",
+        "test_cumulative_km_and_time_run_to_the_end_of_each_stop",
+    ),
+}
+
 
 FEATURE_03 = "tests/acceptance/overland_route_planner_mvp/slice-03-pi-performance.feature"
 
@@ -928,8 +1006,9 @@ def _collected_slice_03(*selection: str) -> list[str]:
 
 
 def test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and_job_2_does_not() -> None:
-    """D220, D221, D223: A-6, the HC properties, the slice-03 scenarios that wait out a 20 s or 30 s limit and the
-    costliest registry properties at profile ci; job 2 runs the rest of slice 03 but the @pi pair and the golden."""
+    """D220, D221, D223: A-6, the HC properties, the slice-03 scenarios that wait out a 20 s or 30 s limit, the
+    costliest registry properties and the unit and perf tests at 3 s or more at profile ci; job 2 runs the rest of
+    slice 03 but the @pi pair and the golden."""
     workflow = _workflow()
     job = _job(workflow, "slow-properties")
     pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
@@ -953,8 +1032,11 @@ def test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and
     expression = re.search(r'-m "(?P<expression>[^"]+)"', command)
     assert expression is not None
 
-    slow = {A_6, *SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES}
-    assert _collected_everywhere(expression["expression"]) == sorted(slow)
+    moved = {f"{module}::{name}" for module, names in HEAVY_UNIT_AND_PERF.items() for name in names}
+    slow = {A_6, *SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES, *_names(sorted(moved))}
+    job_10_ids = _collected_node_ids(expression["expression"])
+    assert _names(job_10_ids) == sorted(slow)
+    assert moved <= set(job_10_ids), "each moved unit or perf test is found under its own module"
     assert set(_collected_everywhere(job_2["expression"])).isdisjoint(slow)
     others = set(_collected_slice_03()) - {*SLOW_SLICE_03, GOLDEN_SCENARIO, *PI_SCENARIOS}
     assert _collected_slice_03("-m", job_2["expression"]) == sorted(others)

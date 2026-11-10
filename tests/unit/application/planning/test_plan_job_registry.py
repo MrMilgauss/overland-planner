@@ -339,6 +339,7 @@ def _expected_row(plan: Plan) -> tuple[Any, ...] | None:
     return (number, "failed", plan.script.reason, (), *stamp)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(plan=plans())
 def test_any_solver_outcome_ends_in_one_terminal_state_with_a_run_named_iff_one_was_stored(plan: Plan) -> None:
@@ -366,6 +367,7 @@ def test_any_solver_outcome_ends_in_one_terminal_state_with_a_run_named_iff_one_
     assert planner.solver.budgets == [BUDGET]
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), fatal=st.sampled_from([SystemExit(3), KeyboardInterrupt(), GeneratorExit()]))
 def test_whatever_the_work_raises_the_job_ends_failed_and_calculate_is_accepted_again(
@@ -390,6 +392,7 @@ def test_whatever_the_work_raises_the_job_ends_failed_and_calculate_is_accepted_
     assert planner.solver.budgets == [BUDGET, BUDGET]
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), stage=st.sampled_from(["queued", "computing_legs", "solving", "finalising"]))
 def test_the_request_answers_before_the_job_is_done_and_no_run_is_named_until_stored(trip: Trip, stage: str) -> None:
@@ -413,6 +416,7 @@ def test_the_request_answers_before_the_job_is_done_and_no_run_is_named_until_st
     assert planner.solver.threads[0].daemon, "a running job would block process exit"
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips())
 def test_the_project_stays_readable_while_the_optimizer_works(trip: Trip) -> None:
@@ -434,6 +438,7 @@ def _round_trip_from_home() -> Trip:
     return Trip(ProjectSnapshot(home.id, home.id, (home,)), leg_table(leg_m), leg_m, home, home, ())
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(
     trip=trips(),
@@ -467,6 +472,7 @@ def test_a_finished_job_is_kept_for_ten_minutes_and_a_running_one_as_long_as_it_
     planner.held.release()
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(plan=plans())
 def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan: Plan) -> None:
@@ -518,6 +524,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
     assert (completed[0]["memo_hit"], completed[0]["ignore_memo"]) == (False, False)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(
     trip=trips(),
@@ -656,6 +663,7 @@ def test_every_ending_writes_one_log_row_a_refusal_none_and_a_failing_write_chan
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(plan=plans(), took_s=st.integers(0, 3_600_000).map(lambda ms: ms / 1000))
 def test_a_job_row_holds_the_values_of_its_finished_line_with_its_start_and_end(plan: Plan, took_s: float) -> None:
@@ -1093,6 +1101,7 @@ def _refusals_alike(desk: PlanDesk, unavailable: PlanRequestService) -> dict[boo
     return answers
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None, max_examples=25)
 @given(trip=trips(), presses=flagged_presses())
 def test_calculate_reports_the_ignore_memo_it_was_given_and_refuses_alike_with_or_without_it(

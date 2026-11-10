@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -177,6 +178,7 @@ def _after_the_run_time(run: NewPlanRun, lines: tuple[str, ...]) -> tuple[str, .
     return lines[1:]
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data(), feasibility=st.integers(1, 600), longer=st.integers(0, 1800))
 def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving(

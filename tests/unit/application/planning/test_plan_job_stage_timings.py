@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -143,6 +144,7 @@ def _ended_with_stages(planner: TimedPlanner, ticks: dict[str, int]) -> tuple[st
     return job_id, job, stages | ({"solve": _ms(ticks["solve"])} if solved else {})
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), ticks=_durations(), again=st.booleans())
 def test_an_ended_job_reports_each_stage_in_whole_ms_within_its_elapsed_time_and_a_memo_hit_no_solve(
@@ -178,6 +180,7 @@ def test_an_ended_job_reports_each_stage_in_whole_ms_within_its_elapsed_time_and
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), ticks=_durations(), held_at=st.sampled_from(["matrix", "solve"]))
 def test_a_running_job_shows_its_finished_stages_and_its_legs_and_items_once_known(

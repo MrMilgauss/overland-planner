@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -127,6 +128,7 @@ def _with_a_track(trip: Trip) -> bool:
     return bool(trip.tracks())
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(
     trip=trips(),
@@ -152,6 +154,7 @@ def test_rebuilding_the_same_inputs_or_changing_only_what_totals_use_keeps_the_f
         assert _fingerprint((nudged, model, solve)) == before, f"a move of {by} degrees is the same point"
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips().filter(_with_a_track))
 def test_changing_any_single_solver_input_gives_another_fingerprint(trip: Trip) -> None:

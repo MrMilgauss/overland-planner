@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from itertools import pairwise
 from typing import Any
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -177,6 +178,7 @@ def test_each_stop_carries_its_leg_time_and_a_track_its_length_and_offroad_time(
     assert_state_delta(before, after, universe, {"plan.driving": close_to(driving)}, strict=True)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(planned=planned_trips())
 def test_cumulative_km_and_time_run_to_the_end_of_each_stop(planned: tuple[Trip, tuple[CatalogItem, ...]]) -> None:
     trip, order = planned
@@ -224,6 +226,7 @@ unknown_codes = (
 )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(planned=planned_trips(), unknown=unknown_codes, data=st.data())
 def test_a_failed_run_reports_its_reason_in_product_words_and_a_ready_run_has_no_report(
     planned: tuple[Trip, tuple[CatalogItem, ...]], unknown: str, data: st.DataObject

@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+import pytest
 from hypothesis import given, note
 from hypothesis import strategies as st
 
@@ -297,6 +298,7 @@ def test_every_plan_the_assembler_makes_passes(plan: Plan) -> None:
     assert plan.guard().check_order(order) is None
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(plan=plans(), data=st.data())
 def test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule(plan: Plan, data: st.DataObject) -> None:
     # Every mutation on every plan: one sampled per plan left some undrawn in all 50 fixed examples of the mutation
@@ -356,6 +358,7 @@ def _broken_orders(plan: Plan) -> list[tuple[tuple[str, ...], str, str]]:
     return broken
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(plan=plans())
 def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan: Plan) -> None:
     """Every broken order on every example (D212), each with the exact detail the event log gets."""

@@ -20,6 +20,7 @@ from functools import cache
 from itertools import permutations
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -136,6 +137,7 @@ def _assert_one_failed_run_only(harness: Harness, before: dict[str, Any], stored
     assert [(c["status"], c["failure_reason"], c["invariants"]) for c in completed] == [("failed", REASON, "violated")]
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data())
 def test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok(trip: Trip, data: st.DataObject) -> None:
@@ -159,6 +161,7 @@ FAILED_OUTCOMES = st.sampled_from(
 STORED_INPUTS = {"start_item_id", "end_item_id", "included_item_ids", "solver_budget"}
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data(), failure=FAILED_OUTCOMES)
 def test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_none(
@@ -200,6 +203,7 @@ def _reported(harness: Harness) -> dict[str, Any]:
     }
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data())
 def test_a_failed_run_stores_and_shows_its_reason_in_product_words_and_a_ready_run_no_report(
@@ -245,6 +249,7 @@ def _with_a_place_and_a_track(trip: Trip) -> bool:
     return bool(trip.tracks())
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips().filter(_with_a_place_and_a_track), data=st.data(), failure=FAILED_OUTCOMES)
 def test_a_ready_run_stores_and_shows_each_stop_with_its_columns_and_a_failed_run_no_stops(
@@ -296,6 +301,7 @@ def _altered(points: tuple[TrackPoint, ...], at: int, what: str) -> tuple[TrackP
     return (*points[:at], changed, *points[at + 1 :])
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips().filter(lambda trip: bool(trip.tracks())), data=st.data())
 def test_a_track_whose_file_changed_or_vanished_stores_one_failed_run_and_no_itinerary(
@@ -393,6 +399,7 @@ def _big_harness(content: bytes) -> Harness:
     return _harness(snapshot, leg_m, files)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None, max_examples=20)
 @given(
     at=st.integers(0, BIG_TRACK_POINTS - 1),

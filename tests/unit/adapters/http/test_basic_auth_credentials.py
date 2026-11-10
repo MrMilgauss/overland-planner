@@ -100,6 +100,7 @@ def presentations(draw: st.DrawFn, user: str, password: str) -> tuple[str, dict[
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow], deadline=None)
 @given(data=st.data(), user=users, password=passwords)
 def test_a_change_is_made_only_with_the_configured_user_and_exact_password(

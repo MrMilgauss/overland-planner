@@ -117,6 +117,7 @@ def _straight_line_default(origin: Coordinate, destination: Coordinate) -> tuple
     return metres, max(1, round(metres / METRES_PER_SECOND_AT_60_KMH))
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(case=scripted_trips())
 def test_a_scripted_road_map_answers_its_script_on_listed_pairs_and_the_default_elsewhere(
     case: tuple[list[RoadPair], dict[RoadPair, RoadMeasure]],
@@ -174,6 +175,7 @@ def test_a_row_that_does_not_match_its_targets_raises_instead_of_leaving_legs_ou
         LegResolver(_RoadMapAnsweringTheWrongShape(trip, wrong_shape)).resolve(pairs)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), wrong_shape=st.sampled_from((_one_leg_short, _one_leg_too_many)))
 def test_a_job_whose_road_map_answers_a_row_of_the_wrong_shape_ends_failed_with_no_run(
@@ -247,6 +249,7 @@ requests = st.lists(
 )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(trip=trips(), sequence=requests)
 def test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_asked_after_the_held_ones_are_reported(
     trip: Trip, sequence: list[tuple[str, list[RoadPair]]]

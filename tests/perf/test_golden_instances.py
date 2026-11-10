@@ -117,6 +117,7 @@ def test_writing_an_instance_is_byte_identical_and_touches_only_its_own_files(
 
 
 # --------------------------------------------------------------------------------------------- the shape
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(kind=kinds, seed=seeds, items=item_counts, points=points_per_track)
 @settings(deadline=None)
 def test_every_instance_keeps_its_shape(kind: str, seed: int, items: int, points: int) -> None:
@@ -139,6 +140,7 @@ def test_every_instance_keeps_its_shape(kind: str, seed: int, items: int, points
         assert math.isclose(polyline_m(track), 1.4 * straight, rel_tol=0.01), f"{name}: {polyline_m(track):.0f} m"
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(seed=seeds, items=item_counts)
 @settings(deadline=None, max_examples=FILE_EXAMPLES)
 def test_the_sparse_road_map_turns_about_five_percent_of_its_own_pairs_into_one_way_detours(

@@ -46,6 +46,7 @@ def test_road_km_of_any_order_is_the_objective_the_search_minimises(order: list[
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @pytest.mark.solver_child
 def test_a_short_search_writes_a_complete_reference_better_than_the_listed_order(tmp_path: Path) -> None:
     # bypass: a real 5 s OR-Tools search is expensive and not deterministic; one run checks the written reference.

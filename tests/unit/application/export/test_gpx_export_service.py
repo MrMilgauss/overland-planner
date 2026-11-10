@@ -256,6 +256,7 @@ _spoils = st.one_of(
 )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks)
 def test_the_document_holds_every_track_with_its_name_and_its_stored_points_in_order(
@@ -294,6 +295,7 @@ def test_a_full_size_track_exports_whole() -> None:
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks, victim=st.integers(0, 3), spoil=_spoils)
 def test_inconsistent_file_refuses_with_the_verbatim_message(
@@ -310,6 +312,7 @@ def test_inconsistent_file_refuses_with_the_verbatim_message(
     assert_state_delta(before, harness.view(), UNIVERSE, {"events": gained(VIOLATION)}, strict=True)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks, victim=st.integers(0, 3), spoil=_spoils)
 def test_inconsistent_file_logs_invariant_violation(
@@ -358,6 +361,7 @@ def test_a_track_that_cannot_be_read_by_the_run_refuses_the_same_way(broken_by: 
     assert detail in str(harness.violations()[0]["detail"])
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks, unknown=st.text(max_size=40).filter(lambda run_id: run_id != RUN))
 def test_export_changes_nothing_and_unknown_run_is_not_found(tracks: tuple[_StoredTrack, ...], unknown: str) -> None:
@@ -376,6 +380,7 @@ def test_export_changes_nothing_and_unknown_run_is_not_found(tracks: tuple[_Stor
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks)
 def test_failed_run_export_is_refused_with_422_and_its_message(tracks: tuple[_StoredTrack, ...]) -> None:
@@ -393,6 +398,7 @@ def test_failed_run_export_is_refused_with_422_and_its_message(tracks: tuple[_St
     assert_state_delta(before, harness.view(), UNIVERSE, {}, strict=True)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks, project_name=_project_names, number=st.integers(1, 10_000))
 def test_the_file_and_the_document_are_named_from_the_project_and_the_run(
@@ -413,6 +419,7 @@ def test_the_file_and_the_document_are_named_from_the_project_and_the_run(
     )
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @settings(deadline=None)
 @given(tracks=_tracks)
 def test_each_export_logs_one_event_with_the_kpi_fields(tracks: tuple[_StoredTrack, ...]) -> None:

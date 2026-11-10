@@ -115,6 +115,7 @@ def environments(draw: st.DrawFn) -> tuple[dict[str, str], dict[str, Any]]:
     return environ, expected
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(case=environments())
 def test_valid_settings_parse_to_their_values_and_unrelated_keys_are_ignored(
     case: tuple[dict[str, str], dict[str, Any]],
@@ -167,6 +168,7 @@ def test_the_shared_password_set_without_its_user_or_the_reverse_is_refused(
     assert missing in str(refused.value)
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(case=environments(), empty_caps=st.lists(st.sampled_from(UPLOAD_CAPS), unique=True, min_size=1))
 def test_an_empty_upload_cap_falls_back_to_its_default(
     case: tuple[dict[str, str], dict[str, Any]], empty_caps: list[str]
