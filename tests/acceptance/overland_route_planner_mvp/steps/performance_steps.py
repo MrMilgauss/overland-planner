@@ -55,7 +55,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     prepare_day_trip,
     press_calculate,
 )
-from tests.acceptance.overland_route_planner_mvp.steps.planner import RemotePlanner, ServerPlanner
+from tests.acceptance.overland_route_planner_mvp.steps.planner import RemotePlanner, ServerPlanner, optimizer_processes
 from tests.acceptance.overland_route_planner_mvp.steps.world import (
     PLANNING_UNIVERSE,
     PlannerWorld,
@@ -348,25 +348,6 @@ def assert_sixty_continues(world: PlannerWorld) -> None:
         assert job["state"] == "solving", f"the 60-item plan stopped being optimised: {job}"
         time.sleep(1.0)
     world.project_id = project_id
-
-
-def optimizer_processes(root_pid: int) -> list[int]:
-    """The solve children under the planner process (multiprocessing spawn children), read from the process table.
-
-    `-ww`: without a terminal, procps on Linux cuts each command to 80 columns, which hides `spawn_main` behind the
-    interpreter's path."""
-    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], capture_output=True, text=True, check=True)
-    rows = [line.split(None, 2) for line in table.stdout.splitlines() if len(line.split(None, 2)) == 3]
-    children: dict[int, list[tuple[int, str]]] = {}
-    for pid, ppid, command in rows:
-        children.setdefault(int(ppid), []).append((int(pid), command))
-    found, pending = [], [root_pid]
-    while pending:
-        for pid, command in children.get(pending.pop(), []):
-            pending.append(pid)
-            if "spawn_main" in command:
-                found.append(pid)
-    return found
 
 
 def process_tree(root_pid: int) -> str:

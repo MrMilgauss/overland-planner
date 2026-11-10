@@ -93,6 +93,8 @@ class PlannerWorld:
             self.tour_solver.abandon()
         if self.planner is not None:
             self.planner.stop()
+        if isinstance(self.planner, ServerPlanner):
+            self.planner.reap_left_behind()  # after the scenario's checks: what the product left must not outlive it
 
     # --- what Marco observes ---------------------------------------------------------------------------
     def note(self, response: httpx.Response) -> httpx.Response:

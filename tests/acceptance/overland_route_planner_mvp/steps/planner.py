@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -173,6 +175,51 @@ class StartRecord:
         return f"--- stdout (last {lines}) ---\n{out}\n--- stderr (last {lines}) ---\n{err}"
 
 
+def descendants(root_pid: int) -> dict[int, str]:
+    """Every process under `root_pid` with its command line, read from the process table."""
+    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], capture_output=True, text=True, check=True)
+    rows = [line.split(None, 2) for line in table.stdout.splitlines() if len(line.split(None, 2)) == 3]
+    children: dict[int, list[tuple[int, str]]] = {}
+    for pid, ppid, command in rows:
+        children.setdefault(int(ppid), []).append((int(pid), command))
+    found: dict[int, str] = {}
+    pending = [root_pid]
+    while pending:
+        for pid, command in children.get(pending.pop(), []):
+            pending.append(pid)
+            found[pid] = command
+    return found
+
+
+def optimizer_processes(root_pid: int) -> list[int]:
+    """The solve children under the planner process (multiprocessing spawn children), read from the process table."""
+    return [pid for pid, command in descendants(root_pid).items() if "spawn_main" in command]
+
+
+class LeftBehind:
+    """The processes a planner process spawned, recorded before it is ended, so that the teardown can end those that
+    outlived it (review F5). Only the teardown reaps: a scenario's own checks see what the product left running."""
+
+    def __init__(self) -> None:
+        self._recorded: dict[int, str] = {}
+
+    def record(self, root_pid: int) -> None:
+        self._recorded.update(descendants(root_pid))
+
+    def reap(self) -> None:
+        """SIGKILLs each recorded process still running the same command (a pid reused by another process is left)."""
+        for pid, command in self._recorded.items():
+            if _command_of(pid) == command:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+        self._recorded.clear()
+
+
+def _command_of(pid: int) -> str | None:
+    table = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return table.stdout.strip() or None
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -193,6 +240,7 @@ class ServerPlanner:
         self._client: httpx.Client | None = None
         self._pumps: list[threading.Thread] = []
         self.base_url = ""
+        self.left_behind = LeftBehind()  # what each ended process spawned; `reap_left_behind` ends the survivors
 
     def _child_env(self) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PLANNER_", "ROUTING_", "MOCK_"))}
@@ -251,6 +299,7 @@ class ServerPlanner:
             self._client.close()
             self._client = None
         if self._process is not None and self._process.poll() is None:
+            self.left_behind.record(self._process.pid)
             self._process.terminate()
             try:
                 self._process.wait(timeout=15)
@@ -274,8 +323,13 @@ class ServerPlanner:
     def kill_abruptly(self) -> None:
         """The planner is stopped abruptly: SIGKILL, no shutdown of its own (slice 03)."""
         assert self._process is not None, "the planner process is not running"
+        self.left_behind.record(self._process.pid)
         self._process.kill()
         self._process.wait(timeout=10)
+
+    def reap_left_behind(self) -> None:
+        """Teardown only: ends what the ended planner processes spawned and left running (solve children)."""
+        self.left_behind.reap()
 
     def session(self, auth: Auth = None) -> PlannerSession:
         assert self._client is not None, "the planner is not running"
