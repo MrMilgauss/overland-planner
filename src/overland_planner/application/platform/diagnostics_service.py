@@ -30,6 +30,7 @@ EXCLUDED_PREFIX = "__"  # kpi-contracts exclusions: fixtures loaded by hand
 HEADLINE_BAND = "60"
 SECOND_PASS_HEAVY = 700
 INVARIANT_VIOLATION = "internal_invariant_violation"
+_MILLISECONDS_PER_SECOND = 1000
 BANDS: Mapping[str, range] = {"le_30": range(31), "31_59": range(31, 60), "60": range(60, 61), "61_70": range(61, 71)}
 
 
@@ -99,7 +100,11 @@ def _band(job: JobLogRow) -> str | None:
 
 
 def _stage_seconds(jobs: Iterable[JobLogRow], stage: str) -> list[float]:
-    return [job.stage_ms[stage] / 1000 for job in jobs if job.stage_ms is not None and stage in job.stage_ms]
+    return [
+        job.stage_ms[stage] / _MILLISECONDS_PER_SECOND
+        for job in jobs
+        if job.stage_ms is not None and stage in job.stage_ms
+    ]
 
 
 class _JobFigures:
@@ -112,7 +117,7 @@ class _JobFigures:
     def k5(self) -> K5:
         cold = [job for job in self._jobs if not job.memo_hit]
         stages = sorted({stage for job in cold for stage in job.stage_ms or {}})
-        e2e = self._per_band(lambda rows: nearest_rank_p95(job.elapsed_ms / 1000 for job in rows))
+        e2e = self._per_band(lambda rows: nearest_rank_p95(job.elapsed_ms / _MILLISECONDS_PER_SECOND for job in rows))
         return K5(
             stage_p95_s={stage: nearest_rank_p95(_stage_seconds(cold, stage)) for stage in stages},
             solve_p95_s=self._per_band(lambda rows: nearest_rank_p95(_stage_seconds(rows, "solve"))),
