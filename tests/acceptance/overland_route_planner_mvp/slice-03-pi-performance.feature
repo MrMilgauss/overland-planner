@@ -5,7 +5,7 @@
 # of the 10 runs" is the p95 of 10 (D159); every cold run counts, retried ones included (UD-3, D147).
 # Slice 03-ops (enabler) supplies the fixtures, the golden order and make perf-pi; it has no scenarios of its own.
 
-@slice-03 @pending
+@slice-03
 Feature: A full-size trip planned within budget, with Stop
   As Marco, I want a 60-item trip planned within minutes on my Pi, and a way to stop early and keep the best
   plan so far, so that a big collection never leaves me waiting with nothing.
@@ -94,7 +94,7 @@ Feature: A full-size trip planned within budget, with Stop
     Given a plan run of the 60-item project is being optimised and a valid route has been found
     When the optimizer stops abnormally
     Then the best route found so far is shown
-    And it is labelled "not fully optimised (optimizer_failed)"
+    And it is labelled "not fully optimised (optimizer failed)"
 
   @US-06b @J-01 @technical @error
   Scenario: The feasibility limit reached while roads are still being looked up changes nothing

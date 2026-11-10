@@ -75,7 +75,7 @@ BUILDER_SEED = 20261109  # the test-side 60-item builder; the I1/I2 generator of
 LABELS = {  # what Marco reads -> the run flag behind it (brief §8 run flags)
     "not fully optimised (time limit)": "time_limit",
     "not fully optimised (stopped)": "stopped",
-    "not fully optimised (optimizer_failed)": "optimizer_failed",
+    "not fully optimised (optimizer failed)": "optimizer_failed",
 }
 FAILED_REASONS = {  # a Failed run's text -> its reason code (ADR-015 amendment D122)
     "stopped before a valid route was found": "stopped",

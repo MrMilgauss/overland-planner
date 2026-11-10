@@ -126,9 +126,11 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     env = {**workflow.get("env", {}), **job.get("env", {})}
     pytest_step = _main_pytest(job)
 
-    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12).
+    # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12),
+    # slice 03 (step 06-13).
     assert workflow["env"]["PENDING_FLAGS"] == (
         "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
+        " --run-pending=slice-03"
     )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
@@ -906,6 +908,16 @@ HEAVY_REGISTRY_PROPERTIES = (  # the five at about 5 s or more each at profile c
     "test_two_fast_presses_start_one_job",
     "test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_counted_from_its_start",
 )
+
+
+FEATURE_03 = "tests/acceptance/overland_route_planner_mvp/slice-03-pi-performance.feature"
+
+
+def test_slice_03_scenarios_run_without_being_enabled() -> None:
+    """Step 06-13: the feature-level tags are what conftest reads to skip a slice; `@pending` must be gone from them."""
+    lines = (REPO_ROOT / FEATURE_03).read_text().splitlines()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-03"]
 
 
 def _collected_slice_03(*selection: str) -> list[str]:
