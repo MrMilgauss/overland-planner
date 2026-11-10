@@ -362,6 +362,21 @@ def optimizer_processes(root_pid: int) -> list[int]:
     return found
 
 
+def process_tree(root_pid: int) -> str:
+    """Every process under `root_pid` as `pid ppid command`, for a failure message."""
+    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], capture_output=True, text=True, check=True)
+    rows = [line.split(None, 2) for line in table.stdout.splitlines() if len(line.split(None, 2)) == 3]
+    children: dict[int, list[list[str]]] = {}
+    for row in rows:
+        children.setdefault(int(row[1]), []).append(row)
+    lines, pending = [], [root_pid]
+    while pending:
+        for row in children.get(pending.pop(), []):
+            pending.append(int(row[0]))
+            lines.append(" ".join(row))
+    return "\n".join(lines) or "(none)"
+
+
 def running_optimizers(root_pid: int, deadline_s: float) -> list[int]:
     """The optimizer children once at least one is up: the job reports "solving" just before its child is spawned."""
     deadline = time.monotonic() + deadline_s
@@ -658,7 +673,11 @@ def when_the_planner_is_stopped_abruptly(world: PlannerWorld) -> None:
     server = world.planner
     assert isinstance(server, ServerPlanner), "the planner is not a process of its own here"
     world.scratch["optimizers"] = running_optimizers(server.pid, OPTIMIZER_START_DEADLINE_S)
-    assert world.scratch["optimizers"], "no optimizer process is running under the planner"
+    if not world.scratch["optimizers"]:
+        job, _ = follow_job(world, world.scratch["job_id"], lambda j: True, 0)
+        raise AssertionError(
+            f"no optimizer process is running under the planner; job {job}; processes:\n{process_tree(server.pid)}"
+        )
     server.kill_abruptly()
     world.scratch["killed_at"] = time.monotonic()
 
