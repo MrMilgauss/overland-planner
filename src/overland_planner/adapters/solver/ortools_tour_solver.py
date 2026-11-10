@@ -28,7 +28,7 @@ child deaf to SIGTERM within a wait step and the grace: the last incumbent label
 from __future__ import annotations
 
 import multiprocessing
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from multiprocessing.connection import Connection
@@ -67,16 +67,17 @@ from overland_planner.application.ports.tour_solver import (
     TourTimedOut,
     ignore_incumbents,
 )
+from overland_planner.domain.planning.run_messages import NotFullyOptimised
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
 PROBE_TIMEOUT_S = 30.0  # bounds a hung child; a cold first import of OR-Tools took over 10 s once on the Mac
 _PROBE_SOLUTION_LIMIT = 100
 _REAP_TIMEOUT_S = 2.0
+_SIGTERM_GRACE_S = 2.0
 _WAIT_STEP_S = 0.25  # the longest wait on the pipe before the deadlines are checked again on the Clock port
 # What makes this solver's orders what they are, for the fingerprint memo (ADR-014 sections 3 and 5): the installed
 # OR-Tools release, read from its metadata without importing it (G1), and the search `tour_child` runs.
 SOLVER_IDENTITY = f"ortools=={version('ortools')};PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH"
-_SIGTERM_GRACE_S = 2.0
 
 
 def _solve_probe_instance() -> Solve:
@@ -148,7 +149,6 @@ class OrToolsTourSolver:
             sender.close()
             return TourChildObservation(exit_code=None)
         sender.close()
-        reading = ChildReading()
         outlived_reap_wait = False
         try:
             reading = read_tour_child(receiver, bounds.deadlines, model, on_incumbent, bounds.stop)
@@ -209,9 +209,9 @@ def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOut
     """
     incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
     if observation.stopped:
-        return TourFound(order=incumbents[-1].order, ending="stopped") if incumbents else TourStopped()
+        return _last_incumbent(incumbents, "stopped") or TourStopped()
     if observation.overran:
-        return TourFound(order=incumbents[-1].order, ending="time_limit") if incumbents else TourTimedOut()
+        return _last_incumbent(incumbents, "time_limit") or TourTimedOut()
     ended_normally = observation.exit_code == 0 or observation.outlived_reap_wait
     final = next((message for message in observation.messages if _is_final(message)), None)
     if ended_normally and final is not None:
@@ -219,9 +219,12 @@ def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOut
             return TourNoRoute()
         if _is_complete_tour(final[1], model):
             return TourFound(order=_item_ids(final[1], model))
-    if incumbents:
-        return TourFound(order=incumbents[-1].order, ending="optimizer_failed")
-    return _failed(observation.exit_code)
+    return _last_incumbent(incumbents, "optimizer_failed") or _failed(observation.exit_code)
+
+
+def _last_incumbent(incumbents: Sequence[Incumbent], ending: NotFullyOptimised) -> TourFound | None:
+    """The last valid incumbent labelled with how its search ended, `None` without one."""
+    return TourFound(order=incumbents[-1].order, ending=ending) if incumbents else None
 
 
 def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
