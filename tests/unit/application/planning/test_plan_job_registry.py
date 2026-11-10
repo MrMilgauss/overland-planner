@@ -78,6 +78,7 @@ from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.application.planning.planning_doubles import (
     DEFAULT_STAMP,
     MAX_WAIT_S,
+    POLL_S,
     TERMINAL_STATES,
     Gate,
     InMemoryPlanJobLog,
@@ -750,11 +751,16 @@ class SolverOnCue:
 
 
 def _until(reached: Callable[[], bool], what: str) -> None:
-    """Waits for a job's thread by yielding to it, with no fixed pause; the deadline only stops a hung test."""
+    """Waits for a job's thread, pausing `POLL_S` between polls; the deadline only stops a hung test.
+
+    A real pause, not `sleep(0)`: a loop that only yields the GIL takes it straight back, so under mutmut's trampolines
+    the job threads starved past the deadline and the example failed at a step set by thread timing, which Hypothesis
+    then reports as inconsistent data generation (FlakyStrategyDefinition).
+    """
     deadline = time.monotonic() + MAX_WAIT_S
     while not reached():
         assert time.monotonic() < deadline, f"never happened: {what}"
-        time.sleep(0)
+        time.sleep(POLL_S)
 
 
 def _optimizer(outcome: ProbeOutcome = "ok") -> HealthService:
