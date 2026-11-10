@@ -26,6 +26,7 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import HealthService
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
+from overland_planner.application.ports.tour_solver import SolveLimits
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import RecordingEventLog
 from tests.common.fakes import FakeClock
@@ -49,6 +50,8 @@ def _planning(numbers: set[int], start: str | None = None, end: str | None = Non
 
 class _NoWork:
     """Calculate's pre-checks are under test here; the plan job itself is in test_plan_job_registry.py."""
+
+    limits = SolveLimits()
 
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
         return StoredRun(plan_run_id="not-stored", reason=None)
