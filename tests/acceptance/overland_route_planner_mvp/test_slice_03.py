@@ -2,11 +2,11 @@
 
 Markers per scenario (D199 precedent, D221): every scenario that starts a solve child (the real OR-Tools child, or
 the scripted child of waiver W1 behind the production parent) or a planner process is `solver_child`, so pre-push
-(`-m "not slow and not solver_child"`) leaves it to CI job 2. The scenarios whose text sets a 20 s or 30 s limit wait
-for it, and the golden order solves 60 items at the default budget (22 s on the Mac): those four should also be
-`slow`, but `slow` is not set here because test_ci_workflow.py pins the slow-properties population (D221); placing
-them is the orchestrator's call before slice 03 is enabled. The two
-`@pi @requires_external` scenarios are skipped without --run-external and run only through make perf-pi (D96).
+(`-m "not slow and not solver_child"`) leaves it to CI job 2. Placement (D223, pinned in tests/ci/test_ci_workflow.py):
+the three scenarios whose text sets a 20 s or 30 s limit wait for it (#2, #10, #13) and are `slow`, so they run in
+the slow-properties job (10) and never in pre-push; the 60-item plan of I1 at the default budget (#6, 16-22 s on the
+Mac) is `golden_order` and runs in the golden-order job (3) with I1 and I2; every other scenario runs in job 2. The
+two `@pi @requires_external` scenarios are skipped without --run-external and run only through make perf-pi (D96).
 The Stop during the road look-up never reaches a solve.
 """
 
@@ -17,7 +17,7 @@ FEATURE = "slice-03-pi-performance.feature"
 
 
 @pytest.mark.solver_child
-# slow: recommended, not set (orchestrator decision; tests/ci/test_ci_workflow.py pins the "slow" population)
+@pytest.mark.slow  # D223: waits out the 20 s optimisation limit; slow-properties job
 @scenario(FEATURE, "The best plan found is returned when the optimisation limit is reached")
 def test_the_best_plan_is_returned_at_the_optimisation_limit() -> None:
     """W1 scripted child; waits for the 20 s optimisation limit."""
@@ -35,7 +35,7 @@ def test_a_project_above_sixty_items_is_planned_with_a_notice() -> None:
     """Real 65-item solve at the suite's budget."""
 
 
-# slow: recommended, not set (orchestrator decision; tests/ci/test_ci_workflow.py pins the "slow" population)
+@pytest.mark.golden_order  # D223: a real 60-item solve at the default budget; golden-order job
 @scenario(FEATURE, "The 60-item plan is the same on every machine")
 def test_the_sixty_item_plan_is_the_same_on_every_machine() -> None:
     """`@solver_child` in the feature file: a real solve of I1 at the default budget."""
@@ -54,7 +54,7 @@ def test_stopping_before_any_valid_route_fails_the_run() -> None:
 
 
 @pytest.mark.solver_child
-# slow: recommended, not set (orchestrator decision; tests/ci/test_ci_workflow.py pins the "slow" population)
+@pytest.mark.slow  # D223: waits out the 30 s feasibility limit; slow-properties job
 @scenario(FEATURE, "No valid route within the feasibility limit")
 def test_no_valid_route_within_the_feasibility_limit() -> None:
     """W1 scripted child; waits for the 30 s feasibility limit."""
@@ -72,7 +72,7 @@ def test_an_optimizer_crash_still_gives_the_best_route() -> None:
     """W1 scripted child, killed with SIGKILL."""
 
 
-# slow: recommended, not set (orchestrator decision; tests/ci/test_ci_workflow.py pins the "slow" population)
+@pytest.mark.slow  # D223: waits out the 30 s feasibility limit; slow-properties job, not pre-push
 @scenario(FEATURE, "The feasibility limit reached while roads are still being looked up changes nothing")
 def test_the_feasibility_limit_during_the_road_look_up() -> None:
     """Waits for the 30 s feasibility limit; never reaches a solve."""

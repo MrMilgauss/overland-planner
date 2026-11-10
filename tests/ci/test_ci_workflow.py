@@ -887,8 +887,37 @@ def _collected_everywhere(expression: str) -> list[str]:
     return sorted(line.rsplit("::", 1)[1] for line in collected.stdout.splitlines() if "::" in line)
 
 
-def test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_job_2_does_not() -> None:
-    """D220, D221: A-6 (200 cases) and the HC properties (1,000 cases each) at profile ci overran job 2's timeout."""
+# ---------------------------------------------------------------- step 06-12: CI placement of the slice 03 scenarios
+MODULE_03 = "tests/acceptance/overland_route_planner_mvp/test_slice_03.py"
+SLOW_SLICE_03 = (
+    "test_the_best_plan_is_returned_at_the_optimisation_limit",  # #2, waits out the 20 s optimisation limit
+    "test_no_valid_route_within_the_feasibility_limit",  # #10, waits out the 30 s feasibility limit
+    "test_the_feasibility_limit_during_the_road_look_up",  # #13, waits out the 30 s feasibility limit
+)
+GOLDEN_SCENARIO = "test_the_sixty_item_plan_is_the_same_on_every_machine"  # #6, I1 at the default budget
+PI_SCENARIOS = (  # #1 and #3: make perf-pi only (D96)
+    "test_the_solve_stage_for_60_items_fits_the_budget_on_the_pi",
+    "test_a_plan_found_on_the_pi_is_nearly_as_good_as_a_long_search",
+)
+HEAVY_REGISTRY_PROPERTIES = (  # the five at about 5 s or more each at profile ci on the Mac (06-12)
+    "test_any_presses_and_endings_keep_one_job_per_project_and_one_in_the_solver",
+    "test_another_project_waits_for_the_solver_slot",
+    "test_the_active_job_check_comes_after_the_anchors_and_before_the_optimizer",
+    "test_two_fast_presses_start_one_job",
+    "test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_counted_from_its_start",
+)
+
+
+def _collected_slice_03(*selection: str) -> list[str]:
+    pending = _workflow()["env"]["PENDING_FLAGS"].split()
+    collected = _collect(*pending, *selection, module=MODULE_03)
+    assert collected.returncode in (0, 5), collected.stdout + collected.stderr
+    return sorted(line.split("::", 1)[1] for line in collected.stdout.splitlines() if line.startswith(f"{MODULE_03}::"))
+
+
+def test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and_job_2_does_not() -> None:
+    """D220, D221, D223: A-6, the HC properties, the slice-03 scenarios that wait out a 20 s or 30 s limit and the
+    costliest registry properties at profile ci; job 2 runs the rest of slice 03 but the @pi pair and the golden."""
     workflow = _workflow()
     job = _job(workflow, "slow-properties")
     pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
@@ -912,8 +941,11 @@ def test_slow_properties_job_runs_a_6_and_the_hc_properties_at_profile_ci_and_jo
     expression = re.search(r'-m "(?P<expression>[^"]+)"', command)
     assert expression is not None
 
-    assert _collected_everywhere(expression["expression"]) == sorted([A_6, *SLICE_02_PROPERTIES])
-    assert set(_collected_slice_02(job_2["expression"])).isdisjoint({A_6, *SLICE_02_PROPERTIES})
+    slow = {A_6, *SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES}
+    assert _collected_everywhere(expression["expression"]) == sorted(slow)
+    assert set(_collected_everywhere(job_2["expression"])).isdisjoint(slow)
+    others = set(_collected_slice_03()) - {*SLOW_SLICE_03, GOLDEN_SCENARIO, *PI_SCENARIOS}
+    assert _collected_slice_03("-m", job_2["expression"]) == sorted(others)
 
 
 def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:
@@ -926,12 +958,25 @@ def test_pre_push_selection_excludes_slow_and_solver_child_scenarios() -> None:
     assert missing == []
 
 
+def test_pre_push_selection_excludes_the_slow_slice_03_scenarios() -> None:
+    """D199, D223: #13 starts no solve child, so only `slow` keeps its 30 s wait out of pre-push; #6 is a real solve."""
+    hooks = {h["id"]: h for repo in yaml.safe_load(PRE_COMMIT.read_text())["repos"] for h in repo["hooks"]}
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', hooks["pytest-fast"]["entry"])
+    assert expression is not None and expression["expression"] == "not slow and not solver_child"
+
+    collected = _collected_slice_03("-m", expression["expression"])
+
+    assert "test_stopping_while_roads_are_still_being_looked_up_changes_nothing" in collected, "the module collected"
+    assert set(collected).isdisjoint({*SLOW_SLICE_03, GOLDEN_SCENARIO})
+
+
 # ------------------------------------------------------------------- step 06-02: job 3 golden-order gates publish
 GOLDEN_TESTS = ("test_the_reference_projects_plan_to_their_committed_golden_order",)
 
 
-def test_golden_order_job_runs_exactly_the_golden_tests_and_job_2_none_of_them() -> None:
-    """DEVOPS row 3, D96: I1 and I2 against their blessed order on every code change; a real child, so not job 2."""
+def test_golden_order_job_runs_the_golden_tests_and_the_golden_scenario() -> None:
+    """DEVOPS row 3, D96, D223: I1 and I2 against their blessed order and slice 03's 60-item plan (#6) on every code
+    change; real children, so not job 2."""
     workflow = _workflow()
     job = _job(workflow, "golden-order")
     pytest_steps = [s for s in job["steps"] if "pytest" in s.get("run", "")]
@@ -952,5 +997,5 @@ def test_golden_order_job_runs_exactly_the_golden_tests_and_job_2_none_of_them()
     assert "uv run pytest -q $PENDING_FLAGS -m golden_order\n" in command + "\n"
     assert "pytest-selection.sh" not in command and "||" not in command
 
-    assert _collected_everywhere("golden_order") == sorted(GOLDEN_TESTS)
-    assert set(_collected_everywhere(job_2["expression"])).isdisjoint(GOLDEN_TESTS)
+    assert _collected_everywhere("golden_order") == sorted([*GOLDEN_TESTS, GOLDEN_SCENARIO])
+    assert set(_collected_everywhere(job_2["expression"])).isdisjoint({*GOLDEN_TESTS, GOLDEN_SCENARIO})

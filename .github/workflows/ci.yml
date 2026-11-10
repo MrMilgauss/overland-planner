@@ -273,10 +273,12 @@ jobs:
             df -T "$PLANNER_TEST_WORKSPACE"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: pytest -m "slow or heavy_property" (A-6 and the slice-02 HC properties, D221; selecting nothing exits 5)
+      - name: pytest -m "slow or heavy_property" (A-6, the slice-02 HC properties, D221, and the slice-03 20 s and 30 s waits, D223; selecting nothing exits 5)
         run: |
           mkdir -p "$DATA_DIR"
           # D221: the HC-1, HC-5 and A-2 properties (1,000 cases each at profile ci) overran job 2's timeout.
+          # D223: slice-03 #2 waits out the 20 s optimisation limit, #10 and #13 the 30 s feasibility limit; the
+          # five registry properties at about 5 s or more each at profile ci are heavy_property too.
           # shellcheck disable=SC2086 # PENDING_FLAGS is a list of flags
           uv run pytest -q $PENDING_FLAGS -m "slow or heavy_property"
 

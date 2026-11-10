@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import pytest
 from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -920,8 +921,12 @@ class OnePlanAtATime(RuleBasedStateMachine):
     def teardown(self) -> None:
         if not hasattr(self, "desk"):
             return
-        for job_id in self.desk.still_working():
+        # One cue per working job, all up front: the slot names no order (D133), so a later-pressed job may solve
+        # first, and a cue per job in press order would leave the earlier one waiting for a cue nobody sends.
+        working = self.desk.still_working()
+        for _ in working:
             self.desk.solver.cue(None)
+        for job_id in working:
             self.desk.until_ended(job_id)
         finished = [fields["job_id"] for fields in self.desk.log.fields_of("plan.job.finished")]
         assert sorted(finished) == sorted(job_id for job_id, _ in self.desk.accepted), "a press without one ending"
@@ -943,10 +948,12 @@ def _moved_as_expected(old: tuple[Any, ...], new: tuple[Any, ...], ended_job_id:
     return new == old or (new == (*old[:2], "solving", None) and old[2] == "waiting_for_optimizer")
 
 
+@pytest.mark.heavy_property  # over 5 s at profile ci on the Mac, about 2.5x that on a runner: slow-properties job
 def test_any_presses_and_endings_keep_one_job_per_project_and_one_in_the_solver() -> None:
     run_state_machine_as_test(OnePlanAtATime, settings=settings(max_examples=25, stateful_step_count=12, deadline=None))
 
 
+@pytest.mark.heavy_property  # over 5 s at profile ci on the Mac, about 2.5x that on a runner: slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), ending=_endings())
 def test_another_project_waits_for_the_solver_slot(trip: Trip, ending: Script) -> None:
@@ -976,6 +983,7 @@ def test_another_project_waits_for_the_solver_slot(trip: Trip, ending: Script) -
     assert desk.solver.most_at_once == 1
 
 
+@pytest.mark.heavy_property  # over 5 s at profile ci on the Mac, about 2.5x that on a runner: slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), anchors_set=st.booleans(), optimizer=st.sampled_from(["ok", "degraded-unhealthy"]))
 def test_the_active_job_check_comes_after_the_anchors_and_before_the_optimizer(
@@ -1014,6 +1022,7 @@ class _APressSlipsIn(HealthService):
         return super().detail()
 
 
+@pytest.mark.heavy_property  # over 5 s at profile ci on the Mac, about 2.5x that on a runner: slow-properties job
 @settings(deadline=None)
 @given(trip=trips())
 def test_two_fast_presses_start_one_job(trip: Trip) -> None:
@@ -1292,6 +1301,7 @@ def test_a_stop_ends_the_job_as_the_state_table_names_and_every_stop_answers_the
     assert desk.registry.stop(job_id) is None, "an expired job's Stop answers nothing (404)"
 
 
+@pytest.mark.heavy_property  # over 5 s at profile ci on the Mac, about 2.5x that on a runner: slow-properties job
 @settings(deadline=None, max_examples=10)
 @given(trip=trips(), feasibility=st.integers(1, 600), longer=st.integers(0, 1200))
 def test_a_job_waiting_for_the_optimizer_gives_up_at_the_feasibility_limit_counted_from_its_start(
