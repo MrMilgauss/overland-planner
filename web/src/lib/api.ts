@@ -68,14 +68,22 @@ export interface PlanRun {
   status: 'ready' | 'failed';
 }
 
+/** Why a ready run is not fully optimised; the words are in the run's `messages` (D223 b). */
+export type NotFullyOptimised = 'optimizer_failed' | 'time_limit' | 'stopped';
+
 /** A plan run with its stops and totals; a Failed run has neither, names its `failure_reason` code and its `report`.
- * A run stored before the totals (0006) shows `totals` null; one stored before the report (05-08) `report` null. */
+ * A run stored before the totals (0006) shows `totals` null; one stored before the report (05-08) `report` null.
+ * `messages` are the planner's own lines, in order (run time, label, reuse, failure), shown verbatim; `memo_hit` says
+ * the run reused an identical earlier plan. */
 export interface PlanRunDetail extends PlanRun {
   project_id: string;
   failure_reason: string | null;
   stops: PlanStop[];
   totals: PlanTotals | null;
   report: PlanReport | null;
+  not_fully_optimised?: NotFullyOptimised | null;
+  messages?: string[];
+  memo_hit?: boolean;
 }
 
 export type PlanJobState =
@@ -85,14 +93,57 @@ export type PlanJobState =
   | 'solving'
   | 'finalising'
   | 'done'
-  | 'failed';
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out';
 
+/** `stoppable` until the job is finalising (ADR-015); an ended job's `message` says what it did, in words. */
 export interface PlanJob {
   state: PlanJobState;
   reason: string | null;
   message: string | null;
   plan_run_id: string | null;
   elapsed_s: number;
+  memo_hit?: boolean;
+  ignore_memo?: boolean;
+  stoppable?: boolean;
+  notices?: string[];
+}
+
+export interface PlanJobAccepted {
+  job_id: string;
+  notices?: string[];
+}
+
+/** A count of all time and of the window. */
+export interface WindowCount {
+  all_time: number;
+  window: number;
+}
+
+/** GET /api/diagnostics (kpi-contracts `diagnostics_endpoint`) over the last `days` days; seconds unrounded. */
+export interface Diagnostics {
+  version: string;
+  process_started_at: string;
+  days: number;
+  k2: { invariant_violations: WindowCount };
+  k3: { report_omissions: WindowCount };
+  k5: {
+    stage_p95_s: Record<string, number | null>;
+    solve_p95_s: Record<string, number | null>;
+    e2e_p95_s: number | null;
+    e2e_p95_by_band_s: Record<string, number | null>;
+    e2e_source: string;
+    retried_jobs: Record<string, number>;
+    second_pass_gt_700_jobs: Record<string, number>;
+    failed_jobs: Record<string, number>;
+    cancelled_jobs: Record<string, number>;
+    memo_hit_jobs: Record<string, number>;
+  };
+  k7: { runs_per_project_day: { median: number | null; max: number | null } };
+  jobs_by_terminal_state_30d: Record<string, number>;
+  retried_jobs_30d: number;
+  second_pass_jobs_30d: number;
 }
 
 /** `status` is the HTTP status of the planner's refusal; none when the planner could not be reached. */
@@ -198,9 +249,11 @@ export function setAnchors(
   );
 }
 
-export function startPlan(projectId: string): Promise<{ job_id: string }> {
+/** Calculate; `ignoreMemo` (Re-optimise) starts a fresh search instead of reusing an identical earlier plan. */
+export function startPlan(projectId: string, ignoreMemo = false): Promise<PlanJobAccepted> {
+  const query = ignoreMemo ? '?ignore_memo=true' : '';
   return call(
-    `/api/projects/${encodeURIComponent(projectId)}/plan-runs`,
+    `/api/projects/${encodeURIComponent(projectId)}/plan-runs${query}`,
     { method: 'POST' },
     GENERIC_WRITE_FAILURE,
   );
@@ -208,6 +261,19 @@ export function startPlan(projectId: string): Promise<{ job_id: string }> {
 
 export function readPlanJob(jobId: string): Promise<PlanJob> {
   return call(`/api/plan-jobs/${encodeURIComponent(jobId)}`, {}, PLAN_READ_FAILURE);
+}
+
+/** Stop and use best so far; the planner treats a repeated Stop as the same one. */
+export function stopPlanJob(jobId: string): Promise<PlanJob> {
+  return call(
+    `/api/plan-jobs/${encodeURIComponent(jobId)}/stop`,
+    { method: 'POST' },
+    GENERIC_WRITE_FAILURE,
+  );
+}
+
+export function readDiagnostics(): Promise<Diagnostics> {
+  return call('/api/diagnostics', {}, 'Could not load the diagnostics.');
 }
 
 export function listPlanRuns(projectId: string): Promise<PlanRun[]> {

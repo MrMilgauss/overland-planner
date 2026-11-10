@@ -5,6 +5,10 @@
   // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
   // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
   // a page reload during a job it offers the latest ready run's export, since nothing on the page says a job runs.
+  //
+  // While the job is stoppable (ADR-015) 'Stop and use best so far' is offered, and posted once per job; polling then
+  // shows how the job ended. The run's messages (run time, label, reuse) and the job's notices are the planner's lines,
+  // shown verbatim: the web composes no wording (D211, D223 b). A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import {
@@ -15,6 +19,7 @@
     readPlanJob,
     readPlanRun,
     startPlan,
+    stopPlanJob,
     type PlanJob,
     type PlanJobState,
     type PlanRun,
@@ -39,6 +44,10 @@
   let pollProblem = $state(''); // the job may well still run: Calculate is usable meanwhile, and polling goes on
   let readyRun = $state<PlanRunDetail | undefined>();
   let failedRun = $state<PlanRunDetail | undefined>();
+  let stoppable = $state(false);
+  let stopPressed = $state(false);
+  let notices = $state<string[]>([]);
+  let endedWithoutRun = $state(''); // a job stopped before the solve: what it did, not a problem
 
   let nextPoll: ReturnType<typeof setTimeout> | undefined;
   let gone = false;
@@ -76,6 +85,7 @@
     clearTimeout(nextPoll);
     watchedJobId = undefined;
     pollProblem = '';
+    stoppable = false;
   }
 
   function pollSoon(jobId: string): void {
@@ -87,15 +97,21 @@
     if (gone) return;
     watchedJobId = jobId;
     jobState = 'queued';
+    stopPressed = false;
     pollSoon(jobId);
   }
 
   async function showJob(jobId: string, job: PlanJob): Promise<void> {
     pollProblem = '';
     jobState = job.state;
-    if (job.state === 'failed') {
+    stoppable = job.stoppable === true;
+    if (job.notices && job.notices.length > 0) notices = job.notices;
+    if (job.state === 'failed' || job.state === 'timed_out') {
       stopWatching();
       problem = job.message ?? failureText(undefined);
+    } else if (job.state === 'cancelled') {
+      stopWatching();
+      endedWithoutRun = job.message ?? '';
     } else if (job.state === 'done') {
       await showLatestRuns(); // still watching, so that the earlier run's export does not come back meanwhile
       stopWatching();
@@ -123,17 +139,35 @@
     }
   }
 
-  async function calculate(): Promise<void> {
+  async function calculate(ignoreMemo = false): Promise<void> {
     pressing = true;
     problem = '';
+    endedWithoutRun = '';
+    notices = [];
     failedRun = undefined;
     try {
-      const { job_id: jobId } = await startPlan(projectId);
-      watch(jobId);
+      const accepted = await startPlan(projectId, ignoreMemo);
+      notices = accepted.notices ?? [];
+      watch(accepted.job_id);
     } catch (error) {
       problem = failureText(error);
     }
     pressing = false;
+  }
+
+  /** Once per job: the button stays disabled after the press, and polling shows how the job ends. */
+  async function stop(): Promise<void> {
+    const jobId = watchedJobId;
+    if (jobId === undefined || stopPressed) return;
+    stopPressed = true;
+    try {
+      await stopPlanJob(jobId);
+    } catch (error) {
+      if (jobId === watchedJobId) {
+        stopPressed = false;
+        problem = failureText(error);
+      }
+    }
   }
 
   onMount(() => {
@@ -145,10 +179,19 @@
   });
 </script>
 
-<button type="button" disabled={calculating} onclick={calculate}>Calculate</button>
+<button type="button" disabled={calculating} onclick={() => calculate()}>Calculate</button>
 
 {#if watchedJobId && STATE_TEXTS[jobState]}
   <p role="status">{STATE_TEXTS[jobState]}</p>
+{/if}
+{#if watchedJobId && stoppable}
+  <button type="button" disabled={stopPressed} onclick={stop}>Stop and use best so far</button>
+{/if}
+{#each notices as notice (notice)}
+  <p class="notice">{notice}</p>
+{/each}
+{#if endedWithoutRun}
+  <p>{endedWithoutRun}</p>
 {/if}
 {#if problem}
   <p role="alert">{problem}</p>
@@ -162,6 +205,14 @@
 
 {#if readyRun}
   <p class="run">Run {readyRun.number}</p>
+  {#each readyRun.messages ?? [] as message, index (index)}
+    <p class="message">{message}</p>
+  {/each}
+  {#if readyRun.memo_hit}
+    <button type="button" disabled={calculating} onclick={() => calculate(true)}>
+      Re-optimise (ignore previous result)
+    </button>
+  {/if}
   <Itinerary stops={readyRun.stops} totals={readyRun.totals} />
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
@@ -175,6 +226,13 @@
   }
   .run {
     font-weight: 600;
+  }
+  .message,
+  .notice {
+    margin: 0.25rem 0;
+  }
+  .notice {
+    color: #5c3600;
   }
   a {
     display: inline-block;

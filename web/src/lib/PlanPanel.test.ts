@@ -2,7 +2,9 @@
 // GPX, each job state, each refusal and a Failed run's report. The fetch stub stands in for the planner's HTTP API (the port of the page); only setTimeout is faked,
 // so the polling clock is the test's.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11); the job's states are property-tested on
-// the server (steps 04-04, 04-09), and the journey runs in a real browser (test_slice_01b.py).
+// the server (steps 04-04, 04-09), and the journey runs in a real browser (test_slice_01b.py). Slice 03 (06-11): Stop, the
+// labels, messages and notices, and Re-optimise are pinned by examples here; the invariants behind them are the property
+// tests of steps 06-06 to 06-10.
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +45,7 @@ function readyRun(
   number: number,
   stopName = 'Briancon',
   totals: typeof TOTALS | null = null,
+  fields: Record<string, unknown> = {},
 ): Reply {
   const stop = { ...CASA, name: stopName, leg_km: 12.25 };
   return {
@@ -56,6 +59,7 @@ function readyRun(
       stops: [CASA, stop],
       totals,
       report: null,
+      ...fields,
     },
   };
 }
@@ -565,5 +569,198 @@ describe('Plan panel: reopening a project', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+  });
+});
+
+describe('Plan panel: Stop and use best so far', () => {
+  const STOP = `POST ${JOB}/stop`;
+  const STOPPED_LABEL = 'not fully optimised (stopped)';
+
+  function stopButton(): HTMLElement | null {
+    return screen.queryByRole('button', { name: 'Stop and use best so far' });
+  }
+
+  it('offers Stop while the job is stoppable, posts it once, then shows the run', async () => {
+    const calls = stubPlanner({
+      [`GET ${RUNS}`]: [NO_RUNS, listed(['r1', 1, 'ready'])],
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: [
+        job('solving', { stoppable: true }),
+        job('done', { plan_run_id: 'r1', stoppable: false }),
+      ],
+      [STOP]: job('solving', { stoppable: true }),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
+        not_fully_optimised: 'stopped',
+        messages: ['Planned 5 items in 2.4 s', STOPPED_LABEL],
+      }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    expect(stopButton()).not.toBeInTheDocument();
+    await tick();
+    const stop = stopButton();
+    expect(stop).toBeEnabled();
+
+    await fireEvent.click(stop as HTMLElement);
+    await fireEvent.click(stop as HTMLElement);
+    await settled();
+    expect(count(calls, STOP)).toBe(1);
+    expect(stop).toBeDisabled();
+
+    await tick();
+    expect(screen.getByText(STOPPED_LABEL)).toBeInTheDocument();
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(stopButton()).not.toBeInTheDocument();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+  });
+
+  it('does not offer Stop once the job is no longer stoppable', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: NO_RUNS,
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('finalising', { stoppable: false }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    await tick();
+
+    expect(screen.getByRole('status')).toHaveTextContent('Finalising');
+    expect(stopButton()).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['cancelled', 'Stopped before the solve - no plan run was made'],
+    ['timed_out', 'The calculation took too long - no plan run was made'],
+  ])(
+    'shows the message of a job that ended %s without a run, and stops asking',
+    async (state, message) => {
+      const calls = stubPlanner({
+        [`GET ${RUNS}`]: NO_RUNS,
+        [`POST ${RUNS}`]: ACCEPTED,
+        [`GET ${JOB}`]: [job('computing_legs', { stoppable: true }), job(state, { message })],
+        [STOP]: job('computing_legs', { stoppable: true }),
+      });
+      render(PlanPanel, { props: { projectId: 'p1' } });
+
+      await pressCalculate();
+      await tick();
+      await fireEvent.click(stopButton() as HTMLElement);
+      await tick();
+
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(stopButton()).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+      const asked = count(calls, `GET ${JOB}`);
+      await tick(2000);
+      expect(count(calls, `GET ${JOB}`)).toBe(asked);
+    },
+  );
+});
+
+describe('Plan panel: labels, messages and notices', () => {
+  it.each([
+    ['optimizer_failed', 'not fully optimised (optimizer failed)'],
+    ['time_limit', 'not fully optimised (time limit)'],
+    ['stopped', 'not fully optimised (stopped)'],
+  ])('shows a run %s with its label and messages verbatim', async (code, label) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
+        not_fully_optimised: code,
+        messages: ['Planned 5 items in 2.4 s', label],
+      }),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByText('Planned 5 items in 2.4 s')).toBeInTheDocument();
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it('pins the label of a run whose optimizer failed (D223 b)', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
+        not_fully_optimised: 'optimizer_failed',
+        messages: ['Planned 5 items in 2.4 s', 'not fully optimised (optimizer failed)'],
+      }),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByText('not fully optimised (optimizer failed)')).toBeInTheDocument();
+  });
+
+  it("shows the job's notices while it runs and beside the run it made", async () => {
+    const notice = 'Large project - calculation may take longer than 3 minutes';
+    stubPlanner({
+      [`GET ${RUNS}`]: [NO_RUNS, listed(['r1', 1, 'ready'])],
+      [`POST ${RUNS}`]: { status: 202, body: { job_id: 'j1', notices: [notice] } },
+      [`GET ${JOB}`]: [
+        job('solving', { notices: [notice] }),
+        job('done', { plan_run_id: 'r1', notices: [notice] }),
+      ],
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
+        messages: ['Planned 5 items in 2.4 s'],
+      }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    await pressCalculate();
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    await tick();
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    await tick();
+
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getAllByText(notice)).toHaveLength(1);
+    expect(screen.getByText('Planned 5 items in 2.4 s')).toBeInTheDocument();
+  });
+});
+
+describe('Plan panel: Re-optimise a reused plan', () => {
+  const REOPTIMISE = 'Re-optimise (ignore previous result)';
+
+  it('offers Re-optimise on a reused plan, which calculates ignoring the previous result', async () => {
+    const calls = stubPlanner({
+      [`GET ${RUNS}`]: listed(['r2', 2, 'ready']),
+      [`POST ${RUNS}?ignore_memo=true`]: ACCEPTED,
+      [`GET ${JOB}`]: job('solving', { stoppable: true }),
+      'GET /api/plan-runs/r2': readyRun('r2', 2, 'Briancon', null, {
+        memo_hit: true,
+        messages: ['Planned 5 items in 0.1 s', 'Reused the identical plan of run #1'],
+      }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+    expect(screen.getByText('Reused the identical plan of run #1')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: REOPTIMISE }));
+    await settled();
+
+    expect(count(calls, `POST ${RUNS}?ignore_memo=true`)).toBe(1);
+    expect(count(calls, `POST ${RUNS}`)).toBe(0);
+    await tick();
+    expect(screen.getByRole('status')).toHaveTextContent('Solving');
+  });
+
+  it.each([
+    ['a fresh run', { memo_hit: false, messages: ['Planned 5 items in 2.4 s'] }],
+    ['a run stored before the messages', {}],
+  ])('never offers Re-optimise on %s', async (_run, fields) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, fields),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: REOPTIMISE })).not.toBeInTheDocument();
   });
 });
