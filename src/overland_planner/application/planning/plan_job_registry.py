@@ -176,19 +176,17 @@ def _timed_out() -> _EndedBeforeSolving:
 
 
 class _SolverSlot:
-    """The one solver slot (D133). A wait for it gives up on Stop and at the feasibility limit from the job's start."""
+    """The one solver slot (D133). A wait for it gives up on Stop and at the job's feasibility give-up instant."""
 
-    def __init__(self, clock: Clock, work: PlanWork) -> None:
+    def __init__(self, clock: Clock) -> None:
         self._lock = threading.Lock()
         self._clock = clock
-        self._work = work
 
-    def take(self, started_s: float, stop: threading.Event, waiting: Callable[[], None]) -> None:
+    def take(self, give_up_at_s: float, stop: threading.Event, waiting: Callable[[], None]) -> None:
         """Takes the slot, calling `waiting` first when it is busy; raises the ending when the wait gives up."""
         if self._lock.acquire(blocking=False):
             return
         waiting()
-        give_up_at_s = started_s + self._work.limits.feasibility_s
         while not self._lock.acquire(timeout=_SLOT_WAIT_STEP_S):
             if stop.is_set():
                 raise _cancelled()
@@ -250,10 +248,12 @@ class _Job:
         slot: _SolverSlot,
         *,
         ignore_memo: bool,
+        feasibility_s: float,
     ) -> None:
         self.id = job_id
         self.project_id = project_id
         self.started_s, self.started_at = started
+        self.give_up_at_s = self.started_s + feasibility_s  # the feasibility limit from the job's start
         self.ignore_memo = ignore_memo
         self._slot = slot
         self.facts: dict[str, object] = {"ignore_memo": ignore_memo, "memo_hit": False}
@@ -289,7 +289,7 @@ class _Job:
             self._stop.set()
         self.wake.set()
 
-    def abandon_before_solving(self, now_s: float, give_up_at_s: float) -> _EndedBeforeSolving | None:
+    def abandon_before_solving(self, now_s: float) -> _EndedBeforeSolving | None:
         """The ending of a job still before its road legs are found when a Stop came or the feasibility limit is
         reached, `None` otherwise; from then on the work's next state or fact raises it."""
         with self._guard:
@@ -297,7 +297,7 @@ class _Job:
                 return None
             if self._stop.is_set():
                 self._abandoned = _cancelled()
-            elif now_s >= give_up_at_s:
+            elif now_s >= self.give_up_at_s:
                 self._abandoned = _timed_out()
             return self._abandoned
 
@@ -318,7 +318,7 @@ class _Job:
 
     @contextmanager
     def solver_slot(self) -> Iterator[StopSignal]:
-        self._slot.take(self.started_s, self._stop, lambda: self.enter("waiting_for_optimizer"))
+        self._slot.take(self.give_up_at_s, self._stop, lambda: self.enter("waiting_for_optimizer"))
         try:
             self.enter("solving")
             yield self._stop
@@ -373,7 +373,7 @@ class PlanJobRegistry:
         self._event_log = event_log
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
-        self._solver_slot = _SolverSlot(clock, work)
+        self._solver_slot = _SolverSlot(clock)
 
     def has_active_job(self, project_id: str) -> bool:
         with self._lock:
@@ -382,7 +382,15 @@ class PlanJobRegistry:
     def start(self, project_id: str, *, ignore_memo: bool = False) -> str | None:
         """Start the job on its own thread and answer at once with its id; `None` if the project has an active job."""
         started = (self._clock.monotonic(), self._clock.now())
-        job = _Job(uuid.uuid4().hex, project_id, started, self._solver_slot, ignore_memo=ignore_memo)
+        feasibility_s = self._work.limits.feasibility_s
+        job = _Job(
+            uuid.uuid4().hex,
+            project_id,
+            started,
+            self._solver_slot,
+            ignore_memo=ignore_memo,
+            feasibility_s=feasibility_s,
+        )
         with self._lock:
             if self._active_in(project_id):
                 return None
@@ -437,9 +445,8 @@ class PlanJobRegistry:
 
     def _ending_of(self, job: _Job) -> _Ending:
         work = _WorkThread(lambda: self._work.run(job.project_id, job, ignore_memo=job.ignore_memo), job)
-        give_up_at_s = job.started_s + self._work.limits.feasibility_s
         while not work.finished():
-            abandoned = job.abandon_before_solving(self._clock.monotonic(), give_up_at_s)
+            abandoned = job.abandon_before_solving(self._clock.monotonic())
             if abandoned is not None:
                 return self._ended_before_solving(job, abandoned)
             job.wake.wait(_WATCH_STEP_S)
