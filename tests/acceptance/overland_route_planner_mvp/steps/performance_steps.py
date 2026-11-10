@@ -344,8 +344,11 @@ def assert_sixty_continues(world: PlannerWorld) -> None:
 
 
 def optimizer_processes(root_pid: int) -> list[int]:
-    """The solve children under the planner process (multiprocessing spawn children), read from the process table."""
-    table = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True, check=True)
+    """The solve children under the planner process (multiprocessing spawn children), read from the process table.
+
+    `-ww`: without a terminal, procps on Linux cuts each command to 80 columns, which hides `spawn_main` behind the
+    interpreter's path."""
+    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,command="], capture_output=True, text=True, check=True)
     rows = [line.split(None, 2) for line in table.stdout.splitlines() if len(line.split(None, 2)) == 3]
     children: dict[int, list[tuple[int, str]]] = {}
     for pid, ppid, command in rows:
