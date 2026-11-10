@@ -152,7 +152,8 @@ class PlanJobProgress(Protocol):
 class PlanWork(Protocol):
     @property
     def limits(self) -> SolveLimits:
-        """The limits of the work, from the job's start: a wait for the solver slot gives up at the feasibility one."""
+        """The limits of the work. The work counts its deadlines from its own start; the registry counts the
+        feasibility one from the job's start (under 1 ms earlier), where its watch and a wait for the slot give up."""
         ...
 
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun: ...

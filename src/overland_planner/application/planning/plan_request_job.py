@@ -14,8 +14,10 @@ progress without one (`None`) hands the solve one that is never set. A stopped s
 labelled `stopped`, not reproducible, or a Failed `stopped` run whose words say so (ADR-015, D60, D122).
 
 The solve is handed its deadlines (ADR-014 section 2, D58): the job's `SolveLimits` from the start of the job's work on
-the `Clock` port, so the road legs and the wait for the solver slot count. A Failed `timeout` run and its job's end say
-so in words with the run's number (D151, `run_messages`).
+the `Clock` port, so the road legs and the wait for the solver slot count. The work starts on its own thread under 1 ms
+after the registry started the job, from whose start the registry's watch and slot wait count the feasibility limit;
+`work_started_s` names the work's start. A Failed `timeout` run and its job's end say so in words with the run's
+number (D151, `run_messages`).
 
 The solver streams its incumbents to the job: the poll shows the last one with `found_at_s`, stamped on receipt by the
 `Clock` port's monotonic time from the start of the job's work, and the job's line counts them (`incumbents`). How a
@@ -91,7 +93,7 @@ class _PlannedProject:
     snapshot: ProjectSnapshot
     stamp: ProjectStamp
     ignore_memo: bool
-    started_s: float
+    work_started_s: float
     fingerprint: str | None = None
     memo_source: MemoSource | None = None
 
@@ -128,10 +130,10 @@ class PlanRequestJob:
     def run(self, project_id: str, progress: PlanJobProgress, *, ignore_memo: bool = False) -> StoredRun:
         """With a memo, a ready run of the project with the inputs' fingerprint gives the order and the solver is not
         asked, unless `ignore_memo`; the guard judges a reused order like a solved one."""
-        started_s = self.clock.monotonic()
+        work_started_s = self.clock.monotonic()
         stages = _Stages(self.clock, progress)
         with stages.timing("snapshot"):
-            project = self._read(project_id, ignore_memo, started_s)
+            project = self._read(project_id, ignore_memo, work_started_s)
         progress.note(notices=project_notices(len(project.snapshot.visited_items())))
         progress.enter("computing_legs")
         with stages.timing("matrix"):
@@ -145,7 +147,7 @@ class PlanRequestJob:
             outcome: TourOutcome = reused
         else:
             with progress.solver_slot() as stop, stages.timing("solve"):
-                outcome = self._solve(model, progress, started_s, stop or NEVER_STOPPED)
+                outcome = self._solve(model, progress, work_started_s, stop or NEVER_STOPPED)
         progress.enter("finalising")
         with stages.timing("guard_persist"):
             stored = self._finish(project, legs, outcome)
@@ -195,11 +197,11 @@ class PlanRequestJob:
             if not isinstance(content, CanonicalPointsMissing)
         }
 
-    def _read(self, project_id: str, ignore_memo: bool, started_s: float) -> _PlannedProject:
+    def _read(self, project_id: str, ignore_memo: bool, work_started_s: float) -> _PlannedProject:
         with self.unit_of_work() as uow:
             snapshot = existing_snapshot(uow, project_id)
             stamp = uow.project_snapshots.stamp(project_id)
-            return _PlannedProject(project_id, snapshot, stamp, ignore_memo, started_s)
+            return _PlannedProject(project_id, snapshot, stamp, ignore_memo, work_started_s)
 
     def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
         """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09)."""
@@ -227,9 +229,11 @@ class PlanRequestJob:
         recalled = replace(project, fingerprint=fingerprint.value, memo_source=source)
         return recalled, None if source is None else TourFound(source.order, source.not_fully_optimised or "budget")
 
-    def _solve(self, model: TourModel, progress: PlanJobProgress, started_s: float, stop: StopSignal) -> TourOutcome:
-        incumbents = _Incumbents(self.clock, progress, started_s)
-        deadlines = self.limits.from_start(self.clock, started_s)
+    def _solve(
+        self, model: TourModel, progress: PlanJobProgress, work_started_s: float, stop: StopSignal
+    ) -> TourOutcome:
+        incumbents = _Incumbents(self.clock, progress, work_started_s)
+        deadlines = self.limits.from_start(self.clock, work_started_s)
         outcome = self.solver.solve(model, self.budget, incumbents.found, deadlines=deadlines, stop=stop)
         progress.note(incumbents=incumbents.count)
         if isinstance(outcome, TourOptimizerFailed):
@@ -275,7 +279,7 @@ class PlanRequestJob:
             memo_hit=project.memo_hit,
             reproducible=finding.reproducible,
             not_fully_optimised=finding.not_fully_optimised,
-            run_time_ms=round((self.clock.monotonic() - project.started_s) * _MILLISECONDS_PER_SECOND),
+            run_time_ms=round((self.clock.monotonic() - project.work_started_s) * _MILLISECONDS_PER_SECOND),
             memo_source_run_id=None if project.memo_source is None else project.memo_source.plan_run_id,
         )
 
@@ -291,10 +295,10 @@ class PlanRequestJob:
 class _Incumbents:
     """The incumbents a solve streamed, on the solving thread: the poll shows the last, the job's line counts them."""
 
-    def __init__(self, clock: Clock, progress: PlanJobProgress, started_s: float) -> None:
+    def __init__(self, clock: Clock, progress: PlanJobProgress, work_started_s: float) -> None:
         self._clock = clock
         self._progress = progress
-        self._started_s = started_s
+        self._work_started_s = work_started_s
         self.count = 0
 
     def found(self, incumbent: Incumbent) -> None:
@@ -303,7 +307,7 @@ class _Incumbents:
             "unconfirmed_legs": incumbent.unconfirmed_legs,
             "retraces": incumbent.retraces,
             "objective": incumbent.objective,
-            "found_at_s": self._clock.monotonic() - self._started_s,
+            "found_at_s": self._clock.monotonic() - self._work_started_s,
         }
         self._progress.note(incumbents=self.count, incumbent=shown)
 
