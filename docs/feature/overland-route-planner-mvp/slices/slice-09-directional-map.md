@@ -33,6 +33,10 @@ Plan run #4 of "Alpi Occidentali giugno 2027".
 
 Marco does the 5-track blind direction check with Giulia.
 
+## Delivery order (D232, 2026-11-10)
+
+Delivered right after slice 06a. The scenarios that need slices 08, 06b or 03b ("The map follows a reversed track", "Compromise legs stand out on the map") are deferred and arrive with those slices. Slice 12 (UI foundation) follows.
+
 ## Dependencies
 
 Slice 02; slice 08 for "The map follows a reversed track"; slices 06b/03b for "Compromise legs stand out on the map". OD#4 resolved: MapLibre GL JS (DESIGN D19); road shapes via `GET /api/plan-runs/{plan_run_id}/geometry` (DESIGN D28).
