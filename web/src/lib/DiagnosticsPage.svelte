@@ -2,7 +2,7 @@
   // GET /api/diagnostics as it comes (kpi-contracts `diagnostics_endpoint`): the stage p95s, the retried jobs, the jobs
   // by terminal state, the variants per project and day, and the K2 and K3 counts, any above 0 in red. Keys are the
   // planner's own (stages, bands, states); seconds to one decimal; a figure without a job shows 'none'.
-  import { failureText, readDiagnostics, type WindowCount } from './api';
+  import { failureText, readDiagnostics, type Diagnostics, type WindowCount } from './api';
 
   const NONE = 'none';
   const ALARM = '#b00020'; // K2 or K3 above 0: a hard rule broken, or a report that left out an item
@@ -14,6 +14,14 @@
 
   function figure(value: number | null): string {
     return value === null ? NONE : String(value);
+  }
+
+  /** K2 and K3: the plan runs that broke a hard rule, and those whose report left out an item. */
+  function runChecks(diagnostics: Diagnostics): [string, WindowCount][] {
+    return [
+      ['K2 invariant violations', diagnostics.k2.invariant_violations],
+      ['K3 report omissions', diagnostics.k3.report_omissions],
+    ];
   }
 
   function counts(days: number, count: WindowCount): [string, number][] {
@@ -36,7 +44,7 @@
       days
     </p>
 
-    {#each [['K2 invariant violations', diagnostics.k2.invariant_violations], ['K3 report omissions', diagnostics.k3.report_omissions]] as const as [title, count] (title)}
+    {#each runChecks(diagnostics) as [title, count] (title)}
       <section aria-label={title}>
         <h2>{title}</h2>
         <ul>
