@@ -10,10 +10,10 @@ A solve spawns one child (`tour_child`) that streams its incumbents, sends its f
 the pipe in the thread that spawned the child for the child's whole life (PR_SET_PDEATHSIG, `tour_child`), hands each
 valid incumbent (`incumbent_of`) to the solve's observer as it arrives, and stops reading at the final or the pipe's
 end; a message that is not a complete tour from Start to End is ignored. `tour_outcome` says what the messages and the
-end mean (ADR-015's table): the final order when the child ended normally, else the last valid incumbent labelled
-`optimizer_failed`, else Failed with the exit code or signal. A child still running when the reap wait after its final
-ends (interpreter teardown can be slow on a loaded Pi) is ended like any other, and its final counts: the exit code
-then only shows the parent's signal.
+end mean (ADR-015's table): a final with a complete tour is the outcome however the child ended after it (user ruling
+2026-11-10), else the last valid incumbent labelled `optimizer_failed`, else Failed with the exit code or signal. A
+child still running when the reap wait after its final ends (interpreter teardown can be slow on a loaded Pi) is ended
+like any other.
 
 The child dies with its parent through PR_SET_PDEATHSIG (Linux) and a pipe-EOF watchdog (also macOS). No child waits
 without a bound (D200): the parent reads in short waits against the solve's deadlines on the `Clock` port
@@ -75,6 +75,7 @@ _PROBE_SOLUTION_LIMIT = 100
 _REAP_TIMEOUT_S = 2.0
 _SIGTERM_GRACE_S = 2.0
 _WAIT_STEP_S = 0.25  # the longest wait on the pipe before the deadlines are checked again on the Clock port
+_DRAINED_AT_MOST = 1000  # messages read without waiting once overran or stopped: a child that keeps sending is cut off
 # What makes this solver's orders what they are, for the fingerprint memo (ADR-014 sections 3 and 5): the installed
 # OR-Tools release, read from its metadata without importing it (G1), and the search `tour_child` runs.
 SOLVER_IDENTITY = f"ortools=={version('ortools')};PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH"
@@ -202,23 +203,33 @@ class TourChildObservation:
 
 
 def tour_outcome(observation: TourChildObservation, model: TourModel) -> TourOutcome:
-    """ADR-015's table of endings: budget end -> the final order; an abnormal end -> the last valid incumbent labelled
-    `optimizer_failed`, or Failed without one; a final without an order -> no route; the deadline that applies ->
-    the last valid incumbent labelled `time_limit`, or Failed `timeout` without one; Stop -> the last valid incumbent
-    labelled `stopped`, or Failed `stopped` without one.
+    """ADR-015's table of endings, in this order (user ruling 2026-11-10: a complete valid final always wins):
+
+    | what the parent saw                          | outcome                                                       |
+    |----------------------------------------------|---------------------------------------------------------------|
+    | a final whose order is a complete tour       | the final order (budget), whatever the child's end            |
+    | Stop came first                              | the last valid incumbent labelled `stopped`, else Failed      |
+    |                                              | `stopped`                                                     |
+    | the deadline that applies came first         | the last valid incumbent labelled `time_limit`, else Failed   |
+    |                                              | `timeout`                                                     |
+    | a final without an order, ended normally     | no route                                                      |
+    | anything else (abnormal end, no or a broken  | the last valid incumbent labelled `optimizer_failed`, else    |
+    | final)                                       | Failed with the exit code or signal                           |
+
+    The child's end matters only without a usable final; it ended normally on exit code 0 or when it outlived the reap
+    wait after its final.
     """
     incumbents = [found for message in observation.messages if (found := incumbent_of(message, model)) is not None]
+    final = next((message for message in observation.messages if _is_final(message)), None)
+    if final is not None and _is_complete_tour(final[1], model):
+        return TourFound(order=_item_ids(final[1], model))
     if observation.stopped:
         return _last_incumbent(incumbents, "stopped") or TourStopped()
     if observation.overran:
         return _last_incumbent(incumbents, "time_limit") or TourTimedOut()
     ended_normally = observation.exit_code == 0 or observation.outlived_reap_wait
-    final = next((message for message in observation.messages if _is_final(message)), None)
-    if ended_normally and final is not None:
-        if final[1] is None:
-            return TourNoRoute()
-        if _is_complete_tour(final[1], model):
-            return TourFound(order=_item_ids(final[1], model))
+    if ended_normally and final is not None and final[1] is None:
+        return TourNoRoute()
     return _last_incumbent(incumbents, "optimizer_failed") or _failed(observation.exit_code)
 
 
@@ -257,25 +268,39 @@ def read_tour_child(
     """Reads until the final, the pipe's end or an unreadable message, handing each valid incumbent to `on_incumbent`;
     overran when the deadline that applies passed first: the feasibility one until a valid incumbent arrived, then the
     optimisation one; stopped when `stop` was set first. It waits at most `_WAIT_STEP_S` at a time and never past that
-    deadline, and checks `stop` before each wait."""
-    messages: list[Any] = []
-    found = False
-    while (remaining_s := deadlines.remaining_s(found=found)) > 0:
-        if stop.is_set():
-            return ChildReading(tuple(messages), stopped=True)
-        if not receiver.poll(min(remaining_s, _WAIT_STEP_S)):
-            continue
+    deadline, and checks `stop` before each wait. Overran or stopped, it first reads what the child already sent (at
+    most `_DRAINED_AT_MOST` messages, without waiting), so a final already in the pipe is not lost (review F6)."""
+    reading = _Reading(model, on_incumbent)
+    while (remaining_s := deadlines.remaining_s(found=reading.found)) > 0 and not stop.is_set():
+        if receiver.poll(min(remaining_s, _WAIT_STEP_S)) and reading.ended_by_next(receiver):
+            return ChildReading(tuple(reading.messages))
+    for _ in range(_DRAINED_AT_MOST):
+        if not receiver.poll(0) or reading.ended_by_next(receiver):
+            break
+    overran = remaining_s <= 0
+    return ChildReading(tuple(reading.messages), overran=overran, stopped=not overran)
+
+
+class _Reading:
+    """The messages read so far from a solve child, each valid incumbent handed on as it arrives."""
+
+    def __init__(self, model: TourModel, on_incumbent: IncumbentObserver) -> None:
+        self._model = model
+        self._on_incumbent = on_incumbent
+        self.messages: list[Any] = []
+        self.found = False
+
+    def ended_by_next(self, receiver: Connection) -> bool:
+        """Reads the next message: true when it ends the reading (the final, the pipe's end, an unreadable message)."""
         message = _read_message(receiver)
         if message is _UNREADABLE:
-            return ChildReading(tuple(messages))
-        messages.append(message)
-        incumbent = incumbent_of(message, model)
+            return True
+        self.messages.append(message)
+        incumbent = incumbent_of(message, self._model)
         if incumbent is not None:
-            found = True
-            on_incumbent(incumbent)
-        if _is_final(message):
-            return ChildReading(tuple(messages))
-    return ChildReading(tuple(messages), overran=True)
+            self.found = True
+            self._on_incumbent(incumbent)
+        return _is_final(message)
 
 
 def _is_final(message: Any) -> bool:

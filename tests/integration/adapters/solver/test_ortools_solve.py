@@ -294,9 +294,8 @@ def test_tiny_trips_finish_on_the_full_budget(item_count: int) -> None:
         (_raising_child, TourOptimizerFailed(exit_code=1, signal=None)),
         (_silent_child, TourOptimizerFailed(exit_code=0, signal=None)),
         (_garbling_child, TourOptimizerFailed(exit_code=0, signal=None)),
-        (_final_then_crashing_child, TourOptimizerFailed(exit_code=3, signal=None)),
     ],
-    ids=["exit-code", "sigkill", "exception", "no-message", "garbled-message", "exit-code-after-the-final"],
+    ids=["exit-code", "sigkill", "exception", "no-message", "garbled-message"],
 )
 def test_crashed_child_is_optimizer_failed(child: object, expected: TourOptimizerFailed) -> None:
     outcome = OrToolsTourSolver(tour_child_main=child).solve(ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits())  # type: ignore[arg-type]
@@ -317,8 +316,12 @@ def _assert_no_child_left() -> None:
     assert multiprocessing.active_children() == []
 
 
-def test_a_valid_final_counts_when_the_child_does_not_exit_in_time() -> None:
-    outcome = OrToolsTourSolver(tour_child_main=_final_then_hanging_child).solve(
+@pytest.mark.parametrize(
+    "child", [_final_then_hanging_child, _final_then_crashing_child], ids=["no-exit-in-time", "exit-code-after-it"]
+)
+def test_a_valid_final_counts_however_the_child_ends_after_it(child: object) -> None:
+    """User ruling 2026-11-10: a complete valid final always wins; the child's end matters only without one."""
+    outcome = OrToolsTourSolver(tour_child_main=child).solve(  # type: ignore[arg-type]
         ROUND_TRIP, ENOUGH_BUDGET, deadlines=_default_limits()
     )
 

@@ -9,16 +9,20 @@ budget, the last valid incumbent ended by `optimizer_failed` or by `time_limit`,
 or timeout. For any timeline of a child's messages against a fake clock (when each incumbent and the final arrive, when
 the solve starts after the job did, the two deadlines), the reading ends exactly at the final, at the feasibility
 deadline without an incumbent (timeout) or at the optimisation deadline with one (time_limit, the last incumbent).
-Test Budget: 2 behaviors (classifying a child's messages and end; ending the reading at the limit that applies) x 2 = 4;
-2 property tests used. Expectations come from how each observation or timeline was built (which messages were valid,
-how the child ended, which instants fall before which deadline), not from re-deriving the rule.
+A complete valid final wins whatever the child's end, Stop or limit (user ruling 2026-11-10), and a Stop still reads
+what the child already sent. Test Budget: 3 behaviors (classifying a child's messages and end; ending the reading at the
+limit that applies; a Stop reading what is already sent) x 2 = 6; 3 property tests used. Expectations come from how
+each observation or timeline was built (which messages were valid, how the child ended, which signal or exit code was
+drawn, which instants fall before which deadline), not from re-deriving the rule.
 """
 
 from __future__ import annotations
 
+import multiprocessing
+import threading
 from typing import Any
 
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.adapters.solver.ortools_tour_solver import (
@@ -143,13 +147,22 @@ def _streams(draw: st.DrawFn, model: TourModel) -> tuple[list[Any], tuple[Incumb
     return sent, tuple(valid)
 
 
-def _failure(exit_code: int | None, incumbents: tuple[Incumbent, ...]) -> dict[str, Any]:
-    """An abnormal end: the last valid incumbent, labelled, or a Failed run with the exit code or signal."""
+@st.composite
+def _abnormal_ends(draw: st.DrawFn) -> tuple[int, dict[str, int]]:
+    """A child killed by a signal or crashed with an exit code: the exit code multiprocessing reports for it (-N for
+    signal N), and what the Failed outcome must name, both from what was drawn."""
+    if draw(st.booleans()):
+        signal_number = draw(st.integers(min_value=1, max_value=31))
+        return -signal_number, {"signal": signal_number}
+    exit_code = draw(st.integers(min_value=1, max_value=255))
+    return exit_code, {"exit_code": exit_code}
+
+
+def _failure(named: dict[str, int], incumbents: tuple[Incumbent, ...]) -> dict[str, Any]:
+    """An abnormal end: the last valid incumbent sent, labelled, or a Failed run naming what the case drew."""
     if incumbents:
         return _expected(order=incumbents[-1].order, ending=FAILED, reproducible=False, incumbents=incumbents)
-    if exit_code is not None and exit_code < 0:
-        return _expected(reason=FAILED, reproducible=False, signal=-exit_code)
-    return _expected(reason=FAILED, reproducible=False, exit_code=exit_code)
+    return _expected(reason=FAILED, reproducible=False, **named)
 
 
 @st.composite
@@ -161,7 +174,17 @@ def child_ends(draw: st.DrawFn) -> tuple[TourChildObservation, TourModel, dict[s
     any_exit = draw(st.one_of(st.none(), st.just(0), abnormal_exits))
     kind = draw(
         st.sampled_from(
-            ["found", "no_route", "overrun", "abnormal_exit", "never_exited", "no_final", "bad_final", "lingered"]
+            [
+                "found",
+                "no_route",
+                "overrun",
+                "abnormal_exit",
+                "never_exited",
+                "no_final",
+                "bad_final",
+                "lingered",
+                "final_then_any_end",
+            ]
         )
     )
     if kind == "found":
@@ -175,20 +198,26 @@ def child_ends(draw: st.DrawFn) -> tuple[TourChildObservation, TourModel, dict[s
         observation = TourChildObservation(ended_by_the_parent, (*sent, final_tour), outlived_reap_wait=True)
         expected = _expected(order=_ids(model, tour), ending="budget", reproducible=True, incumbents=valid)
         return observation, model, expected
+    if kind == "final_then_any_end":  # user ruling 2026-11-10: a complete valid final wins, whatever came after it
+        exit_code = draw(st.one_of(st.none(), st.just(0), abnormal_exits))
+        cut_short = draw(st.sampled_from([{}, {"stopped": True}, {"overran": True}]))  # read as Stop or the limit came
+        observation = TourChildObservation(exit_code, (*sent, final_tour), **cut_short)
+        expected = _expected(order=_ids(model, tour), ending="budget", reproducible=True, incumbents=valid)
+        return observation, model, expected
     if kind == "overrun":  # the limit that applies came first: the last valid incumbent, or a Failed timeout
         observation = TourChildObservation(any_exit, tuple(sent), overran=True)
         if valid:
             expected = _expected(order=valid[-1].order, ending="time_limit", reproducible=False, incumbents=valid)
             return observation, model, expected
         return observation, model, _expected(reason="timeout", reproducible=False, incumbents=valid)
-    if kind == "abnormal_exit":  # killed or crashed, whether or not its final made it
-        exit_code = draw(abnormal_exits)
-        any_end = draw(st.sampled_from([(), (final_tour,), ((FINAL, None),)]))
-        return TourChildObservation(exit_code, (*sent, *any_end)), model, _failure(exit_code, valid)
+    if kind == "abnormal_exit":  # killed or crashed without a usable final: none, or one without an order
+        exit_code, named = draw(_abnormal_ends())
+        any_end = draw(st.sampled_from([(), ((FINAL, None),)]))
+        return TourChildObservation(exit_code, (*sent, *any_end)), model, _failure(named, valid)
     if kind == "never_exited":
-        return TourChildObservation(None, tuple(sent)), model, _failure(None, valid)
+        return TourChildObservation(None, tuple(sent)), model, _failure({}, valid)
     if kind == "no_final":  # pipe end-of-file after the incumbents, exit 0
-        return TourChildObservation(0, tuple(sent)), model, _failure(0, valid)
+        return TourChildObservation(0, tuple(sent)), model, _failure({"exit_code": 0}, valid)
     bad_final = draw(
         st.one_of(
             st.just((FINAL,)),
@@ -196,7 +225,7 @@ def child_ends(draw: st.DrawFn) -> tuple[TourChildObservation, TourModel, dict[s
             _broken_tours(model, tour).map(lambda broken: (FINAL, broken)),
         )
     )
-    return TourChildObservation(0, (*sent, bad_final)), model, _failure(0, valid)
+    return TourChildObservation(0, (*sent, bad_final)), model, _failure({"exit_code": 0}, valid)
 
 
 @given(case=child_ends())
@@ -334,3 +363,43 @@ def test_the_reading_ends_at_the_final_or_at_the_limit_that_applies_from_job_sta
     assert_state_delta(
         before, after, TIMELINE_UNIVERSE, {slot: set_to(value) for slot, value in expected.items()}, strict=True
     )
+
+
+# ------------------------------------------------------------------- Stop with the child's messages already sent
+@settings(max_examples=50)
+@given(data=st.data(), model=models, with_final=st.booleans(), child_closed_the_pipe=st.booleans())
+def test_a_stop_reads_what_the_child_already_sent_and_a_complete_final_among_it_wins(
+    data: st.DataObject, model: TourModel, with_final: bool, child_closed_the_pipe: bool
+) -> None:
+    """Review F6, user ruling 2026-11-10: a Stop set while the child's messages wait in the pipe still reads them; a
+    complete final among them is the outcome, and without one the Stop keeps its label (the last incumbent, or Failed
+    `stopped`)."""
+    sent, valid = data.draw(_streams(model), label="sent")
+    final_tour = data.draw(_complete_tours(model), label="final")
+    receiver, sender = multiprocessing.Pipe(duplex=False)
+    stop = threading.Event()
+    streamed: list[Incumbent] = []
+    try:
+        for message in (*sent, (FINAL, final_tour)) if with_final else sent:
+            sender.send(message)
+        if child_closed_the_pipe:
+            sender.close()
+        stop.set()
+
+        before = _expected()
+        clock = FakeClock()  # the limits far ahead: only the Stop ends this reading
+        deadlines = SolveLimits().from_start(clock, clock.monotonic())
+        reading = read_tour_child(receiver, deadlines, model, streamed.append, stop)
+        outcome = tour_outcome(TourChildObservation(PARENT_ENDED_IT, reading.messages, stopped=reading.stopped), model)
+        after = _observe(outcome, tuple(streamed))
+    finally:
+        receiver.close()
+        sender.close()
+
+    if with_final:
+        expected = _expected(order=_ids(model, final_tour), ending="budget", reproducible=True, incumbents=valid)
+    elif valid:
+        expected = _expected(order=valid[-1].order, ending="stopped", reproducible=False, incumbents=valid)
+    else:
+        expected = _expected(reason="stopped", reproducible=False)
+    assert_state_delta(before, after, UNIVERSE, {slot: set_to(value) for slot, value in expected.items()}, strict=True)
