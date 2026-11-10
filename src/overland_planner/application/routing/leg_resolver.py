@@ -16,7 +16,7 @@ progress that hears of it ends the request.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from overland_planner.application.ports.routing_provider import RoutingProvider
@@ -52,12 +52,8 @@ class LegResolver:
         provider_id = self.provider_id
         distinct = list(dict.fromkeys(pairs))
         roads = [pair for pair in distinct if pair[0] != pair[1]]
-        with self._lock:
-            held = {pair: self._known[provider_id, pair] for pair in roads if (provider_id, pair) in self._known}
-        targets_by_origin: dict[Coordinate, list[Coordinate]] = {}
-        for origin, destination in roads:
-            if (origin, destination) not in held:
-                targets_by_origin.setdefault(origin, []).append(destination)
+        held = self._held(provider_id, roads)
+        targets_by_origin = _missing_by_origin(roads, held)
         found = LegsFound(0, len(distinct) - sum(map(len, targets_by_origin.values())), len(distinct))
         progress(found)
         for origin, targets in targets_by_origin.items():
@@ -67,9 +63,24 @@ class LegResolver:
             progress(found)
         return LegTable(RoadLeg(*pair, measure.distance_m, measure.duration_s) for pair, measure in held.items())
 
+    def _held(self, provider_id: str, roads: Iterable[RoadPair]) -> dict[RoadPair, RoadMeasure]:
+        with self._lock:
+            return {pair: self._known[provider_id, pair] for pair in roads if (provider_id, pair) in self._known}
+
     def _ask(self, provider_id: str, origin: Coordinate, targets: list[Coordinate]) -> dict[RoadPair, RoadMeasure]:
         (row,) = self._provider.matrix([origin], targets)
         answered = {(origin, target): measure for target, measure in zip(targets, row, strict=True)}
         with self._lock:
             self._known.update({(provider_id, pair): measure for pair, measure in answered.items()})
         return answered
+
+
+def _missing_by_origin(
+    roads: Iterable[RoadPair], held: Mapping[RoadPair, RoadMeasure]
+) -> dict[Coordinate, list[Coordinate]]:
+    """The road pairs not held, one entry per origin with its targets in request order (one road-map call each)."""
+    targets_by_origin: dict[Coordinate, list[Coordinate]] = {}
+    for origin, destination in roads:
+        if (origin, destination) not in held:
+            targets_by_origin.setdefault(origin, []).append(destination)
+    return targets_by_origin
