@@ -457,13 +457,18 @@ class PlanJobRegistry:
             return self._ended_before_solving(job, ended)
         except BaseException as error:
             job.note(error_class=type(error).__name__)
-            return _Ending("failed", None, FAILED_MESSAGE, None, self._clock.monotonic(), self._clock.now())
-        ended_s, ended_at = self._clock.monotonic(), self._clock.now()
-        return _Ending("done", stored.reason, stored.message, stored.plan_run_id, ended_s, ended_at)
+            return self._ended_now("failed", None, FAILED_MESSAGE)
+        return self._ended_now("done", stored.reason, stored.message, stored.plan_run_id)
 
     def _ended_before_solving(self, job: _Job, ended: _EndedBeforeSolving) -> _Ending:
         job.ended_for(ended.reason)
-        return _Ending(ended.state, ended.reason, ended.message, None, self._clock.monotonic(), self._clock.now())
+        return self._ended_now(ended.state, ended.reason, ended.message)
+
+    def _ended_now(
+        self, state: PlanJobState, reason: str | None, message: str | None, plan_run_id: str | None = None
+    ) -> _Ending:
+        """An ending at this moment of the `Clock` port: its monotonic time, then its date."""
+        return _Ending(state, reason, message, plan_run_id, self._clock.monotonic(), self._clock.now())
 
     def _finished_fields(self, job: _Job, ending: _Ending) -> dict[str, object]:
         """The `plan.job.finished` fields, which the job's row holds too."""
