@@ -1,6 +1,6 @@
 # Slice 03b roadmap proposal: dead-end trails are retraced, never reversed
 
-Status: PROPOSED (architect, 2026-11-10). Not reviewed, not approved, not enabled. The matching phase 07 is in `deliver/roadmap.json`, marked PROPOSED. Nothing outside the roadmap and this note was changed; the feature file and `spike/` are untouched.
+Status: APPROVED 2026-11-11 (architect proposal of 2026-11-10; reviewed; user rulings 2026-11-10; decision 18, single-phase weighting, accepted 2026-11-11). Steps not yet run.
 
 ## 1. What Marco gets (plain language)
 
