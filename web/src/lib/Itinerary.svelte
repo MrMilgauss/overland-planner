@@ -1,6 +1,8 @@
 <script lang="ts">
   // The stops of a plan run, in order (FR-6.1): name, type, road leg in km and time, cumulative km and time; a track
   // also shows its length and off-road time and its entry and exit, as coordinates (D202). Then the Totals (FR-6.2).
+  // A retrace is its own row: the track driven back, with its reason and its km and time off-road, no Road or Track
+  // line; a stop reached by an Unconfirmed road leg is marked with its reason (slice 03b).
   // A run stored before the per-stop columns or the totals shows only what it has. Each line wraps on a narrow phone.
   import type { PlanStop, PlanTotals, Point } from './api';
   import { durationText } from './duration';
@@ -8,7 +10,11 @@
 
   let { stops, totals = null }: { stops: PlanStop[]; totals?: PlanTotals | null } = $props();
 
-  const TYPE_TEXTS: Record<PlanStop['type'], string> = { track: 'Track', poi: 'Place' };
+  const TYPE_TEXTS: Record<PlanStop['type'], string> = {
+    track: 'Track',
+    poi: 'Place',
+    retrace: 'Retrace',
+  };
 
   function coordinates({ lat, lon }: Point): string {
     return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
@@ -25,10 +31,19 @@
     <li>
       <span class="name">{stop.name}</span>
       <span class="type">{TYPE_TEXTS[stop.type]}</span>
+      {#if stop.type === 'retrace'}
+        <span class="line unconfirmed">Unconfirmed: {stop.reason}</span>
+        {#if stop.track_km != null}
+          <span class="line">{distanceAndTime(stop.track_km, stop.offroad_s)} off-road</span>
+        {/if}
+      {/if}
+      {#if stop.leg_confidence === 'unconfirmed'}
+        <span class="line unconfirmed">Unconfirmed: {stop.leg_reason}</span>
+      {/if}
       {#if stop.leg_km !== null}
         <span class="line">Road {distanceAndTime(stop.leg_km, stop.leg_s)}</span>
       {/if}
-      {#if stop.track_km != null}
+      {#if stop.type !== 'retrace' && stop.track_km != null}
         <span class="line">Track {distanceAndTime(stop.track_km, stop.offroad_s)} off-road</span>
       {/if}
       {#if stop.cumulative_km != null}
@@ -80,6 +95,9 @@
   .line {
     display: block;
     color: #555;
+  }
+  .unconfirmed {
+    color: #8a4b00;
   }
   dl {
     margin: 0.5rem 0;

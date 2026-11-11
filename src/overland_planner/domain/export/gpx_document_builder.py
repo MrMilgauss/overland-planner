@@ -3,7 +3,10 @@
 Waypoints: one per POI item in itinerary order, named as the item; a round-trip anchor, one item both first and last,
 is one waypoint named "<name> (S/E)". Tracks, in itinerary order: every stop but the first is reached by its road leg
 "Leg k: A -> B", straight from where A is left to where B is reached, also when the two are the same point; a trail
-follows with its own stored points. A trail's `number` is its stop and a leg's is the stop it leaves.
+follows with its own stored points. A retrace row (ADR-017 section 3) builds no road leg into it: it is written right
+after its trail as its own track, kind `retrace`, the trail's stored points reversed (the only track written
+reversed), and the next road leg leaves where the retrace ends. A trail's `number` is its stop and a leg's is the stop
+it leaves. A leg that is Unconfirmed, retrace or road, ends its name with "[UNCONFIRMED - <reason>]" (FR-5.8).
 Slice 11 adds the report, the stale label, the stop positions and the provider's road shapes.
 """
 
@@ -20,6 +23,8 @@ from overland_planner.domain.planning.plan_run import PlanStop
 _ROUND_TRIP_SUFFIX = " (S/E)"
 _ROAD = "road"
 _OFFROAD = "offroad"
+_RETRACE = "retrace"
+_UNCONFIRMED = "unconfirmed"
 
 
 class StopWithoutPlaceError(ValueError):
@@ -53,28 +58,40 @@ class GpxDocumentBuilder:
         return len(self.stops) > 1 and first.item_id == last.item_id == stop.item_id
 
     def _tracks(self) -> tuple[GpxTrack, ...]:
-        return tuple(
-            track for number, stop in enumerate(self.stops, start=1) for track in self._tracks_reaching(number, stop)
-        )
+        tracks: list[GpxTrack] = []
+        legs = 0
+        for number, stop in enumerate(self.stops, start=1):
+            if stop.kind == _RETRACE:
+                tracks.append(self._retrace(number, stop))
+                continue
+            if number > 1:
+                legs += 1
+                tracks.append(_road_leg(legs, number - 1, self.stops[number - 2], stop))
+            if stop.kind == "track":
+                tracks.append(GpxTrack(stop.name, self.trail_points[stop.item_id], number=number, kind=_OFFROAD))
+        return tuple(tracks)
 
-    def _tracks_reaching(self, number: int, stop: PlanStop) -> tuple[GpxTrack, ...]:
-        leg = () if number == 1 else (_road_leg(number - 1, self.stops[number - 2], stop),)
-        trail = (self._trail(number, stop),) if stop.kind == "track" else ()
-        return (*leg, *trail)
-
-    def _trail(self, number: int, stop: PlanStop) -> GpxTrack:
-        return GpxTrack(stop.name, self.trail_points[stop.item_id], number=number, kind=_OFFROAD)
+    def _retrace(self, number: int, stop: PlanStop) -> GpxTrack:
+        points = tuple(reversed(self.trail_points[stop.item_id]))
+        return GpxTrack(_marked(stop.name, stop.confidence, stop.reason), points, number=number, kind=_RETRACE)
 
 
-def _road_leg(leg: int, origin: PlanStop, destination: PlanStop) -> GpxTrack:
-    left = origin.exit if origin.kind == "track" else origin.location
+def _road_leg(leg: int, number: int, origin: PlanStop, destination: PlanStop) -> GpxTrack:
+    left = origin.location if origin.kind == "poi" else origin.exit
     reached = destination.entry if destination.kind == "track" else destination.location
+    name = f"Leg {leg}: {origin.name} -> {destination.name}"
     return GpxTrack(
-        f"Leg {leg}: {origin.name} -> {destination.name}",
+        _marked(name, destination.leg_confidence, destination.leg_reason),
         (TrackPoint(_placed(origin, left)), TrackPoint(_placed(destination, reached))),
-        number=leg,
+        number=number,
         kind=_ROAD,
     )
+
+
+def _marked(name: str, confidence: str | None, reason: str | None) -> str:
+    if confidence != _UNCONFIRMED:
+        return name
+    return f"{name} [UNCONFIRMED - {reason}]" if reason else f"{name} [UNCONFIRMED]"
 
 
 def _placed(stop: PlanStop, place: Coordinate | None) -> Coordinate:

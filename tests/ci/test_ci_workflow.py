@@ -955,6 +955,8 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
         "test_inconsistent_file_refuses_with_the_verbatim_message",
         "test_export_changes_nothing_and_unknown_run_is_not_found",
         "test_the_document_holds_every_track_with_its_name_and_its_stored_points_in_order",
+        "test_a_retraced_run_exports_each_track_forwards_and_its_retrace_as_its_own_marked_leg",
+        "test_a_retrace_that_does_not_match_its_recorded_hash_refuses_the_file",
     ),
     "tests/unit/application/planning/test_plan_request_job_guard.py": (
         "test_a_track_of_real_size_passes_and_one_altered_point_anywhere_fails",

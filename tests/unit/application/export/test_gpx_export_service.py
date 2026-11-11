@@ -5,10 +5,11 @@ Driving port: `GpxExportService.export`. Driven ports: `PlanningUnitOfWork`, `Ca
 tests/unit/domain/export/test_gpx_document_builder.py, the file name's at test_run_file_name.py.
 Observable universe: `plan_runs`, `commits`, `items`, `projects` as planning reads them, the `catalog` project, `files`
 as the store holds them, the `documents` handed to the writer and the `events` logged.
-Test Budget: 7 behaviors (each trail holds its stored points by the run's version; a track that cannot be proven
-refuses with the fixed message; the refusal logs its violation; nothing changes, and an unknown run is not found; a
-Failed run is refused; the file and document are named from the project and the run; one `export.gpx` event per file)
-x 2 = 14; 9 used.
+Test Budget: 9 behaviors (each trail holds its stored points by the run's version; a track that cannot be proven
+refuses with the fixed message; the refusal logs its violation; a retrace is written after its track as its own leg
+of the stored points reversed, and one whose hash does not match refuses likewise; nothing changes, and an unknown
+run is not found; a Failed run is refused; the file and document are named from the project and the run; one
+`export.gpx` event per file) x 2 = 18; 11 used.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.adapters.http.errors import install_error_handlers
@@ -56,6 +57,7 @@ EXPORTED = ("export.gpx", RUN, None)
 EXPORT_FIELDS = {"plan_run_id", "project_id", "items_included", "bytes", "stale"}
 VIOLATION_FIELDS = {"plan_run_id", "check", "detail"}
 BIG_TRACK_POINTS = 23_295
+RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"
 
 
 class _RecordingGpxWriter:
@@ -80,6 +82,8 @@ class _StoredTrack:
     name: str
     run_version: int
     points: tuple[TrackPoint, ...]
+    retraced: bool = False
+    retrace_sha256: str | None = None
 
     @property
     def file(self) -> bytes:
@@ -102,6 +106,20 @@ class _StoredTrack:
             entry=self.points[-1].coordinate,
             exit=self.points[0].coordinate,
             length_m=1000.0,
+        )
+
+    def retrace_stop(self) -> PlanStop:
+        """The row after the track: the stored points reversed, hashed as a canonical file afresh."""
+        return PlanStop(
+            item_id=self.item_id,
+            name=f"Retrace {self.name}",
+            kind="retrace",
+            leg_km=None,
+            entry=self.points[-1].coordinate,
+            exit=self.points[0].coordinate,
+            confidence="unconfirmed",
+            reason=RETRACE_REASON,
+            retrace_sha256=self.retrace_sha256 or _sha256(self.later_file),
         )
 
     def stop(self) -> PlanStop:
@@ -149,7 +167,7 @@ class _Harness:
                 provider_id="mock",
                 objective="distance",
                 inputs={},
-                stops=(anchor, *(track.stop() for track in self.tracks), replace(anchor, leg_km=1.0)),
+                stops=(anchor, *(row for track in self.tracks for row in _rows_of(track)), replace(anchor, leg_km=1.0)),
             )
         )
         for track in self.tracks:
@@ -202,12 +220,29 @@ class _Harness:
         return self.log.fields_of("invariant.violation")
 
 
+def _rows_of(track: _StoredTrack) -> tuple[PlanStop, ...]:
+    return (track.stop(), track.retrace_stop()) if track.retraced else (track.stop(),)
+
+
 def _tracks_of(document: GpxDocument) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:
-    return tuple((track.name, track.points) for track in document.tracks if track.kind == "offroad")
+    return tuple((track.name, track.points) for track in document.tracks if track.kind in ("offroad", "retrace"))
 
 
 def _expected(tracks: tuple[_StoredTrack, ...]) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:
     return tuple((track.name, track.points) for track in tracks)
+
+
+def _expected_with_retraces(tracks: tuple[_StoredTrack, ...]) -> tuple[tuple[str, tuple[TrackPoint, ...]], ...]:
+    """Each track once forwards, its retrace right after as its own marked leg of the points reversed."""
+    marked = f"[UNCONFIRMED - {RETRACE_REASON}]"
+    return tuple(
+        row
+        for track in tracks
+        for row in (
+            (track.name, track.points),
+            (f"Retrace {track.name} {marked}", track.points[::-1]),
+        )
+    )
 
 
 def _one_more_document(old: Any, new: Any) -> bool:
@@ -277,6 +312,48 @@ def test_the_document_holds_every_track_with_its_name_and_its_stored_points_in_o
     assert answer.content == repr(harness.writer.documents[-1]).encode(), "the answer is the writer's file"
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@settings(deadline=None)
+@given(tracks=_tracks)
+def test_a_retraced_run_exports_each_track_forwards_and_its_retrace_as_its_own_marked_leg(
+    tracks: tuple[_StoredTrack, ...],
+) -> None:
+    retraced = tuple(replace(track, retraced=True) for track in tracks)
+    harness = _Harness(retraced)
+    before = harness.view()
+
+    harness.service.export(RUN)
+
+    assert_state_delta(
+        before,
+        harness.view(),
+        UNIVERSE,
+        {"documents": set_to((_expected_with_retraces(retraced),)), "events": gained(EXPORTED)},
+        strict=True,
+    )
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@settings(deadline=None)
+@given(tracks=_tracks, victim=st.integers(0, 3), wrong=st.text("0123456789abcdef", min_size=64, max_size=64))
+def test_a_retrace_that_does_not_match_its_recorded_hash_refuses_the_file(
+    tracks: tuple[_StoredTrack, ...], victim: int, wrong: str
+) -> None:
+    index = victim % len(tracks)
+    target = tracks[index]
+    assume(wrong != _sha256(target.later_file))
+    spoiled = replace(target, retraced=True, retrace_sha256=wrong)
+    harness = _Harness((*tracks[:index], spoiled, *tracks[index + 1 :]))
+    before = harness.view()
+
+    with pytest.raises(TrackDataInconsistentError) as refusal:
+        harness.service.export(RUN)
+
+    assert str(refusal.value) == REFUSAL
+    assert_state_delta(before, harness.view(), UNIVERSE, {"events": gained(VIOLATION)}, strict=True)
+    assert f"retrace of track {target.item_id}" in str(harness.violations()[0]["detail"])
+
+
 def test_a_full_size_track_exports_whole() -> None:
     # bypass: the size is the input here; one generated sequence proves it, and many would only slow the mutation runs.
     points = tuple(TrackPoint.at(45.0 + i / 1e6, 7.0 + i / 1e6, float(i % 3000)) for i in range(BIG_TRACK_POINTS))
@@ -339,12 +416,19 @@ def test_inconsistent_file_logs_invariant_violation(
         ("unreadable_file_with_its_own_hash", "canonical file v1"),
         ("stop_without_a_version", "no direction version"),
         ("stop_without_a_place", "names no place"),
+        ("retrace_without_its_track", "retrace of track assietta: the run holds no such track"),
     ],
 )
 def test_a_track_that_cannot_be_read_by_the_run_refuses_the_same_way(broken_by: str, detail: str) -> None:
-    track = _StoredTrack("assietta", "Strada dell'Assietta", 1, (TrackPoint.at(45.0, 7.0), TrackPoint.at(45.1, 7.1)))
+    points = (TrackPoint.at(45.0, 7.0), TrackPoint.at(45.1, 7.1))
+    track = _StoredTrack(
+        "assietta", "Strada dell'Assietta", 1, points, retraced=broken_by == "retrace_without_its_track"
+    )
     harness = _Harness((track,))
-    if broken_by == "stop_without_a_version":
+    if broken_by == "retrace_without_its_track":
+        run = harness.planning.runs[0]
+        harness.planning.runs[0] = replace(run, stops=tuple(stop for stop in run.stops if stop.kind != "track"))
+    elif broken_by == "stop_without_a_version":
         harness.replace_track_stop(track, direction_version=None)
     elif broken_by == "stop_without_a_place":
         harness.replace_track_stop(track, entry=None)

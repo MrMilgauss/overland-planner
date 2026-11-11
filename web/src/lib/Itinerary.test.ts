@@ -59,6 +59,27 @@ const totals: PlanTotals = {
   total_s: 64_200,
 };
 
+const retrace: PlanStop = {
+  name: "Retrace Strada dell'Assietta",
+  type: 'retrace',
+  leg_km: null,
+  leg_s: null,
+  cumulative_km: 120.04,
+  cumulative_s: 12_516,
+  track_km: 33.99,
+  offroad_s: 4_308,
+  entry: { lat: 44.958, lon: 6.879 },
+  exit: { lat: 45.056, lon: 7.041 },
+  confidence: 'unconfirmed',
+  reason: 'retraces the trail backwards; check it is drivable in reverse',
+};
+const unconfirmedLeg: PlanStop = {
+  ...briancon,
+  leg_confidence: 'unconfirmed',
+  leg_reason: 'entry is 1.2 km from the nearest road - check on the ground',
+};
+const confirmedLeg: PlanStop = { ...briancon, leg_confidence: 'confirmed', leg_reason: null };
+
 function rows(): string[] {
   return within(screen.getByRole('list', { name: 'Itinerary' }))
     .getAllByRole('listitem')
@@ -123,5 +144,31 @@ describe('Itinerary', () => {
     expect(second).not.toContain('Cumulative');
     expect(second).not.toContain('h');
     expect(screen.queryByLabelText('Totals')).not.toBeInTheDocument();
+  });
+
+  // bypass: no Hypothesis in the web stack; one case per row type and leg confidence (slice 03b, step 07-09).
+  it('shows a retrace with its name, the label Retrace, its reason and its km and time off-road, no Track or Road line', () => {
+    render(Itinerary, { props: { stops: [casa, assietta, retrace, briancon], totals } });
+
+    const third = rows()[2];
+    expect(third).toContain("Retrace Strada dell'Assietta");
+    expect(third).toContain('Retrace');
+    expect(third).toContain('Unconfirmed');
+    expect(third).toContain('retraces the trail backwards; check it is drivable in reverse');
+    expect(third).toContain('34.0 km, 1h12 off-road');
+    expect(third).not.toContain('Track');
+    expect(third).not.toContain('Road');
+    expect(third).not.toContain('Place');
+  });
+
+  it('marks a stop reached by an Unconfirmed road leg with its reason and leaves a Confirmed or an old one as before', () => {
+    render(Itinerary, { props: { stops: [casa, unconfirmedLeg, confirmedLeg, briancon] } });
+
+    const [, unconfirmed, confirmed, old] = rows();
+    expect(unconfirmed).toContain('Unconfirmed');
+    expect(unconfirmed).toContain('entry is 1.2 km from the nearest road - check on the ground');
+    expect(unconfirmed).toContain('Road 12.2 km, 0h02');
+    expect(confirmed).not.toContain('Unconfirmed');
+    expect(old).not.toContain('Unconfirmed');
   });
 });

@@ -1,10 +1,10 @@
 """GPX export use case (brief §5, ADR-009 Amendment 2, ADR-010 Amendment 1, HC-1): a stored run becomes a named file.
 
 Each trail holds the canonical points of the run's own direction version, 1:1 in stored order, after its bytes are
-proven against the hash the run recorded. A track that cannot be proven refuses the whole file and logs one
-`invariant.violation`; a Failed run is refused before anything is read (D203). Road legs come from the stored itinerary,
-with no provider call. Exporting reads only: no project, item or plan run changes. Each file logs one `export.gpx`;
-`stale` stays false until slice 04.
+proven against the hash the run recorded; a retrace is proven against the hash of its track's points reversed. A track
+that cannot be proven refuses the whole file and logs one `invariant.violation`; a Failed run is refused before
+anything is read (D203). Road legs come from the stored itinerary, with no provider call. Exporting reads only: no
+project, item or plan run changes. Each file logs one `export.gpx`; `stale` stays false until slice 04.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from overland_planner.application.catalog.facade import (
     ProjectService,
     canonical_file_sha256,
     parse_canonical_points_file,
+    reversed_points_sha256,
 )
 from overland_planner.application.planning.facade import PlanRunNotFoundError, PlanRunQueries
 from overland_planner.application.ports.event_log import EventLog
@@ -85,6 +86,9 @@ class GpxExportService:
 
     def _document_of(self, run: PlanRunDetail) -> GpxDocument:
         trail_points = {stop.item_id: self._stored_points(run.id, stop) for stop in run.stops if stop.kind == "track"}
+        for stop in run.stops:
+            if stop.kind == "retrace":
+                self._prove_retrace(run.id, stop, trail_points.get(stop.item_id))
         try:
             return GpxDocumentBuilder(run.number, run.stops, trail_points).build()
         except StopWithoutPlaceError as error:
@@ -105,6 +109,14 @@ class GpxExportService:
             return parse_canonical_points_file(content)
         except InvalidCanonicalPointsFileError as error:
             raise self._refusal(plan_run_id, f"{file} cannot be read") from error
+
+    def _prove_retrace(self, plan_run_id: str, stop: PlanStop, points: tuple[TrackPoint, ...] | None) -> None:
+        """A retrace is written from its track's proven points, reversed, and only if they hash as the run recorded."""
+        row = f"retrace of track {stop.item_id}"
+        if points is None:
+            raise self._refusal(plan_run_id, f"{row}: the run holds no such track")
+        if reversed_points_sha256(points) != stop.retrace_sha256:
+            raise self._refusal(plan_run_id, f"{row}: the points reversed have changed")
 
     def _refusal(self, plan_run_id: str, detail: str) -> TrackDataInconsistentError:
         self._event_log.warning("invariant.violation", plan_run_id=plan_run_id, check=_CHECK, detail=detail)

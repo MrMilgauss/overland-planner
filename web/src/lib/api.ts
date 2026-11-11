@@ -32,11 +32,13 @@ export interface NewPlace {
   lon: number;
 }
 
+export type RoadLevel = 'confirmed' | 'unconfirmed';
+
 /** One stop (FR-6.1), km and seconds unrounded; a run stored before the per-stop columns (05-07) shows them null, and
  * `track_km` and `offroad_s` are null on a place. */
 export interface PlanStop {
   name: string;
-  type: 'track' | 'poi';
+  type: 'track' | 'poi' | 'retrace';
   leg_km: number | null;
   leg_s: number | null;
   cumulative_km: number | null;
@@ -45,6 +47,12 @@ export interface PlanStop {
   offroad_s: number | null;
   entry: Point | null;
   exit: Point | null;
+  /** A retrace row's own level and reason, and the level of the road leg into any other stop (slice 03b); a run
+   * stored before them has none. */
+  confidence?: RoadLevel | null;
+  reason?: string | null;
+  leg_confidence?: RoadLevel | null;
+  leg_reason?: string | null;
 }
 
 /** The plan's road, off-road and total driving (FR-6.2), unrounded: rounding is the web's. */

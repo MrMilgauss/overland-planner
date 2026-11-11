@@ -4,13 +4,14 @@ Driving port: `GpxDocumentBuilder.build`, pure. Observable universe: the documen
 and `tracks`, each as it would be written.
 Test Budget: 4 behaviors (waypoints are the distinct POI items with only a round-trip anchor suffixed; road legs are
 straight named tracks, one fewer than the stops; trails keep their points, in itinerary order among the legs; the
-document is labelled by its run) x 2 = 8; 5 used.
+document is labelled by its run; a retrace is its own leg of the track reversed and a leg is marked when it is
+Unconfirmed) x 2 = 12; 7 used.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Literal
 
 import pytest
 from hypothesis import given
@@ -249,3 +250,123 @@ def test_an_itinerary_too_short_to_return_names_no_anchor_and_no_leg(
         {"name": set_to("Plan run #7"), "waypoints": set_to(waypoints)},
         strict=True,
     )
+
+
+_RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"
+_reasons = st.none() | st.text(alphabet="abc 12.-,", min_size=1, max_size=12)
+_levels = st.tuples(st.sampled_from(["confirmed", "unconfirmed"]), _reasons)
+_long_points = st.lists(_points, min_size=3, max_size=5).map(tuple).filter(lambda points: points != points[::-1])
+_kinds = st.sampled_from(["poi", "track", "retrace"])
+
+
+@dataclass(frozen=True)
+class _Marked:
+    """Any itinerary, retraces anywhere (first, last, consecutive) and any legs Unconfirmed; the oracle is the file the
+    story states, written leg by leg without the builder."""
+
+    stops: tuple[PlanStop, ...]
+    pool: dict[str, tuple[TrackPoint, ...]]
+    expected: tuple[tuple[str, int, str, tuple[TrackPoint, ...]], ...]
+
+    def built(self) -> GpxDocument:
+        return GpxDocumentBuilder(1, self.stops, self.pool).build()
+
+
+def _marked_plan(
+    pool_points: list[tuple[TrackPoint, ...]],
+    rows: list[tuple[str, int, tuple[Literal["confirmed", "unconfirmed"], str | None]]],
+) -> _Marked:
+    pool = {f"track-{index}": points for index, points in enumerate(pool_points)}
+    stops: list[PlanStop] = []
+    for position, (kind, pick, (level, reason)) in enumerate(rows):
+        track_id = f"track-{pick % len(pool_points)}"
+        points = pool[track_id]
+        if kind == "retrace":
+            stops.append(
+                PlanStop(
+                    track_id, f"Retrace {track_id}", "retrace", None,
+                    entry=points[-1].coordinate, exit=points[0].coordinate,
+                    confidence="unconfirmed", reason=_RETRACE_REASON,
+                )
+            )  # fmt: skip
+            continue
+        stop = (
+            _poi(f"poi-{position}", f"P{position}", Coordinate(position + 1.0, 2.0))
+            if kind == "poi"
+            else _trail(track_id, track_id, points)
+        )
+        stops.append(replace(stop, leg_km=None if position == 0 else 1.0, leg_confidence=level, leg_reason=reason))
+    return _Marked(tuple(stops), pool, _file_of(stops, pool))
+
+
+def _suffix(reason: str | None) -> str:
+    return f" [UNCONFIRMED - {reason}]" if reason else " [UNCONFIRMED]"
+
+
+def _file_of(
+    stops: list[PlanStop], pool: dict[str, tuple[TrackPoint, ...]]
+) -> tuple[tuple[str, int, str, tuple[TrackPoint, ...]], ...]:
+    rows: list[tuple[str, int, str, tuple[TrackPoint, ...]]] = []
+    legs = 0
+    for number, stop in enumerate(stops, start=1):
+        if stop.kind == "retrace":
+            name = f"{stop.name}{_suffix(stop.reason)}"
+            rows.append((name, number, "retrace", pool[stop.item_id][::-1]))
+            continue
+        if number > 1:
+            legs += 1
+            origin = stops[number - 2]
+            left = origin.exit if origin.kind != "poi" else origin.location
+            reached = stop.entry if stop.kind == "track" else stop.location
+            assert left is not None
+            assert reached is not None
+            marked = _suffix(stop.leg_reason) if stop.leg_confidence == "unconfirmed" else ""
+            ends = (TrackPoint(left), TrackPoint(reached))
+            rows.append((f"Leg {legs}: {origin.name} -> {stop.name}{marked}", number - 1, "road", ends))
+        if stop.kind == "track":
+            rows.append((stop.name, number, "offroad", pool[stop.item_id]))
+    return tuple(rows)
+
+
+_marked_plans = st.builds(
+    _marked_plan,
+    st.lists(_long_points, min_size=1, max_size=3),
+    st.lists(st.tuples(_kinds, st.integers(0, 9), _levels), min_size=1, max_size=7),
+)
+
+
+@given(plan=_marked_plans)
+def test_a_retrace_is_its_own_marked_leg_and_every_unconfirmed_leg_is_marked(plan: _Marked) -> None:
+    document = plan.built()
+
+    assert_state_delta(
+        {"tracks": ()},
+        {"tracks": tuple((t.name, t.number, t.kind, t.points) for t in document.tracks)},
+        {"tracks"},
+        {"tracks": set_to(plan.expected)},
+        strict=True,
+    )
+
+
+@given(plan=_marked_plans)
+def test_a_trail_is_written_once_forwards_and_its_reverse_only_as_a_retrace(plan: _Marked) -> None:
+    stored = [stop.item_id for stop in plan.stops if stop.kind == "track"]
+    backwards = {points[::-1] for points in plan.pool.values()}
+
+    document = plan.built()
+
+    written = tuple((track.name, track.points) for track in document.tracks if track.kind == "offroad")
+    reversed_as = {track.kind for track in document.tracks if track.points in backwards}
+    assert_state_delta(
+        {"offroad": (), "reverse_kinds": set()},
+        {"offroad": written, "reverse_kinds": reversed_as},
+        {"offroad", "reverse_kinds"},
+        {
+            "offroad": set_to(
+                tuple((stop.name, plan.pool[stop.item_id]) for stop in plan.stops if stop.kind == "track")
+            ),
+            "reverse_kinds": set_to({"retrace"} if any(s.kind == "retrace" for s in plan.stops) else set()),
+        },
+        strict=True,
+    )
+    assert len(written) == len(stored)
