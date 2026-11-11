@@ -4,19 +4,21 @@ one fails naming its rule.
 
 Driving port: `InvariantGuard` (`check_order`, `check_plan`, `check_unreachable` are its public interface; it is pure).
 Observable universe = the guard's result, the stops it judged and the snapshot read.
-Test Budget: 6 behaviors (assembled plans pass, a broken plan names its rule, a broken chosen order names its rule,
+Test Budget: 8 behaviors (assembled plans pass, a broken plan names its rule, a broken chosen order names its rule,
 assembled plans with retraces pass, a broken retrace plan names its rule, an unreachable claim holds only for the items
-no order connects) x 2 = 12; 6 used.
+no order connects, a leg's level and reason and a stop's off-road time are the table's and the speed's, a pair of the
+order that no road or retrace joins is named) x 2 = 16; 9 used (a leveled table has its own accept property).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from typing import Any
 
 import pytest
-from hypothesis import given, note
+from hypothesis import assume, given, note
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
@@ -27,16 +29,19 @@ from overland_planner.domain.planning.invariant_guard import (
 )
 from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
+from overland_planner.domain.planning.retrace_rule import arc_kind
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.domain.planning.retrace_trips import (
     DeadEnds,
     dead_end_trips,
+    levelled_dead_end_trips,
     reversed_sha256,
 )
 from tests.unit.domain.planning.trips import (
     POINTS,
     Trip,
+    left_at,
     reached_at,
     road_time_s,
     trips,
@@ -103,6 +108,21 @@ class Broken:
 
 
 Breaking = Callable[[Plan, st.DrawFn], Broken]
+
+
+def _assert_names_its_rule(plan: Plan, broken: Broken) -> None:
+    """The guard refuses the broken plan, naming the rule it breaks first and (if one) the item."""
+    before = _judged(plan, broken.stops, None)
+
+    guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
+    violation = guard.check_plan(broken.stops, broken.files)
+
+    expected = {"guard.check": set_to(broken.rule)}
+    assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
+    assert violation is not None
+    assert violation.detail, "a violation says what is wrong"
+    if broken.item_id is not None:
+        assert broken.item_id in violation.detail, f"the detail names no item: {violation.detail}"
 
 
 def _swap(stops: tuple[PlanStop, ...], one: int, other: int) -> tuple[PlanStop, ...]:
@@ -318,18 +338,7 @@ def test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule(plan: Pl
     # profile, so the guard's stop-against-snapshot and tampered-leg checks ran in no mutation run.
     for breaking in _breakings(plan):
         note(f"mutation: {breaking.__name__}")
-        broken = breaking(plan, data.draw)
-        before = _judged(plan, broken.stops, None)
-
-        guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
-        violation = guard.check_plan(broken.stops, broken.files)
-
-        expected = {"guard.check": set_to(broken.rule)}
-        assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
-        assert violation is not None
-        assert violation.detail, "a violation says what is wrong"
-        if broken.item_id is not None:
-            assert broken.item_id in violation.detail, f"the detail names no item: {violation.detail}"
+        _assert_names_its_rule(plan, breaking(plan, data.draw))
 
 
 def _order_of(plan: Plan) -> tuple[str, ...]:
@@ -576,16 +585,133 @@ def test_any_single_retrace_perturbation_fails_and_names_its_rule(plan: Plan, da
     others = [_retrace_of_another_track] if len(plan.trip.tracks()) > 1 else []
     for breaking in [*RETRACE_BREAKINGS, *others]:
         note(f"perturbation: {breaking.__name__}")
-        broken = breaking(plan, data.draw)
-        before = _judged(plan, broken.stops, None)
+        _assert_names_its_rule(plan, breaking(plan, data.draw))
 
-        guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
-        violation = guard.check_plan(broken.stops, broken.files)
 
-        expected = {"guard.check": set_to(broken.rule)}
-        assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
-        assert violation is not None and violation.detail
-        assert broken.item_id is None or broken.item_id in violation.detail, f"no item named: {violation.detail}"
+# --------------------------------------------------------------- ADR-009 Amendment 1, check 5: level, reason, off-road
+@st.composite
+def levelled_plans(draw: st.DrawFn) -> Plan:
+    """A plan the assembler makes in any order from a levelled leg table (Unconfirmed legs with their reasons) where
+    some tracks' exits lead nowhere, so that retrace rows come too."""
+    trip, legs, _, _ = draw(levelled_dead_end_trips())
+    trip = replace(trip, legs=legs)
+    order = draw(st.permutations(trip.items))
+    hashes = {track.id: reversed_sha256(track) for track in trip.tracks()}
+    stops = PlanRunAssembler(trip.snapshot, legs).assemble([item.id for item in order], hashes)
+    return Plan(trip, stops, {track.id: _retrace_evidence_of(track) for track in trip.tracks()})
+
+
+def _driven_positions(plan: Plan) -> list[int]:
+    """The stops reached by a road leg: every one but the first and the retrace rows."""
+    return [at for at, stop in enumerate(plan.stops) if at and stop.kind != "retrace"]
+
+
+def _leg_confidence_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    at = draw(st.sampled_from(_driven_positions(plan)))
+    stop = plan.stops[at]
+    level = draw(
+        st.sampled_from([level for level in ("confirmed", "unconfirmed", None) if level != stop.leg_confidence])
+    )
+    return Broken(plan.with_stop(at, leg_confidence=level), plan.files, "leg_consistency", stop.item_id)
+
+
+def _leg_reason_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    at = draw(st.sampled_from(_driven_positions(plan)))
+    stop = plan.stops[at]
+    reason = draw(st.sampled_from([reason for reason in ("another reason", None) if reason != stop.leg_reason]))
+    return Broken(plan.with_stop(at, leg_reason=reason), plan.files, "leg_consistency", stop.item_id)
+
+
+def _first_stop_has_a_level(plan: Plan, draw: st.DrawFn) -> Broken:
+    words = draw(st.sampled_from(({"leg_confidence": "confirmed"}, {"leg_reason": "a road"})))
+    return Broken(plan.with_stop(0, **words), plan.files, "leg_consistency", plan.stops[0].item_id)
+
+
+def _offroad_time_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    """ADR-009 check 5: a track stop drives its length at the project's off-road speed, no other time."""
+    at = draw(st.sampled_from(plan.track_positions()))
+    stop = plan.stops[at]
+    assert stop.offroad_s is not None
+    offroad_s = draw(st.sampled_from((stop.offroad_s + 1.0, stop.offroad_s / 2, None)))
+    return Broken(plan.with_stop(at, offroad_s=offroad_s), plan.files, "HC-5", stop.item_id)
+
+
+def _retrace_offroad_time_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    assert stop.offroad_s is not None
+    offroad_s = draw(st.sampled_from((stop.offroad_s + 1.0, stop.offroad_s / 2, None)))
+    return Broken(plan.with_stop(at, offroad_s=offroad_s), plan.files, "retrace", stop.item_id)
+
+
+@given(plan=levelled_plans())
+def test_every_plan_the_assembler_makes_from_levelled_tables_passes(plan: Plan) -> None:
+    before = _judged(plan, plan.stops, None)
+
+    violation = plan.guard().check_plan(plan.stops, plan.files)
+
+    assert_state_delta(before, _judged(plan, plan.stops, violation), UNIVERSE, {}, strict=True)
+    assert violation is None, f"{violation}"
+    order = tuple(stop.item_id for stop in plan.stops if stop.kind != "retrace")
+    assert plan.guard().check_order(order) is None, "a pair joined by a retrace is not forbidden"
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@given(plan=levelled_plans(), data=st.data())
+def test_any_single_leg_level_reason_or_offroad_time_perturbation_fails_and_names_its_rule(
+    plan: Plan, data: st.DataObject
+) -> None:
+    """Every perturbation on every plan (D212): the leg's level and reason are the table's, the off-road time is the
+    track's length at the project's speed, on a track stop and on a retrace row."""
+    breakings: list[Breaking] = [_leg_confidence_differs, _leg_reason_differs, _first_stop_has_a_level]
+    breakings += [_offroad_time_differs] if plan.track_positions() else []
+    breakings += [_retrace_offroad_time_differs] if _retraces(plan) else []
+    for breaking in breakings:
+        note(f"perturbation: {breaking.__name__}")
+        _assert_names_its_rule(plan, breaking(plan, data.draw))
+
+
+def _retraceable(item: CatalogItem) -> bool:
+    return isinstance(item, TrackItem) and item.entry != item.exit
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@given(plan=levelled_plans(), data=st.data())
+def test_a_chosen_order_with_a_pair_no_road_or_retrace_joins_fails_naming_both_items(
+    plan: Plan, data: st.DataObject
+) -> None:
+    """The assembler cannot make stops of such an order: the guard names the pair before. A pair is forbidden when no
+    road at any level joins the exit of one to the entry of the next and the first is no track to retrace; a pair
+    nobody measured is too."""
+    snapshot = plan.trip.snapshot
+    order = tuple(stop.item_id for stop in plan.stops if stop.kind != "retrace")
+    pairs = list(pairwise(snapshot.item(item_id) for item_id in order))
+    cuttable = [(a, b) for a, b in pairs if not _retraceable(a) and left_at(a) != reached_at(b)]
+    assume(cuttable)
+    a, b = data.draw(st.sampled_from(cuttable), label="pair cut off")
+    cut = plan.trip.legs.merged_with(LegTable([], [(left_at(a), reached_at(b))]))
+    for legs in (cut, LegTable(())):  # no road at any level for the pair; a table that measured nothing
+        before = _judged(plan, plan.stops, None)
+
+        violation = InvariantGuard(snapshot, legs).check_order(order)
+
+        assert_state_delta(
+            before,
+            _judged(plan, plan.stops, violation),
+            UNIVERSE,
+            {"guard.check": set_to("leg_consistency")},
+            strict=True,
+        )
+        assert violation is not None
+        first_a, first_b = next((a, b) for a, b in pairs if _kind_of(a, b, legs) == "forbidden")
+        assert first_a.id in violation.detail and first_b.id in violation.detail, violation.detail
+
+
+def _kind_of(previous: CatalogItem, successor: CatalogItem, legs: LegTable) -> str:
+    """The test's reading of the retrace rule's answer: a pair nobody measured is forbidden."""
+    try:
+        return arc_kind(previous, successor, legs)
+    except KeyError:
+        return "forbidden"
 
 
 CLAIM_UNIVERSE = {"guard.check", "snapshot.read"}

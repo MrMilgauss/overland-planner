@@ -16,15 +16,15 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from itertools import pairwise
+from itertools import chain, pairwise
 from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.catalog.item import TrackItem
-from overland_planner.domain.planning.plan_run import RETRACE_REASON, PlanStop, stored_length_km
+from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.planning.plan_run import RETRACE_REASON, PlanStop, offroad_of, stored_length_km
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
-from overland_planner.domain.planning.retrace_rule import arc_kind, second_pass_pair
-from overland_planner.domain.routing.road_leg import LegTable, RoadPair
+from overland_planner.domain.planning.retrace_rule import ArcKind, arc_kind, second_pass_pair
+from overland_planner.domain.routing.road_leg import LegTable, RoadLevel, RoadPair
 
 INVARIANT_VIOLATION_REASON = "internal_invariant_violation"  # the reason code of ADR-015
 _NO_ROAD = (None,) * 5  # a retrace row's leg km, seconds, confidence, reason and location: it drives no road
@@ -55,8 +55,10 @@ class InvariantGuard:
         self._legs = legs
 
     def check_order(self, order: Sequence[str]) -> GuardViolation | None:
-        """The solver's chosen order, Start to End, before any stop is made of it: unknown ids are named, not raised."""
-        return next(self._order_violations(tuple(order)), None)
+        """The solver's chosen order, Start to End, before any stop is made of it: unknown ids are named, not raised,
+        and so is a consecutive pair no road at any level or retrace joins, which the assembler could not make."""
+        chosen = tuple(order)
+        return next(chain(self._order_violations(chosen), self._arc_violations(chosen)), None)
 
     def check_plan(
         self, stops: Sequence[PlanStop], files: Mapping[str, CanonicalFileEvidence]
@@ -80,6 +82,13 @@ class InvariantGuard:
         if len(order) < 2 or order[0] != start or order[-1] != end:
             yield GuardViolation("HC-2", f"the trip runs {order[:1]} to {order[-1:]}, not {start} to {end}")
         yield from self._items_violations(order[1:-1])
+
+    def _arc_violations(self, order: tuple[str, ...]) -> Iterator[GuardViolation]:
+        """Only for an order that runs Start to End with each item once, so that every id is known."""
+        for previous, successor in pairwise(self._snapshot.item(item_id) for item_id in order):
+            if _arc_of(previous, successor, self._legs) == "forbidden":
+                detail = f"no road at any level or retrace from {previous.id} to {successor.id}"
+                yield GuardViolation("leg_consistency", detail)
 
     def _items_violations(self, between: tuple[str, ...]) -> Iterator[GuardViolation]:
         placed = Counter(between)
@@ -128,23 +137,27 @@ class InvariantGuard:
             yield GuardViolation(
                 "HC-5", f"track {item.id}: {stop.track_km} km driven, not its stored {item.length_m} m"
             )
+        if stop.offroad_s != offroad_of(item, self._snapshot.offroad_speed)[1]:
+            yield GuardViolation("HC-5", f"track {item.id}: {stop.offroad_s} s off-road, not its length at the speed")
 
     def _leg_violations(self, stops: tuple[PlanStop, ...]) -> Iterator[GuardViolation]:
         # A consistency check between the stops and this job's leg table; it does not prove the table right.
-        if (stops[0].leg_km, stops[0].leg_s) != (None, None):
+        if _leg_of(stops[0]) != (None,) * 4:
             yield GuardViolation("leg_consistency", f"the first stop {stops[0].item_id} has a road leg")
         for previous, stop in pairwise(stops):
             if stop.kind == "retrace":  # not a road leg: check 6 judged it
                 continue
-            road = self._road(previous, stop)
-            if road is None or (stop.leg_km, stop.leg_s) != road:
+            if self._road(previous, stop) != _leg_of(stop):
                 yield GuardViolation("leg_consistency", f"the leg into {stop.item_id} is not the road map's")
 
-    def _road(self, previous: PlanStop, stop: PlanStop) -> tuple[float, int] | None:
-        """The leg's km and seconds in this job's table, or None for a pair nobody measured or with no road."""
+    def _road(self, previous: PlanStop, stop: PlanStop) -> _Leg | None:
+        """The leg's km, seconds, level and reason in this job's table, or None for a pair nobody measured or with no
+        road."""
         pair = self._reference_pair(previous, stop)
+        if pair is None:
+            return None
         try:
-            return None if pair is None else self._legs.km_and_s(*pair)
+            return *self._legs.km_and_s(*pair), self._legs.level(*pair), self._legs.reason(*pair)
         except LookupError:  # a pair nobody measured (KeyError) or with no road at any level (NoRoadError)
             return None
 
@@ -157,6 +170,22 @@ class InvariantGuard:
             return second_pass_pair(before, item, self._legs)
         except KeyError:
             return None
+
+
+_Leg = tuple[float | None, int | None, RoadLevel | None, str | None]
+
+
+def _leg_of(stop: PlanStop) -> _Leg:
+    """The road leg a stop shows: km, seconds, level and the reason it is Unconfirmed; none at all on the first stop."""
+    return stop.leg_km, stop.leg_s, stop.leg_confidence, stop.leg_reason
+
+
+def _arc_of(previous: CatalogItem, successor: CatalogItem, legs: LegTable) -> ArcKind:
+    """The retrace rule's arc; a pair nobody measured joins nothing."""
+    try:
+        return arc_kind(previous, successor, legs)
+    except KeyError:
+        return "forbidden"
 
 
 def _place_of(stop: PlanStop) -> tuple[object, ...]:
@@ -189,17 +218,19 @@ class _RetraceForm:
     def _formed(self, stop: PlanStop, track: TrackItem) -> bool:
         found = self._files.get(track.id)
         evidence = None if found is None else found.reversed_sha256
-        form = (stop.entry, stop.exit, stop.confidence, stop.reason, stop.track_km, stop.retrace_sha256)
+        form = (stop.entry, stop.exit, stop.confidence, stop.reason, stop.track_km, stop.offroad_s, stop.retrace_sha256)
         road = (stop.leg_km, stop.leg_s, stop.leg_confidence, stop.leg_reason, stop.location)
-        wanted = (track.exit, track.entry, "unconfirmed", RETRACE_REASON, stored_length_km(track), evidence)
+        track_km, offroad_s = offroad_of(track, self._snapshot.offroad_speed)
+        wanted = (track.exit, track.entry, "unconfirmed", RETRACE_REASON, track_km, offroad_s, evidence)
         return evidence is not None and form == wanted and road == _NO_ROAD
 
     def _is_a_retrace_arc(self, track: TrackItem, after: PlanStop) -> bool:
         """Only where no road leaves the exit toward the next stop and one leaves the entry (the retrace rule)."""
         try:
-            return arc_kind(track, self._snapshot.item(after.item_id), self._legs) == "retrace"
-        except KeyError:  # an unknown next stop, or a pair nobody measured
+            successor = self._snapshot.item(after.item_id)
+        except KeyError:  # an unknown next stop
             return False
+        return _arc_of(track, successor, self._legs) == "retrace"
 
 
 class _Connections:
@@ -222,10 +253,7 @@ class _Connections:
         return {self._nodes[node].id for node in range(1, last) if node in from_start and node in to_end}
 
     def _runs(self, origin: int, destination: int) -> bool:
-        try:
-            return arc_kind(self._nodes[origin], self._nodes[destination], self._legs) != "forbidden"
-        except KeyError:  # a pair nobody measured: no arc is known
-            return False
+        return _arc_of(self._nodes[origin], self._nodes[destination], self._legs) != "forbidden"
 
 
 def _reached(source: int, onward: Mapping[int, set[int]]) -> set[int]:

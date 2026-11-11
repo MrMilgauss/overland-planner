@@ -974,6 +974,8 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
         "test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule",
         "test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule",
         "test_any_single_retrace_perturbation_fails_and_names_its_rule",
+        "test_any_single_leg_level_reason_or_offroad_time_perturbation_fails_and_names_its_rule",
+        "test_a_chosen_order_with_a_pair_no_road_or_retrace_joins_fails_naming_both_items",
     ),
     "tests/unit/bootstrap/test_settings.py": (
         "test_valid_settings_parse_to_their_values_and_unrelated_keys_are_ignored",

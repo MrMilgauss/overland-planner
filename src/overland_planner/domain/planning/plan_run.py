@@ -116,7 +116,7 @@ class PlanStop:
         stop = replace(cls.of(item, leg_km), leg_s=leg_s, leg_confidence=leg_confidence, leg_reason=leg_reason)
         if not isinstance(item, TrackItem):
             return stop
-        track_km, offroad_s = _offroad(item, offroad_speed)
+        track_km, offroad_s = offroad_of(item, offroad_speed)
         return replace(stop, track_km=track_km, offroad_s=offroad_s)
 
     @classmethod
@@ -124,7 +124,7 @@ class PlanStop:
         cls, track: TrackItem, offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED, retrace_sha256: str | None = None
     ) -> PlanStop:
         """The track driven back from its exit to its entry: off-road at the track's length, never a road leg."""
-        track_km, offroad_s = _offroad(track, offroad_speed)
+        track_km, offroad_s = offroad_of(track, offroad_speed)
         return cls(
             item_id=track.id,
             name=f"Retrace {track.name}",
@@ -190,8 +190,9 @@ def stored_length_km(track: TrackItem) -> float:
     return track.length_m / _METRES_PER_KM
 
 
-def _offroad(track: TrackItem, offroad_speed: OffroadSpeed) -> tuple[float, float]:
-    """The track's stored length and the time to drive it at the project's off-road speed (FR-4.6)."""
+def offroad_of(track: TrackItem, offroad_speed: OffroadSpeed) -> tuple[float, float]:
+    """The track's stored length and the time to drive it at the project's off-road speed (FR-4.6): the one definition
+    the stops are built with and the guard judges them by."""
     track_km = stored_length_km(track)
     return track_km, track_km / offroad_speed.kmh * _SECONDS_PER_HOUR
 

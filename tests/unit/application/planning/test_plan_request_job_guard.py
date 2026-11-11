@@ -508,3 +508,31 @@ def test_the_retrace_hash_is_the_reversed_list_serialised_afresh(points: list[Tr
 
     assert retrace == afresh
     assert (retrace == forward) == (points == points[::-1]), "only a palindrome hashes the same both ways"
+
+
+def test_a_solver_order_with_a_pair_no_road_or_retrace_joins_ends_as_a_failed_run_with_no_crash_and_one_solve() -> None:
+    # bypass: one hand-built trip. The cut must leave every item reachable by another way, which a generated trip does
+    # not promise; the guard's rule over generated orders is in test_invariant_guard.
+    home, there, further = (Coordinate(45.0 + i / 10, 7.0 + i / 10) for i in range(3))
+    snapshot = ProjectSnapshot(
+        "home",
+        "home",
+        (
+            PoiItem(id="home", project_id=PROJECT, name="Casa", location=home),
+            PoiItem(id="a", project_id=PROJECT, name="A", location=there),
+            PoiItem(id="b", project_id=PROJECT, name="B", location=further),
+        ),
+    )
+    leg_m = {pair: 10_000 for pair in permutations((home, there, further), 2)}
+    harness = _harness(
+        snapshot, leg_m, InMemoryFileStore(), TourFound(("home", "a", "b", "home")), frozenset({(there, further)})
+    )
+    before = harness.view()
+
+    stored = harness.run()
+
+    _assert_one_failed_run_only(harness, before, stored, "leg_consistency")
+    detail = str(harness.log.fields_of("invariant.violation")[0]["detail"])
+    assert "from a to b" in detail
+    assert isinstance(harness.job.solver, ScriptedTourSolver)
+    assert len(harness.job.solver.models) == 1, "the solver was asked once; the guard ends the run"
