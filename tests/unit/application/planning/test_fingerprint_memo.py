@@ -10,6 +10,10 @@ judged by the guard, a violation stores a Failed run that is never a memo source
 inherits its label and reproducible flag and stores its own run time, ADR-014 section 5, D74) x 2 = 6; 4 used (the
 third pins the settings the drawn sequences may not reach: road map, budget and solver identity, each on every example,
 D212).
+Mutants judged equivalent (07-12, slice 01b precedent): `MemoSource(..., number -> None, ...)` and `MemoSource(...,
+reproducible -> None, ...)` in `FingerprintMemo.source`: no caller reads either field (the job stores the source's id
+and inherits its flag from the source's label, `TourFound(order, not_fully_optimised or "budget")`; a run's detail reads
+the source's number from the source run itself), so neither can change what a port sees.
 """
 
 from __future__ import annotations

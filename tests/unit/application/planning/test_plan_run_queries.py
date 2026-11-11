@@ -8,6 +8,9 @@ lines composed from its stored facts, an unreachable run naming its report's ite
 source, the stored column for a run stored before 06-10; a project's Calculate notices follow its Included non-anchor
 items) x 2 = 6; 3 used, none changes anything.
 Every stale example holds both a current and a stale run, so both outcomes are checked each time (D212).
+Mutant judged equivalent (07-12, slice 01b precedent): `None if source_id is None else get(source_id)` -> always
+`get(source_id)` in `PlanRunQueries.get`: the repository answers `None` for a null id, as for any id it does not hold
+(the adapter's `id IS NULL` on the primary key matches no row), so the source is `None` either way.
 """
 
 from __future__ import annotations

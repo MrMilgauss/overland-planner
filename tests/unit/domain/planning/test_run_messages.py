@@ -79,7 +79,7 @@ def test_a_run_shows_its_run_time_its_label_its_source_and_a_timeout_names_the_f
     assert all("_" not in text for text in after["messages"]), "labels are words, never codes (D220 e)"
 
 
-@given(ms=MS)
+@given(ms=st.one_of(MS, st.integers(min_value=0, max_value=9_949)))  # the tenths below 10 s drawn as often as the rest
 @example(ms=2_400)
 @example(ms=41_000)
 @example(ms=161_000)

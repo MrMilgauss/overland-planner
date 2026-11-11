@@ -22,6 +22,23 @@ a Stop while solving ends the solve through its stop signal with the best so far
 behavior on every example (D212). Unreachable items (07-05): one more behavior (an Included item no order can connect
 fails the run before the solver is asked, naming it; otherwise the solver is asked) x 2 = 2; 1 property test used.
 The label texts are written here as the product shows them, not imported.
+Mutation carry-over (07-12): the solver's own figures show for an incumbent whose order names no tour of the model, and
+a solve that raises still has its streamed incumbents counted on the job's row (one more behavior x 2 = 2; 1 property
+test used); the unreachable and second-pass properties also see the job in `finalising` while the run is written, the
+stages timed, and the legs of a second Calculate all known.
+Mutants judged equivalent (07-12, slice 01b precedent), all in `plan_request_job.py`:
+- `_evidence_of` x4 (`points = () -> None`, the empty evidence's `sha256 -> None`, `0 -> None`, `0 -> 1`) as slice 02,
+  and `reversed_points_sha256(points) if retraced or True`: the guard reads `reversed_sha256` on a retrace row only and
+  `_retrace_hashes` keeps the retraced tracks only, so a hash for another track is never read.
+- `_finish_found`: `stop.kind == "retrace"` -> `!=` for the tracks whose reversed hash is read: a retraced track's own
+  `track` stop carries the same item id, so the set still holds every retraced track; the extra hashes are never read.
+- `_resolve_legs`: `first_found = LegsFound(0, 0, 0)` -> `None` or any other counts (x7): `LegResolver.resolve` always
+  reports once before it asks anything, so the first pass's counts replace the initial value before a second pass.
+- `_added`: `total -> None` and `first.total - second.total`: `_note_legs` notes only `new` and `cached`.
+- `_end_unreachable`: `check_unreachable(...) -> None` and the 8 mutants of its `_store_violation(...)` call: the guard
+  re-derives the claim from the same leg table `unreachable_item_ids` read (ADR-009 Amendment 1), so with the real
+  domain it always confirms it and the violation branch cannot be reached through a port; it stays as the independent
+  check the ADR asks for.
 """
 
 from __future__ import annotations
@@ -249,7 +266,11 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
             job_log,
             solving.incumbent,
             ended.message,
-            (handed.feasibility_s - job_started_s, handed.optimisation_s - job_started_s),
+            (
+                handed.feasibility_s - job_started_s,
+                handed.optimisation_s - job_started_s,
+                handed.remaining_s(found=False) + clock.monotonic() - job_started_s,  # read on the job's clock
+            ),
             None if answer is None else (answer.state, answer.stoppable),
         ),
         UNIVERSE,
@@ -258,7 +279,7 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
             "job_log": gained(ending.row),
             "poll.incumbent": set_to(shown_while_solving),
             "poll.message": set_to(ending.message),
-            "solve.deadlines": set_to((float(feasibility), float(feasibility + longer))),
+            "solve.deadlines": set_to((float(feasibility), float(feasibility + longer), float(feasibility))),
             "stop.answer": set_to(("solving", True) if ending.stopped else None),
         },
         strict=True,
@@ -374,6 +395,74 @@ def test_the_incumbent_the_line_and_the_row_show_the_plans_road_metres_and_count
     )
 
 
+STREAMED_UNIVERSE = {"plan_runs", "poll.incumbent", "job_log"}
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 07-12): slow-properties job
+@settings(deadline=None)
+@given(trip=trips(), data=st.data(), raises=st.booleans())
+def test_an_incumbent_naming_no_tour_shows_as_streamed_and_a_solve_that_raises_still_counts_its_incumbents(
+    trip: Trip, data: st.DataObject, raises: bool
+) -> None:
+    def an_incumbent(named: bool) -> Incumbent:
+        order = (trip.start.id, *data.draw(st.permutations([item.id for item in trip.items])), trip.end.id)
+        if not named:  # an order the model has no tour for: the solver's own figures are all there is
+            order = (trip.start.id, NOT_AN_ITEM, trip.end.id)
+        return Incumbent(
+            order=order,
+            objective=data.draw(st.integers(1, 10**7)),
+            unconfirmed_legs=data.draw(st.integers(0, 5)),
+            retraces=data.draw(st.integers(0, 5)),
+        )
+
+    incumbents = tuple(an_incumbent(named) for named in data.draw(st.lists(st.booleans(), min_size=1, max_size=3)))
+    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    trip.seed_canonical_files(files)
+    planning.add_project(PROJECT, trip.snapshot)
+    job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
+    ending: BaseException | TourOutcome = RuntimeError("the solver child was lost") if raises else TourNoRoute()
+    solver = ScriptedTourSolver(
+        ending, gate=Gate(held=True), incumbents=incumbents, clock=clock, incumbent_every_s=EVERY_S
+    )
+    work = PlanRequestJob(
+        planning.unit_of_work, LegResolver(RecordingRoadMap(trip.leg_m)), solver, BUDGET, clock, log, files
+    )
+    registry = PlanJobRegistry(clock, work, log, job_log=job_log)
+
+    def view(poll: Any = None) -> dict[str, Any]:
+        return {
+            "plan_runs": tuple((run.status, run.failure_reason) for run in planning.runs),
+            "poll.incumbent": poll,
+            "job_log": tuple((row.fields["terminal_state"], row.fields["incumbents"]) for row in job_log.rows),
+        }
+
+    before = view()
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    assert solver.gate.reached.wait(30.0), "the solve was never asked"
+    solving = known_job(registry, job_id)
+    solver.gate.release()
+    job_when_ended(registry, job_id)
+
+    last = incumbents[-1]
+    if last.order[1:-1] == (NOT_AN_ITEM,):
+        shown: tuple[float, ...] = (last.unconfirmed_legs, last.retraces, last.objective)
+    else:
+        shown = (0, 0, _described(trip, last.order, set(), set())[0])  # every road Confirmed, none missing
+    expected_poll = dict(zip(("unconfirmed_legs", "retraces", "objective"), shown, strict=True))
+    assert_state_delta(
+        before,
+        view(solving.incumbent),
+        STREAMED_UNIVERSE,
+        {
+            "plan_runs": set_to(() if raises else (("failed", "no_valid_route_found"),)),
+            "poll.incumbent": set_to({**expected_poll, "found_at_s": EVERY_S * len(incumbents)}),
+            "job_log": gained(("failed" if raises else "done", len(incumbents))),
+        },
+        strict=True,
+    )
+
+
 def _counted_from(run: NewPlanRun) -> tuple[int, int, int]:
     """Road metres, Unconfirmed legs and retraces as the stored stops and totals show them."""
     assert run.totals is not None
@@ -383,7 +472,7 @@ def _counted_from(run: NewPlanRun) -> tuple[int, int, int]:
 
 
 # ------------------------------------------------------------ the second pass of the legs (07-03, ADR-017 section 2)
-LEGS_UNIVERSE = {"road_map.asked", "job_log.second_pass_pairs", "job_log.legs"}
+LEGS_UNIVERSE = {"road_map.asked", "job_log.second_pass_pairs", "job_log.legs", "job_log.legs_again"}
 RoadPairOfPoints = tuple[Coordinate, Coordinate]
 
 
@@ -399,13 +488,18 @@ def _arcs_of(trip: Trip) -> list[tuple[CatalogItem, CatalogItem]]:
 def _job_view(asked: Counter[RoadPairOfPoints], job_log: InMemoryPlanJobLog, *, ended: bool = False) -> dict[str, Any]:
     fields = job_log.rows[0].fields if ended else {}
     legs = (fields.get("legs_new"), fields.get("legs_cached"), fields.get("legs_total")) if ended else None
+    again = job_log.rows[1].fields if len(job_log.rows) > 1 else {}
     return {
         "road_map.asked": Counter(asked),
         "job_log.second_pass_pairs": fields.get("second_pass_pairs"),
         "job_log.legs": legs,
+        "job_log.legs_again": (again.get("legs_new"), again.get("legs_cached"), again.get("legs_total"))
+        if again
+        else None,
     }
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 07-12): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data())
 def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_road_and_the_counters_add_up(
@@ -424,6 +518,9 @@ def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_
     job_id = registry.start(PROJECT)
     assert job_id is not None
     job_when_ended(registry, job_id)  # how it ends is the model's (07-04); the legs are asked before that
+    again = registry.start(PROJECT)  # the same project again: the leg resolver knows every leg now (06-09)
+    assert again is not None
+    job_when_ended(registry, again)
 
     first = set(SolverModelBuilder(trip.snapshot).required_pairs())
     second: set[RoadPairOfPoints] = set()
@@ -444,13 +541,23 @@ def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_
             # 0 when the run reached the solve; an unreachable run never does and notes the pairs only if it asked some
             "job_log.second_pass_pairs": set_to(len(fresh) or (None if _items_cut_off(trip, no_road) else 0)),
             "job_log.legs": set_to((new, len(every) - new, len(every))),
+            "job_log.legs_again": set_to((0, len(every), len(every))),  # both passes' legs known, none asked
         },
         strict=True,
     )
 
 
 # ------------------------------------------------- an item no order can connect fails the run first (07-05, FR-8.2)
-UNREACHABLE_UNIVERSE = {"plan_runs", "projects", "items", "solver_calls", "job.message"}
+UNREACHABLE_UNIVERSE = {
+    "plan_runs",
+    "projects",
+    "items",
+    "solver_calls",
+    "job.message",
+    "job.while_storing",
+    "job.stages",
+}
+STAGES_BEFORE_THE_SOLVE = ("guard_persist", "matrix", "reach_model", "snapshot")
 
 
 def _item_failure(number: int, name: str) -> str:
@@ -489,13 +596,14 @@ def _items_cut_off(trip: Trip, no_road: set[RoadPairOfPoints]) -> list[str]:
     return [nodes[node].name for node in range(1, last) if not (ahead[0][node] and ahead[node][last])]
 
 
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 07-12): slow-properties job
 @settings(deadline=None)
 @given(trip=trips(), data=st.data())
 def test_an_item_no_order_can_connect_fails_the_run_naming_it_before_the_solver_is_asked(
     trip: Trip, data: st.DataObject
 ) -> None:
     no_road = data.draw(st.sets(st.sampled_from(POINT_PAIRS)), label="pairs with no road")
-    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    planning, files, clock = InMemoryPlanning(storing=Gate(held=True)), InMemoryFileStore(), FakeClock()
     trip.seed_canonical_files(files)
     planning.add_project(PROJECT, trip.snapshot)
     job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
@@ -511,13 +619,17 @@ def test_an_item_no_order_can_connect_fails_the_run_naming_it_before_the_solver_
     )
     registry = PlanJobRegistry(clock, work, log, job_log=job_log)
 
-    def view(message: str | None) -> dict[str, Any]:
+    def view(
+        message: str | None, while_storing: tuple[Any, ...] | None = None, stages: tuple[str, ...] | None = None
+    ) -> dict[str, Any]:
         return {
             "plan_runs": tuple(_row(run) for run in planning.runs),
             "projects": (planning.snapshots[PROJECT], planning.stamps[PROJECT]),
             "items": planning.snapshots[PROJECT].items,
             "solver_calls": len(solver.models),
             "job.message": message,
+            "job.while_storing": while_storing,
+            "job.stages": stages,
         }
 
     def _row(run: NewPlanRun) -> tuple[Any, ...]:
@@ -531,19 +643,31 @@ def test_an_item_no_order_can_connect_fails_the_run_naming_it_before_the_solver_
     before = view(None)
     job_id = registry.start(PROJECT)
     assert job_id is not None
+    assert planning.storing.reached.wait(30.0), "the run was never stored"
+    storing = known_job(registry, job_id)
+    answer = registry.stop(job_id)  # while the run is written a Stop changes nothing (D136)
+    assert answer is not None
+    planning.storing.release()
     ended = job_when_ended(registry, job_id)
 
     cut_off = _items_cut_off(trip, no_road)
     lines = tuple(_item_failure(1, name) for name in cut_off)
     expected_run = (1, "unreachable", "unreachable", tuple(cut_off), lines) if cut_off else (1, "reached the solver")
+    stages = STAGES_BEFORE_THE_SOLVE if cut_off else tuple(sorted((*STAGES_BEFORE_THE_SOLVE, "solve")))
     assert_state_delta(
         before,
-        view(ended.message),
+        view(
+            ended.message,
+            (storing.state, storing.stoppable, answer.state, answer.stoppable),
+            tuple(sorted(ended.stage_ms or {})),
+        ),
         UNREACHABLE_UNIVERSE,
         {
             "plan_runs": gained(expected_run),
             "solver_calls": set_to(0 if cut_off else 1),
             "job.message": set_to("; ".join(lines) if cut_off else None),
+            "job.while_storing": set_to(("finalising", False, "finalising", False)),
+            "job.stages": set_to(stages),  # the guard and the store are timed as such, on either path
         },
         strict=True,
     )

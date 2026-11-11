@@ -982,6 +982,10 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
     "tests/unit/application/planning/test_plan_request_job_outcomes.py": (
         "test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving",
         "test_the_incumbent_the_line_and_the_row_show_the_plans_road_metres_and_counts_not_the_solvers_cost",
+        # 07-12: about 3 s each at profile ci on the Mac
+        "test_an_incumbent_naming_no_tour_shows_as_streamed_and_a_solve_that_raises_still_counts_its_incumbents",
+        "test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_road_and_the_counters_add_up",
+        "test_an_item_no_order_can_connect_fails_the_run_naming_it_before_the_solver_is_asked",
     ),
     "tests/unit/application/routing/test_leg_resolver.py": (
         "test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_asked_after_the_held_ones_are_reported",
