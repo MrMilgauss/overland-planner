@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, road_between
+from overland_planner.domain.planning.retrace_rule import second_pass_pair
 from overland_planner.domain.routing.road_leg import LegTable, RoadPair
 
 
@@ -31,6 +32,15 @@ class SolverModelBuilder:
     def required_pairs(self) -> tuple[RoadPair, ...]:
         """The road legs the model needs, one per arc."""
         return tuple(self._pair(origin, destination) for origin, destination in self._arcs())
+
+    def retrace_pairs(self, first_pass: LegTable) -> tuple[RoadPair, ...]:
+        """The second pass (ADR-017 section 2): entry(t) -> entry(j) for each arc t -> j whose first pair has no road,
+        when t may be retraced. Each pair once, in arc order."""
+        asked = (
+            second_pass_pair(self._nodes[origin], self._nodes[destination], first_pass)
+            for origin, destination in self._arcs()
+        )
+        return tuple(dict.fromkeys(pair for pair in asked if pair is not None))
 
     def build(self, legs: LegTable) -> TourModel:
         size = len(self._nodes)

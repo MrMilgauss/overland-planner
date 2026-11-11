@@ -20,6 +20,7 @@ behavior on every example (D212). The label texts are written here as the produc
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +40,9 @@ from overland_planner.application.ports.tour_solver import (
     TourTimedOut,
 )
 from overland_planner.application.routing.facade import LegResolver
+from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -52,7 +56,7 @@ from tests.unit.application.planning.planning_doubles import (
     known_job,
 )
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
-from tests.unit.domain.planning.trips import PROJECT, Trip, trips
+from tests.unit.domain.planning.trips import POINT_PAIRS, PROJECT, Trip, left_at, reached_at, trips
 
 UNIVERSE = {"plan_runs", "job_log", "poll.incumbent", "poll.message", "solve.deadlines", "stop.answer"}
 BUDGET = 500
@@ -246,6 +250,72 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
             "poll.message": set_to(ending.message),
             "solve.deadlines": set_to((float(feasibility), float(feasibility + longer))),
             "stop.answer": set_to(("solving", True) if ending.stopped else None),
+        },
+        strict=True,
+    )
+
+
+# ------------------------------------------------------------ the second pass of the legs (07-03, ADR-017 section 2)
+LEGS_UNIVERSE = {"road_map.asked", "job_log.second_pass_pairs", "job_log.legs"}
+RoadPairOfPoints = tuple[Coordinate, Coordinate]
+
+
+def _arcs_of(trip: Trip) -> list[tuple[CatalogItem, CatalogItem]]:
+    """Who may be driven after whom, worked out from the brief: Start to each item, each item to every other and to
+    End; with no item, Start to End."""
+    if not trip.items:
+        return [(trip.start, trip.end)]
+    sources, targets = [trip.start, *trip.items], [*trip.items, trip.end]
+    return [(a, b) for a in sources for b in targets if a is not b]
+
+
+def _job_view(asked: Counter[RoadPairOfPoints], job_log: InMemoryPlanJobLog, *, ended: bool = False) -> dict[str, Any]:
+    fields = job_log.rows[0].fields if ended else {}
+    legs = (fields.get("legs_new"), fields.get("legs_cached"), fields.get("legs_total")) if ended else None
+    return {
+        "road_map.asked": Counter(asked),
+        "job_log.second_pass_pairs": fields.get("second_pass_pairs"),
+        "job_log.legs": legs,
+    }
+
+
+@settings(deadline=None)
+@given(trip=trips(), data=st.data())
+def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_road_and_the_counters_add_up(
+    trip: Trip, data: st.DataObject
+) -> None:
+    no_road = data.draw(st.sets(st.sampled_from(POINT_PAIRS)), label="pairs with no road")
+    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    trip.seed_canonical_files(files)
+    planning.add_project(PROJECT, trip.snapshot)
+    job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
+    road_map = RecordingRoadMap(trip.leg_m, no_road=no_road)
+    work = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), ScriptedTourSolver(), BUDGET, clock, log, files)
+    registry = PlanJobRegistry(clock, work, log, job_log=job_log)
+    before = _job_view(road_map.asked, job_log)
+
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    job_when_ended(registry, job_id)  # how it ends is the model's (07-04); the legs are asked before that
+
+    first = set(SolverModelBuilder(trip.snapshot).required_pairs())
+    second: set[RoadPairOfPoints] = set()
+    for previous, successor in _arcs_of(trip):
+        leaving = (left_at(previous), reached_at(successor))
+        if leaving in no_road and isinstance(previous, TrackItem) and previous.entry != previous.exit:
+            second.add((previous.entry, reached_at(successor)))
+    fresh = second - first
+    every = first | fresh
+    asked = Counter({pair: 1 for pair in every if pair[0] != pair[1]})
+    new = len(asked)
+    assert_state_delta(
+        before,
+        _job_view(road_map.asked, job_log, ended=True),
+        LEGS_UNIVERSE,
+        {
+            "road_map.asked": set_to(asked),
+            "job_log.second_pass_pairs": set_to(len(fresh) or None),  # noted only when a second pass was asked
+            "job_log.legs": set_to((new, len(every) - new, len(every))),
         },
         strict=True,
     )

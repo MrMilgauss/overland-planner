@@ -16,7 +16,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.routing.road_leg import LegTable, RoadLeg, RoadMeasure, RoadPair
+from overland_planner.domain.routing.road_leg import LegTable, NoRoadError, RoadLeg, RoadMeasure, RoadPair
 from tests.common.state_delta import assert_state_delta, set_to
 
 TORINO = Coordinate(45.0703, 7.6869)
@@ -115,5 +115,106 @@ def test_a_measure_is_confirmed_by_default_and_an_unconfirmed_one_always_says_wh
         {"measure.outcome": _measured(level, reason)},
         {"measure.outcome"},
         {"measure.outcome": set_to(expected)},
+        strict=True,
+    )
+
+
+# ----------------------------------------------------------------------- level, reason and no road (07-03, ADR-017)
+KNOWN_UNIVERSE = {"legs.answers", "legs.identical_points", "legs.unasked", "legs.no_road_measure"}
+ANSWERS = ("confirmed", "unconfirmed", "no_road")
+
+
+@st.composite
+def answered_pairs(draw: st.DrawFn) -> tuple[list[Coordinate], dict[RoadPair, str]]:
+    """Every ordered pair of a few points, each answered confirmed, unconfirmed (with a reason) or with no road."""
+    points = draw(st.lists(alpine_points, min_size=2, max_size=4, unique=True))
+    pairs = list(permutations(points, 2))
+    return points, dict(zip(pairs, draw(st.lists(st.sampled_from(ANSWERS), min_size=len(pairs))), strict=False))
+
+
+def _table_of(answers: dict[RoadPair, str]) -> LegTable:
+    legs = [
+        RoadLeg(*pair, 1200, 90, *(("confirmed", None) if kind == "confirmed" else ("unconfirmed", f"why {i}")))
+        for i, (pair, kind) in enumerate(answers.items())
+        if kind != "no_road"
+    ]
+    return LegTable(legs, no_road=[pair for pair, kind in answers.items() if kind == "no_road"])
+
+
+def _known_view(table: LegTable | None, points: list[Coordinate], answers: dict[RoadPair, str]) -> dict[str, Any]:
+    if table is None:
+        return {slot: None for slot in KNOWN_UNIVERSE}
+    far = Coordinate(10.0, 10.0)  # a point nobody asked about
+    return {
+        "legs.answers": {
+            pair: (table.level(*pair), table.reason(*pair), table.connected(*pair))
+            if kind != "no_road"
+            else (None, None, table.connected(*pair))
+            for pair, kind in answers.items()
+        },
+        "legs.identical_points": {p: (table.level(p, p), table.reason(p, p), table.connected(p, p)) for p in points},
+        "legs.unasked": _raises(KeyError, lambda: table.connected(points[0], far)),
+        "legs.no_road_measure": {
+            pair: _raises(NoRoadError, lambda pair=pair: table.distance_m(*pair))
+            for pair, kind in answers.items()
+            if kind == "no_road"
+        },
+    }
+
+
+def _raises(error: type[Exception], ask: Any) -> bool:
+    try:
+        ask()
+    except error:
+        return True
+    return False
+
+
+@given(case=answered_pairs())
+def test_a_table_answers_each_pairs_level_and_reason_and_whether_a_road_connects_it_and_tells_no_road_from_unasked(
+    case: tuple[list[Coordinate], dict[RoadPair, str]],
+) -> None:
+    points, answers = case
+    before = _known_view(None, points, answers)
+
+    table = _table_of(answers)
+
+    reasons = {pair: f"why {i}" for i, pair in enumerate(answers)}
+    assert_state_delta(
+        before,
+        _known_view(table, points, answers),
+        KNOWN_UNIVERSE,
+        {
+            "legs.answers": set_to(
+                {
+                    pair: (None, None, False)
+                    if kind == "no_road"
+                    else (kind, None if kind == "confirmed" else reasons[pair], True)
+                    for pair, kind in answers.items()
+                }
+            ),
+            "legs.identical_points": set_to(dict.fromkeys(points, ("confirmed", None, True))),
+            "legs.unasked": set_to(True),
+            "legs.no_road_measure": set_to({pair: True for pair, kind in answers.items() if kind == "no_road"}),
+        },
+        strict=True,
+    )
+
+
+@given(left=answered_pairs(), right=answered_pairs())
+def test_two_tables_merge_into_one_that_answers_what_either_did_the_later_one_first(
+    left: tuple[list[Coordinate], dict[RoadPair, str]], right: tuple[list[Coordinate], dict[RoadPair, str]]
+) -> None:
+    (_, asked_left), (_, asked_right) = left, right
+    before = {"merged.connected": None}
+
+    merged = _table_of(asked_left).merged_with(_table_of(asked_right))
+
+    expected = {pair: kind != "no_road" for pair, kind in {**asked_left, **asked_right}.items()}
+    assert_state_delta(
+        before,
+        {"merged.connected": {pair: merged.connected(*pair) for pair in expected}},
+        {"merged.connected"},
+        {"merged.connected": set_to(expected)},
         strict=True,
     )

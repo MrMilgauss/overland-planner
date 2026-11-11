@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from types import TracebackType
@@ -248,6 +248,7 @@ class RecordingRoadMap:
     """Road legs from a table; `asked` counts every pair the road map was asked for.
 
     The road time of a leg is `leg_s[pair]` when given, else the distance driven at about 60 km/h (at least 1 s).
+    A pair in `no_road` has no road at any level: its cell is `None`, as the port says.
     """
 
     provider_id = "road-map-double"
@@ -258,21 +259,27 @@ class RecordingRoadMap:
         *,
         leg_s: Mapping[tuple[Coordinate, Coordinate], int] | None = None,
         gate: Gate | None = None,
+        no_road: Collection[tuple[Coordinate, Coordinate]] = (),
     ) -> None:
         self._leg_m = leg_m
         self._leg_s = leg_s
+        self._no_road = frozenset(no_road)
         self.gate = gate or Gate()
         self.asked: Counter[tuple[Coordinate, Coordinate]] = Counter()
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
+    ) -> Sequence[Sequence[RoadMeasure | None]]:
         self.gate.passing()
         self.asked.update((source, target) for source in sources for target in targets)
         return [[self._measure(source, target) for target in targets] for source in sources]
 
-    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure:
+    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure | None:
+        if (source, target) in self._no_road:
+            return None
         metres = self._leg_m[source, target]
         seconds = max(1, metres * 3 // 50) if self._leg_s is None else self._leg_s[source, target]
         return RoadMeasure(metres, seconds)

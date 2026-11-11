@@ -30,7 +30,9 @@ ADR-015 DV-2, K5): `snapshot`, `matrix` (the road legs), `reach_model` (the mode
 and `guard_persist` (guard, assemble, store). Truncating keeps their sum within the job's elapsed time.
 
 The road legs come from the leg resolver, which keeps those found for the process's life (06-09): the job notes
-`legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. A job its registry ended
+`legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. After the first pass it asks
+the second pass, the retrace pairs of the arcs whose first pair has no road (ADR-017 section 2), and notes how many
+they were (`second_pass_pairs`, only when there was one); they join `legs_total`. A job its registry ended
 during the look-up raises that ending at its next fact or state, so a late road-map answer stores no run.
 
 Every run stores its `run_time_ms`, from the start of the job's work to the run stored, by the `Clock` port's monotonic
@@ -204,10 +206,27 @@ class PlanRequestJob:
             return _PlannedProject(project_id, snapshot, stamp, ignore_memo, work_started_s)
 
     def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
-        """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09)."""
-        pairs = SolverModelBuilder(snapshot).required_pairs()
-        legs = self.legs.resolve(pairs, lambda found: _note_legs(progress, found))
-        progress.note(legs_total=len(set(pairs)), provider_id=self.legs.provider_id)
+        """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09). The second
+        pass asks the retrace pairs once the first has come back (ADR-017 section 2); its pairs join the job's total
+        and its counts the first pass's, so that `new + cached = total` at the end."""
+        builder = SolverModelBuilder(snapshot)
+        pairs = builder.required_pairs()
+        first_found = LegsFound(0, 0, 0)
+
+        def first_pass_heard(found: LegsFound) -> None:
+            nonlocal first_found
+            first_found = found
+            _note_legs(progress, found)
+
+        legs = self.legs.resolve(pairs, first_pass_heard)
+        known = set(pairs)
+        second = tuple(pair for pair in builder.retrace_pairs(legs) if pair not in known)
+        if second:
+            legs = legs.merged_with(
+                self.legs.resolve(second, lambda found: _note_legs(progress, _added(first_found, found)))
+            )
+            progress.note(second_pass_pairs=len(second))
+        progress.note(legs_total=len(known) + len(second), provider_id=self.legs.provider_id)
         return legs
 
     def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, TourFound | None]:
@@ -326,6 +345,10 @@ class _Stages:
         yield
         self._ms[stage] = int((self._clock.monotonic() - began_s) * _MILLISECONDS_PER_SECOND)
         self._progress.note(stage_ms=dict(self._ms))
+
+
+def _added(first: LegsFound, second: LegsFound) -> LegsFound:
+    return LegsFound(first.new + second.new, first.cached + second.cached, first.total + second.total)
 
 
 def _note_legs(progress: PlanJobProgress, found: LegsFound) -> None:

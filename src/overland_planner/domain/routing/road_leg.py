@@ -5,7 +5,9 @@ is driven between identical points, so that leg is 0 m and 0 s and needs no row.
 programming error and raises `KeyError`.
 
 A road map answers each pair at a level (brief section 6): `confirmed`, or `unconfirmed` with the reason it is not; a
-pair with no road at any level has no measure at all (`None` in the port's matrix).
+pair with no road at any level has no measure at all (`None` in the port's matrix). The table keeps that answer apart
+from a pair nobody asked: the measure of a pair with no road raises `NoRoadError`, a pair nobody asked `KeyError`;
+`connected` says whether any road joins a pair (identical points do: 0 m, nothing to drive).
 """
 
 from __future__ import annotations
@@ -41,17 +43,43 @@ class RoadMeasure:
 NOTHING_TO_DRIVE = RoadMeasure(distance_m=0, duration_s=0)
 
 
+class NoRoadError(LookupError):
+    """The pair was asked and the road map has no road for it at any level, so it has no distance or time."""
+
+
 @dataclass(frozen=True)
 class RoadLeg:
     origin: Coordinate
     destination: Coordinate
     distance_m: int
     duration_s: int
+    level: RoadLevel = "confirmed"
+    reason: str | None = None
 
 
 class LegTable:
-    def __init__(self, legs: Iterable[RoadLeg]) -> None:
-        self._measures = {(leg.origin, leg.destination): RoadMeasure(leg.distance_m, leg.duration_s) for leg in legs}
+    def __init__(self, legs: Iterable[RoadLeg], no_road: Iterable[RoadPair] = ()) -> None:
+        self._measures: dict[RoadPair, RoadMeasure | None] = {
+            (leg.origin, leg.destination): RoadMeasure(leg.distance_m, leg.duration_s, leg.level, leg.reason)
+            for leg in legs
+        }
+        self._measures.update(dict.fromkeys(no_road))
+
+    def level(self, origin: Coordinate, destination: Coordinate) -> RoadLevel:
+        return self._measure(origin, destination).level
+
+    def reason(self, origin: Coordinate, destination: Coordinate) -> str | None:
+        return self._measure(origin, destination).reason
+
+    def connected(self, origin: Coordinate, destination: Coordinate) -> bool:
+        """Whether a road at any level joins the pair; `KeyError` for a pair nobody asked."""
+        return origin == destination or self._measures[origin, destination] is not None
+
+    def merged_with(self, later: LegTable) -> LegTable:
+        """A table that answers what either did; for a pair both answered, the later table's answer."""
+        merged = LegTable([])
+        merged._measures = {**self._measures, **later._measures}
+        return merged
 
     def distance_m(self, origin: Coordinate, destination: Coordinate) -> int:
         return self._measure(origin, destination).distance_m
@@ -69,4 +97,7 @@ class LegTable:
     def _measure(self, origin: Coordinate, destination: Coordinate) -> RoadMeasure:
         if origin == destination:
             return NOTHING_TO_DRIVE
-        return self._measures[origin, destination]
+        measure = self._measures[origin, destination]
+        if measure is None:
+            raise NoRoadError(f"the road map has no road from {origin} to {destination} at any level")
+        return measure

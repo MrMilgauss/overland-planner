@@ -15,7 +15,7 @@ per road map for the resolver's life and reported, the held ones before any call
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 import pytest
@@ -212,8 +212,9 @@ ROAD_MAPS = ("road-map-a", "road-map-b")  # two road maps: legs are held per pro
 class _RoadMapOfManyNames(RecordingRoadMap):
     """A recording road map whose provider_id the test sets; `events` lists its calls and the resolver's reports."""
 
-    def __init__(self, trip: Trip) -> None:
-        super().__init__(trip.leg_m, leg_s={pair: metres // 7 + 11 for pair, metres in trip.leg_m.items()})
+    def __init__(self, trip: Trip, no_road: Collection[RoadPair] = ()) -> None:
+        leg_s = {pair: metres // 7 + 11 for pair, metres in trip.leg_m.items()}
+        super().__init__(trip.leg_m, leg_s=leg_s, no_road=no_road)
         self.provider_id = ROAD_MAPS[0]
         self.events: list[tuple[Any, ...]] = []
 
@@ -283,3 +284,43 @@ def test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_aske
 
 def pair_s(trip: Trip, pair: RoadPair) -> int:
     return trip.leg_m[pair] // 7 + 11
+
+
+# ------------------------------------------------------------------- pairs with no road (07-03, ADR-017 section 2)
+NO_ROAD_UNIVERSE = {"road_map.asked", "plan.connected", "road_map.calls_and_reports"}
+
+
+@given(trip=trips(), sequence=requests, no_road=st.sets(st.sampled_from(POINT_PAIRS)))
+def test_a_pair_with_no_road_is_known_as_such_asked_once_per_road_map_and_counted_like_any_leg(
+    trip: Trip, sequence: list[tuple[str, list[RoadPair]]], no_road: set[RoadPair]
+) -> None:
+    road_map = _RoadMapOfManyNames(trip, no_road)
+    resolver = LegResolver(road_map)
+    held: dict[str, set[RoadPair]] = {name: set() for name in ROAD_MAPS}
+    for provider_id, pairs in sequence:
+        road_map.provider_id = provider_id
+        road_map.events.clear()
+        before = {"road_map.asked": Counter(road_map.asked), "plan.connected": {}, "road_map.calls_and_reports": []}
+
+        table = resolver.resolve(pairs, road_map.reported)
+
+        expected_events = _expected_calls_and_reports(pairs, held[provider_id])
+        newly_asked = [pair for event in expected_events if event[0] == "asked" for pair in event[1]]
+        *_, (_, new, cached, total) = [event for event in road_map.events if event[0] == "found"]
+        assert new + cached == total == len(set(pairs)), "the legs counters add up at the end"
+        assert_state_delta(
+            before,
+            {
+                "road_map.asked": Counter(road_map.asked),
+                "plan.connected": {pair: table.connected(*pair) for pair in pairs},
+                "road_map.calls_and_reports": list(road_map.events),
+            },
+            NO_ROAD_UNIVERSE,
+            {
+                "road_map.asked": lambda old, new, asked=Counter(newly_asked): new - old == asked and old <= new,
+                "plan.connected": set_to({pair: pair[0] == pair[1] or pair not in no_road for pair in pairs}),
+                "road_map.calls_and_reports": set_to(expected_events),
+            },
+            strict=True,
+        )
+        held[provider_id].update(newly_asked)

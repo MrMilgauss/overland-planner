@@ -46,6 +46,7 @@ def production_model(kind: str) -> TourModel:
     legs = []
     for origin, destination in builder.required_pairs():
         ((measure,),) = road_map.matrix([origin], [destination])
+        assert measure is not None, "the pinned instances have a road for every required pair"
         legs.append(RoadLeg(origin, destination, measure.distance_m, measure.duration_s))
     return builder.build(LegTable(legs))
 

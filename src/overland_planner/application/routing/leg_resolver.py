@@ -5,12 +5,13 @@ it does not hold yet: each distinct pair once, one origin per road-map call with
 (L5), so that no pair outside the request is asked, and hands on each pair's distance and road time. Identical points
 need no road map, because nothing is driven between them (`LegTable` answers 0 m, 0 s).
 
-The legs found are kept in memory for the resolver's life, which is the planner process's (06-09): per provider_id
-and pair, safe across the jobs' threads, and never locked while the road map is asked. The persistent `leg_cache`
-table is slice 05's; until then a restart forgets them (a recorded deviation from ADR-015). A request reports the legs
-it already holds before it asks anything (`cached`, identical points included), and the legs found after every
-road-map call (`new`); at the end `new + cached = total`, its distinct pairs. A leg answered is kept even when the
-progress that hears of it ends the request.
+A pair the road map answers with no road at any level is kept as such: it is never asked again, and counts as found
+like any other leg. The legs found are kept in memory for the resolver's life, which is the planner process's (06-09):
+per provider_id and pair, safe across the jobs' threads, and never locked while the road map is asked. The
+persistent `leg_cache` table is slice 05's; until then a restart forgets them (a recorded deviation from ADR-015). A
+request reports the legs it already holds before it asks anything (`cached`, identical points included), and the
+legs found after every road-map call (`new`); at the end `new + cached = total`, its distinct pairs. A leg answered
+is kept even when the progress that hears of it ends the request.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ def _unheard(_: LegsFound) -> None:
 class LegResolver:
     def __init__(self, provider: RoutingProvider) -> None:
         self._provider = provider
-        self._known: dict[tuple[str, RoadPair], RoadMeasure] = {}
+        self._known: dict[tuple[str, RoadPair], RoadMeasure | None] = {}
         self._lock = threading.Lock()
 
     @property
@@ -61,30 +62,34 @@ class LegResolver:
             held.update(answered)
             found = LegsFound(found.new + len(answered), found.cached, found.total)
             progress(found)
-        return LegTable(RoadLeg(*pair, measure.distance_m, measure.duration_s) for pair, measure in held.items())
+        return _table_of(held)
 
-    def _held(self, provider_id: str, roads: Iterable[RoadPair]) -> dict[RoadPair, RoadMeasure]:
+    def _held(self, provider_id: str, roads: Iterable[RoadPair]) -> dict[RoadPair, RoadMeasure | None]:
         with self._lock:
             return {pair: self._known[provider_id, pair] for pair in roads if (provider_id, pair) in self._known}
 
-    def _ask(self, provider_id: str, origin: Coordinate, targets: list[Coordinate]) -> dict[RoadPair, RoadMeasure]:
+    def _ask(
+        self, provider_id: str, origin: Coordinate, targets: list[Coordinate]
+    ) -> dict[RoadPair, RoadMeasure | None]:
         (row,) = self._provider.matrix([origin], targets)
-        answered = {(origin, target): _road(measure) for target, measure in zip(targets, row, strict=True)}
+        answered = {(origin, target): measure for target, measure in zip(targets, row, strict=True)}
         with self._lock:
             self._known.update({(provider_id, pair): measure for pair, measure in answered.items()})
         return answered
 
 
-def _road(measure: RoadMeasure | None) -> RoadMeasure:
-    if measure is None:
-        raise LookupError(
-            "the road map has no road at any level for a pair; slice 03b's resolver does not take that yet"
-        )
-    return measure
+def _table_of(held: Mapping[RoadPair, RoadMeasure | None]) -> LegTable:
+    """A pair answered with no road stays in the table as such, apart from a pair nobody asked."""
+    legs = (
+        RoadLeg(*pair, measure.distance_m, measure.duration_s, measure.level, measure.reason)
+        for pair, measure in held.items()
+        if measure is not None
+    )
+    return LegTable(legs, no_road=[pair for pair, measure in held.items() if measure is None])
 
 
 def _missing_by_origin(
-    roads: Iterable[RoadPair], held: Mapping[RoadPair, RoadMeasure]
+    roads: Iterable[RoadPair], held: Mapping[RoadPair, RoadMeasure | None]
 ) -> dict[Coordinate, list[Coordinate]]:
     """The road pairs not held, one entry per origin with its targets in request order (one road-map call each)."""
     targets_by_origin: dict[Coordinate, list[Coordinate]] = {}
