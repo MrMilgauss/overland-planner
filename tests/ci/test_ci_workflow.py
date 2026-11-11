@@ -128,10 +128,10 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     pytest_step = _main_pytest(job)
 
     # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12),
-    # slice 03 (step 06-13).
+    # slice 03 (step 06-13), slice 03b (step 07-13).
     assert workflow["env"]["PENDING_FLAGS"] == (
         "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
-        " --run-pending=slice-03"
+        " --run-pending=slice-03 --run-pending=slice-03b"
     )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
@@ -1017,6 +1017,19 @@ def test_slice_03_scenarios_run_without_being_enabled() -> None:
     assert [line for line in lines if line.startswith("@")] == ["@slice-03"]
 
 
+FEATURE_03B = "tests/acceptance/overland_route_planner_mvp/slice-03b-out-and-back-retrace.feature"
+MODULE_03B = "tests/acceptance/overland_route_planner_mvp/test_slice_03b.py"
+HEAVY_SLICE_03B = ("test_no_track_item_is_ever_driven_backwards",)  # about 9 s at profile ci on the Mac (07-10, 07-13)
+
+
+# bypass: one tag line, one observable outcome; no input space to generate over
+def test_slice_03b_scenarios_run_without_being_enabled() -> None:
+    """Step 07-13: the feature-level tags are what conftest reads to skip a slice; `@pending` must be gone from them."""
+    lines = (REPO_ROOT / FEATURE_03B).read_text().splitlines()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-03b"]
+
+
 def _collected_slice_03(*selection: str) -> list[str]:
     pending = _workflow()["env"]["PENDING_FLAGS"].split()
     collected = _collect(*pending, *selection, module=MODULE_03)
@@ -1052,13 +1065,15 @@ def test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and
     assert expression is not None
 
     moved = {f"{module}::{name}" for module, names in HEAVY_UNIT_AND_PERF.items() for name in names}
-    slow = {*SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES, *_names(sorted(moved))}
+    slow = {*SLICE_02_PROPERTIES, *SLOW_SLICE_03, *HEAVY_REGISTRY_PROPERTIES, *HEAVY_SLICE_03B, *_names(sorted(moved))}
     job_10_ids = _collected_node_ids(expression["expression"])
     assert _names(job_10_ids) == sorted(slow)
     assert moved <= set(job_10_ids), "each moved unit or perf test is found under its own module"
     assert set(_collected_everywhere(job_2["expression"])).isdisjoint({A_6, *slow})
     others = set(_collected_slice_03()) - {*SLOW_SLICE_03, GOLDEN_SCENARIO, *PI_SCENARIOS}
     assert _collected_slice_03("-m", job_2["expression"]) == sorted(others)
+    slice_03b = _collect(*workflow["env"]["PENDING_FLAGS"].split(), "-m", job_2["expression"], module=MODULE_03B)
+    assert slice_03b.stdout.count(f"{MODULE_03B}::") == 6, "job 2 blocks on the six example scenarios of slice 03b"
 
 
 def test_slow_a6_job_runs_the_a6_property_alone_at_profile_ci_in_parallel_with_job_10() -> None:

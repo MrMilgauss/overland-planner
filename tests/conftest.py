@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from hypothesis import settings
+from hypothesis import Phase, settings
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -107,7 +107,15 @@ def _git_subprocesses_use_their_own_repository() -> Iterator[None]:
 # Hypothesis profiles (D97), selected with HYPOTHESIS_PROFILE (default dev).
 settings.register_profile("dev", max_examples=100)
 settings.register_profile("ci", max_examples=1_000, derandomize=True)
-settings.register_profile("mutation", max_examples=50, derandomize=True)
+# mutation (step 07-13): no shrink phase. A mutant only has to fail, not fail minimally; with shrinking, a mutant that
+# ends a plan job before it reaches a test's gate re-ran its failing example for up to 300 s, each run waiting out the
+# 30 s gate deadline at 0 % CPU, so mutmut's wall timeout (about 9 min for PlanRequestJob.run) left the run stalled.
+settings.register_profile(
+    "mutation",
+    max_examples=50,
+    derandomize=True,
+    phases=(Phase.explicit, Phase.reuse, Phase.generate, Phase.target),
+)
 # weekly.yml deep run (D86): ten times the CI examples with random seeds.
 settings.register_profile("deep", max_examples=10_000, derandomize=False)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))

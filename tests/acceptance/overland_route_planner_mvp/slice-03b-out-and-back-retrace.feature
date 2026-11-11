@@ -3,7 +3,7 @@
 # fewest Unconfirmed legs, then fewest retraces, then road km; a retrace penalty is a tie-break only and never
 # appears in reported km or time.
 
-@slice-03b @pending
+@slice-03b
 Feature: Dead-end trails are retraced, never reversed
   As Marco, I want a trail whose end leads nowhere to be driven in full and then retraced back to its start,
   never entered from its end, so that dead-end passes like the Sommeiller can still be in my trip.

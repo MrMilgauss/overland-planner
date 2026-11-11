@@ -1,11 +1,12 @@
-"""pytest-bdd binding: slice 03b scenarios (@pending; enable with --run-pending=slice-03b).
+"""pytest-bdd binding: slice 03b scenarios (blocking in CI since step 07-13).
 
 Markers per scenario (D199 precedent): the scenarios that run real OR-Tools solves in the solver child are
 `solver_child`, so pre-push (`-m "not slow and not solver_child"`) leaves them to CI job 2. "A trail is never entered
 from its exit" ends at the reachability check, before any solve, so it stays in pre-push. The property solves in-process
-at layer 1-2 (D192, D215) and keeps Hypothesis profile dev in pre-push. It should be `heavy_property` (D221, D226):
-planning 1,000 sparse projects takes about 8 s at profile ci (measured on the Mac). The marker is not set here: the CI
-pin test lists the heavy population exactly, so the marker and the pin change together.
+at layer 1-2 (D192, D215) and keeps Hypothesis profile dev in pre-push. It is `heavy_property` (D221, D226): planning
+1,000 sparse projects takes about 9 s at profile ci on the Mac, so it runs in job 10, not job 2;
+tests/ci/test_ci_workflow.py pins job 10's population exactly, so the marker and the pin change together (07-13). The
+six example scenarios take under 1 s each at profile ci and wait out no limit, so none is `slow`: they block in job 2.
 """
 
 import pytest
@@ -49,8 +50,7 @@ def test_an_order_with_fewer_retraces_wins() -> None:
     """Real solve on the scripted road map."""
 
 
-# heavy_property: recommended, not set (about 8 s at profile ci; tests/ci/test_ci_workflow.py pins the population that
-# job 10 selects, D221/D226, so the orchestrator sets the marker and the pin together before slice 03b is enabled)
+@pytest.mark.heavy_property  # about 9 s at profile ci on the Mac (07-10, 07-13): job 10 (D221, D226)
 @scenario(FEATURE, "No track item is ever driven backwards, retraces included")
 def test_no_track_item_is_ever_driven_backwards() -> None:
     """The property, in-process."""
