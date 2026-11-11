@@ -2,9 +2,11 @@
 
 SHA-256 over the canonical model as far as it exists today: the node item ids in model order, each node's quantised
 location (a POI) or entry and exit with `direction_version` and `canonical_sha256` (a track), every arc cost, the
-objective, the road map's `provider_id`, the budget and the solver identity the solver adapter publishes. The weighting
-mode, the phase limits and the retrace penalties (D124) do not exist yet: the scheme version leads both the hashed text
-and the value, so a later scheme that adds inputs misses instead of hitting an old memo. The off-road speed, the names
+real tables of the model (road metres, Unconfirmed legs and retraces per arc, so an arc's level and the presence of a
+retrace arc count), its weighting (mode, W1, W2), the objective, the road map's `provider_id`, the budget and the solver
+identity the solver adapter publishes. fp2 (07-04) added the weighting inputs of D124; the phase limits do not exist
+yet, and the retrace penalty was dropped (ruling 2026-11-10). The scheme version leads both the hashed text and the
+value, so a later scheme that adds inputs misses instead of hitting an old memo. The off-road speed, the names
 and the Excluded items are not inputs: they change the totals or nothing, never the order.
 """
 
@@ -12,14 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import TourModel
 
-FINGERPRINT_SCHEME = "fp1"
+FINGERPRINT_SCHEME = "fp2"
 _COORDINATE_DECIMALS = 6  # about 0.1 m
 
 
@@ -45,6 +47,8 @@ class Fingerprint:
             "start_node": model.start_node,
             "end_node": model.end_node,
             "arc_m": model.arc_m,
+            "real": None if model.real is None else asdict(model.real),
+            "weights": None if model.weights is None else asdict(model.weights),
             "objective": settings.objective,
             "provider_id": settings.provider_id,
             "budget": settings.budget,

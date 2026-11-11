@@ -2,8 +2,9 @@
 
 Driving port: `Fingerprint.of`, the function the plan job calls. Observable universe: the fingerprint value.
 Test Budget: 3 behaviors (rebuilding the same inputs, or changing what only the totals use, or moving a point by less
-than the quantum, keeps the fingerprint; changing any single input gives another; stored fingerprints never change
-silently) x 2 = 6; 3 used. Every single-input change is applied on every generated model (D212), not one random draw.
+than the quantum, keeps the fingerprint; changing any single input gives another, the scheme and the weighting inputs
+of D124 included; stored fingerprints never change silently) x 2 = 6; 3 used. Every single-input change is applied on
+every generated model (D212), not one random draw.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from hypothesis import given, settings
@@ -21,9 +23,15 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.catalog.project import OffroadSpeed
+from overland_planner.domain.planning import fingerprint as fingerprint_module
 from overland_planner.domain.planning.fingerprint import FINGERPRINT_SCHEME, Fingerprint, SolveSettings
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
+from overland_planner.domain.planning.solver_model_builder import (
+    ArcTables,
+    LexicographicWeights,
+    SolverModelBuilder,
+    TourModel,
+)
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.domain.planning.trips import PROJECT, Trip, trips
 
@@ -116,6 +124,29 @@ def _single_input_changes(trip: Trip) -> dict[str, Inputs]:
         "objective": (snapshot, model, replace(solve, objective="time")),
         "budget": (snapshot, model, replace(solve, budget=solve.budget + 1)),
         "solver identity": (snapshot, model, replace(solve, solver_identity="ortools==9.16;PATH_CHEAPEST_ARC")),
+        **{name: (snapshot, changed, solve) for name, changed in _weighting_changes(model).items()},
+    }
+
+
+def _weighting_changes(model: TourModel) -> dict[str, TourModel]:
+    """D124: each weighting input of the model changed alone (the matrix the child reads stays as it is)."""
+    assert model.weights is not None and model.real is not None
+    weights, real = model.weights, model.real
+    origin, destination = next(
+        (a, b) for a, row in enumerate(model.arc_m) for b, cost in enumerate(row) if cost is not None
+    )
+
+    def table_with(table: tuple[tuple[int, ...], ...]) -> tuple[tuple[int, ...], ...]:
+        rows = [list(row) for row in table]
+        rows[origin][destination] += 1
+        return tuple(tuple(row) for row in rows)
+
+    return {
+        "weight W1": replace(model, weights=replace(weights, w1=weights.w1 + 1)),
+        "weight W2": replace(model, weights=replace(weights, w2=weights.w2 + 1)),
+        "weighting mode": replace(model, weights=replace(weights, mode="two_phase")),
+        "level of one arc": replace(model, real=replace(real, unconfirmed_legs=table_with(real.unconfirmed_legs))),
+        "presence of a retrace arc": replace(model, real=replace(real, retraces=table_with(real.retraces))),
     }
 
 
@@ -167,6 +198,9 @@ def test_changing_any_single_solver_input_gives_another_fingerprint(trip: Trip) 
             assert_state_delta(before, after, UNIVERSE, {"fingerprint": _changed}, strict=True)
         except AssertionError as error:
             raise AssertionError(f"changing the {name} kept the fingerprint: {error}") from error
+    with patch.object(fingerprint_module, "FINGERPRINT_SCHEME", "fp-next"):
+        after = _fingerprint(_inputs_of(trip))
+    assert_state_delta(before, after, UNIVERSE, {"fingerprint": _changed}, strict=True)
 
 
 GOLDEN_START = PoiItem(id="home", project_id=PROJECT, name="Casa Marco", location=Coordinate(45.0703391, 7.6868572))
@@ -185,22 +219,37 @@ GOLDEN_TRACK = TrackItem(
 )
 GOLDEN_END = PoiItem(id="briancon", project_id=PROJECT, name="Briancon", location=Coordinate(44.8986, 6.6436))
 GOLDEN_SNAPSHOT = ProjectSnapshot(GOLDEN_START.id, GOLDEN_END.id, (GOLDEN_START, GOLDEN_TRACK, GOLDEN_END))
+_GOLDEN_ARC_M = ((None, 61_200, 140_100), (None, None, 27_400), (None, None, None))
+_NO_COUNTS = ((0, 0, 0),) * 3
+# Confirmed legs only: the weights of ADR-016 section 4 by hand, N = 2 arcs in a tour and c_max = 140,100 m:
+# W2 = 3 * 140,100 + 1 = 420,301 and W1 = 3 * (420,301 + 140,100) + 1 = 1,681,204.
 GOLDEN_MODEL = TourModel(
-    ("home", "assietta", "briancon"), 0, 2, ((None, 61_200, 140_100), (None, None, 27_400), (None, None, None))
+    ("home", "assietta", "briancon"),
+    0,
+    2,
+    _GOLDEN_ARC_M,
+    ArcTables(road_m=_GOLDEN_ARC_M, unconfirmed_legs=_NO_COUNTS, retraces=_NO_COUNTS),
+    LexicographicWeights(mode="single_phase", w1=1_681_204, w2=420_301),
 )
 # The canonical JSON written out by hand (sorted keys, no spaces, points to 6 decimals), not by `of`.
 GOLDEN_TEXT = (
     '{"arc_m":[[null,61200,140100],[null,null,27400],[null,null,null]],"budget":500,"end_node":2,'
     '"nodes":[["poi","home",[45.070339,7.686857]],["track","assietta",[45.051235,7.041235],[44.968765,6.878765],2,'
     '"abababababababababababababababababababababababababababababababab"],["poi","briancon",[44.8986,6.6436]]],'
-    '"objective":"distance","provider_id":"mock:straight_line_x1.3","scheme":"fp1",'
-    '"solver":"ortools==9.15.6755;PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH","start_node":0}'
+    '"objective":"distance","provider_id":"mock:straight_line_x1.3",'
+    '"real":{"retraces":[[0,0,0],[0,0,0],[0,0,0]],"road_m":[[null,61200,140100],[null,null,27400],[null,null,null]],'
+    '"unconfirmed_legs":[[0,0,0],[0,0,0],[0,0,0]]},"scheme":"fp2",'
+    '"solver":"ortools==9.15.6755;PATH_CHEAPEST_ARC;GUIDED_LOCAL_SEARCH","start_node":0,'
+    '"weights":{"mode":"single_phase","w1":1681204,"w2":420301}}'
 )
-GOLDEN_FINGERPRINT = "fp1:25884a670e4a16fba2b8861de399124b0188982c895b62316a1dbe64936167e3"
+GOLDEN_FINGERPRINT = "fp2:53350ed31e1b2c1ecbd9d01f6b07127d3f080b9dacd5c036deffb0d96d873d46"
+# What fp1 gave for the same Confirmed-only inputs (06-13): fp2 recalculates every existing project once (07-04).
+FP1_GOLDEN_FINGERPRINT = "fp1:25884a670e4a16fba2b8861de399124b0188982c895b62316a1dbe64936167e3"
 
 
 def test_the_fingerprint_of_fixed_inputs_is_pinned_so_stored_fingerprints_never_change_silently() -> None:
     """Runs keep their fingerprint in the database: a change of this value must bump FINGERPRINT_SCHEME (ADR-014
     section 5), so old memo entries miss instead of matching inputs they were not computed from."""
-    assert "fp1:" + hashlib.sha256(GOLDEN_TEXT.encode()).hexdigest() == GOLDEN_FINGERPRINT, "the text is the pinned one"
+    assert "fp2:" + hashlib.sha256(GOLDEN_TEXT.encode()).hexdigest() == GOLDEN_FINGERPRINT, "the text is the pinned one"
     assert Fingerprint.of(GOLDEN_SNAPSHOT, GOLDEN_MODEL, SETTINGS).value == GOLDEN_FINGERPRINT
+    assert GOLDEN_FINGERPRINT != FP1_GOLDEN_FINGERPRINT, "fp2 leads and hashes the weights: one recalculation (D124)"

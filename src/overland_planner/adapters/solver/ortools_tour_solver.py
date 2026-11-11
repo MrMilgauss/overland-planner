@@ -248,13 +248,25 @@ def _last_incumbent(incumbents: Sequence[Incumbent], ending: NotFullyOptimised) 
 
 
 def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
-    """The incumbent a message carries, or `None` when it is no `(INCUMBENT, complete tour, objective)`."""
+    """The incumbent a message carries, or `None` when it is no `(INCUMBENT, complete tour, objective)`.
+
+    The child's objective is the weighted cost it minimises; the incumbent reports the tour as the model's real tables
+    describe it (road metres, Unconfirmed legs, retraces: FR-5.8), the same number for a Confirmed-only model. A plain
+    model (no real tables) reports the child's objective as it came."""
     if not (isinstance(message, tuple) and len(message) == 3 and message[0] == INCUMBENT):
         return None
     _, nodes, objective = message
     if type(objective) not in (int, float) or not _is_complete_tour(nodes, model):
         return None
-    return Incumbent(order=_item_ids(nodes, model), objective=objective)
+    counts = model.counts_of(nodes)
+    if counts is None:
+        return Incumbent(order=_item_ids(nodes, model), objective=objective)
+    return Incumbent(
+        order=_item_ids(nodes, model),
+        objective=counts.road_m,
+        unconfirmed_legs=counts.unconfirmed_legs,
+        retraces=counts.retraces,
+    )
 
 
 @dataclass(frozen=True)

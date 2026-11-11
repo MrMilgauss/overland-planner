@@ -421,7 +421,7 @@ def test_identical_inputs_after_a_restart_reuse_the_stored_order_through_sqlite(
     rows = connection.execute("SELECT number, status, fingerprint, memo_hit FROM plan_runs ORDER BY number").fetchall()
     connection.close()
     assert [(number, status, memo_hit) for number, status, _, memo_hit in rows] == [(1, "ready", 0), (2, "ready", 1)]
-    assert rows[0][2] == rows[1][2] and str(rows[0][2]).startswith("fp1:"), f"the fingerprints are {rows}"
+    assert rows[0][2] == rows[1][2] and str(rows[0][2]).startswith("fp2:"), f"the fingerprints are {rows}"
     first, second = (restarted.get(f"/api/plan-runs/{job['plan_run_id']}").json() for job in (solved, reused))
     assert (first["stops"], first["totals"]) == (second["stops"], second["totals"])
 
