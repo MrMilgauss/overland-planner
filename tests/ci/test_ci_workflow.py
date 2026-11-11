@@ -979,6 +979,7 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
     ),
     "tests/unit/application/planning/test_plan_request_job_outcomes.py": (
         "test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_show_while_solving",
+        "test_the_incumbent_the_line_and_the_row_show_the_plans_road_metres_and_counts_not_the_solvers_cost",
     ),
     "tests/unit/application/routing/test_leg_resolver.py": (
         "test_the_legs_found_are_kept_per_road_map_and_only_the_missing_ones_are_asked_after_the_held_ones_are_reported",

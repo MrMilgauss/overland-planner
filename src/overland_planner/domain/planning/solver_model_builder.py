@@ -82,6 +82,15 @@ class TourModel:
             retraces=sum(self.real.retraces[a][b] for a, b in pairwise(nodes)),
         )
 
+    def counts_of_order(self, item_ids: Sequence[str]) -> TourCounts | None:
+        """The tour an order in item ids names (the Start first, the End last, one node per item between), read like
+        `counts_of`; `None` for an order that names no tour of this model."""
+        between = item_ids[1:-1]
+        nodes = [self.node_item_ids.index(item_id) if item_id in self.node_item_ids else -1 for item_id in between]
+        if len(item_ids) < 2 or -1 in nodes:
+            return None
+        return self.counts_of([self.start_node, *nodes, self.end_node])
+
 
 @dataclass(frozen=True)
 class _Arc:

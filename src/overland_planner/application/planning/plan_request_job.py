@@ -39,7 +39,8 @@ and `guard_persist` (guard, assemble, store). Truncating keeps their sum within 
 The road legs come from the leg resolver, which keeps those found for the process's life (06-09): the job notes
 `legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. After the first pass it asks
 the second pass, the retrace pairs of the arcs whose first pair has no road (ADR-017 section 2), and notes how many
-they were (`second_pass_pairs`, only when there was one); they join `legs_total`. A job its registry ended
+they were (`second_pass_pairs`: 0 for a run that reached the solve, null for one that failed unreachable asking none);
+they join `legs_total`. A job its registry ended
 during the look-up raises that ending at its next fact or state, so a late road-map answer stores no run.
 
 Every run stores its `run_time_ms`, from the start of the job's work to the run stored, by the `Clock` port's monotonic
@@ -154,7 +155,7 @@ class PlanRequestJob:
         progress.note(notices=project_notices(len(project.snapshot.visited_items())))
         progress.enter("computing_legs")
         with stages.timing("matrix"):
-            legs = self._resolve_legs(project.snapshot, progress)
+            legs, second_pass_pairs = self._resolve_legs(project.snapshot, progress)
         with stages.timing("reach_model"):
             model = SolverModelBuilder(project.snapshot).build(legs)
             progress.note(items_included=len(set(model.node_item_ids)))
@@ -162,6 +163,7 @@ class PlanRequestJob:
             reused = None
             if not cut_off:
                 project, reused = self._recall(project, model)
+        progress.note(second_pass_pairs=second_pass_pairs if second_pass_pairs or not cut_off else None)
         if cut_off:
             return self._end_unreachable(project, legs, cut_off, progress, stages)
         if reused is not None:
@@ -172,7 +174,7 @@ class PlanRequestJob:
                 outcome = self._solve(model, progress, work_started_s, stop or NEVER_STOPPED)
         progress.enter("finalising")
         with stages.timing("guard_persist"):
-            stored = self._finish(project, legs, outcome)
+            stored = self._finish(project, legs, outcome, model, progress)
         return _ended(progress, stored)
 
     def _end_unreachable(
@@ -195,12 +197,21 @@ class PlanRequestJob:
                 stored = self._store(project, _Finding(failure_reason=UNREACHABLE, report_items=names))
         return _ended(progress, stored)
 
-    def _finish(self, project: _PlannedProject, legs: LegTable, outcome: TourOutcome) -> StoredRun:
+    def _finish(
+        self,
+        project: _PlannedProject,
+        legs: LegTable,
+        outcome: TourOutcome,
+        model: TourModel,
+        progress: PlanJobProgress,
+    ) -> StoredRun:
         if isinstance(outcome, TourFound):
-            return self._finish_found(project, legs, outcome)
+            return self._finish_found(project, legs, outcome, model, progress)
         return self._store(project, _Finding(failure_reason=outcome.reason, reproducible=outcome.reproducible))
 
-    def _finish_found(self, project: _PlannedProject, legs: LegTable, tour: TourFound) -> StoredRun:
+    def _finish_found(
+        self, project: _PlannedProject, legs: LegTable, tour: TourFound, model: TourModel, progress: PlanJobProgress
+    ) -> StoredRun:
         guard = InvariantGuard(project.snapshot, legs)
         broken_order = guard.check_order(tour.order)  # first: the assembler raises on an unknown id
         if broken_order is not None:
@@ -212,6 +223,9 @@ class PlanRequestJob:
         broken_plan = guard.check_plan(stops, files)
         if broken_plan is not None:
             return self._store_violation(project, broken_plan, tour.reproducible)
+        counts = model.counts_of_order(tour.order)  # the stored plan's, read from the model's real tables
+        if counts is not None:
+            progress.note(unconfirmed_legs=counts.unconfirmed_legs, retraces=counts.retraces)
         finding = _Finding(
             stops=stops,
             totals=Totals.of(stops),
@@ -246,10 +260,11 @@ class PlanRequestJob:
             stamp = uow.project_snapshots.stamp(project_id)
             return _PlannedProject(project_id, snapshot, stamp, ignore_memo, work_started_s)
 
-    def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> LegTable:
+    def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> tuple[LegTable, int]:
         """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09). The second
         pass asks the retrace pairs once the first has come back (ADR-017 section 2); its pairs join the job's total
-        and its counts the first pass's, so that `new + cached = total` at the end."""
+        and its counts the first pass's, so that `new + cached = total` at the end. Answers the legs and the second
+        pass's pairs."""
         builder = SolverModelBuilder(snapshot)
         pairs = builder.required_pairs()
         first_found = LegsFound(0, 0, 0)
@@ -266,9 +281,8 @@ class PlanRequestJob:
             legs = legs.merged_with(
                 self.legs.resolve(second, lambda found: _note_legs(progress, _added(first_found, found)))
             )
-            progress.note(second_pass_pairs=len(second))
         progress.note(legs_total=len(known) + len(second), provider_id=self.legs.provider_id)
-        return legs
+        return legs, len(second)
 
     def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, TourFound | None]:
         """The project with its fingerprint and memo source, and the reused tour, `None` when the solver is asked. The
@@ -292,7 +306,7 @@ class PlanRequestJob:
     def _solve(
         self, model: TourModel, progress: PlanJobProgress, work_started_s: float, stop: StopSignal
     ) -> TourOutcome:
-        incumbents = _Incumbents(self.clock, progress, work_started_s)
+        incumbents = _Incumbents(self.clock, progress, work_started_s, model)
         deadlines = self.limits.from_start(self.clock, work_started_s)
         outcome = self.solver.solve(model, self.budget, incumbents.found, deadlines=deadlines, stop=stop)
         progress.note(incumbents=incumbents.count)
@@ -353,9 +367,12 @@ class PlanRequestJob:
 
 
 class _Incumbents:
-    """The incumbents a solve streamed, on the solving thread: the poll shows the last, the job's line counts them."""
+    """The incumbents a solve streamed, on the solving thread: the poll shows the last, the job's line counts them.
+    Each is shown as the model's real tables describe it: road metres only, with its Unconfirmed legs and retraces,
+    never the solver's cost (07-08, D148)."""
 
-    def __init__(self, clock: Clock, progress: PlanJobProgress, work_started_s: float) -> None:
+    def __init__(self, clock: Clock, progress: PlanJobProgress, work_started_s: float, model: TourModel) -> None:
+        self._model = model
         self._clock = clock
         self._progress = progress
         self._work_started_s = work_started_s
@@ -363,10 +380,11 @@ class _Incumbents:
 
     def found(self, incumbent: Incumbent) -> None:
         self.count += 1
+        counts = self._model.counts_of_order(incumbent.order)
         shown = {
-            "unconfirmed_legs": incumbent.unconfirmed_legs,
-            "retraces": incumbent.retraces,
-            "objective": incumbent.objective,
+            "unconfirmed_legs": incumbent.unconfirmed_legs if counts is None else counts.unconfirmed_legs,
+            "retraces": incumbent.retraces if counts is None else counts.retraces,
+            "objective": incumbent.objective if counts is None else counts.road_m,
             "found_at_s": self._clock.monotonic() - self._work_started_s,
         }
         self._progress.note(incumbents=self.count, incumbent=shown)

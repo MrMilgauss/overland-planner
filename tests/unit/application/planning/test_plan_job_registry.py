@@ -136,6 +136,9 @@ FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
     "incumbents",  # 06-06 fills these three (test_plan_request_job_outcomes.py)
     "reproducible",
     "not_fully_optimised_reason",
+    "second_pass_pairs",  # 07-08 fills these three: 0 for a run that reached the solve, the counts of a stored plan
+    "unconfirmed_legs",
+    "retraces",
 }
 RUN_FIELDS = {
     "plan_run_id",
@@ -495,6 +498,8 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
         job.plan_run_id,
     )
     assert all(fields[name] is None for name in FIELDS_OF_LATER_SLICES)
+    counts = (0, 0) if isinstance(plan.script, TourFound) else (None, None)  # a ready run, confirmed roads only
+    assert (fields["unconfirmed_legs"], fields["retraces"], fields["second_pass_pairs"]) == (*counts, 0)
     assert (fields["memo_hit"], fields["ignore_memo"]) == (False, False)  # a plain Calculate of a job without a memo
     assert fields["elapsed_ms"] == 0
     assert (fields["legs_total"], fields["provider_id"]) == (

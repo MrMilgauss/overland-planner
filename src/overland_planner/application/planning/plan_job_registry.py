@@ -30,7 +30,9 @@ and it holds no writer lock while it waits; the legs it was answered stay with t
 
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
-fields owned by later slices are null. A failed job names only the exception's class (D197). With a `PlanJobLog`, the
+fields owned by later slices, and those a job ended before it could note, are null; `unconfirmed_legs` and
+`retraces` are the stored plan's, read from the model's real tables (07-08). A failed job names only the exception's
+class (D197). With a `PlanJobLog`, the
 line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the run is stored and before
 the end is published; a row that cannot be written changes nothing of the ending and logs `plan.job.log_failed` at
 warning with the error's class. The row adds `solver_wait_s`, which the line leaves out (kpi-contracts): the seconds by

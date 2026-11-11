@@ -40,6 +40,9 @@ LINE = {  # a solved job's plan.job.finished fields; exit_code and signal are li
     "elapsed_ms": 41200,
     "reason": None,
     "points_located": None,
+    "second_pass_pairs": 0,
+    "unconfirmed_legs": 3,
+    "retraces": 1,
 }
 
 
@@ -80,8 +83,9 @@ def test_a_job_row_is_written_with_the_line_values_and_the_app_version(database:
     assert (row["memo_hit"], row["ignore_memo"], row["app_version"]) == (0, 1, "0123456789ab")
     assert row["stage_ms"] == '{"snapshot": 3, "matrix": 120, "reach_model": 1, "solve": 41000, "guard_persist": 9}'
     assert (row["started_at"], row["ended_at"]) == ("2026-11-09 07:00:00.000000", "2026-11-09 07:00:42.000000")
-    later = ("legs_new", "solver_solutions", "reproducible", "solver_wait_s", "error_class", "reason", "retraces")
+    later = ("legs_new", "solver_solutions", "reproducible", "solver_wait_s", "error_class", "reason")
     assert all(row[name] is None for name in later)
+    assert (row["second_pass_pairs"], row["unconfirmed_legs"], row["retraces"]) == (0, 3, 1)
     assert "exit_code" not in row and "points_located" not in row
     assert _rows(database, "plan_runs") == [] and _rows(database, "projects") == []
 

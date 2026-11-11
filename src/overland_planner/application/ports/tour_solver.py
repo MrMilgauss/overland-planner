@@ -73,9 +73,10 @@ class SolveLimits:
 
 @dataclass(frozen=True)
 class Incumbent:
-    """A valid tour found while searching: its order in item ids and the model's cost of it (metres today).
+    """A valid tour found while searching: its order in item ids and the cost the solver gave it.
 
-    `unconfirmed_legs` and `retraces` stay 0 until slices 06a/06b give the model levels and retrace arcs.
+    The job shows the tour as the model's real tables describe it (road metres, Unconfirmed legs, retraces), not this
+    cost, which may weigh them (07-08); a model without real tables is shown as it came.
     """
 
     order: tuple[str, ...]

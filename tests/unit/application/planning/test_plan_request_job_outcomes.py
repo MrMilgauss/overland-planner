@@ -11,6 +11,11 @@ the state and `stoppable` a Stop pressed while solving answers (D136), null when
 reaches the solve through the port's stop signal (brief section 6) and ends it like the adapter does: the last incumbent
 labelled `stopped`, or Failed `stopped` without one (ADR-015, D122). A ready run's lines start with its run time line
 (06-10), checked here by its pattern; its words are test_run_messages'.
+Real values (07-08, ruling 2026-11-10): the incumbent the poll shows, the finished line and the row carry the plan's
+road metres only (no weight, no penalty, no retrace km) and its Unconfirmed legs (a retrace counting one) and retraces,
+read by the parent from the model's real tables, whatever cost the solver streamed; checked against an oracle worked
+out from the legs and the retrace rule of ADR-017, and against the stored run's own stops and totals. One more behavior
+x 2 = 2; 1 property test used. A run that reached the solve counts 0 second-pass pairs when it asked none (07-08).
 Test Budget: 4 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
 incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start;
 a Stop while solving ends the solve through its stop signal with the best so far) x 2 = 8; 1 property test used, every
@@ -23,11 +28,13 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries
@@ -45,6 +52,7 @@ from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder
+from overland_planner.domain.routing.road_leg import RoadMeasure
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -230,7 +238,7 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
         shown_while_solving = {
             "unconfirmed_legs": 0,
             "retraces": 0,
-            "objective": last.objective,
+            "objective": _described(trip, last.order, set(), set())[0],  # the child's cost shows as road metres
             "found_at_s": found_at_s,
         }
     assert solving.state == "solving"
@@ -255,6 +263,123 @@ def test_how_the_solve_ended_gives_one_run_with_its_flags_and_the_incumbents_sho
         },
         strict=True,
     )
+
+
+# ------------------------------------- the real values of the plan: the incumbent, the line and the row (07-08, D148)
+REAL_UNIVERSE = {"poll.incumbent", "job_log", "finished_line", "stored_run"}
+WEIGHTED_COST = 987_654_321  # what a solver child minimises: far beyond any sum of the generated road metres
+
+
+class LeveledRoadMap(RecordingRoadMap):
+    """A road map whose roads on the `unconfirmed` pairs are Unconfirmed, the others Confirmed."""
+
+    def __init__(
+        self,
+        leg_m: Mapping[RoadPairOfPoints, int],
+        *,
+        no_road: Collection[RoadPairOfPoints],
+        unconfirmed: Collection[RoadPairOfPoints],
+    ) -> None:
+        super().__init__(leg_m, no_road=no_road)
+        self._unconfirmed = frozenset(unconfirmed)
+
+    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure | None:
+        measure = super()._measure(source, target)
+        if measure is None or (source, target) not in self._unconfirmed:
+            return measure
+        return RoadMeasure(measure.distance_m, measure.duration_s, "unconfirmed", "only a track leads there")
+
+
+def _described(
+    trip: Trip, order: tuple[str, ...], no_road: set[RoadPairOfPoints], unconfirmed: set[RoadPairOfPoints]
+) -> tuple[int, int, int]:
+    """Road metres, Unconfirmed legs (a retrace counting one) and retraces of an order, worked out from ADR-017: a road
+    from where the previous stop is left, else for a track the road from its entry after a retrace, whose own metres
+    are off-road."""
+    items = {item.id: item for item in (trip.start, trip.end, *trip.items)}
+    metres = legs = retraces = 0
+    for previous, successor in pairwise(items[item_id] for item_id in order):
+        leaving = (left_at(previous), reached_at(successor))
+        if leaving[0] == leaving[1] or leaving not in no_road:
+            metres += trip.road_m(*leaving)
+            legs += int(leaving[0] != leaving[1] and leaving in unconfirmed)
+            continue
+        assert isinstance(previous, TrackItem)
+        onward = (previous.entry, reached_at(successor))
+        metres += trip.road_m(*onward)
+        legs += 1 + int(onward[0] != onward[1] and onward in unconfirmed)
+        retraces += 1
+    return metres, legs, retraces
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@settings(deadline=None)
+@given(trip=trips(), data=st.data())
+def test_the_incumbent_the_line_and_the_row_show_the_plans_road_metres_and_counts_not_the_solvers_cost(
+    trip: Trip, data: st.DataObject
+) -> None:
+    no_road = data.draw(st.sets(st.sampled_from(POINT_PAIRS), max_size=3), label="pairs with no road")
+    unconfirmed = data.draw(st.sets(st.sampled_from(POINT_PAIRS), max_size=8), label="unconfirmed roads")
+    order = (trip.start.id, *data.draw(st.permutations([item.id for item in trip.items])), trip.end.id)
+    items = {item.id: item for item in (trip.start, trip.end, *trip.items)}
+    assume(all(_connected(trip, no_road, a, b) for a, b in pairwise(items[item_id] for item_id in order)))
+    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    trip.seed_canonical_files(files)
+    planning.add_project(PROJECT, trip.snapshot)
+    job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
+    solver = ScriptedTourSolver(
+        TourFound(order),
+        gate=Gate(held=True),
+        incumbents=(Incumbent(order=order, objective=WEIGHTED_COST),),
+        clock=clock,
+        incumbent_every_s=EVERY_S,
+    )
+    road_map = LeveledRoadMap(trip.leg_m, no_road=no_road, unconfirmed=unconfirmed)
+    work = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
+    registry = PlanJobRegistry(clock, work, log, job_log=job_log)
+
+    def view(poll: Any = None) -> dict[str, Any]:
+        (stored,) = planning.runs or [None]
+        return {
+            "poll.incumbent": poll,
+            "job_log": tuple((row.fields["unconfirmed_legs"], row.fields["retraces"]) for row in job_log.rows),
+            "finished_line": tuple(
+                (fields["unconfirmed_legs"], fields["retraces"]) for fields in log.fields_of("plan.job.finished")
+            ),
+            "stored_run": None if stored is None else _counted_from(stored),
+        }
+
+    before = view()
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    assert solver.gate.reached.wait(30.0), "the solve was never asked"
+    solving = known_job(registry, job_id)
+    solver.gate.release()
+    job_when_ended(registry, job_id)
+
+    metres, legs, retraces = _described(trip, order, no_road, unconfirmed)
+    assert_state_delta(
+        before,
+        view(solving.incumbent),
+        REAL_UNIVERSE,
+        {
+            "poll.incumbent": set_to(
+                {"unconfirmed_legs": legs, "retraces": retraces, "objective": metres, "found_at_s": EVERY_S}
+            ),
+            "job_log": gained((legs, retraces)),
+            "finished_line": gained((legs, retraces)),
+            "stored_run": set_to((metres, legs, retraces)),  # the stored plan's own stops and totals say the same
+        },
+        strict=True,
+    )
+
+
+def _counted_from(run: NewPlanRun) -> tuple[int, int, int]:
+    """Road metres, Unconfirmed legs and retraces as the stored stops and totals show them."""
+    assert run.totals is not None
+    retraces = sum(stop.kind == "retrace" for stop in run.stops)
+    unconfirmed = sum(stop.leg_confidence == "unconfirmed" for stop in run.stops)
+    return round(run.totals.road_km * 1000), unconfirmed + retraces, retraces
 
 
 # ------------------------------------------------------------ the second pass of the legs (07-03, ADR-017 section 2)
@@ -316,7 +441,8 @@ def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_
         LEGS_UNIVERSE,
         {
             "road_map.asked": set_to(asked),
-            "job_log.second_pass_pairs": set_to(len(fresh) or None),  # noted only when a second pass was asked
+            # 0 when the run reached the solve; an unreachable run never does and notes the pairs only if it asked some
+            "job_log.second_pass_pairs": set_to(len(fresh) or (None if _items_cut_off(trip, no_road) else 0)),
             "job_log.legs": set_to((new, len(every) - new, len(every))),
         },
         strict=True,
