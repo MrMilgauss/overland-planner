@@ -2458,6 +2458,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-11T08:37:37Z"
+    },
+    {
+      "sid": "07-04",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-11T09:00:55Z"
+    },
+    {
+      "sid": "07-04",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: no slice-03b scenario can go green before the stops exist (07-06/07-07); the brute-force oracle unit tests drive this step",
+      "t": "2026-11-11T09:00:55Z"
+    },
+    {
+      "sid": "07-04",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-11T09:04:38Z"
+    },
+    {
+      "sid": "07-04",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-11T09:46:18Z"
+    },
+    {
+      "sid": "07-04",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-11T09:46:33Z"
     }
   ]
 }
