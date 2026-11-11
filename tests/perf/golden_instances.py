@@ -21,6 +21,8 @@ D223: the golden is blessed on the current single GLS search (PATH_CHEAPEST_ARC 
 solution count); two-phase weighting (ADR-016 section 4) is not built. Re-bless trigger: any change to the weighting
 mode, the phase limits, the solver identity (SOLVER_IDENTITY), the default budget or the ortools version (for example
 the 06a/06b two-phase weighting) re-blesses both instances, in a commit of its own.
+Slice 03b does not re-bless: the model pin (`test_golden_model_pin.py`) and the golden test are the check, and a
+failure of either is reported to the orchestrator, never fixed by `bless`.
 
 `items` (70 for the D146 re-calibration) and `points_per_track` (20,000 for the D135 guard re-measure) give the 06-05
 variants; they are written elsewhere (`--out`) on the fly and never committed. The fixture reader (`committed_trip`,
