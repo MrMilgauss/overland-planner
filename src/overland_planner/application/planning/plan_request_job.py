@@ -4,7 +4,9 @@ Runs on the job's own thread, never the request's. The snapshot is read under th
 (D204). The lock is not held while the road map or the solver works. Run number and row commit in one transaction.
 Solver-side outcomes all store a run (D122); an exception stores nothing, because the data folder may be going away.
 Before anything is stored the guard judges the solver's order, then the assembled plan against the canonical files
-(ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). The solve runs
+(ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). For each track
+the plan retraces, the file read by version also gives the hash of its points reversed, which the assembler writes on
+the retrace row and the guard checks (ADR-009 Amendment 2). The solve runs
 holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
 fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
 totals are recomputed. Later slices add the snapping and the ladder to this sequence.
@@ -26,7 +28,8 @@ found tour's search ended sets the run's flags: `reproducible` only when the bud
 
 Before the memo lookup and the solver slot, the model's arcs are checked (`unreachable_item_ids`, ADR-016 section 3):
 an Included item with no arc in, no arc out, no path from the Start or to the End fails the run as `unreachable`, its
-report naming each such item (`report.items`), and the solver is never asked (07-05, stage `reach_model`).
+report naming each such item (`report.items`), and the solver is never asked (07-05, stage `reach_model`). The guard
+re-derives the claim from the leg table first; a claim it does not confirm stores an invariant violation instead.
 
 Each stage notes its whole milliseconds, truncated, by the `Clock` port's monotonic time, as it ends (`stage_ms`,
 ADR-015 DV-2, K5): `snapshot`, `matrix` (the road legs), `reach_model` (the model, its fingerprint and the memo lookup),
@@ -56,6 +59,7 @@ from overland_planner.application.catalog.facade import (
     InvalidCanonicalPointsFileError,
     canonical_file_sha256,
     parse_canonical_points_file,
+    reversed_points_sha256,
 )
 from overland_planner.application.planning.fingerprint_memo import FingerprintMemo, MemoSource
 from overland_planner.application.planning.plan_job_registry import PlanJobProgress, StoredRun
@@ -159,7 +163,7 @@ class PlanRequestJob:
             if not cut_off:
                 project, reused = self._recall(project, model)
         if cut_off:
-            return self._end_unreachable(project, cut_off, progress, stages)
+            return self._end_unreachable(project, legs, cut_off, progress, stages)
         if reused is not None:
             progress.note(memo_hit=True)
             outcome: TourOutcome = reused
@@ -172,13 +176,23 @@ class PlanRequestJob:
         return _ended(progress, stored)
 
     def _end_unreachable(
-        self, project: _PlannedProject, cut_off: tuple[str, ...], progress: PlanJobProgress, stages: _Stages
+        self,
+        project: _PlannedProject,
+        legs: LegTable,
+        cut_off: tuple[str, ...],
+        progress: PlanJobProgress,
+        stages: _Stages,
     ) -> StoredRun:
-        """The run fails before the memo and the solver slot, naming each item the arcs cut off in words."""
+        """The run fails before the memo and the solver slot, naming each item the arcs cut off in words, once the
+        guard has re-derived the claim from the leg table (ADR-009 Amendment 1)."""
         progress.enter("finalising")
         names = tuple(project.snapshot.item(item_id).name for item_id in cut_off)
         with stages.timing("guard_persist"):
-            stored = self._store(project, _Finding(failure_reason=UNREACHABLE, report_items=names))
+            wrong_claim = InvariantGuard(project.snapshot, legs).check_unreachable(cut_off)
+            if wrong_claim is not None:
+                stored = self._store_violation(project, wrong_claim, reproducible=True)
+            else:
+                stored = self._store(project, _Finding(failure_reason=UNREACHABLE, report_items=names))
         return _ended(progress, stored)
 
     def _finish(self, project: _PlannedProject, legs: LegTable, outcome: TourOutcome) -> StoredRun:
@@ -191,8 +205,11 @@ class PlanRequestJob:
         broken_order = guard.check_order(tour.order)  # first: the assembler raises on an unknown id
         if broken_order is not None:
             return self._store_violation(project, broken_order, tour.reproducible)
-        stops = PlanRunAssembler(project.snapshot, legs).assemble(tour.visited_item_ids)
-        broken_plan = guard.check_plan(stops, self._canonical_files(project.snapshot))
+        assembler = PlanRunAssembler(project.snapshot, legs)
+        retraced = {stop.item_id for stop in assembler.assemble(tour.visited_item_ids) if stop.kind == "retrace"}
+        files = self._canonical_files(project.snapshot, retraced)
+        stops = assembler.assemble(tour.visited_item_ids, _retrace_hashes(files, retraced))
+        broken_plan = guard.check_plan(stops, files)
         if broken_plan is not None:
             return self._store_violation(project, broken_plan, tour.reproducible)
         finding = _Finding(
@@ -212,12 +229,13 @@ class PlanRequestJob:
         )
         return self._store(project, finding)
 
-    def _canonical_files(self, snapshot: ProjectSnapshot) -> dict[str, CanonicalFileEvidence]:
-        """What is stored for each track, read by the snapshot's direction version (ADR-009 Amendment 1)."""
+    def _canonical_files(self, snapshot: ProjectSnapshot, retraced: set[str]) -> dict[str, CanonicalFileEvidence]:
+        """What is stored for each track, read by the snapshot's direction version (ADR-009 Amendment 1), with the
+        reversed points' hash for the `retraced` ones only (Amendment 2)."""
         tracks = (item for item in snapshot.visited_items() if isinstance(item, TrackItem))
         read = {track.id: self.files.read_canonical_points(track.id, track.direction_version) for track in tracks}
         return {
-            track_id: _evidence_of(content)
+            track_id: _evidence_of(content, track_id in retraced)
             for track_id, content in read.items()
             if not isinstance(content, CanonicalPointsMissing)
         }
@@ -385,7 +403,7 @@ def _note_legs(progress: PlanJobProgress, found: LegsFound) -> None:
     progress.note(legs_new=found.new, legs_cached=found.cached)
 
 
-def _evidence_of(content: bytes) -> CanonicalFileEvidence:
+def _evidence_of(content: bytes, retraced: bool) -> CanonicalFileEvidence:
     sha256 = canonical_file_sha256(content)
     try:
         points = parse_canonical_points_file(content)
@@ -393,4 +411,11 @@ def _evidence_of(content: bytes) -> CanonicalFileEvidence:
         points = ()
     if not points:
         return CanonicalFileEvidence(sha256, 0, None, None)
-    return CanonicalFileEvidence(sha256, len(points), points[0].coordinate, points[-1].coordinate)
+    reversed_sha256 = reversed_points_sha256(points) if retraced else None
+    return CanonicalFileEvidence(sha256, len(points), points[0].coordinate, points[-1].coordinate, reversed_sha256)
+
+
+def _retrace_hashes(files: dict[str, CanonicalFileEvidence], retraced: set[str]) -> dict[str, str]:
+    """The reversed points' hash of each retraced track whose file could be read as points."""
+    found = {track_id: files[track_id].reversed_sha256 for track_id in retraced if track_id in files}
+    return {track_id: sha256 for track_id, sha256 in found.items() if sha256 is not None}

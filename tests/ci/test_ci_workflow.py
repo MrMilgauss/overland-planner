@@ -963,6 +963,7 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
         "test_a_track_whose_file_changed_or_vanished_stores_one_failed_run_and_no_itinerary",
         "test_a_ready_run_stores_and_shows_the_totals_of_its_stops_and_a_failed_run_none",
         "test_a_passing_plan_is_stored_ready_and_logged_with_invariants_ok",
+        "test_a_retraced_plan_is_stored_with_the_reversed_points_hash_and_a_damaged_retraced_track_fails_it",
     ),
     "tests/perf/test_reference_search.py": (
         "test_a_short_search_writes_a_complete_reference_better_than_the_listed_order",
@@ -970,6 +971,7 @@ HEAVY_UNIT_AND_PERF = {  # >= 3 s each at profile ci on the Mac when job 2 hit i
     "tests/unit/domain/planning/test_invariant_guard.py": (
         "test_any_single_mutation_of_a_passing_plan_fails_and_names_its_rule",
         "test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule",
+        "test_any_single_retrace_perturbation_fails_and_names_its_rule",
     ),
     "tests/unit/bootstrap/test_settings.py": (
         "test_valid_settings_parse_to_their_values_and_unrelated_keys_are_ignored",

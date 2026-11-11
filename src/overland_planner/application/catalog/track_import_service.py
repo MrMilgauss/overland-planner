@@ -170,3 +170,8 @@ def canonical_points_file(points: Sequence[TrackPoint]) -> bytes:
     """`{"points": [[lat, lon, elevation_m|null], ...]}` in recorded order, compact UTF-8 JSON."""
     rows = [[p.coordinate.latitude, p.coordinate.longitude, p.elevation_m] for p in points]
     return json.dumps({"points": rows}, separators=(",", ":")).encode()
+
+
+def reversed_points_sha256(points: Sequence[TrackPoint]) -> str:
+    """The hash a retrace records (ADR-009 Amendment 2): the points reversed, serialised as a canonical file afresh."""
+    return canonical_file_sha256(canonical_points_file(tuple(reversed(points))))

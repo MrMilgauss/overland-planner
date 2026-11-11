@@ -1,14 +1,17 @@
-"""The HC guard on a plan (ADR-009 with Amendments 1 and 2, slice 01b scope plus slice 02's track length and leg time):
-every assembled plan passes, every broken one fails naming its rule.
+"""The HC guard on a plan (ADR-009 with Amendments 1 to 3, slice 01b scope plus slice 02's track length and leg time,
+slice 03b's retrace form, check 5 after a retrace and reachability claims): every assembled plan passes, every broken
+one fails naming its rule.
 
-Driving port: `InvariantGuard` (`check_order`, `check_plan` are its public interface; it is pure).
+Driving port: `InvariantGuard` (`check_order`, `check_plan`, `check_unreachable` are its public interface; it is pure).
 Observable universe = the guard's result, the stops it judged and the snapshot read.
-Test Budget: 3 behaviors (assembled plans pass, a broken plan names its rule, a broken chosen order names its rule)
-x 2 = 6; 3 used.
+Test Budget: 6 behaviors (assembled plans pass, a broken plan names its rule, a broken chosen order names its rule,
+assembled plans with retraces pass, a broken retrace plan names its rule, an unreachable claim holds only for the items
+no order connects) x 2 = 12; 6 used.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -17,7 +20,10 @@ import pytest
 from hypothesis import given, note
 from hypothesis import strategies as st
 
-from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.application.catalog.facade import canonical_points_file
+from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.planning.invariant_guard import (
     CanonicalFileEvidence,
     GuardViolation,
@@ -25,9 +31,18 @@ from overland_planner.domain.planning.invariant_guard import (
 )
 from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
-from overland_planner.domain.routing.road_leg import LegTable
+from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.unit.domain.planning.trips import POINTS, Trip, trips
+from tests.unit.domain.planning.trips import (
+    POINTS,
+    PROJECT,
+    Trip,
+    reached_at,
+    road_time_s,
+    track_lengths_m,
+    track_points,
+    trips,
+)
 
 UNIVERSE = {"guard.check", "plan.stops", "snapshot.read"}
 Files = Mapping[str, CanonicalFileEvidence]
@@ -372,3 +387,286 @@ def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan
             before, _judged(plan, plan.stops, violation), UNIVERSE, {"guard.check": set_to(rule)}, strict=True
         )
         assert violation is not None and violation.detail == detail
+
+
+# ------------------------------------------------------------------------------------- slice 03b: retraces (ADR-017)
+RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"  # the product's words (ADR-017)
+DEAD_EXITS = (Coordinate(46.5, 8.5), Coordinate(46.6, 8.6))  # points of their own: no item is reached there
+ISOLATED = Coordinate(47.0, 9.0)  # a place no road reaches or leaves
+Pair = tuple[Coordinate, Coordinate]
+
+
+def reversed_sha256(track: TrackItem) -> str:
+    """The test's own retrace evidence: the stored points of the track, reversed and serialised afresh."""
+    points = track_points(track.entry, track.exit, track.point_count)
+    return hashlib.sha256(canonical_points_file(tuple(reversed(points)))).hexdigest()
+
+
+def _dead_end_track(draw: st.DrawFn, item_id: str, exit_: Coordinate) -> TrackItem:
+    entry, point_count = draw(st.sampled_from(POINTS)), draw(st.integers(2, 20))
+    canonical = canonical_points_file(track_points(entry, exit_, point_count))
+    return TrackItem(
+        id=item_id,
+        project_id=PROJECT,
+        name=f"Dead end {item_id}",
+        description=None,
+        original_sha256="original",
+        canonical_sha256=hashlib.sha256(canonical).hexdigest(),
+        direction_version=draw(st.integers(1, 9)),
+        point_count=point_count,
+        entry=entry,
+        exit=exit_,
+        length_m=draw(track_lengths_m),
+    )
+
+
+@dataclass(frozen=True)
+class DeadEnds:
+    """A trip with one or two dead-end tracks (no road at any level leaves their exit) and maybe an isolated place;
+    `no_road` holds the pairs the road map has no road for."""
+
+    trip: Trip
+    no_road: frozenset[Pair]
+    isolated: PoiItem | None = None
+
+
+@st.composite
+def dead_end_trips(draw: st.DrawFn, *, isolated: bool = False) -> DeadEnds:
+    trip = draw(trips())
+    exits = DEAD_EXITS[: draw(st.integers(1, 2))]
+    dead = [_dead_end_track(draw, f"dead-{i}", exit_) for i, exit_ in enumerate(exits)]
+    no_road = {(exit_, point) for exit_ in DEAD_EXITS for point in (*POINTS, ISOLATED)}
+    alone = PoiItem(id="isolated", project_id=PROJECT, name="Alone", location=ISOLATED) if isolated else None
+    if alone is not None:
+        no_road |= {pair for point in (*POINTS, *DEAD_EXITS) for pair in ((point, ISOLATED), (ISOLATED, point))}
+    added = (*dead, *([alone] if alone else []))
+    order = draw(st.permutations((*trip.items, *added)))
+    legs = LegTable((RoadLeg(*pair, m, road_time_s(m)) for pair, m in trip.leg_m.items()), no_road)
+    snapshot = replace(trip.snapshot, items=(*trip.snapshot.items, *added))
+    return DeadEnds(Trip(snapshot, legs, trip.leg_m, trip.start, trip.end, tuple(order)), frozenset(no_road), alone)
+
+
+def _retrace_evidence_of(track: TrackItem) -> CanonicalFileEvidence:
+    return replace(_evidence_of(track), reversed_sha256=reversed_sha256(track))
+
+
+@st.composite
+def retrace_plans(draw: st.DrawFn) -> Plan:
+    """A plan the assembler makes of a dead-end trip in any order, with the job's retrace hashes and file evidence."""
+    trip = draw(dead_end_trips()).trip
+    hashes = {track.id: reversed_sha256(track) for track in trip.tracks()}
+    stops = PlanRunAssembler(trip.snapshot, trip.legs).assemble([item.id for item in trip.items], hashes)
+    return Plan(trip, stops, {track.id: _retrace_evidence_of(track) for track in trip.tracks()})
+
+
+def _retraces(plan: Plan) -> list[int]:
+    return [at for at, stop in enumerate(plan.stops) if stop.kind == "retrace"]
+
+
+def _track_of(plan: Plan, at: int) -> TrackItem:
+    track = plan.trip.snapshot.item(plan.stops[at].item_id)
+    assert isinstance(track, TrackItem)
+    return track
+
+
+def _a_retrace(plan: Plan, draw: st.DrawFn) -> tuple[int, PlanStop, TrackItem]:
+    at = draw(st.sampled_from(_retraces(plan)))
+    return at, plan.stops[at], _track_of(plan, at)
+
+
+def _retrace_moved(plan: Plan, draw: st.DrawFn) -> Broken:
+    """Check 6, adjacency: anywhere but directly after its own track (never last: that is HC-2's)."""
+    at, stop, _ = _a_retrace(plan, draw)
+    rest = (*plan.stops[:at], *plan.stops[at + 1 :])
+    places = [to for to in range(1, len(rest)) if rest[to - 1].item_id != stop.item_id]
+    to = draw(st.sampled_from(places))
+    return Broken((*rest[:to], stop, *rest[to:]), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_repeated(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    return Broken(plan.inserted(at + 1, stop), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_of_another_track(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    other = draw(st.sampled_from([track.id for track in plan.trip.tracks() if track.id != stop.item_id]))
+    return Broken(plan.with_stop(at, item_id=other), plan.files, "retrace", other)
+
+
+def _retrace_of_no_track(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, _, _ = _a_retrace(plan, draw)
+    other = draw(st.sampled_from(("no-such-item", plan.trip.start.id)))
+    return Broken(plan.with_stop(at, item_id=other), plan.files, "retrace", other)
+
+
+def _retrace_runs_entry_to_exit(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, track = _a_retrace(plan, draw)
+    return Broken(plan.with_stop(at, entry=track.entry, exit=track.exit), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_ends_at_the_tracks_exit(plan: Plan, draw: st.DrawFn) -> Broken:
+    """No stop may end at a track's exit (no mirror case)."""
+    at, stop, track = _a_retrace(plan, draw)
+    return Broken(plan.with_stop(at, exit=track.exit), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_says_otherwise(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    words = draw(
+        st.sampled_from(
+            ({"confidence": "confirmed"}, {"confidence": None}, {"reason": "other"}, {"reason": None}, {"kind": "poi"})
+        )
+    )
+    return Broken(plan.with_stop(at, **words), plan.files, "retrace" if "kind" not in words else "HC-3", stop.item_id)
+
+
+def _retrace_length_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, track = _a_retrace(plan, draw)
+    length = draw(st.sampled_from((track.length_m / 1000 + 0.001, track.length_m / 2000, None)))
+    return Broken(plan.with_stop(at, track_km=length), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_has_a_road_leg(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    changes: tuple[dict[str, Any], ...] = (
+        {"leg_km": 0.0},
+        {"leg_s": 0},
+        {"leg_confidence": "confirmed"},
+        {"leg_reason": "a road"},
+        {"location": POINTS[0]},
+    )
+    leg = draw(st.sampled_from(changes))
+    return Broken(plan.with_stop(at, **leg), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_although_a_road_leaves_the_exit(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, track = _a_retrace(plan, draw)
+    onward = plan.trip.snapshot.item(plan.stops[at + 1].item_id)
+    road = LegTable([RoadLeg(track.exit, reached_at(onward), 1, 1)])
+    return Broken(plan.stops, plan.files, "retrace", stop.item_id, plan.trip.legs.merged_with(road))
+
+
+def _retrace_hash_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, track = _a_retrace(plan, draw)
+    sha = draw(st.sampled_from(("other", None, track.canonical_sha256)))
+    return Broken(plan.with_stop(at, retrace_sha256=sha), plan.files, "retrace", stop.item_id)
+
+
+def _retrace_evidence_differs(plan: Plan, draw: st.DrawFn) -> Broken:
+    """The reversed points read from the file are not the ones retraced, or could not be read."""
+    _, stop, track = _a_retrace(plan, draw)
+    changed = replace(plan.files[track.id], reversed_sha256=draw(st.sampled_from(("other", None))))
+    return Broken(plan.stops, {**plan.files, track.id: changed}, "retrace", stop.item_id)
+
+
+def _retraced_file_vanished(plan: Plan, draw: st.DrawFn) -> Broken:
+    _, stop, _ = _a_retrace(plan, draw)
+    return Broken(plan.stops, {k: v for k, v in plan.files.items() if k != stop.item_id}, "HC-5", stop.item_id)
+
+
+def _retrace_dropped(plan: Plan, draw: st.DrawFn) -> Broken:
+    """The track is left from its exit, where no road goes: the leg after it is nobody's."""
+    at, _, _ = _a_retrace(plan, draw)
+    after = plan.stops[at + 1].item_id
+    return Broken((*plan.stops[:at], *plan.stops[at + 1 :]), plan.files, "leg_consistency", after)
+
+
+def _retraced_track_dropped(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, _ = _a_retrace(plan, draw)
+    return Broken((*plan.stops[: at - 1], *plan.stops[at:]), plan.files, "HC-3", stop.item_id)
+
+
+def _retraced_track_reversed(plan: Plan, draw: st.DrawFn) -> Broken:
+    at, stop, track = _a_retrace(plan, draw)
+    return Broken(plan.with_stop(at - 1, entry=track.exit, exit=track.entry), plan.files, "HC-1", stop.item_id)
+
+
+def _leg_after_the_retrace_from_elsewhere(plan: Plan, draw: st.DrawFn) -> Broken:
+    """Check 5 after a retrace: the road goes on from the track's entry, from no other point."""
+    at, _, track = _a_retrace(plan, draw)
+    onward = plan.stops[at + 1]
+    destination = reached_at(plan.trip.snapshot.item(onward.item_id))
+    origin = draw(st.sampled_from([point for point in POINTS if point not in (track.entry, destination)]))
+    m = plan.trip.leg_m[origin, destination]
+    changed = plan.with_stop(at + 1, leg_km=m / 1000, leg_s=road_time_s(m))
+    return Broken(changed, plan.files, "leg_consistency", onward.item_id)
+
+
+RETRACE_BREAKINGS: list[Breaking] = [
+    _retrace_moved,
+    _retrace_repeated,
+    _retrace_of_no_track,
+    _retrace_runs_entry_to_exit,
+    _retrace_ends_at_the_tracks_exit,
+    _retrace_says_otherwise,
+    _retrace_length_differs,
+    _retrace_has_a_road_leg,
+    _retrace_although_a_road_leaves_the_exit,
+    _retrace_hash_differs,
+    _retrace_evidence_differs,
+    _retraced_file_vanished,
+    _retrace_dropped,
+    _retraced_track_dropped,
+    _retraced_track_reversed,
+    _leg_after_the_retrace_from_elsewhere,
+]
+
+
+@given(plan=retrace_plans())
+def test_every_plan_with_retraces_the_assembler_makes_passes(plan: Plan) -> None:
+    before = _judged(plan, plan.stops, None)
+
+    violation = plan.guard().check_plan(plan.stops, plan.files)
+
+    assert_state_delta(before, _judged(plan, plan.stops, violation), UNIVERSE, {}, strict=True)
+    assert violation is None, f"{violation}"
+    assert _retraces(plan), "a dead-end track is always retraced"
+    assert all(
+        plan.stops[at].retrace_sha256 == plan.files[plan.stops[at].item_id].reversed_sha256 for at in _retraces(plan)
+    )
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@given(plan=retrace_plans(), data=st.data())
+def test_any_single_retrace_perturbation_fails_and_names_its_rule(plan: Plan, data: st.DataObject) -> None:
+    """Every perturbation of criterion 2 on every plan (D212); none passes."""
+    others = [_retrace_of_another_track] if len(plan.trip.tracks()) > 1 else []
+    for breaking in [*RETRACE_BREAKINGS, *others]:
+        note(f"perturbation: {breaking.__name__}")
+        broken = breaking(plan, data.draw)
+        before = _judged(plan, broken.stops, None)
+
+        guard = InvariantGuard(plan.trip.snapshot, broken.legs or plan.trip.legs)
+        violation = guard.check_plan(broken.stops, broken.files)
+
+        expected = {"guard.check": set_to(broken.rule)}
+        assert_state_delta(before, _judged(plan, broken.stops, violation), UNIVERSE, expected, strict=True)
+        assert violation is not None and violation.detail
+        assert broken.item_id is None or broken.item_id in violation.detail, f"no item named: {violation.detail}"
+
+
+CLAIM_UNIVERSE = {"guard.check", "snapshot.read"}
+
+
+@given(dead_ends=dead_end_trips(isolated=True), data=st.data())
+def test_an_unreachable_claim_holds_only_for_the_items_no_order_connects(
+    dead_ends: DeadEnds, data: st.DataObject
+) -> None:
+    """ADR-009 Amendment 1: the claim is re-derived from the leg table. Here only the isolated place is cut off: every
+    other item has a road from every point, and a dead end its retrace."""
+    trip, alone = dead_ends.trip, dead_ends.isolated
+    assert alone is not None
+    connected: list[CatalogItem] = [item for item in trip.items if item.id != alone.id]
+    guard = InvariantGuard(trip.snapshot, trip.legs)
+    wrong = data.draw(st.sampled_from([*(item.id for item in connected), "no-such-item"]), label="wrongly claimed")
+    claims = [((alone.id,), None), ((alone.id, wrong), "reachability"), ((wrong,), "reachability")]
+    for claim, rule in claims:
+        note(f"claim: {claim}")
+        before = {"guard.check": None, "snapshot.read": trip.snapshot}
+
+        violation = guard.check_unreachable(claim)
+
+        after = {"guard.check": None if violation is None else violation.check, "snapshot.read": trip.snapshot}
+        assert_state_delta(before, after, CLAIM_UNIVERSE, {"guard.check": set_to(rule)} if rule else {}, strict=True)
+        assert violation is None or wrong in violation.detail, f"the detail names no item: {violation}"

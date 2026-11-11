@@ -36,6 +36,7 @@ from overland_planner.application.catalog.facade import (
     canonical_file_sha256,
     canonical_points_file,
     parse_canonical_points_file,
+    reversed_points_sha256,
 )
 from overland_planner.application.planning.facade import PlanRequestJob, PlanRunQueries
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
@@ -96,12 +97,14 @@ class GeneratedProject:
         return parse_canonical_points_file(content)
 
     def evidence(self) -> dict[str, CanonicalFileEvidence]:
-        """What the guard is shown of each stored file, computed here from the bytes (the test's own reading)."""
+        """What the guard is shown of each stored file, computed here from the bytes (the test's own reading), with the
+        hash of its points reversed by the production function, so a retrace goes through the same guard rule."""
         found = {}
         for track_id, _version, content in self.files:
             points = parse_canonical_points_file(content)
             first, last = points[0].coordinate, points[-1].coordinate
-            found[track_id] = CanonicalFileEvidence(canonical_file_sha256(content), len(points), first, last)
+            sha256, reversed_sha256 = canonical_file_sha256(content), reversed_points_sha256(points)
+            found[track_id] = CanonicalFileEvidence(sha256, len(points), first, last, reversed_sha256)
         return found
 
 
@@ -324,6 +327,9 @@ def plan_from_scratch(
 def guard_finds_nothing(plan: GeneratedPlan) -> None:
     """ADR-009's guard as the oracle, run again here on what was stored, against the test's own reading of the files."""
     snapshot = plan.project.snapshot
-    legs = LegResolver(plan.project.road_map_provider()).resolve(SolverModelBuilder(snapshot).required_pairs())
+    builder, resolver = SolverModelBuilder(snapshot), LegResolver(plan.project.road_map_provider())
+    legs = resolver.resolve(builder.required_pairs())
+    second = builder.retrace_pairs(legs)  # the retrace pairs, as the job asks them (ADR-017 section 2)
+    legs = legs.merged_with(resolver.resolve(second)) if second else legs
     violation = InvariantGuard(snapshot, legs).check_plan(plan.stops, plan.project.evidence())
     assert violation is None, f"the stored plan breaks {violation.check}: {violation.detail}"

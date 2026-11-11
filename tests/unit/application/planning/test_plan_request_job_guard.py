@@ -3,11 +3,13 @@
 Driving ports: `PlanRequestJob.run` and, for the job's end, `PlanJobRegistry`. Driven ports: `PlanningUnitOfWork`,
 `RoutingProvider`, `TourSolver` (scripted), `FileStore`, `EventLog`. Removing the guard from the job fails these tests.
 Observable universe: `plan_runs`, `items`, `projects` as planning reads them and `files` as the store holds them.
-Test Budget: 8 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
+Test Budget: 10 behaviors (a passing plan is stored and logged ok; a changed or vanished file stores one Failed run; a
 solver's broken order ends the same way, job done; the size of a real track; canonical file round trip; a ready run
 stores and shows the totals of its stops, a Failed run none; a ready run stores and shows each stop with the
 assembler's columns, a Failed run no stops; a Failed run stores and shows its reason in product words, a ready run no
-report) x 2 = 16; 8 used.
+report; a retraced plan is stored with the hash of each retraced track's reversed points, and a changed or vanished
+file of a retraced track stores one Failed run; the retrace hash is the reversed list serialised afresh) x 2 = 20;
+11 used.
 """
 
 from __future__ import annotations
@@ -24,7 +26,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from overland_planner.application.catalog.facade import canonical_points_file, parse_canonical_points_file
+from overland_planner.application.catalog.facade import (
+    canonical_points_file,
+    parse_canonical_points_file,
+    reversed_points_sha256,
+)
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob, PlanRunQueries, StoredRun
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.tour_solver import (
@@ -49,6 +55,7 @@ from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
+from tests.unit.domain.planning.test_invariant_guard import DeadEnds, dead_end_trips, reversed_sha256
 from tests.unit.domain.planning.trips import PRODUCT_WORDS, PROJECT, Trip, planned_totals, track_points, trips
 
 UNIVERSE = {"plan_runs", "items", "projects", "files"}
@@ -107,19 +114,23 @@ def _harness(
     leg_m: dict[tuple[Coordinate, Coordinate], int],
     files: InMemoryFileStore,
     outcome: TourOutcome | None = None,
+    no_road: frozenset[tuple[Coordinate, Coordinate]] = frozenset(),
 ) -> Harness:
     planning = InMemoryPlanning()
     planning.add_project(PROJECT, snapshot)
     clock, log = FakeClock(), RecordingEventLog()
     solver = ScriptedTourSolver(outcome)
-    job = PlanRequestJob(planning.unit_of_work, LegResolver(RecordingRoadMap(leg_m)), solver, BUDGET, clock, log, files)
+    road_map = RecordingRoadMap(leg_m, no_road=no_road)
+    job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files)
     return Harness(planning, files, job, clock, log)
 
 
-def _harness_of(trip: Trip, outcome: TourOutcome | None = None) -> Harness:
+def _harness_of(
+    trip: Trip, outcome: TourOutcome | None = None, no_road: frozenset[tuple[Coordinate, Coordinate]] = frozenset()
+) -> Harness:
     files = InMemoryFileStore()
     trip.seed_canonical_files(files)
-    return _harness(trip.snapshot, trip.leg_m, files, outcome)
+    return _harness(trip.snapshot, trip.leg_m, files, outcome, no_road)
 
 
 def _assert_one_failed_run_only(harness: Harness, before: dict[str, Any], stored: StoredRun, check: str) -> None:
@@ -430,3 +441,70 @@ def test_the_parser_reads_back_what_the_encoder_wrote(points: list[TrackPoint]) 
 
     assert parse_canonical_points_file(content) == tuple(points)
     assert canonical_points_file(parse_canonical_points_file(content)) == content
+
+
+RETRACE_UNIVERSE = {"plan_runs", "log.invariant_violations"}
+
+
+def _retraced_rows(harness: Harness) -> dict[str, Any]:
+    """The runs as stored, each stop as (kind, item, retrace hash), and the checks the guard said were broken."""
+    rows = tuple(
+        (run.number, run.status, run.failure_reason, tuple((s.kind, s.item_id, s.retrace_sha256) for s in run.stops))
+        for run in harness.planning.runs
+    )
+    checks = tuple(fields["check"] for fields in harness.log.fields_of("invariant.violation"))
+    return {"plan_runs": rows, "log.invariant_violations": checks}
+
+
+def _expected_stops(dead_ends: DeadEnds, order: tuple[str, ...]) -> tuple[tuple[str, str, str | None], ...]:
+    """Worked out from the rules: a dead-end track (no road leaves its exit) is followed by its retrace, which carries
+    the hash of the track's stored points reversed; every other stop carries none."""
+    snapshot = dead_ends.trip.snapshot
+    expected: list[tuple[str, str, str | None]] = []
+    for item_id in order:
+        item = snapshot.item(item_id)
+        expected.append(("track" if isinstance(item, TrackItem) else "poi", item_id, None))
+        if isinstance(item, TrackItem) and item.id.startswith("dead-"):
+            expected.append(("retrace", item_id, reversed_sha256(item)))
+    return tuple(expected)
+
+
+@pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
+@settings(deadline=None)
+@given(dead_ends=dead_end_trips(), data=st.data())
+def test_a_retraced_plan_is_stored_with_the_reversed_points_hash_and_a_damaged_retraced_track_fails_it(
+    dead_ends: DeadEnds, data: st.DataObject
+) -> None:
+    """Criterion 4 through the job: the hash comes from the file read by version; a changed or vanished file of a
+    retraced track stores one Failed run and no ready one."""
+    trip = dead_ends.trip
+    order = (trip.start.id, *(item.id for item in trip.items), trip.end.id)
+    dead = data.draw(st.sampled_from([t for t in trip.tracks() if t.id.startswith("dead-")]), label="retraced")
+    damage = data.draw(_damages(dead), label="damage")
+    for damaged, row in (
+        (False, (1, "ready", None, _expected_stops(dead_ends, order))),
+        (True, (1, "failed", REASON, ())),
+    ):
+        harness = _harness_of(trip, TourFound(order), dead_ends.no_road)
+        if damaged and damage is None:
+            harness.files.lose_canonical_points(dead.id, dead.direction_version)
+        elif damaged and damage is not None:
+            harness.files.keep_canonical_points(dead.id, dead.direction_version, damage)
+        before = _retraced_rows(harness)
+
+        harness.run()
+
+        checks = gained("HC-5") if damaged else unchanged()
+        expected = {"plan_runs": gained(row), "log.invariant_violations": checks}
+        assert_state_delta(before, _retraced_rows(harness), RETRACE_UNIVERSE, expected, strict=True)
+
+
+@given(points=st.lists(coordinates, max_size=50))
+def test_the_retrace_hash_is_the_reversed_list_serialised_afresh(points: list[TrackPoint]) -> None:
+    afresh = hashlib.sha256(canonical_points_file(points[::-1])).hexdigest()
+    forward = hashlib.sha256(canonical_points_file(points)).hexdigest()
+
+    retrace = reversed_points_sha256(points)
+
+    assert retrace == afresh
+    assert (retrace == forward) == (points == points[::-1]), "only a palindrome hashes the same both ways"

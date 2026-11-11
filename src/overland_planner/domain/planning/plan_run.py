@@ -59,7 +59,8 @@ class PlanStop:
     `cumulative_km`/`cumulative_s` is road plus off-road to the stop's end (D11). A retrace (ADR-017 section 3) is the
     row after its track, with the track's `item_id`: it leaves the track's exit and ends at its entry, is not a road
     leg, and carries its own `confidence` (always Unconfirmed) and `reason`; its km and time are the track's, off-road.
-    `retrace_sha256` is the evidence of the track's points it retraces (07-07).
+    `retrace_sha256` is the hash of the track's points it retraces: reversed and serialised as the canonical file is
+    (ADR-009 Amendment 2).
     """
 
     item_id: str
@@ -119,7 +120,9 @@ class PlanStop:
         return replace(stop, track_km=track_km, offroad_s=offroad_s)
 
     @classmethod
-    def retracing(cls, track: TrackItem, offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED) -> PlanStop:
+    def retracing(
+        cls, track: TrackItem, offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED, retrace_sha256: str | None = None
+    ) -> PlanStop:
         """The track driven back from its exit to its entry: off-road at the track's length, never a road leg."""
         track_km, offroad_s = _offroad(track, offroad_speed)
         return cls(
@@ -133,6 +136,7 @@ class PlanStop:
             reason=RETRACE_REASON,
             track_km=track_km,
             offroad_s=offroad_s,
+            retrace_sha256=retrace_sha256,
         )
 
     def driven_km(self) -> Driven:

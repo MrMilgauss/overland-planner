@@ -12,6 +12,7 @@ from overland_planner.application.catalog.track_import_service import (
     canonical_file_sha256,
     canonical_points_file,
     parse_canonical_points_file,
+    reversed_points_sha256,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "canonical_file_sha256",
     "canonical_points_file",
     "parse_canonical_points_file",
+    "reversed_points_sha256",
 ]

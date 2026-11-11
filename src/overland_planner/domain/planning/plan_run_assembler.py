@@ -2,10 +2,11 @@
 
 The first stop is the Start and the last the End (HC-2); each later stop carries the road leg, km and time, from where
 the previous stop is left to where it is reached (HC-1), with its confidence level; a track whose exit has no road to
-the next stop is followed by its retrace row and the road goes on from its entry (ADR-017 section 3); a track stop
-carries its length and off-road time at the project's off-road speed, and every stop its cumulative km and time to its
-end (FR-6.1, D11). `Totals.of` the stops are the plan's totals (FR-6.2). Checking the chosen order is the guard's job
-(brief section 8), not this assembler's.
+the next stop is followed by its retrace row and the road goes on from its entry (ADR-017 section 3), the row carrying
+the hash of the track's reversed points the job read from its file (ADR-009 Amendment 2; the domain reads none); a
+track stop carries its length and off-road time at the project's off-road speed, and every stop its cumulative km and
+time to its end (FR-6.1, D11). `Totals.of` the stops are the plan's totals (FR-6.2). Checking the chosen order is the
+guard's job (brief section 8), not this assembler's.
 A Failed run's report keeps its reason in product words, mapped from the stored code (D206); a code with no product
 wording yet shows its words (D220 e). A ready run has no report until slice 04 brings the consideration report; the
 warnings arrive with later slices.
@@ -13,7 +14,7 @@ warnings arrive with later slices.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
@@ -36,11 +37,15 @@ class PlanRunAssembler:
         self._snapshot = snapshot
         self._legs = legs
 
-    def assemble(self, visited_item_ids: Sequence[str]) -> tuple[PlanStop, ...]:
+    def assemble(
+        self, visited_item_ids: Sequence[str], retrace_sha256: Mapping[str, str] | None = None
+    ) -> tuple[PlanStop, ...]:
+        """`retrace_sha256` holds, by track id, the hash of the reversed points of each track the plan retraces."""
         trip = (self._snapshot.start(), *map(self._snapshot.item, visited_item_ids), self._snapshot.end())
+        hashes = retrace_sha256 or {}
         stops: list[PlanStop] = []
         for previous, item in zip((None, *trip[:-1]), trip, strict=True):
-            for stop in self._arrival(item, previous):
+            for stop in self._arrival(item, previous, hashes):
                 stops.append(stop.ending(stops))
         return tuple(stops)
 
@@ -52,13 +57,14 @@ class PlanRunAssembler:
             return None
         return PlanReport(_PRODUCT_WORDS.get(failure_reason, failure_reason.replace("_", " ")), tuple(items))
 
-    def _arrival(self, item: CatalogItem, previous: CatalogItem | None) -> list[PlanStop]:
+    def _arrival(self, item: CatalogItem, previous: CatalogItem | None, hashes: Mapping[str, str]) -> list[PlanStop]:
         """The stops that reach `item`: its retrace row first when `previous` is a track retraced to leave (the rule is
         the model's, `retrace_rule.arc_kind`), then the item with the road leg from where the previous is left."""
         if previous is None:
             return [PlanStop.driving(item, None, self._snapshot.offroad_speed)]
         if isinstance(previous, TrackItem) and arc_kind(previous, item, self._legs) == "retrace":
-            return [PlanStop.retracing(previous, self._snapshot.offroad_speed), self._reached(item, previous.entry)]
+            retrace = PlanStop.retracing(previous, self._snapshot.offroad_speed, hashes.get(previous.id))
+            return [retrace, self._reached(item, previous.entry)]
         return [self._reached(item, left_at(previous))]
 
     def _reached(self, item: CatalogItem, origin: Coordinate) -> PlanStop:
