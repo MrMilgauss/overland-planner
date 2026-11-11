@@ -3,25 +3,39 @@
 A leg carries its road distance in integer metres, as the leg cache holds them, and its road time in seconds. Nothing
 is driven between identical points, so that leg is 0 m and 0 s and needs no row. A pair that is missing otherwise is a
 programming error and raises `KeyError`.
+
+A road map answers each pair at a level (brief section 6): `confirmed`, or `unconfirmed` with the reason it is not; a
+pair with no road at any level has no measure at all (`None` in the port's matrix).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 
 RoadPair = tuple[Coordinate, Coordinate]
+RoadLevel = Literal["confirmed", "unconfirmed"]
 _METRES_PER_KM = 1000
 
 
 @dataclass(frozen=True)
 class RoadMeasure:
-    """What the road map answers for one pair: road distance in metres and road time in seconds."""
+    """What the road map answers for one pair: road distance in metres, road time in seconds, its level and reason."""
 
     distance_m: int
     duration_s: int
+    level: RoadLevel = "confirmed"
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.level == "confirmed" and self.reason is None:
+            return
+        if self.level == "unconfirmed" and self.reason is not None and self.reason.strip():
+            return
+        raise ValueError(f"a {self.level} road measure cannot carry the reason {self.reason!r}")
 
 
 NOTHING_TO_DRIVE = RoadMeasure(distance_m=0, duration_s=0)

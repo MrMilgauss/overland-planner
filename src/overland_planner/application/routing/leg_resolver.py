@@ -69,10 +69,18 @@ class LegResolver:
 
     def _ask(self, provider_id: str, origin: Coordinate, targets: list[Coordinate]) -> dict[RoadPair, RoadMeasure]:
         (row,) = self._provider.matrix([origin], targets)
-        answered = {(origin, target): measure for target, measure in zip(targets, row, strict=True)}
+        answered = {(origin, target): _road(measure) for target, measure in zip(targets, row, strict=True)}
         with self._lock:
             self._known.update({(provider_id, pair): measure for pair, measure in answered.items()})
         return answered
+
+
+def _road(measure: RoadMeasure | None) -> RoadMeasure:
+    if measure is None:
+        raise LookupError(
+            "the road map has no road at any level for a pair; slice 03b's resolver does not take that yet"
+        )
+    return measure
 
 
 def _missing_by_origin(

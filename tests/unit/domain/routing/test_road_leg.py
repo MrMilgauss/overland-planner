@@ -3,7 +3,7 @@
 Driving port: `LegTable` (`distance_m`, `distance_km`, `duration_s`). Observable universe: what the table answers for
 the pairs it was given (`legs.distance_m`, `legs.duration_s`) and for a point and itself (`legs.identical_points`).
 Test Budget: 2 behaviors (a leg answers its own distance and road time, identical points 0 m and 0 s; metres read as
-kilometres) x 2 = 4; 2 used.
+kilometres; a road measure carries a level and the reason of an unconfirmed one) x 2 = 6; 3 used.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.routing.road_leg import LegTable, RoadLeg, RoadPair
+from overland_planner.domain.routing.road_leg import LegTable, RoadLeg, RoadMeasure, RoadPair
 from tests.common.state_delta import assert_state_delta, set_to
 
 TORINO = Coordinate(45.0703, 7.6869)
@@ -83,3 +83,37 @@ def test_a_leg_reads_in_kilometres(metres: int, origin: Coordinate, destination:
     legs = LegTable([RoadLeg(TORINO, BRIANCON, metres, 90)])
 
     assert legs.distance_km(origin, destination) == kilometres
+
+
+def _measured(level: str | None, reason: str | None) -> Any:
+    kwargs = {} if level is None else {"level": level}
+    kwargs |= {} if reason is None else {"reason": reason}
+    try:
+        measure = RoadMeasure(1200, 90, **kwargs)
+    except ValueError:
+        return "refused"
+    return (measure.level, measure.reason)
+
+
+@given(
+    level=st.one_of(st.none(), st.sampled_from(["confirmed", "unconfirmed", "none", "Confirmed", ""])),
+    reason=st.one_of(st.none(), st.just(""), st.text(alphabet="abc_ ", min_size=1)),
+)
+def test_a_measure_is_confirmed_by_default_and_an_unconfirmed_one_always_says_why(
+    level: str | None, reason: str | None
+) -> None:
+    before = {"measure.outcome": None}
+
+    valid_unconfirmed = level == "unconfirmed" and bool(reason and reason.strip())
+    valid_confirmed = level in (None, "confirmed") and reason is None
+    expected = (
+        (level or "confirmed", reason) if valid_unconfirmed or valid_confirmed else "refused"
+    )  # oracle: the two rules of brief section 6, not the class's own checks
+
+    assert_state_delta(
+        before,
+        {"measure.outcome": _measured(level, reason)},
+        {"measure.outcome"},
+        {"measure.outcome": set_to(expected)},
+        strict=True,
+    )

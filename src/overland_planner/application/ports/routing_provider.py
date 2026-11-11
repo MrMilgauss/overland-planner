@@ -1,7 +1,8 @@
 """RoutingProvider port (brief section 6): the road map that gives the distance and road time of a road leg.
 
-Slice 01b declares the subset `provider_id` and `matrix(sources, targets)`; `locate`, `route_many`, modes, `None` cells
-and typed errors arrive with slice 06a. Each cell holds the distance in integer metres and the road time in seconds.
+Slice 01b declares the subset `provider_id` and `matrix(sources, targets)`; `locate`, `route_many`, modes and typed
+errors arrive with slice 06a. Each cell holds the distance in integer metres and the road time in seconds, with the
+level it was found at (03b); a cell is `None` for a pair with no road at any level.
 `provider_id` names the road map, so legs and plans of different road maps are never confused.
 """
 
@@ -19,6 +20,9 @@ class RoutingProvider(Probeable, Protocol):
     @property
     def provider_id(self) -> str: ...
 
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
-        """One row per source, one cell per target: the road distance in metres and the road time in seconds."""
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
+    ) -> Sequence[Sequence[RoadMeasure | None]]:
+        """One row per source, one cell per target: the road distance in metres and the road time in seconds,
+        or None when no road exists at any level."""
         ...

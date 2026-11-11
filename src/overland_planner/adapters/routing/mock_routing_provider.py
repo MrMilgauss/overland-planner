@@ -2,11 +2,14 @@
 
 Without a script every road leg is the straight line x 1.3 in metres, and its road time that distance at the one
 default road speed (D220 f). A scripted road map (`MOCK_PLAN`, brief section 12) is a YAML file
-`{detour_factor, pairs: [{from: [lat, lon], to: [lat, lon], distance_m, duration_s}], latency}`: each listed pair
-answers its scripted distance and time (points matched at 6 decimals); every other pair keeps the default at the file's
-detour_factor; `pairs` may be empty. The file is read once, at start-up, with `yaml.safe_load` only; a missing,
-unreadable or malformed file (including a pair listed twice with different values) is `InvalidRoadMapError`, which
-names the path. Identical points are always 0 m and 0 s apart, and distinct points never are.
+`{detour_factor, pairs: [{from: [lat, lon], to: [lat, lon], distance_m, duration_s, level}], latency}`: each listed
+pair answers its scripted distance and time (points matched at 6 decimals); every other pair keeps the default at the
+file's detour_factor; `pairs` may be empty. The optional `level` (03b) is `confirmed` (the default),
+`unconfirmed:<reason>` (distance and time as well, answered as an Unconfirmed measure with that reason) or `none`
+(neither distance nor time: no road at any level, answered `None`); any other combination is refused. The file is read
+once, at start-up, with `yaml.safe_load` only; a missing, unreadable or malformed file (including a pair listed twice
+with different values or levels) is `InvalidRoadMapError`, which names the path.
+Identical points are always 0 m and 0 s apart, and distinct points never are.
 
 The optional `latency: {answered_at_once_pairs, then_each_call_s}` (06-09, brought forward from slice 06a) slows the
 look-up: the pairs answered are counted over the road map's life, and once those answered before a matrix call have
@@ -14,8 +17,9 @@ reached `answered_at_once_pairs`, that call and every later one waits `then_each
 calls are never delayed nor counted. The wait holds no lock, so calls may wait side by side.
 
 `provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted.
-The start-up probe proves Torino -> Susa (when the script does not list it), identical points, and that one scripted
-pair answers as scripted. Snap classes, levels, unreachable points and the fault plan arrive with slice 06a.
+The start-up probe proves Torino -> Susa (when the script does not list it), identical points, that one scripted
+pair answers as scripted and that one pair of each level the script lists does. Snap classes, unreachable points and the
+fault plan arrive with slice 06a.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -43,7 +48,9 @@ _TORINO_SUSA_STRAIGHT_M = 50_554.67  # haversine, mean Earth radius
 _TORINO_SUSA_ROAD_M = 65_721  # x 1.3
 _KNOWN_PAIR_TOLERANCE_M = 1
 _KNOWN_PAIR_TOLERANCE_S = 1
-_PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s"})
+_PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s", "level"})
+_PAIR_MANDATORY_KEYS = frozenset({"from", "to"})
+_UNCONFIRMED_PREFIX = "unconfirmed:"
 _TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency"})
 _LATENCY_KEYS = frozenset({"answered_at_once_pairs", "then_each_call_s"})
 
@@ -68,7 +75,7 @@ class RoadMapScript:
     """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file, its latency."""
 
     detour_factor: float
-    pairs: Mapping[RoadPair, RoadMeasure]
+    pairs: Mapping[RoadPair, RoadMeasure | None]
     sha256: str
     latency: RoadLookUpLatency | None = None
 
@@ -86,7 +93,7 @@ def read_road_map(path: Path) -> RoadMapScript:
     return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency)
 
 
-def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure], RoadLookUpLatency | None]:
+def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure | None], RoadLookUpLatency | None]:
     if not isinstance(document, dict) or not set(document) <= _TOP_LEVEL_KEYS or "pairs" not in document:
         raise ValueError("must be a mapping with `pairs` and an optional `detour_factor` and `latency`")
     detour_factor = document.get("detour_factor", DETOUR_FACTOR)
@@ -95,11 +102,11 @@ def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure], RoadLo
     listed = document["pairs"]
     if not isinstance(listed, list):
         raise ValueError("pairs must be a list")
-    pairs: dict[RoadPair, RoadMeasure] = {}
+    pairs: dict[RoadPair, RoadMeasure | None] = {}
     for index, entry in enumerate(listed):
         pair, measure = _pair(index, entry)
         if pairs.setdefault(pair, measure) != measure:
-            raise ValueError(f"pairs[{index}] lists a pair again with different values")
+            raise ValueError(f"pairs[{index}] lists a pair again with different values or levels")
     return float(detour_factor), pairs, _latency(document.get("latency"))
 
 
@@ -116,16 +123,33 @@ def _latency(value: object) -> RoadLookUpLatency | None:
     return RoadLookUpLatency(pairs, float(seconds))
 
 
-def _pair(index: int, entry: object) -> tuple[RoadPair, RoadMeasure]:
-    if not isinstance(entry, dict) or set(entry) != _PAIR_KEYS:
-        raise ValueError(f"pairs[{index}] must have exactly from, to, distance_m and duration_s")
+def _pair(index: int, entry: object) -> tuple[RoadPair, RoadMeasure | None]:
+    if not isinstance(entry, dict) or not _PAIR_MANDATORY_KEYS <= set(entry) <= _PAIR_KEYS:
+        raise ValueError(f"pairs[{index}] must have from, to, distance_m, duration_s and an optional level")
     origin, destination = _point(index, entry["from"]), _point(index, entry["to"])
     if origin == destination:
         raise ValueError(f"pairs[{index}] goes from a point to itself, which is always 0 m and 0 s")
-    distance_m, duration_s = entry["distance_m"], entry["duration_s"]
-    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (distance_m, duration_s)):
+    return (origin, destination), _measure_of(index, entry)
+
+
+def _measure_of(index: int, entry: dict[str, object]) -> RoadMeasure | None:
+    level = entry.get("level", "confirmed")
+    if not isinstance(level, str):
+        raise ValueError(f"pairs[{index}] level must be text")
+    figures = [entry.get("distance_m"), entry.get("duration_s")]
+    if level == "none":
+        if "distance_m" in entry or "duration_s" in entry:
+            raise ValueError(f"pairs[{index}] at level none has no road, so neither distance_m nor duration_s")
+        return None
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in figures):
         raise ValueError(f"pairs[{index}] distance_m and duration_s must be whole numbers above 0")
-    return (origin, destination), RoadMeasure(distance_m, duration_s)
+    distance_m, duration_s = cast(int, figures[0]), cast(int, figures[1])
+    if level == "confirmed":
+        return RoadMeasure(distance_m, duration_s)
+    reason = level.removeprefix(_UNCONFIRMED_PREFIX)
+    if not level.startswith(_UNCONFIRMED_PREFIX) or not reason.strip():
+        raise ValueError(f"pairs[{index}] level must be confirmed, unconfirmed:<reason> or none")
+    return RoadMeasure(distance_m, duration_s, level="unconfirmed", reason=reason)
 
 
 def _point(index: int, value: object) -> Coordinate:
@@ -185,7 +209,7 @@ class MockRoutingProvider:
     ) -> None:
         self._detour_factor = detour_factor if script is None else script.detour_factor
         self._script = script
-        self._pairs: Mapping[RoadPair, RoadMeasure] = {} if script is None else script.pairs
+        self._pairs: Mapping[RoadPair, RoadMeasure | None] = {} if script is None else script.pairs
         self._pace = _LookUpPace(None if script is None else script.latency)
         self._sleep = sleep
 
@@ -194,7 +218,9 @@ class MockRoutingProvider:
         default = f"mock:straight_line_x{self._detour_factor}"
         return default if self._script is None else f"{default}:script:{self._script.sha256}"
 
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
+    ) -> Sequence[Sequence[RoadMeasure | None]]:
         wait_s = self._pace.wait_s()
         if wait_s is not None:
             self._sleep(wait_s)
@@ -212,18 +238,19 @@ class MockRoutingProvider:
                     ProbeCheck("routing_known_pair_wrong", self._knows_the_pair),
                     ProbeCheck("routing_identical_points_not_zero", self._identical_points_are_zero),
                     ProbeCheck("routing_scripted_pair_wrong", self._answers_its_script),
+                    ProbeCheck("routing_scripted_level_wrong", self._answers_each_level_it_lists),
                 ),
                 failing_errors=(),
             )
         finally:
             self._pace.probing(False)
 
-    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure:
+    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure | None:
         if source == target:
             return NOTHING_TO_DRIVE
-        scripted = self._pairs.get((_matched(source), _matched(target)))
-        if scripted is not None:
-            return scripted
+        listed = (_matched(source), _matched(target))
+        if listed in self._pairs:
+            return self._pairs[listed]
         distance_m = max(1, round(source.great_circle_distance_m(target) * self._detour_factor))
         return RoadMeasure(distance_m, max(1, round(distance_m / _METRES_PER_SECOND)))
 
@@ -232,6 +259,8 @@ class MockRoutingProvider:
             return True
         expected_m = _TORINO_SUSA_ROAD_M if self._script is None else _TORINO_SUSA_STRAIGHT_M * self._detour_factor
         ((answered,),) = self.matrix([_TORINO], [_SUSA])
+        if answered is None:
+            return False
         expected_s = expected_m / _METRES_PER_SECOND
         distance_right = abs(answered.distance_m - expected_m) <= _KNOWN_PAIR_TOLERANCE_M
         return distance_right and abs(answered.duration_s - expected_s) <= _KNOWN_PAIR_TOLERANCE_S
@@ -247,3 +276,18 @@ class MockRoutingProvider:
         (origin, destination), scripted = listed
         ((answered,),) = self.matrix([origin], [destination])
         return answered == scripted
+
+    def _answers_each_level_it_lists(self) -> bool:
+        """One listed pair of each level present (confirmed, unconfirmed, none) answers exactly as scripted."""
+        firsts: dict[str, tuple[RoadPair, RoadMeasure | None]] = {}
+        for pair, scripted in self._pairs.items():
+            firsts.setdefault(_level_of(scripted), (pair, scripted))
+        for (origin, destination), scripted in firsts.values():
+            ((answered,),) = self.matrix([origin], [destination])
+            if answered != scripted:
+                return False
+        return True
+
+
+def _level_of(measure: RoadMeasure | None) -> str:
+    return "none" if measure is None else measure.level
