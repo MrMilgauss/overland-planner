@@ -27,6 +27,7 @@ from overland_planner.domain.planning.retrace_rule import arc_kind, second_pass_
 from overland_planner.domain.routing.road_leg import LegTable, RoadPair
 
 INVARIANT_VIOLATION_REASON = "internal_invariant_violation"  # the reason code of ADR-015
+_NO_ROAD = (None,) * 5  # a retrace row's leg km, seconds, confidence, reason and location: it drives no road
 GuardCheck = Literal["HC-1", "HC-2", "HC-3", "HC-5", "leg_consistency", "retrace", "reachability"]
 
 
@@ -191,7 +192,7 @@ class _RetraceForm:
         form = (stop.entry, stop.exit, stop.confidence, stop.reason, stop.track_km, stop.retrace_sha256)
         road = (stop.leg_km, stop.leg_s, stop.leg_confidence, stop.leg_reason, stop.location)
         wanted = (track.exit, track.entry, "unconfirmed", RETRACE_REASON, stored_length_km(track), evidence)
-        return evidence is not None and form == wanted and road == (None,) * 5
+        return evidence is not None and form == wanted and road == _NO_ROAD
 
     def _is_a_retrace_arc(self, track: TrackItem, after: PlanStop) -> bool:
         """Only where no road leaves the exit toward the next stop and one leaves the entry (the retrace rule)."""
@@ -210,9 +211,14 @@ class _Connections:
 
     def connected_ids(self) -> set[str]:
         last = len(self._nodes) - 1
-        arcs = {(a, b) for a in range(last) for b in range(1, last + 1) if a != b and self._runs(a, b)}
-        from_start = _reached(0, {a: {b for x, b in arcs if x == a} for a in range(last + 1)})
-        to_end = _reached(last, {b: {a for a, y in arcs if y == b} for b in range(last + 1)})
+        onward: dict[int, set[int]] = {node: set() for node in range(last + 1)}
+        backward: dict[int, set[int]] = {node: set() for node in range(last + 1)}
+        for origin in range(last):
+            for destination in range(1, last + 1):
+                if origin != destination and self._runs(origin, destination):
+                    onward[origin].add(destination)
+                    backward[destination].add(origin)
+        from_start, to_end = _reached(0, onward), _reached(last, backward)
         return {self._nodes[node].id for node in range(1, last) if node in from_start and node in to_end}
 
     def _runs(self, origin: int, destination: int) -> bool:

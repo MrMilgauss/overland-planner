@@ -52,7 +52,7 @@ large-project notice above 60 Included items other than the anchors (D146).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
@@ -216,10 +216,7 @@ class PlanRequestJob:
         broken_order = guard.check_order(tour.order)  # first: the assembler raises on an unknown id
         if broken_order is not None:
             return self._store_violation(project, broken_order, tour.reproducible)
-        assembler = PlanRunAssembler(project.snapshot, legs)
-        retraced = {stop.item_id for stop in assembler.assemble(tour.visited_item_ids) if stop.kind == "retrace"}
-        files = self._canonical_files(project.snapshot, retraced)
-        stops = assembler.assemble(tour.visited_item_ids, _retrace_hashes(files, retraced))
+        stops, files = self._assemble(project.snapshot, legs, tour.visited_item_ids)
         broken_plan = guard.check_plan(stops, files)
         if broken_plan is not None:
             return self._store_violation(project, broken_plan, tour.reproducible)
@@ -234,6 +231,16 @@ class PlanRequestJob:
             not_fully_optimised=tour.not_fully_optimised,
         )
         return self._store(project, finding)
+
+    def _assemble(
+        self, snapshot: ProjectSnapshot, legs: LegTable, visited_item_ids: Sequence[str]
+    ) -> tuple[tuple[PlanStop, ...], dict[str, CanonicalFileEvidence]]:
+        """The stops and the canonical files' evidence. A first assembly names the retraced tracks, whose files are
+        read with the reversed points' hash; the second writes those hashes on the retrace rows (Amendment 2)."""
+        assembler = PlanRunAssembler(snapshot, legs)
+        retraced = {stop.item_id for stop in assembler.assemble(visited_item_ids) if stop.kind == "retrace"}
+        files = self._canonical_files(snapshot, retraced)
+        return assembler.assemble(visited_item_ids, _retrace_hashes(files, retraced)), files
 
     def _store_violation(self, project: _PlannedProject, violation: GuardViolation, reproducible: bool) -> StoredRun:
         """No fallback to an earlier incumbent (ADR-015): the chosen order broke a rule, so the run is Failed."""
