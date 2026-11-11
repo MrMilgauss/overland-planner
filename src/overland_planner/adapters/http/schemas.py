@@ -15,6 +15,7 @@ from overland_planner.domain.catalog.poi import AnchorRole
 from overland_planner.domain.catalog.project import Project
 from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, StopKind, Totals
 from overland_planner.domain.planning.run_messages import NotFullyOptimised
+from overland_planner.domain.routing.road_leg import RoadLevel
 
 
 class ErrorEnvelope(BaseModel):
@@ -193,7 +194,9 @@ class PlanJobResource(BaseModel):
 
 class PlanStopResource(BaseModel):
     """One stop of the itinerary (FR-6.1): the first has no road leg; a track shows its entry and exit (HC-1), its
-    length and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null."""
+    length and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null.
+    A retrace is its own row, `type` "retrace", right after its track, with its own `confidence` and `reason`; a stop
+    reached by road shows the `leg_confidence` of that road and, when Unconfirmed, its `leg_reason`."""
 
     name: str
     type: StopKind
@@ -205,6 +208,10 @@ class PlanStopResource(BaseModel):
     offroad_s: float | None
     cumulative_km: float | None
     cumulative_s: float | None
+    confidence: RoadLevel | None
+    reason: str | None
+    leg_confidence: RoadLevel | None
+    leg_reason: str | None
 
     @classmethod
     def of(cls, stop: PlanStop) -> PlanStopResource:
@@ -221,6 +228,10 @@ class PlanStopResource(BaseModel):
             offroad_s=stop.offroad_s,
             cumulative_km=stop.cumulative_km,
             cumulative_s=stop.cumulative_s,
+            confidence=stop.confidence,
+            reason=stop.reason,
+            leg_confidence=stop.leg_confidence,
+            leg_reason=stop.leg_reason,
         )
 
 

@@ -223,7 +223,8 @@ item_ids = st.lists(st.sampled_from(["a", "b", "c", "d"]), max_size=4, unique=Tr
 def plan_run_rows(draw: st.DrawFn) -> PlanRunRow:
     status = draw(st.sampled_from(["ready", "failed"]))
     included = tuple(draw(item_ids))
-    stops = () if status == "failed" else tuple(draw(st.lists(st.sampled_from(included or ("x",)), unique=True)))
+    # a retrace row repeats its track's item id (ADR-017 section 3): repeats must break neither count
+    stops = () if status == "failed" else tuple(draw(st.lists(st.sampled_from(included or ("x",)))))
     reason = draw(st.sampled_from([None, "internal_invariant_violation", "infeasible"])) if status == "failed" else None
     return PlanRunRow(
         project_id=draw(st.sampled_from(list(PROJECTS))),

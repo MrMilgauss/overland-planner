@@ -790,8 +790,23 @@
         "type": "object"
       },
       "PlanStopResource": {
-        "description": "One stop of the itinerary (FR-6.1): the first has no road leg; a track shows its entry and exit (HC-1), its\nlength and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null.",
+        "description": "One stop of the itinerary (FR-6.1): the first has no road leg; a track shows its entry and exit (HC-1), its\nlength and off-road time, a POI none. Km and seconds are unrounded; a run stored before them shows them null.\nA retrace is its own row, `type` \"retrace\", right after its track, with its own `confidence` and `reason`; a stop\nreached by road shows the `leg_confidence` of that road and, when Unconfirmed, its `leg_reason`.",
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "cumulative_km": {
             "anyOf": [
               {
@@ -834,6 +849,21 @@
               }
             ]
           },
+          "leg_confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg Confidence"
+          },
           "leg_km": {
             "anyOf": [
               {
@@ -844,6 +874,17 @@
               }
             ],
             "title": "Leg Km"
+          },
+          "leg_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg Reason"
           },
           "leg_s": {
             "anyOf": [
@@ -871,6 +912,17 @@
             ],
             "title": "Offroad S"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "track_km": {
             "anyOf": [
               {
@@ -885,7 +937,8 @@
           "type": {
             "enum": [
               "poi",
-              "track"
+              "track",
+              "retrace"
             ],
             "title": "Type",
             "type": "string"
@@ -901,7 +954,11 @@
           "track_km",
           "offroad_s",
           "cumulative_km",
-          "cumulative_s"
+          "cumulative_s",
+          "confidence",
+          "reason",
+          "leg_confidence",
+          "leg_reason"
         ],
         "title": "PlanStopResource",
         "type": "object"

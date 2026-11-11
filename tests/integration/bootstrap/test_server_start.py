@@ -38,8 +38,11 @@ NOT_PERSISTENT = "Data directory is not persistent - projects would be lost on r
 PLAN_DEADLINE_S = 30.0
 ASSIETTA = "Strada dell'Assietta"
 COLUMNS = ("leg_s", "track_km", "offroad_s", "cumulative_km", "cumulative_s")
-SHOWN_STOP_KEYS = {"name", "type", "leg_km", "entry", "exit", *COLUMNS}
+LEVEL_KEYS = ("confidence", "reason", "leg_confidence", "leg_reason")  # 07-06
+SHOWN_STOP_KEYS = {"name", "type", "leg_km", "entry", "exit", *COLUMNS, *LEVEL_KEYS}
 STORED_STOP_KEYS = {
+    *LEVEL_KEYS,
+    "retrace_sha256",
     "item_id",
     "name",
     "kind",
@@ -280,7 +283,8 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     in_order = (items.start_item_id, item_ids["Briancon"], item_ids[ASSIETTA], items.end_item_id)
     for item_id, stop in zip(in_order, saved, strict=True):
         leg = None if stop["leg_km"] is None else (stop["leg_km"], stop["leg_s"])
-        expected.append(PlanStop.driving(items.item(item_id), leg, items.offroad_speed).ending(expected))
+        level = None if stop["leg_confidence"] is None else (stop["leg_confidence"], stop["leg_reason"])
+        expected.append(PlanStop.driving(items.item(item_id), leg, items.offroad_speed, level).ending(expected))
     assert stored.stops == tuple(expected), "a column did not survive SQLite"
     track = items.item(item_ids[ASSIETTA])
     assert isinstance(track, TrackItem)

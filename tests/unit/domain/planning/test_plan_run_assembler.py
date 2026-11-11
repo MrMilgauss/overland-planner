@@ -3,8 +3,9 @@ their road legs, track lengths, off-road times and cumulative values, and the pl
 
 Driving ports: `PlanRunAssembler` (`assemble(order)`) and `Totals.of(stops)`, both pure.
 Observable universe = the stops as the itinerary, the guard and the export read them, the totals and the snapshot read.
-Test Budget: 6 behaviors (stops in order with their details, road leg of each stop, what each stop drives, cumulative
-to the end of each stop, the totals, the report of a run's outcome) x 2 = 12; 6 used.
+Test Budget: 8 behaviors (stops in order with their details, road leg of each stop, what each stop drives, cumulative
+to the end of each stop, the totals, the report of a run's outcome, the retrace row after a dead-end track, the level
+of each road leg) x 2 = 16; 9 used.
 Km and seconds are not rounded by the domain; expected values are worked out here from the business rules (km from
 metres, off-road time = length / speed) and compared within float rounding, the last cumulative against the totals
 exactly.
@@ -22,12 +23,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.application.ports.tour_solver import TourNoRoute, TourOptimizerFailed, TourTimedOut
+from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.invariant_guard import INVARIANT_VIOLATION_REASON
 from overland_planner.domain.planning.plan_run import PlanReport, PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
+from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.unit.domain.planning.trips import PRODUCT_WORDS, Trip, left_at, reached_at, trips
+from tests.unit.domain.planning.trips import PRODUCT_WORDS, Trip, left_at, reached_at, road_time_s, trips
 
 
 @st.composite
@@ -91,6 +94,8 @@ def _close(expected: Any, actual: Any) -> bool:
         return isinstance(actual, tuple) and len(expected) == len(actual) and all(map(_close, expected, actual))
     if expected is None or actual is None:
         return expected is actual
+    if not isinstance(expected, int | float):
+        return bool(expected == actual)
     return math.isclose(expected, actual, rel_tol=1e-9, abs_tol=1e-9)
 
 
@@ -216,6 +221,118 @@ def test_totals_sum_the_road_legs_and_the_tracks_and_end_the_cumulative(
     assert_state_delta(before, after, universe, expected, strict=True)
     if not order:
         assert (len(legs), after["plan.totals"][2:4]) == (1, (0, 0)), "Start and End only: one leg, no off-road"
+
+
+RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"  # the product's words (ADR-017)
+Pair = tuple[Coordinate, Coordinate]
+_NO_LEG = (None, None, None, None)
+
+
+@st.composite
+def dead_end_trips(draw: st.DrawFn) -> tuple[Trip, LegTable, set[Pair], set[Pair]]:
+    """A trip whose road legs have levels and where some tracks' exits lead nowhere: no road at any level from such an
+    exit to any other point. Only a point no item is reached at can be a dead exit, so every entry keeps its roads.
+    Returns the trip, its leg table, the pairs with no road and the pairs whose road is Unconfirmed."""
+    trip = draw(trips())
+    reached = {reached_at(item) for item in (trip.start, trip.end, *trip.items)}
+    exits = sorted({track.exit for track in trip.tracks() if track.exit not in reached}, key=str)
+    dead = set(draw(st.lists(st.sampled_from(exits), unique=True))) if exits else set()
+    no_road = {pair for pair in trip.leg_m if pair[0] in dead}
+    roads = sorted(set(trip.leg_m) - no_road, key=str)
+    unconfirmed = set(draw(st.lists(st.sampled_from(roads), unique=True))) if roads else set()
+    legs = [
+        RoadLeg(*pair, m, road_time_s(m), *_level(pair, unconfirmed))
+        for pair, m in trip.leg_m.items()
+        if pair not in no_road
+    ]
+    return trip, LegTable(legs, no_road), no_road, unconfirmed
+
+
+def _level(pair: Pair, unconfirmed: set[Pair]) -> tuple[str, str | None]:
+    return ("unconfirmed", f"reason {pair}") if pair in unconfirmed else ("confirmed", None)
+
+
+def _oracle(trip: Trip, order: tuple[CatalogItem, ...], no_road: set[Pair], unconfirmed: set[Pair]) -> list[Any]:
+    """The expected stops as (kind, item id, name, leg, retrace) worked out from the rules, not from the assembler:
+    a track whose exit has no road to the next stop is followed by its retrace, and the road goes on from its entry."""
+    sequence = _trip_of(trip, order)
+    expected: list[Any] = [("poi", sequence[0].id, sequence[0].name, _NO_LEG, None)]
+    for previous, item in pairwise(sequence):
+        origin = left_at(previous)
+        if (origin, reached_at(item)) in no_road:
+            assert isinstance(previous, TrackItem)
+            expected.append(("retrace", previous.id, f"Retrace {previous.name}", _NO_LEG, previous))
+            origin = previous.entry
+        pair = (origin, reached_at(item))
+        level, reason = _level(pair, unconfirmed)
+        leg = (trip.road_m(*pair) / 1000, trip.road_s(*pair), level, reason)
+        expected.append(("track" if isinstance(item, TrackItem) else "poi", item.id, item.name, leg, None))
+    return expected
+
+
+@given(dead_ends=dead_end_trips(), data=st.data())
+def test_a_dead_end_track_is_followed_by_its_retrace_and_the_road_goes_on_from_its_entry(
+    dead_ends: tuple[Trip, LegTable, set[Pair], set[Pair]], data: st.DataObject
+) -> None:
+    trip, legs, no_road, unconfirmed = dead_ends
+    order = tuple(data.draw(st.permutations(trip.items)))
+    stops = PlanRunAssembler(trip.snapshot, legs).assemble([item.id for item in order])
+    universe = {"snapshot.read", "plan.rows", "plan.retraces", "plan.road_legs", "plan.totals"}
+    before = {
+        "snapshot.read": trip.snapshot,
+        "plan.rows": (),
+        "plan.retraces": (),
+        "plan.road_legs": (),
+        "plan.totals": (),
+    }
+
+    after = {
+        "snapshot.read": trip.snapshot,
+        "plan.rows": tuple((stop.kind, stop.item_id, stop.name) for stop in stops),
+        "plan.retraces": tuple(
+            (s.entry, s.exit, s.confidence, s.reason, s.track_km, s.offroad_s, s.leg_km, s.leg_s, s.leg_confidence)
+            for s in stops
+            if s.kind == "retrace"
+        ),
+        "plan.road_legs": tuple((s.leg_km, s.leg_s, s.leg_confidence, s.leg_reason) for s in stops),
+        "plan.totals": _totals_row(Totals.of(stops)),
+    }
+
+    expected = _oracle(trip, order, no_road, unconfirmed)
+    retraced = [track for *_, track in expected if track is not None]
+    retrace_km = [track.length_m / 1000 for track in retraced]
+    retrace_s = [km / trip.speed.kmh * 3600 for km in retrace_km]
+    expected_retraces = tuple(
+        (t.exit, t.entry, "unconfirmed", RETRACE_REASON, km, s, None, None, None)
+        for t, km, s in zip(retraced, retrace_km, retrace_s, strict=True)
+    )
+    legs_km = [leg[0] for *_, leg, _ in expected if leg[0] is not None]
+    legs_s = [leg[1] for *_, leg, _ in expected if leg[1] is not None]
+    tracks = [item for item in _trip_of(trip, order) if isinstance(item, TrackItem)]
+    track_km = [t.length_m / 1000 for t in tracks]
+    track_s = [km / trip.speed.kmh * 3600 for km in track_km]
+    offroad_km, offroad_s = math.fsum([*track_km, *retrace_km]), math.fsum([*track_s, *retrace_s])
+    totals = (
+        math.fsum(legs_km),
+        sum(legs_s),
+        offroad_km,
+        offroad_s,
+        math.fsum(legs_km) + offroad_km,
+        sum(legs_s) + offroad_s,
+    )
+    assert_state_delta(
+        before,
+        after,
+        universe,
+        {
+            "plan.rows": set_to(tuple((kind, item_id, name) for kind, item_id, name, *_ in expected)),
+            "plan.retraces": close_to(expected_retraces),
+            "plan.road_legs": close_to(tuple(leg for *_, leg, _ in expected)),
+            "plan.totals": close_to(totals),
+        },
+        strict=True,
+    )
+    assert (stops[-1].cumulative_km, stops[-1].cumulative_s) == (Totals.of(stops).total_km, Totals.of(stops).total_s)
 
 
 STORED_CODES = {TourNoRoute.reason, TourOptimizerFailed.reason, TourTimedOut.reason, INVARIANT_VIOLATION_REASON}

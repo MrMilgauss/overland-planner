@@ -15,9 +15,11 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed
 from overland_planner.domain.planning.run_messages import NotFullyOptimised
+from overland_planner.domain.routing.road_leg import RoadLevel
 
 PlanRunStatus = Literal["ready", "failed"]
-StopKind = Literal["poi", "track"]
+StopKind = Literal["poi", "track", "retrace"]
+RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"
 _METRES_PER_KM = 1000
 _SECONDS_PER_HOUR = 3600
 
@@ -52,8 +54,12 @@ class PlanRun:
 class PlanStop:
     """One stop of an itinerary (FR-6.1). The first has no road leg; a POI holds `location`, a track the rest (HC-1).
 
-    `leg_km`/`leg_s` is the road into the stop; a track's `track_km`/`offroad_s` is its stored length driven at the
-    project's off-road speed (FR-4.6); `cumulative_km`/`cumulative_s` is road plus off-road to the stop's end (D11).
+    `leg_km`/`leg_s` is the road into the stop, with its `leg_confidence` and, when Unconfirmed, its `leg_reason`; a
+    track's `track_km`/`offroad_s` is its stored length driven at the project's off-road speed (FR-4.6);
+    `cumulative_km`/`cumulative_s` is road plus off-road to the stop's end (D11). A retrace (ADR-017 section 3) is the
+    row after its track, with the track's `item_id`: it leaves the track's exit and ends at its entry, is not a road
+    leg, and carries its own `confidence` (always Unconfirmed) and `reason`; its km and time are the track's, off-road.
+    `retrace_sha256` is the evidence of the track's points it retraces (07-07).
     """
 
     item_id: str
@@ -71,6 +77,11 @@ class PlanStop:
     offroad_s: float | None = None
     cumulative_km: float | None = None
     cumulative_s: float | None = None
+    confidence: RoadLevel | None = None
+    reason: str | None = None
+    leg_confidence: RoadLevel | None = None
+    leg_reason: str | None = None
+    retrace_sha256: str | None = None
 
     @classmethod
     def of(cls, item: CatalogItem, leg_km: float | None) -> PlanStop:
@@ -91,15 +102,38 @@ class PlanStop:
 
     @classmethod
     def driving(
-        cls, item: CatalogItem, leg: tuple[float, int] | None, offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED
+        cls,
+        item: CatalogItem,
+        leg: tuple[float, int] | None,
+        offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED,
+        level: tuple[RoadLevel, str | None] | None = None,
     ) -> PlanStop:
-        """`of` the item with its road leg (km, s) and, for a track, its length and off-road time (FR-4.6)."""
+        """`of` the item with its road leg (km, s) and its level (confidence, reason) and, for a track, its length and
+        off-road time (FR-4.6)."""
         leg_km, leg_s = (None, None) if leg is None else leg
-        stop = replace(cls.of(item, leg_km), leg_s=leg_s)
+        leg_confidence, leg_reason = (None, None) if level is None else level
+        stop = replace(cls.of(item, leg_km), leg_s=leg_s, leg_confidence=leg_confidence, leg_reason=leg_reason)
         if not isinstance(item, TrackItem):
             return stop
-        track_km = stored_length_km(item)
-        return replace(stop, track_km=track_km, offroad_s=track_km / offroad_speed.kmh * _SECONDS_PER_HOUR)
+        track_km, offroad_s = _offroad(item, offroad_speed)
+        return replace(stop, track_km=track_km, offroad_s=offroad_s)
+
+    @classmethod
+    def retracing(cls, track: TrackItem, offroad_speed: OffroadSpeed = DEFAULT_OFFROAD_SPEED) -> PlanStop:
+        """The track driven back from its exit to its entry: off-road at the track's length, never a road leg."""
+        track_km, offroad_s = _offroad(track, offroad_speed)
+        return cls(
+            item_id=track.id,
+            name=f"Retrace {track.name}",
+            kind="retrace",
+            leg_km=None,
+            entry=track.exit,
+            exit=track.entry,
+            confidence="unconfirmed",
+            reason=RETRACE_REASON,
+            track_km=track_km,
+            offroad_s=offroad_s,
+        )
 
     def driven_km(self) -> Driven:
         """Road and off-road km driven to reach and through this stop."""
@@ -150,6 +184,12 @@ class PlanReport:
 def stored_length_km(track: TrackItem) -> float:
     """The track's stored length, the off-road km a stop of it drives (HC-5, ADR-009 check 4)."""
     return track.length_m / _METRES_PER_KM
+
+
+def _offroad(track: TrackItem, offroad_speed: OffroadSpeed) -> tuple[float, float]:
+    """The track's stored length and the time to drive it at the project's off-road speed (FR-4.6)."""
+    track_km = stored_length_km(track)
+    return track_km, track_km / offroad_speed.kmh * _SECONDS_PER_HOUR
 
 
 def _driven_km(stops: Iterable[PlanStop]) -> float:

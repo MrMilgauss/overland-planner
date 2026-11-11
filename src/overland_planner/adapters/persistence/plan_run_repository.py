@@ -2,10 +2,12 @@
 
 The itinerary JSON holds everything a `PlanStop` holds; HTTP shows a subset. A Failed run has no itinerary and no
 totals (SQL NULL), nor has a run stored before 0006. A stop stored before its driving columns were (05-07) reads them
-as `None`: runs are not recomputed. `report` holds a Failed run's reason in product words; a ready run, and any run
-stored before 05-08, has none (SQL NULL). `fingerprint` and `memo_hit` (05-10) are stored on every run; a run stored
-before has a null fingerprint and is never a memo source. The run flags `reproducible` and `not_fully_optimised` (0008)
-are stored on every run and shown in the list and the detail; a run stored before reads reproducible and no label.
+as `None`, and so does a stop stored before its levels (07-06: `confidence`, `reason`, `leg_confidence`, `leg_reason`)
+and its retrace evidence (`retrace_sha256`): runs are not recomputed. `report` holds a Failed run's reason in product
+words; a ready run, and any run stored before 05-08, has none (SQL NULL). `fingerprint` and `memo_hit` (05-10) are
+stored on every run; a run stored before has a null fingerprint and is never a memo source. The run flags
+`reproducible` and `not_fully_optimised` (0008) are stored on every run and shown in the list and the detail; a run
+stored before reads reproducible and no label.
 A report names the items of an `unreachable` run (07-05); one stored before reads none.
 `run_time_ms` and `memo_source_run_id` (0008) are written since 06-10; a run stored before reads them null. The detail
 counts the Included items it was planned with from its stored inputs.
@@ -25,7 +27,20 @@ from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanS
 
 _STOP_FIELDS = tuple(field.name for field in fields(PlanStop))
 _POINT_FIELDS = frozenset({"location", "entry", "exit"})
-_DRIVING_FIELDS = frozenset({"leg_s", "track_km", "offroad_s", "cumulative_km", "cumulative_s"})
+_DRIVING_FIELDS = frozenset(
+    {
+        "leg_s",
+        "track_km",
+        "offroad_s",
+        "cumulative_km",
+        "cumulative_s",
+        "confidence",
+        "reason",
+        "leg_confidence",
+        "leg_reason",
+        "retrace_sha256",
+    }
+)
 
 
 class SqlAlchemyPlanRunRepository:
@@ -151,7 +166,7 @@ def _stops(itinerary: dict[str, Any] | None) -> tuple[PlanStop, ...]:
 
 
 def _stop(stored: dict[str, Any]) -> PlanStop:
-    """A stop stored before the driving fields (05-07) reads them as `None`; every other field must be there."""
+    """A stop stored before the driving fields (05-07, 07-06) reads them as `None`; every other field must be there."""
     values = {name: stored.get(name) if name in _DRIVING_FIELDS else stored[name] for name in _STOP_FIELDS}
     read: dict[str, Any] = {name: _point(value) if name in _POINT_FIELDS else value for name, value in values.items()}
     return PlanStop(**read)
