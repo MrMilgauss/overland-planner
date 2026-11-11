@@ -70,7 +70,7 @@ kpis:
       diagnostics_field: k2.invariant_violations
       definition: count of plan_runs with status=failed AND failure_reason='internal_invariant_violation' (all time and last 30 days)
     thresholds: {green: 0, red: ">= 1"}
-    alert: red badge on /diagnostics and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate)
+    alert: red badge on the diagnostics page (#/diagnostics) and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate). Built in slice 03 is the red badge only; the banner is NOT built and is deferred to slice 12 (UI foundation) because it needs an acknowledgement state (ADR-003 Amendment 1, UI-DELIVER-7, 2026-11-11)
 
   - id: K3
     name: Plan runs omitting an item from the consideration report
@@ -173,7 +173,7 @@ guardrails:
     thresholds: {green: 0, amber: ">= 1"}
 
 diagnostics_endpoint:
-  path: GET /api/diagnostics       # JSON, behind Basic auth when enabled; page /diagnostics in the SPA
+  path: GET /api/diagnostics       # JSON, behind Basic auth when enabled; page at #/diagnostics in the SPA (hash route; web_page.py mounts StaticFiles(html=True) with no SPA fallback, so /diagnostics answers 404; ADR-003 Amendment 1)
   query: {days: "default 30", project_id: optional}
   sources: [plan_job_log, plan_runs, items, project_history, /proc, /sys/fs/cgroup]
   cost: read-only SQL aggregates over at most a few thousand rows; must answer in < 200 ms on the Pi; never takes the write lock

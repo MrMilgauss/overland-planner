@@ -137,6 +137,19 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
        A Failed run's export and an inconsistent track file both answer 422 `validation_error` (D203).
      - Item `anchor` enum: `start` | `end` | `start_end` | `null`. Item resource per D107: `id`, `type` (`track` | `poi`), `name`, `included`, `anchor`, `location {lat, lon}` (POI), `entry {lat, lon}`, `exit {lat, lon}`, `length_m` (track).
      - **One field-name table** for the poll payload (`GET /api/plan-jobs/{job_id}`) and `plan_job_log`: `state`, `reason`, `legs_new`, `legs_cached`, `legs_total`, `points_new`, `second_pass_pairs`, `retried`, `memo_hit`, `ignore_memo`, `elapsed_s`, `solver_wait_s`, `stage_ms`, `items_included`, `notices`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message` (ADR-015 amendment); the plan-run detail (`GET /api/plan-runs/{id}`) adds `messages`, `not_fully_optimised`, `reproducible` and `memo_hit`. One name each: the poll keeps `elapsed_s`, the job log `elapsed_ms`; `notices` is on Calculate's answer too.
+     - **Stop fields added by slice 03b** (plan-run detail `stops`; `domain/planning/plan_run.py` `PlanStop`, ADR-009 Amendment 4, ADR-017 Amendment 2):
+
+       | Field | Meaning |
+       |---|---|
+       | `type` | `poi` \| `track` \| `retrace` (the retrace is a row of the stops list, with the `item_id` of its track) |
+       | `confidence` | `confirmed` \| `unconfirmed` of a retrace row (always Unconfirmed); null on other rows |
+       | `reason` | a retrace row's reason: "retraces the trail backwards; check it is drivable in reverse" |
+       | `leg_confidence` | the level of the road leg into the stop |
+       | `leg_reason` | that leg's reason when Unconfirmed |
+
+       `retrace_sha256` (on a retrace row: SHA-256 of the canonical serialisation of the track's reversed points of the same direction version) is a stored field of the stop (guard and GPX export check it) but is **not** exposed over HTTP (`PlanStopResource`).
+
+       The report adds `items`: the names of the items a Failed run with reason `unreachable` is about (empty otherwise; a report stored before step 07-05 has none).
      - `POST /api/plan-jobs/{job_id}/stop` is idempotent: always 200 with the current payload (D136).
      - `/healthz` keeps its own body (`{"status":"ok"}` / 503 `{"status":"unhealthy","reason":...}`), not the envelope.
      - **OpenAPI snapshot in CI**: the generated `openapi.json` is committed; a CI test fails when the generated schema differs from the snapshot, so contract changes are deliberate.
@@ -211,6 +224,12 @@ POST plan-runs -> pre-checks (anchors, active job, engine ready, optimizer ready
  -> PlanRunAssembler -> one transaction (run number, snapshots incl. leg snapshot, results, flags)
  -> UI polls, shows itinerary, then requests geometry (lazy)
 ```
+
+**As built in slice 03b (2026-11-11; ADR-016 Amendment 2, ADR-017 Amendment 2, ADR-015 Amendment 3).**
+- The retrace is a **row of the stops list** (`type` `retrace`, `item_id` of its track, directly after the track row), not a road leg and not a track traversal. The pipeline stage names are `snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; reachability runs in `reach_model` before the memo lookup and the solver slot.
+- Weighting is single-phase until slices 06a/06b (accepted risk, Decision 18); the third criterion is road km only; the fingerprint scheme is `fp2`.
+- A complete valid final from the solver child always wins; the child's own time limit is the optimisation time left at spawn plus 30 s.
+- UI-DELIVER-7 items, handled where they live: item 3 (the leg cache is in process memory only) is persisted by slice 05; item 4 (the `run_messages.py` docstring on `run_time_ms`) was corrected in step 07-05. Items 1 and 2 (diagnostics page `#/diagnostics`, K2 banner deferred to slice 12) are in ADR-003 Amendment 1 and `kpi-contracts.yaml`.
 
 Pins are deferred past slice 01b (D204): the job takes the snapshot without pinning track versions. Pins must land before or with the orphan sweep (ADR-018).
 
@@ -385,7 +404,7 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 | ADR-014 | End-to-end budget, limits, determinism | Accepted; stage budget measured by the spikes (D77); final gate D124/D126/D127/D131/D132/D135 |
 | ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; measured by SPIKE-1R; final gate D122/D130/D133/D136 |
 | ADR-016 | Confidence levels + lexicographic optimisation | Accepted; amended after the spikes (D78, D79); final gate D125 |
-| ADR-017 | Out-and-back retrace (exit side only) | Accepted; penalty measured by SPIKE-1R; final gate D125/D134 |
+| ADR-017 | Out-and-back retrace (exit side only) | Accepted; penalty measured by SPIKE-1R; final gate D125/D134; Amendment 2 slice 03b as built (2026-11-11) |
 | ADR-018 | Versioned track files + SQLite hardening | Accepted; DEVOPS amendment D90/D91; final gate D123/D129 |
 
 ### 15. Deployment topology (added by DEVOPS, 2026-11-02)

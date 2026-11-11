@@ -1,7 +1,7 @@
 # ADR-017: Out-and-back retrace (exit side only)
 
 ## Status
-Accepted (user decision N4, 2026-11-01). Penalty measured by SPIKE-1R (`RETRACE_PENALTY_M` = 10,000 kept; D78). **Final-gate amendment** D125/D134 (2026-11-02). Implements the HC-1 "Out-and-back retrace" bullet, FR-5.8 and A-7.
+Accepted (user decision N4, 2026-11-01). Penalty measured by SPIKE-1R (`RETRACE_PENALTY_M` = 10,000 kept; D78). **Final-gate amendment** D125/D134 (2026-11-02). **Amendment 2** (slice 03b as built: per-arc rule, single-phase weights, no retrace km or penalty in the objective, retrace is a stops row; ruling 2026-11-10, Decision 18 accepted 2026-11-11). Implements the HC-1 "Out-and-back retrace" bullet, FR-5.8 and A-7.
 
 ## Context
 - HC-1 (2026-11-01): if no road leg at any level leaves a track's exit B toward the next stop, but one leaves its entry A, the planner may drive A->B as stored and then a retrace leg B->A along the same track reversed, then continue from A.
@@ -46,3 +46,21 @@ Accepted (user decision N4, 2026-11-01). Penalty measured by SPIKE-1R (`RETRACE_
 - **Penalty is a tie-break only (UD-4, R-05/R-06).** Order: fewest Unconfirmed legs (the retrace leg counts as one), then fewest retraces, then the objective (ADR-016 amendment). `RETRACE_PENALTY_M = 10,000` (SPIKE-1R; `RETRACE_PENALTY_S = 1,800` not exercised) is added to a retrace arc's cost **inside the solver model only**. It is never shown or stored as a result value.
 - **What the itinerary and Totals show.** The retrace leg row shows the real retrace km/time (= track length/duration of version n). Totals: road km/time = road legs only; off-road km/time = track items + retraces (D57). The run's reported objective = road + retrace km (or time), without the penalty.
 - **Guard check 5 (D134, R-16).** The leg that follows a retrace leg starts at entry(t), so its reference pair in the leg snapshot is entry(t) -> entry(next), not exit(t) -> entry(next). See ADR-009 Amendment 3.
+
+## Amendment 2 (slice 03b, as built; ruling of 2026-11-10; Decision 18) — 2026-11-11
+The final-gate amendment above counts as Amendment 1. This records slice 03b, roadmap steps 07-01..07-10 (commits ff4ff2a 07-01, 7fe17e9 07-02, 1573f1c 07-03, 03f5caf 07-04, 13df16e 07-05, ae94b24 07-06, 5e7d51f 07-07, 120fe89 07-08, ff5d8e9 07-09, af5c264 07-10; commit ids as of the 03b branch before push, they may be restacked). Where it differs from section 1 or Amendment 1, this amendment governs; section 1 and Amendment 1 stay readable above.
+
+**1. Per-arc rule, one definition (supersedes the wording of section 1 and section 2).** `domain/planning/retrace_rule.py` holds it and nothing else decides it:
+- `arc_kind(previous, successor, legs)` returns `road` when exit(previous) -> entry(successor) is connected, else `retrace` when `second_pass_pair` exists and is connected, else `forbidden`;
+- `second_pass_pair(previous, successor, legs)` returns entry(t) -> entry(j) only for a track whose entry differs from its exit (a loop never retraces) and with no road from its exit toward the successor; otherwise none. It is also the pair the plan job asks in the second ladder pass.
+The solver model builder, the plan job, the assembler and the guard (ADR-009 check 6) all call it.
+
+**2. Objective: road km only (ruling 2026-11-10; supersedes the retrace cost in section 1 and the reported-objective text in Amendment 1).** Third criterion = road km (or road time). Retrace km are **not** in the objective: a retrace arc's `c` is the metres of the road leg entry(t) -> entry(j) only, with no track length. `RETRACE_PENALTY_M`/`_S` is **dropped** as redundant under W2: W2 already makes a retrace lose to any road alternative with the same Unconfirmed count, and no tie remains that a penalty would break. The reported objective (itinerary, Totals, run `objective`, `incumbent.objective`, diagnostics, GPX) is road metres only. Totals still count a retraced track's km and time as off-road, as before (D57). The `RETRACE_PENALTY_*` keys no longer drive anything. **Ties between plans that retrace different tracks are allowed**: nothing prefers one retraced track over another once counts and road km are equal.
+
+**3. Weights until two-phase exists (single-phase, Decision 18).** With N the number of arcs in a tour and `c_max` the largest `c` over all arcs: `W2 = (N+1) * c_max + 1` and `W1 = (N+1) * (W2 + c_max) + 1`. Every arc costs `W1 * (its Unconfirmed legs, the retrace leg counting one) + W2 * (its retraces, 0 or 1) + c`, so a Confirmed road arc costs its plain metres, in one search (`SINGLE_PHASE`, `domain/planning/solver_model_builder.py`). Counts therefore stay strict. The two-phase solve of ADR-016 section 4 is **not built** in 03b; it stays with slices 06a/06b. See ADR-016 Amendment 2 for the risk and its acceptance.
+
+**4. Retrace row (section 3 as built).** A retrace is a **row of the stops list**: `type` `retrace`, `item_id` that of its track, placed directly after the track row. It leaves the track's exit and ends at its entry, is not a road leg (no `leg_*` fields), carries its own `confidence` (Unconfirmed), `reason` and `retrace_sha256` (ADR-009 Amendment 4), and its km and time are the track's, counted as off-road. The following road leg starts at entry(t). The retrace is not a track traversal and not counted by HC-3.
+
+**5. Presentation as built.** The GPX export writes the retrace as its own `<trk>` of kind `retrace`, with the trail's stored points reversed (the only track written reversed), and names every Unconfirmed leg, road or retrace, with the suffix `[UNCONFIRMED - <reason>]` (ADR-010; `domain/export/gpx_document_builder.py`, step 07-09). An export of a plan with a retrace row no longer fails (fixed in ff5d8e9).
+
+**Evidence from the build.** Sparse real-child property (a real OR-Tools child on sparse projects, compared with brute force): the optimum was found in 20 of 20 cases, road-km gap +0.00 %. Golden order unchanged; matrix pins of step 07-01 (`tests/perf/golden_model_pins.json`) unchanged. HC-1 property over levels with retrace adjacency (af5c264).

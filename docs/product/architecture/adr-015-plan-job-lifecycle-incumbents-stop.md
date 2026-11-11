@@ -1,7 +1,7 @@
 # ADR-015: Plan job lifecycle — limits, Stop, incumbent streaming, solver child process
 
 ## Status
-Accepted (2026-11-01). Parameters measured by SPIKE-1R (2026-11-01; spike/findings.md: streaming, kill, spawn, child RSS). **Final-gate amendment** D122, D130, D133, D136 (2026-11-02). The Stop semantics were confirmed by the user (D60). Supersedes ADR-008 and ADR-012. Resolves review B3.
+Accepted (2026-11-01). Parameters measured by SPIKE-1R (2026-11-01; spike/findings.md: streaming, kill, spawn, child RSS). **Final-gate amendment** D122, D130, D133, D136 (2026-11-02). **Amendment 3** (slice 03b: table of endings D227, child time limit D228; 2026-11-11). The Stop semantics were confirmed by the user (D60). Supersedes ADR-008 and ADR-012. Resolves review B3.
 
 ## Context
 - A plan job now runs from seconds up to 30 min (ADR-014). The UI must show progress and offer "Stop and use best so far" at all times.
@@ -38,7 +38,7 @@ finalising                -- guard fails on the chosen (last) incumbent -->  don
 ### Solver child process (carried over from ADR-012, extended)
 - `OrToolsTourSolver` spawns one child per solve (`multiprocessing`, `spawn`). `ortools` is imported only in the child.
 - The child registers an at-solution callback and **streams every improving incumbent** through the pipe: order, unconfirmed count, retrace count, objective, elapsed.
-- The parent keeps the **last valid incumbent**. On Stop, the optimisation limit or the feasibility limit, the parent stops reading, kills the child (SIGTERM, then SIGKILL after 2 s), and finalises with the last incumbent (or fails as above). When the budget is used up, the child sends `final` and exits normally.
+- [Superseded by Amendment 3 for the order of reading and the child's end.] The parent keeps the **last valid incumbent**. On Stop, the optimisation limit or the feasibility limit, the parent stops reading, kills the child (SIGTERM, then SIGKILL after 2 s), and finalises with the last incumbent (or fails as above). When the budget is used up, the child sends `final` and exits normally.
 - **Child dies with its parent**: on Linux the child sets `PR_SET_PDEATHSIG(SIGKILL)`, and a watchdog thread in the child exits on pipe EOF (this also covers macOS and dev).
 - The guard (ADR-009) runs in the parent on the chosen incumbent.
 
@@ -71,11 +71,11 @@ Review findings R-02 (UI-7), R-10, R-15, R-18. Additions to the state table and 
 
 **Additional state rows (D122).**
 ```
-solving  -- child finishes normally (final) with NO valid incumbent (e.g. OR-Tools ROUTING_FAIL)
+solving  -- child finishes normally (final) with NO valid incumbent (e.g. OR-Tools ROUTING_FAIL)   [refined by Amendment 3: "no route" only after a normal end]
              -->  done (Failed run, reason no_valid_route_found), immediately; the job does not wait for the feasibility limit
-solving  -- child exits abnormally (crash, OOM kill, non-zero exit, pipe EOF without final), no valid incumbent
+solving  -- child exits abnormally (crash, OOM kill, non-zero exit, pipe EOF without final), no valid incumbent   [Superseded by Amendment 3: only without a usable final]
              -->  done (Failed run, reason optimizer_failed)
-solving  -- child exits abnormally WITH a valid incumbent
+solving  -- child exits abnormally WITH a valid incumbent   [Superseded by Amendment 3: only without a usable final]
              -->  finalising with that incumbent, labelled "not fully optimised (optimizer_failed)", reproducible=false
 ```
 - The guard still runs on the incumbent; a guard failure gives Failed "internal invariant violation" as before.
@@ -97,3 +97,25 @@ Reason: the planner container is capped at 1 CPU (OD-9) and OR-Tools is single-t
 **Amendment D209 (2026-11-05, user decision).** The "max 2 jobs overall" above is not enforced: there is no refusal for a further job. Each project still has at most one active job, and one solver child runs at a time; any other job waits in `waiting_for_optimizer`.
 
 **Poll payload field names (D130).** One field-name table serves the poll payload and `plan_job_log`: `legs_new`, `legs_cached`, `legs_total`, `points_new` (replaces `new_legs`, `cached_legs`, `points_located` in the list above), plus `state`, `elapsed_s`, `incumbent {unconfirmed_legs, retraces, objective, found_at_s}`, `stoppable`, `plan_run_id`, `message`, `reason` (on terminal states). `incumbent.objective` is the reported objective (road + retrace km or time, without `RETRACE_PENALTY`; ADR-017 amendment). States in the payload are the snake_case names above, plus `waiting_for_optimizer`.
+
+## Amendment 3 (slice 03b, D227, D228) — 2026-11-11
+The two earlier amendments count as 1 (DEVOPS) and 2 (final gate). User decisions of 2026-11-10, built in slice 03b as `tour_outcome` and `read_tour_child` (D227, commit `5b416ee`) and `CHILD_TIME_LIMIT_MARGIN_S` (D228, commit `2197cfa`) in `adapters/solver/ortools_tour_solver.py`, then carried into the architecture documents at roadmap step 07-11. Review findings F3, F4, F6 of the slice-03 adversarial review. Commit ids are those of the 03b branch before push and may be restacked.
+
+**Table of endings (D227), in the order the parent decides.** A complete valid final always wins, whatever the child's exit code, a Stop or a reached limit.
+
+| What the parent saw | Outcome | Supersedes |
+|---|---|---|
+| a final whose order is a complete tour | the final order (budget used up), whatever the child's end, Stop or limit | the rows "child exits abnormally" (D122) and "kills the child ... finalises with the last incumbent" when a usable final exists |
+| Stop came first, no usable final | the last valid incumbent labelled `stopped`, else Failed `stopped` | unchanged |
+| the deadline that applies came first, no usable final | the last valid incumbent labelled `time_limit`, else Failed `timeout` | unchanged |
+| a final without an order, and the child ended normally | Failed `no_valid_route_found` ("no route") | refines the D122 row: a final without an order is "no route" only after a normal end |
+| anything else (abnormal end, no final, broken final) | the last valid incumbent labelled `optimizer_failed`, else Failed `optimizer_failed` with the exit code or signal | the two D122 rows, now only without a usable final |
+
+- The child's exit code matters only without a usable final. It ended normally on exit code 0, or when it outlived the parent's reap wait after its final.
+- **Read the pipe first.** On Stop or a reached limit the parent first reads what the child has already sent (without waiting, at most 1,000 messages), so a final already in the pipe is not lost. A child that keeps sending is cut off at 1,000.
+- A message that cannot be read ends the reading; the child's end then decides.
+- Poll, run flags and reason codes are unchanged (`stopped`, `time_limit`, `optimizer_failed`, `timeout`, `no_valid_route_found`).
+
+**Child time limit (D228).** The child's own OR-Tools `time_limit` is the optimisation time left at spawn (`SolveDeadlines.remaining_s(found=True)`, never negative) plus 30 s (`CHILD_TIME_LIMIT_MARGIN_S`). The parent still ends the child first (SIGTERM, then SIGKILL after 2 s), so a live parent is unaffected. Reason: macOS has no `PR_SET_PDEATHSIG` and the child's parent-death watchdog thread needs the GIL, which the C++ search holds between solution callbacks; one child outlived its parent by about 5 days. On Linux (the Pi) `PR_SET_PDEATHSIG` still covers it. The golden order is unchanged. Test side: acceptance teardown ends the solve children a stopped planner left.
+
+**Note (UI-DELIVER-7 item 3).** "Cached legs remain" after a lost job holds within one process until slice 05 persists the leg cache. Handled in slice 05, not here.
