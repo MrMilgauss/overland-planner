@@ -11,7 +11,6 @@ no order connects) x 2 = 12; 6 used.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -20,10 +19,7 @@ import pytest
 from hypothesis import given, note
 from hypothesis import strategies as st
 
-from overland_planner.application.catalog.facade import canonical_points_file
-from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
-from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.planning.invariant_guard import (
     CanonicalFileEvidence,
     GuardViolation,
@@ -33,14 +29,16 @@ from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, set_to
+from tests.unit.domain.planning.retrace_trips import (
+    DeadEnds,
+    dead_end_trips,
+    reversed_sha256,
+)
 from tests.unit.domain.planning.trips import (
     POINTS,
-    PROJECT,
     Trip,
     reached_at,
     road_time_s,
-    track_lengths_m,
-    track_points,
     trips,
 )
 
@@ -390,62 +388,6 @@ def test_a_chosen_order_breaking_an_anchor_or_an_item_fails_naming_its_rule(plan
 
 
 # ------------------------------------------------------------------------------------- slice 03b: retraces (ADR-017)
-RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"  # the product's words (ADR-017)
-DEAD_EXITS = (Coordinate(46.5, 8.5), Coordinate(46.6, 8.6))  # points of their own: no item is reached there
-ISOLATED = Coordinate(47.0, 9.0)  # a place no road reaches or leaves
-Pair = tuple[Coordinate, Coordinate]
-
-
-def reversed_sha256(track: TrackItem) -> str:
-    """The test's own retrace evidence: the stored points of the track, reversed and serialised afresh."""
-    points = track_points(track.entry, track.exit, track.point_count)
-    return hashlib.sha256(canonical_points_file(tuple(reversed(points)))).hexdigest()
-
-
-def _dead_end_track(draw: st.DrawFn, item_id: str, exit_: Coordinate) -> TrackItem:
-    entry, point_count = draw(st.sampled_from(POINTS)), draw(st.integers(2, 20))
-    canonical = canonical_points_file(track_points(entry, exit_, point_count))
-    return TrackItem(
-        id=item_id,
-        project_id=PROJECT,
-        name=f"Dead end {item_id}",
-        description=None,
-        original_sha256="original",
-        canonical_sha256=hashlib.sha256(canonical).hexdigest(),
-        direction_version=draw(st.integers(1, 9)),
-        point_count=point_count,
-        entry=entry,
-        exit=exit_,
-        length_m=draw(track_lengths_m),
-    )
-
-
-@dataclass(frozen=True)
-class DeadEnds:
-    """A trip with one or two dead-end tracks (no road at any level leaves their exit) and maybe an isolated place;
-    `no_road` holds the pairs the road map has no road for."""
-
-    trip: Trip
-    no_road: frozenset[Pair]
-    isolated: PoiItem | None = None
-
-
-@st.composite
-def dead_end_trips(draw: st.DrawFn, *, isolated: bool = False) -> DeadEnds:
-    trip = draw(trips())
-    exits = DEAD_EXITS[: draw(st.integers(1, 2))]
-    dead = [_dead_end_track(draw, f"dead-{i}", exit_) for i, exit_ in enumerate(exits)]
-    no_road = {(exit_, point) for exit_ in DEAD_EXITS for point in (*POINTS, ISOLATED)}
-    alone = PoiItem(id="isolated", project_id=PROJECT, name="Alone", location=ISOLATED) if isolated else None
-    if alone is not None:
-        no_road |= {pair for point in (*POINTS, *DEAD_EXITS) for pair in ((point, ISOLATED), (ISOLATED, point))}
-    added = (*dead, *([alone] if alone else []))
-    order = draw(st.permutations((*trip.items, *added)))
-    legs = LegTable((RoadLeg(*pair, m, road_time_s(m)) for pair, m in trip.leg_m.items()), no_road)
-    snapshot = replace(trip.snapshot, items=(*trip.snapshot.items, *added))
-    return DeadEnds(Trip(snapshot, legs, trip.leg_m, trip.start, trip.end, tuple(order)), frozenset(no_road), alone)
-
-
 def _retrace_evidence_of(track: TrackItem) -> CanonicalFileEvidence:
     return replace(_evidence_of(track), reversed_sha256=reversed_sha256(track))
 

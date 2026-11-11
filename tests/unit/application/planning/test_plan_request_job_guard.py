@@ -55,7 +55,7 @@ from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning, RecordingRoadMap, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
-from tests.unit.domain.planning.test_invariant_guard import DeadEnds, dead_end_trips, reversed_sha256
+from tests.unit.domain.planning.retrace_trips import DeadEnds, dead_end_trips, reversed_sha256
 from tests.unit.domain.planning.trips import PRODUCT_WORDS, PROJECT, Trip, planned_totals, track_points, trips
 
 UNIVERSE = {"plan_runs", "items", "projects", "files"}

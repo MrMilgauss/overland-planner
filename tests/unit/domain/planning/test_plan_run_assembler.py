@@ -23,14 +23,15 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.application.ports.tour_solver import TourNoRoute, TourOptimizerFailed, TourTimedOut
-from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.planning.invariant_guard import INVARIANT_VIOLATION_REASON
 from overland_planner.domain.planning.plan_run import PlanReport, PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
-from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
+from overland_planner.domain.routing.road_leg import LegTable
+from tests.common.predicates import close_to
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.unit.domain.planning.trips import PRODUCT_WORDS, Trip, left_at, reached_at, road_time_s, trips
+from tests.unit.domain.planning.retrace_trips import RETRACE_REASON, Pair, level_of, levelled_dead_end_trips
+from tests.unit.domain.planning.trips import PRODUCT_WORDS, Trip, left_at, reached_at, trips
 
 
 @st.composite
@@ -87,26 +88,6 @@ def _assembled(trip: Trip, order: tuple[CatalogItem, ...], universe: set[str]) -
         == (Totals.of(stops).total_km, Totals.of(stops).total_s),
     }
     return {slot: observed[slot] for slot in universe}
-
-
-def _close(expected: Any, actual: Any) -> bool:
-    if isinstance(expected, tuple):
-        return isinstance(actual, tuple) and len(expected) == len(actual) and all(map(_close, expected, actual))
-    if expected is None or actual is None:
-        return expected is actual
-    if not isinstance(expected, int | float):
-        return bool(expected == actual)
-    return math.isclose(expected, actual, rel_tol=1e-9, abs_tol=1e-9)
-
-
-def close_to(expected: Any) -> Any:
-    """`set_to` within float rounding: the domain sums km and seconds in its own order."""
-
-    def _predicate(_: Any, new: Any) -> bool:
-        return _close(expected, new)
-
-    _predicate.__name__ = f"close_to({expected!r})"
-    return _predicate
 
 
 def _trip_of(trip: Trip, order: tuple[CatalogItem, ...]) -> tuple[CatalogItem, ...]:
@@ -223,33 +204,7 @@ def test_totals_sum_the_road_legs_and_the_tracks_and_end_the_cumulative(
         assert (len(legs), after["plan.totals"][2:4]) == (1, (0, 0)), "Start and End only: one leg, no off-road"
 
 
-RETRACE_REASON = "retraces the trail backwards; check it is drivable in reverse"  # the product's words (ADR-017)
-Pair = tuple[Coordinate, Coordinate]
 _NO_LEG = (None, None, None, None)
-
-
-@st.composite
-def dead_end_trips(draw: st.DrawFn) -> tuple[Trip, LegTable, set[Pair], set[Pair]]:
-    """A trip whose road legs have levels and where some tracks' exits lead nowhere: no road at any level from such an
-    exit to any other point. Only a point no item is reached at can be a dead exit, so every entry keeps its roads.
-    Returns the trip, its leg table, the pairs with no road and the pairs whose road is Unconfirmed."""
-    trip = draw(trips())
-    reached = {reached_at(item) for item in (trip.start, trip.end, *trip.items)}
-    exits = sorted({track.exit for track in trip.tracks() if track.exit not in reached}, key=str)
-    dead = set(draw(st.lists(st.sampled_from(exits), unique=True))) if exits else set()
-    no_road = {pair for pair in trip.leg_m if pair[0] in dead}
-    roads = sorted(set(trip.leg_m) - no_road, key=str)
-    unconfirmed = set(draw(st.lists(st.sampled_from(roads), unique=True))) if roads else set()
-    legs = [
-        RoadLeg(*pair, m, road_time_s(m), *_level(pair, unconfirmed))
-        for pair, m in trip.leg_m.items()
-        if pair not in no_road
-    ]
-    return trip, LegTable(legs, no_road), no_road, unconfirmed
-
-
-def _level(pair: Pair, unconfirmed: set[Pair]) -> tuple[str, str | None]:
-    return ("unconfirmed", f"reason {pair}") if pair in unconfirmed else ("confirmed", None)
 
 
 def _oracle(trip: Trip, order: tuple[CatalogItem, ...], no_road: set[Pair], unconfirmed: set[Pair]) -> list[Any]:
@@ -264,13 +219,13 @@ def _oracle(trip: Trip, order: tuple[CatalogItem, ...], no_road: set[Pair], unco
             expected.append(("retrace", previous.id, f"Retrace {previous.name}", _NO_LEG, previous))
             origin = previous.entry
         pair = (origin, reached_at(item))
-        level, reason = _level(pair, unconfirmed)
+        level, reason = level_of(pair, unconfirmed)
         leg = (trip.road_m(*pair) / 1000, trip.road_s(*pair), level, reason)
         expected.append(("track" if isinstance(item, TrackItem) else "poi", item.id, item.name, leg, None))
     return expected
 
 
-@given(dead_ends=dead_end_trips(), data=st.data())
+@given(dead_ends=levelled_dead_end_trips(), data=st.data())
 def test_a_dead_end_track_is_followed_by_its_retrace_and_the_road_goes_on_from_its_entry(
     dead_ends: tuple[Trip, LegTable, set[Pair], set[Pair]], data: st.DataObject
 ) -> None:

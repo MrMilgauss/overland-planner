@@ -41,8 +41,9 @@ from tests.acceptance.overland_route_planner_mvp.steps.retrace_steps import (
     reversed_track_stops,
     sommeiller_on_the_way_to_briancon,
 )
+from tests.common.predicates import close_to
 from tests.common.state_delta import assert_state_delta, set_to, unchanged
-from tests.unit.domain.planning.test_plan_run_assembler import RETRACE_REASON, Pair, close_to, dead_end_trips
+from tests.unit.domain.planning.retrace_trips import RETRACE_REASON, Pair, levelled_dead_end_trips
 from tests.unit.domain.planning.trips import Trip, canonical_file_of, left_at, reached_at
 
 
@@ -80,7 +81,7 @@ def _levelled_rows(
     return rows
 
 
-@given(dead_ends=dead_end_trips(), data=st.data())
+@given(dead_ends=levelled_dead_end_trips(), data=st.data())
 def test_every_assembled_plan_has_its_retraces_right_after_their_tracks_and_is_accepted_by_the_guard(
     dead_ends: tuple[Trip, Any, set[Pair], set[Pair]], data: st.DataObject
 ) -> None:
