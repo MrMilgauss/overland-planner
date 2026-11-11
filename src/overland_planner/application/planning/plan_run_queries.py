@@ -56,6 +56,7 @@ class PlanRunQueries:
             items_planned=detail.items_planned,
             run_time_ms=detail.run_time_ms,
             reused_from=None if source is None else source.number,
+            items=() if detail.report is None else detail.report.items,
         )
         memo_hit = detail.memo_hit if detail.run_time_ms is None else source_id is not None
         return replace(detail, messages=messages, memo_hit=memo_hit)

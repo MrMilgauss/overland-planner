@@ -24,6 +24,10 @@ The solver streams its incumbents to the job: the poll shows the last one with `
 found tour's search ended sets the run's flags: `reproducible` only when the budget ended it (D42), and
 `not_fully_optimised` names any other ending of a ready run (D122); the job's line carries both.
 
+Before the memo lookup and the solver slot, the model's arcs are checked (`unreachable_item_ids`, ADR-016 section 3):
+an Included item with no arc in, no arc out, no path from the Start or to the End fails the run as `unreachable`, its
+report naming each such item (`report.items`), and the solver is never asked (07-05, stage `reach_model`).
+
 Each stage notes its whole milliseconds, truncated, by the `Clock` port's monotonic time, as it ends (`stage_ms`,
 ADR-015 DV-2, K5): `snapshot`, `matrix` (the road legs), `reach_model` (the model, its fingerprint and the memo lookup),
 `solve` (the solver from its start to its end, child spawn included, and not the wait for the slot; none on a memo hit)
@@ -82,7 +86,13 @@ from overland_planner.domain.planning.invariant_guard import (
 from overland_planner.domain.planning.plan_run import PlanStop, Totals
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.run_messages import NotFullyOptimised, job_message, project_notices
+from overland_planner.domain.planning.reachability import unreachable_item_ids
+from overland_planner.domain.planning.run_messages import (
+    UNREACHABLE,
+    NotFullyOptimised,
+    job_message,
+    project_notices,
+)
 from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourModel
 from overland_planner.domain.routing.road_leg import LegTable
 
@@ -114,6 +124,7 @@ class _Finding:
     invariants: str | None = None
     reproducible: bool = True
     not_fully_optimised: NotFullyOptimised | None = None
+    report_items: tuple[str, ...] = ()
     plan_run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -143,7 +154,12 @@ class PlanRequestJob:
         with stages.timing("reach_model"):
             model = SolverModelBuilder(project.snapshot).build(legs)
             progress.note(items_included=len(set(model.node_item_ids)))
-            project, reused = self._recall(project, model)
+            cut_off = unreachable_item_ids(model)
+            reused = None
+            if not cut_off:
+                project, reused = self._recall(project, model)
+        if cut_off:
+            return self._end_unreachable(project, cut_off, progress, stages)
         if reused is not None:
             progress.note(memo_hit=True)
             outcome: TourOutcome = reused
@@ -153,10 +169,17 @@ class PlanRequestJob:
         progress.enter("finalising")
         with stages.timing("guard_persist"):
             stored = self._finish(project, legs, outcome)
-        progress.note(reproducible=stored.reproducible, not_fully_optimised_reason=stored.not_fully_optimised)
-        if stored.reason is not None:
-            progress.note(reason=stored.reason)
-        return stored
+        return _ended(progress, stored)
+
+    def _end_unreachable(
+        self, project: _PlannedProject, cut_off: tuple[str, ...], progress: PlanJobProgress, stages: _Stages
+    ) -> StoredRun:
+        """The run fails before the memo and the solver slot, naming each item the arcs cut off in words."""
+        progress.enter("finalising")
+        names = tuple(project.snapshot.item(item_id).name for item_id in cut_off)
+        with stages.timing("guard_persist"):
+            stored = self._store(project, _Finding(failure_reason=UNREACHABLE, report_items=names))
+        return _ended(progress, stored)
 
     def _finish(self, project: _PlannedProject, legs: LegTable, outcome: TourOutcome) -> StoredRun:
         if isinstance(outcome, TourFound):
@@ -276,7 +299,7 @@ class PlanRequestJob:
             memo_hit=project.memo_hit,
             ignore_memo=project.ignore_memo,
         )
-        message = job_message(finding.failure_reason, run.number)
+        message = job_message(finding.failure_reason, run.number, finding.report_items)
         return StoredRun(run.id, finding.failure_reason, finding.reproducible, finding.not_fully_optimised, message)
 
     def _new_run(self, project: _PlannedProject, finding: _Finding, number: int) -> NewPlanRun:
@@ -293,7 +316,7 @@ class PlanRequestJob:
             inputs=self._inputs(project.snapshot),
             stops=finding.stops,
             totals=finding.totals,
-            report=PlanRunAssembler.report(finding.failure_reason),
+            report=PlanRunAssembler.report(finding.failure_reason, finding.report_items),
             fingerprint=project.fingerprint,
             memo_hit=project.memo_hit,
             reproducible=finding.reproducible,
@@ -345,6 +368,13 @@ class _Stages:
         yield
         self._ms[stage] = int((self._clock.monotonic() - began_s) * _MILLISECONDS_PER_SECOND)
         self._progress.note(stage_ms=dict(self._ms))
+
+
+def _ended(progress: PlanJobProgress, stored: StoredRun) -> StoredRun:
+    progress.note(reproducible=stored.reproducible, not_fully_optimised_reason=stored.not_fully_optimised)
+    if stored.reason is not None:
+        progress.note(reason=stored.reason)
+    return stored
 
 
 def _added(first: LegsFound, second: LegsFound) -> LegsFound:

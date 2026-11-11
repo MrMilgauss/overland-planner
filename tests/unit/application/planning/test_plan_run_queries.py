@@ -4,8 +4,9 @@ Driving port: `PlanRunQueries` from the planning facade. Driven port: `PlanningU
 `ProjectSnapshotReader.stamp` gives the project's current revision and whose plan runs store the revision they were
 computed at. Observable universe: `plan_runs` as stored and `projects` as planning reads them.
 Test Budget: 3 behaviors (each listed run is stale iff its revision differs from the project's; a run's detail shows the
-lines composed from its stored facts and `memo_hit` from its memo source, the stored column for a run stored before
-06-10; a project's Calculate notices follow its Included non-anchor items) x 2 = 6; 3 used, none changes anything.
+lines composed from its stored facts, an unreachable run naming its report's items, and `memo_hit` from its memo
+source, the stored column for a run stored before 06-10; a project's Calculate notices follow its Included non-anchor
+items) x 2 = 6; 3 used, none changes anything.
 Every stale example holds both a current and a stale run, so both outcomes are checked each time (D212).
 """
 
@@ -22,6 +23,7 @@ from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.planning.plan_run import PlanReport
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.state_delta import assert_state_delta
 from tests.unit.application.planning.planning_doubles import InMemoryPlanning
@@ -85,6 +87,7 @@ class Stored:
     run_time_ms: int | None
     from_source: bool
     memo_hit_column: bool
+    cut_off: tuple[str, ...] | None  # a Failed `unreachable` run's report items; `()` is a report stored before 07-05
 
 
 STORED = st.builds(
@@ -95,6 +98,7 @@ STORED = st.builds(
     run_time_ms=st.none() | st.integers(min_value=0, max_value=10_000_000),
     from_source=st.booleans(),
     memo_hit_column=st.booleans(),
+    cut_off=st.none() | st.lists(st.sampled_from(("Valle Stretta", "Assietta")), unique=True, max_size=2).map(tuple),
 )
 LABEL = {"time_limit": "time limit", "stopped": "stopped", "optimizer_failed": "optimizer failed"}
 
@@ -106,7 +110,8 @@ def _stored_run(number: int, stored: Stored, source_id: str | None) -> NewPlanRu
         project_id=PROJECT,
         number=number,
         status="ready" if ready else "failed",
-        failure_reason=None if ready else "no_valid_route_found",
+        failure_reason=None if ready else "no_valid_route_found" if stored.cut_off is None else "unreachable",
+        report=None if ready or stored.cut_off is None else PlanReport("unreachable", stored.cut_off),
         created_at=datetime(2026, 11, 10, tzinfo=UTC),
         revision=1,
         provider_id="road-map-double",
@@ -145,6 +150,15 @@ def test_a_run_shows_the_lines_of_its_stored_facts_and_a_memo_hit_names_its_sour
             else []
         ),
         *([f"Reused the identical plan of run #{source_number}"] if reused else []),
+        *(
+            [
+                f"Plan run #{source_number + 1} failed: '{name}' cannot be connected to any other stop at any "
+                "confidence level"
+                for name in stored.cut_off or ()
+            ]
+            if not ready
+            else []
+        ),
     ]
     shown = list(detail.messages)
     assert len(shown) == len(expected) and all(

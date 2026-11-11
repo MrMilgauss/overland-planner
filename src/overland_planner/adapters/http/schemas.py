@@ -240,13 +240,15 @@ class TotalsResource(BaseModel):
 
 
 class PlanReportResource(BaseModel):
-    """Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`."""
+    """Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`. `items` names the
+    items an `unreachable` run is about, empty for any other run and for a report stored before 07-05."""
 
     reason: str
+    items: list[str]
 
     @classmethod
     def of(cls, report: PlanReport) -> PlanReportResource:
-        return cls.model_validate(report, from_attributes=True)
+        return cls(reason=report.reason, items=list(report.items))
 
 
 class PlanRunDetailResource(BaseModel):

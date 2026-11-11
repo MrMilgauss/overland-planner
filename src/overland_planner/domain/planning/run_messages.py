@@ -1,17 +1,20 @@
 """The user-facing lines of a plan run's results, its ended job and a Calculate (D223 b, D220 e: words, never codes).
 
 Every text a run shows is composed here, on read, from the facts stored with it: no wording is stored. A ready run
-written since 06-10 says how many Included items it planned and how long planning took, from the job's start to the
+written since 06-10 says how many Included items it planned and how long planning took, from the work's start to the
 run stored (`run_time_ms`): one decimal below 10 s, whole seconds from there on ("2.4 s", "41 s", "2 min 41 s",
 "1 h 02 min 05 s"). A ready run that is not fully optimised names why in words; the code stays in its
 `not_fully_optimised`. A memo hit names the run it reused by number (ADR-014 section 5). A run that failed on the
 feasibility limit names itself by number (D151); the reason code stays `timeout` (ADR-015). A run stopped before a valid
-route was found says so in the feature's words (US-06b), its code `stopped`. A project of more than 60 Included items
-other than its anchors is planned with a notice, never refused (D146).
+route was found says so in the feature's words (US-06b), its code `stopped`. A run that failed as `unreachable` names
+each item no order can connect, one line per item, with the run's number (US-08 S1); the job's ending message says the
+same, the lines joined. A project of more than 60 Included items other than its anchors is planned with a notice, never
+refused (D146).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 NotFullyOptimised = Literal["optimizer_failed", "time_limit", "stopped"]
@@ -27,6 +30,8 @@ _FAILED: dict[str, str] = {
     "timeout": "No valid route found within the time limit - plan run #{number} failed",
     "stopped": "stopped before a valid route was found",
 }
+UNREACHABLE = "unreachable"
+_UNREACHABLE = "Plan run #{number} failed: '{item}' cannot be connected to any other stop at any confidence level"
 _MS_PER_TENTH = 100
 _MS_PER_SECOND = 1000
 _TENTHS_SHOWN_BELOW = 100  # 10 s
@@ -62,6 +67,7 @@ def run_messages(
     items_planned: int | None = None,
     run_time_ms: int | None = None,
     reused_from: int | None = None,
+    items: Sequence[str] = (),
 ) -> tuple[str, ...]:
     """The lines a run shows, in order: its run time, its label, the run it reused, and its failure in words.
 
@@ -73,12 +79,17 @@ def run_messages(
         lines.append(_LABELS[not_fully_optimised])
     if failure_reason is None and reused_from is not None:
         lines.append(f"Reused the identical plan of run #{reused_from}")
-    failed = job_message(failure_reason, number)
-    return (*lines, failed) if failed is not None else tuple(lines)
+    return (*lines, *_failure_lines(failure_reason, number, items))
 
 
-def job_message(failure_reason: str | None, number: int | None) -> str | None:
+def job_message(failure_reason: str | None, number: int | None, items: Sequence[str] = ()) -> str | None:
     """What the ended job of a Failed run says, naming the run's number; `None` for a reason with no words yet."""
+    return "; ".join(_failure_lines(failure_reason, number, items)) or None
+
+
+def _failure_lines(failure_reason: str | None, number: int | None, items: Sequence[str]) -> tuple[str, ...]:
+    if failure_reason == UNREACHABLE and number is not None:
+        return tuple(_UNREACHABLE.format(number=number, item=item) for item in items)
     if failure_reason not in _FAILED or number is None:
-        return None
-    return _FAILED[failure_reason].format(number=number)
+        return ()
+    return (_FAILED[failure_reason].format(number=number),)

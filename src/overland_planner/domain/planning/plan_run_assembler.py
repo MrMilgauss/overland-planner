@@ -23,6 +23,7 @@ _PRODUCT_WORDS = {
     "no_valid_route_found": "no valid route found",
     "optimizer_failed": "optimizer failed",
     "timeout": "timeout",
+    "unreachable": "unreachable",
 }
 
 
@@ -39,11 +40,12 @@ class PlanRunAssembler:
         return tuple(stops)
 
     @staticmethod
-    def report(failure_reason: str | None) -> PlanReport | None:
-        """`None` for a ready run; a code with no product wording yet shows its words (D220 e)."""
+    def report(failure_reason: str | None, items: Sequence[str] = ()) -> PlanReport | None:
+        """`None` for a ready run; a code with no product wording yet shows its words (D220 e). `items` are the names
+        an `unreachable` run is about."""
         if failure_reason is None:
             return None
-        return PlanReport(_PRODUCT_WORDS.get(failure_reason, failure_reason.replace("_", " ")))
+        return PlanReport(_PRODUCT_WORDS.get(failure_reason, failure_reason.replace("_", " ")), tuple(items))
 
     def _stop(self, item: CatalogItem, previous: CatalogItem | None) -> PlanStop:
         leg = None if previous is None else self._legs.km_and_s(*road_between(previous, item))

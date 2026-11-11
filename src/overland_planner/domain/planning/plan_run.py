@@ -140,9 +140,11 @@ class Totals:
 
 @dataclass(frozen=True)
 class PlanReport:
-    """The minimal consideration report (US-07b completes it): why a Failed run has no plan, in product words."""
+    """The minimal consideration report (US-07b completes it): why a Failed run has no plan, in product words, and the
+    names of the items an `unreachable` run is about (a report stored before 07-05 has none)."""
 
     reason: str
+    items: tuple[str, ...] = ()
 
 
 def stored_length_km(track: TrackItem) -> float:

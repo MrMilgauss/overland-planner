@@ -14,7 +14,9 @@ labelled `stopped`, or Failed `stopped` without one (ADR-015, D122). A ready run
 Test Budget: 4 behaviors (an ending gives exactly one run with the flags, lines and job message of that ending;
 incumbents show on the poll and are counted in the job's row; the solve gets the limits as deadlines from job start;
 a Stop while solving ends the solve through its stop signal with the best so far) x 2 = 8; 1 property test used, every
-behavior on every example (D212). The label texts are written here as the product shows them, not imported.
+behavior on every example (D212). Unreachable items (07-05): one more behavior (an Included item no order can connect
+fails the run before the solver is asked, naming it; otherwise the solver is asked) x 2 = 2; 1 property test used.
+The label texts are written here as the product shows them, not imported.
 """
 
 from __future__ import annotations
@@ -316,6 +318,106 @@ def test_the_second_pass_asks_the_retrace_pair_only_where_the_first_pair_has_no_
             "road_map.asked": set_to(asked),
             "job_log.second_pass_pairs": set_to(len(fresh) or None),  # noted only when a second pass was asked
             "job_log.legs": set_to((new, len(every) - new, len(every))),
+        },
+        strict=True,
+    )
+
+
+# ------------------------------------------------- an item no order can connect fails the run first (07-05, FR-8.2)
+UNREACHABLE_UNIVERSE = {"plan_runs", "projects", "items", "solver_calls", "job.message"}
+
+
+def _item_failure(number: int, name: str) -> str:
+    return f"Plan run #{number} failed: '{name}' cannot be connected to any other stop at any confidence level"
+
+
+def _connected(trip: Trip, no_road: set[RoadPairOfPoints], origin: CatalogItem, destination: CatalogItem) -> bool:
+    """Whether an arc origin -> destination runs, worked out from ADR-017: a road at any level from where origin is left
+    to where destination is reached (identical points are one), else, for a track with another end, a road from its
+    entry after a retrace."""
+    leaving = (left_at(origin), reached_at(destination))
+    if leaving[0] == leaving[1] or leaving not in no_road:
+        return True
+    if not isinstance(origin, TrackItem) or origin.entry == origin.exit:
+        return False
+    onward = (origin.entry, reached_at(destination))
+    return onward[0] == onward[1] or onward not in no_road
+
+
+def _items_cut_off(trip: Trip, no_road: set[RoadPairOfPoints]) -> list[str]:
+    """The names of the Included items that cannot be both entered from the Start and left towards the End, by a closure
+    of the arcs written out one by one (Warshall), not by walking from the anchors."""
+    visited = trip.snapshot.visited_items()
+    nodes = [trip.start, *visited, trip.end]
+    last = len(nodes) - 1
+    ahead = [[False] * len(nodes) for _ in nodes]
+    for origin in range(last):
+        for destination in range(1, last + 1):
+            direct = (origin, destination) == (0, last) and visited
+            if origin != destination and not direct:
+                ahead[origin][destination] = _connected(trip, no_road, nodes[origin], nodes[destination])
+    for via in range(len(nodes)):
+        for origin in range(len(nodes)):
+            for destination in range(len(nodes)):
+                ahead[origin][destination] |= ahead[origin][via] and ahead[via][destination]
+    return [nodes[node].name for node in range(1, last) if not (ahead[0][node] and ahead[node][last])]
+
+
+@settings(deadline=None)
+@given(trip=trips(), data=st.data())
+def test_an_item_no_order_can_connect_fails_the_run_naming_it_before_the_solver_is_asked(
+    trip: Trip, data: st.DataObject
+) -> None:
+    no_road = data.draw(st.sets(st.sampled_from(POINT_PAIRS)), label="pairs with no road")
+    planning, files, clock = InMemoryPlanning(), InMemoryFileStore(), FakeClock()
+    trip.seed_canonical_files(files)
+    planning.add_project(PROJECT, trip.snapshot)
+    job_log, log = InMemoryPlanJobLog(planning), RecordingEventLog()
+    solver = ScriptedTourSolver(TourNoRoute())  # asked, it finds no route: a Failed run, whatever the legs
+    work = PlanRequestJob(
+        planning.unit_of_work,
+        LegResolver(RecordingRoadMap(trip.leg_m, no_road=no_road)),
+        solver,
+        BUDGET,
+        clock,
+        log,
+        files,
+    )
+    registry = PlanJobRegistry(clock, work, log, job_log=job_log)
+
+    def view(message: str | None) -> dict[str, Any]:
+        return {
+            "plan_runs": tuple(_row(run) for run in planning.runs),
+            "projects": (planning.snapshots[PROJECT], planning.stamps[PROJECT]),
+            "items": planning.snapshots[PROJECT].items,
+            "solver_calls": len(solver.models),
+            "job.message": message,
+        }
+
+    def _row(run: NewPlanRun) -> tuple[Any, ...]:
+        if run.failure_reason != "unreachable":
+            return (run.number, "reached the solver")
+        shown = PlanRunQueries(planning.unit_of_work).get(run.id)
+        assert shown is not None and run.report is not None
+        assert (run.status, run.stops, run.totals) == ("failed", (), None)
+        return (run.number, run.failure_reason, run.report.reason, run.report.items, shown.messages)
+
+    before = view(None)
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    ended = job_when_ended(registry, job_id)
+
+    cut_off = _items_cut_off(trip, no_road)
+    lines = tuple(_item_failure(1, name) for name in cut_off)
+    expected_run = (1, "unreachable", "unreachable", tuple(cut_off), lines) if cut_off else (1, "reached the solver")
+    assert_state_delta(
+        before,
+        view(ended.message),
+        UNREACHABLE_UNIVERSE,
+        {
+            "plan_runs": gained(expected_run),
+            "solver_calls": set_to(0 if cut_off else 1),
+            "job.message": set_to("; ".join(lines) if cut_off else None),
         },
         strict=True,
     )

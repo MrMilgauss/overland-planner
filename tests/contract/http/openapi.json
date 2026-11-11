@@ -603,15 +603,23 @@
         "type": "object"
       },
       "PlanReportResource": {
-        "description": "Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`.",
+        "description": "Why a Failed run has no plan, in product words (D206); the code stays in `failure_reason`. `items` names the\nitems an `unreachable` run is about, empty for any other run and for a report stored before 07-05.",
         "properties": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
           }
         },
         "required": [
-          "reason"
+          "reason",
+          "items"
         ],
         "title": "PlanReportResource",
         "type": "object"

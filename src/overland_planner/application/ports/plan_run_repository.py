@@ -19,7 +19,8 @@ class PlanRunDetail:
     stored before 0008 reads `reproducible` true and no `not_fully_optimised`. `memo_hit` is the stored column, which
     the run queries derive from `memo_source_run_id` for a run with a `run_time_ms` (06-10); a run stored before has
     neither. `items_planned` counts the Included items other than the anchors it was planned with. `messages` are the
-    lines the run shows, which the run queries fill (D223 b); the repository reads none."""
+    lines the run shows, which the run queries fill (D223 b); the repository reads none. The `report` of an
+    `unreachable` run names its items (07-05); one stored before reads none."""
 
     id: str
     project_id: str

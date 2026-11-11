@@ -1,11 +1,12 @@
 """The user-facing lines of a plan run's results, of its ended job and of a Calculate (D223 b, D220 e; D151; D146).
 
 Driving ports: `run_messages(not_fully_optimised, failure_reason=..., number=..., items_planned=..., run_time_ms=...,
-reused_from=...)`, `job_message(failure_reason, number)`, `run_time_text(ms)` and `project_notices(items)`, pure domain
-functions (their signatures are the interface).
-Test Budget: 3 behaviors (a run's stored facts give its lines and its job's message; a run time reads in the binding's
-pattern at its precision; a project above 60 Included items gets the large-project notice) x 2 = 6; 3 property tests
-used. The texts are written here as the product shows them, not imported.
+reused_from=..., items=...)`, `job_message(failure_reason, number, items)`, `run_time_text(ms)` and
+`project_notices(items)`, pure domain functions (their signatures are the interface).
+Test Budget: 4 behaviors (a run's stored facts give its lines and its job's message; a run time reads in the binding's
+pattern at its precision; a project above 60 Included items gets the large-project notice; a run failed as unreachable
+names each item once, in a line of its own, with the run's number) x 2 = 8; 4 property tests used.
+The texts are written here as the product shows them, not imported.
 """
 
 from __future__ import annotations
@@ -110,3 +111,36 @@ def test_a_run_time_reads_in_the_binding_pattern_and_back_to_its_seconds_at_its_
 @example(items=61)
 def test_a_project_above_sixty_included_items_gets_the_large_project_notice_and_no_upper_bound(items: int) -> None:
     assert project_notices(items) == ((NOTICE,) if items > 60 else ())
+
+
+UNREACHABLE_TEXT = "Plan run #{number} failed: '{item}' cannot be connected to any other stop at any confidence level"
+ITEM_NAMES = st.lists(
+    st.sampled_from(["Valle Stretta", "Colle Sommeiller", "Rifugio Mongioie", "Assietta"]), unique=True
+)
+
+
+@given(names=ITEM_NAMES, number=st.integers(min_value=1, max_value=10**6), run_time_ms=st.none() | MS)
+def test_a_run_failed_as_unreachable_names_each_item_once_with_its_number_in_its_lines_and_its_job_message(
+    names: list[str], number: int, run_time_ms: int | None
+) -> None:
+    lines = tuple(UNREACHABLE_TEXT.format(number=number, item=name) for name in names)
+    after = {
+        "messages": run_messages(
+            None,
+            failure_reason="unreachable",
+            number=number,
+            items_planned=len(names),
+            run_time_ms=run_time_ms,
+            items=names,
+        ),
+        "job.message": job_message("unreachable", number, names),
+    }
+
+    assert_state_delta(
+        {"messages": (), "job.message": None},
+        after,
+        UNIVERSE,
+        {"messages": set_to(lines), "job.message": set_to("; ".join(lines) or None)},
+        strict=True,
+    )
+    assert all("".join(after["messages"]).count(name) == 1 for name in names), "each item is named once"
