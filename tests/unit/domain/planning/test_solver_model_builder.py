@@ -6,6 +6,12 @@ and how the model describes an order (road metres, Unconfirmed legs, retraces: `
 Test Budget: 6 behaviors (nodes, arc costs, required pairs, the lexicographic order over levels and retraces, weights
 that keep it strict within an int64, criterion 2 alone) x 2 = 12; 7 used. The oracle of the order (`order_counts`)
 reads the road map's answers and ranks orders by the tuple itself, never by the model's weights.
+
+Mutation survivors judged equivalent (mutmut, 2026-11-11), none of them a behaviour:
+- `_weights` mutants 5, 6, 11, 13 and `build` mutant 14 make W1 or W2 larger than the formula gives (`+ 2` for `+ 1`,
+  one more arc): ADR-016 section 4 only bounds the weights from below and the int64 test has room to spare, so any
+  larger weight is as right; the property below pins the lower bounds, with one arc of margin.
+- `build` mutant 20 (`default=1` for a model with no arc): no arc is costed, so its weights are read by nobody.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.planning.solver_model_builder import SolverModelBuilder, TourCounts, TourModel
+from overland_planner.domain.planning.solver_model_builder import ArcTables, SolverModelBuilder, TourCounts, TourModel
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg, RoadPair
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.unit.domain.planning.trips import (
@@ -292,6 +298,16 @@ def test_weights_keep_the_order_strict_and_confirmed_arcs_keep_their_plain_metre
     assert weights.mode == "single_phase"
     assert weights.w2 > arcs * c_max, "no saving in metres buys an extra retrace"
     assert weights.w1 > arcs * (weights.w2 + c_max), "no saving in retraces or metres buys an Unconfirmed leg"
+    assert weights.w2 > (arcs + 1) * c_max, "one arc of margin: a tour that gains an arc stays strict"
+    assert weights.w1 > (arcs + 1) * (weights.w2 + c_max), "the same margin for the Unconfirmed legs"
+    for a, row in enumerate(model.arc_m):
+        for b, cost in enumerate(row):
+            if cost is None:  # no arc runs: no metres, no Unconfirmed leg, no retrace (ArcTables)
+                assert (model.real.road_m[a][b], model.real.unconfirmed_legs[a][b], model.real.retraces[a][b]) == (
+                    None,
+                    0,
+                    0,
+                )
     for a, b in present:
         unconfirmed, retraces = model.real.unconfirmed_legs[a][b], model.real.retraces[a][b]
         road = model.real.road_m[a][b]
@@ -383,3 +399,21 @@ def test_with_equal_unconfirmed_legs_the_order_without_a_retrace_wins_over_a_sho
     }, "same Unconfirmed legs; the order without a retrace is 30 km longer"
     winner = min(costs, key=lambda order: costs[order] or INT64_MAX)
     assert winner == with_longer_road
+
+
+def test_an_order_that_names_no_tour_of_the_model_is_not_described() -> None:
+    # bypass: a hand-made model whose tables hold an arc between every pair of nodes, so that only the order decides.
+    cells = tuple((1, 1, 1) for _ in range(3))
+    zeros = tuple((0, 0, 0) for _ in range(3))
+    model = TourModel(("s", "a", "e"), 0, 2, cells, ArcTables(cells, zeros, zeros))
+
+    described = {
+        order: model.counts_of_order(order) for order in ((), ("s",), ("s", "no-such-item", "e"), ("s", "a", "e"))
+    }
+
+    assert described == {
+        (): None,
+        ("s",): None,
+        ("s", "no-such-item", "e"): None,
+        ("s", "a", "e"): TourCounts(road_m=2, unconfirmed_legs=0, retraces=0),
+    }

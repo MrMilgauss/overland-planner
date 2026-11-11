@@ -4,6 +4,15 @@ one fails naming its rule.
 
 Driving port: `InvariantGuard` (`check_order`, `check_plan`, `check_unreachable` are its public interface; it is pure).
 Observable universe = the guard's result, the stops it judged and the snapshot read.
+Mutation survivors judged equivalent or unreachable (mutmut, 2026-11-11):
+- `InvariantGuard._place_violations` mutant 3 (expected stop built with `leg_km` None): `_place_of` leaves the leg out.
+- `_RetraceForm._holds` mutants 7-10 (the bounds of `at`): a retrace at stop 0, 1 or the last is already refused by
+  its neighbours (stop 0 is no track, the last no one follows) whatever the bound, so the result is the same.
+- `_RetraceForm._formed` mutant 4 and `_is_a_retrace_arc` mutant 3 (the guards for a vanished file and an unknown next
+  stop): defensive. `check_plan` yields the first violation, and a track stop without its file is HC-5, an unknown
+  id HC-3, both before check 6 runs, so check 6 never meets either case.
+- `_Connections.connected_ids` mutants 7, 11 (one more key in a dict no one reads), 40 (the Start in the result: the
+  claim of the Start id is refused as not visited anyway).
 Test Budget: 8 behaviors (assembled plans pass, a broken plan names its rule, a broken chosen order names its rule,
 assembled plans with retraces pass, a broken retrace plan names its rule, an unreachable claim holds only for the items
 no order connects, a leg's level and reason and a stop's off-road time are the table's and the speed's, a pair of the
@@ -14,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from itertools import pairwise
+from itertools import pairwise, permutations
 from typing import Any
 
 import pytest
@@ -22,6 +31,7 @@ from hypothesis import assume, given, note
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
+from overland_planner.domain.catalog.poi import PoiItem
 from overland_planner.domain.planning.invariant_guard import (
     CanonicalFileEvidence,
     GuardViolation,
@@ -29,6 +39,7 @@ from overland_planner.domain.planning.invariant_guard import (
 )
 from overland_planner.domain.planning.plan_run import PlanStop
 from overland_planner.domain.planning.plan_run_assembler import PlanRunAssembler
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.retrace_rule import arc_kind
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, set_to
@@ -40,6 +51,7 @@ from tests.unit.domain.planning.retrace_trips import (
 )
 from tests.unit.domain.planning.trips import (
     POINTS,
+    PROJECT,
     Trip,
     left_at,
     reached_at,
@@ -738,3 +750,31 @@ def test_an_unreachable_claim_holds_only_for_the_items_no_order_connects(
         after = {"guard.check": None if violation is None else violation.check, "snapshot.read": trip.snapshot}
         assert_state_delta(before, after, CLAIM_UNIVERSE, {"guard.check": set_to(rule)} if rule else {}, strict=True)
         assert violation is None or wrong in violation.detail, f"the detail names no item: {violation}"
+
+
+def test_an_item_whose_only_way_on_leads_back_to_the_start_is_not_connected() -> None:
+    # bypass: one hand-made map. An arc into the Start must not make its tail reach the End through the Start, and an
+    # item nothing leads to must not count for leading on to the End; a generated trip has neither shape.
+    s, lay_by, m, n, e = POINTS
+    items = [
+        PoiItem(id=name, project_id=PROJECT, name=name, location=at) for name, at in (("p", lay_by), ("q", m), ("r", n))
+    ]
+    snapshot = ProjectSnapshot(
+        "start",
+        "end",
+        (
+            PoiItem(id="start", project_id=PROJECT, name="Start", location=s),
+            *items,
+            PoiItem(id="end", project_id=PROJECT, name="End", location=e),
+        ),
+    )
+    roads = [(s, lay_by), (s, n), (lay_by, s), (n, e), (m, e), (m, n)]
+    legs = LegTable(
+        (RoadLeg(a, b, 1000, 60) for a, b in roads), [pair for pair in permutations(POINTS, 2) if pair not in roads]
+    )
+    guard = InvariantGuard(snapshot, legs)
+
+    cut_off, joined = guard.check_unreachable(("p", "q")), guard.check_unreachable(("r",))
+
+    assert cut_off is None, "p only leads back to the Start and nothing leads to q"
+    assert joined is not None and joined.check == "reachability"
