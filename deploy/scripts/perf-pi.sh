@@ -16,8 +16,8 @@
 set -uo pipefail
 set +x
 
-PI_HOST=${PI_HOST:-deploy@pi.example}
-PI_DIR=${PI_DIR:-apps/overland-planner}
+PI_HOST=${PI_HOST:-}
+PI_DIR=${PI_DIR:-}
 N=${N:-10}
 ITEMS=${ITEMS:-60}
 POINTS=${POINTS:-}
@@ -37,6 +37,18 @@ die() {
   say "$*"
   exit 1
 }
+
+# The Pi's address is not in git (deploy/pi.env.example). A variable already in the environment wins over the file.
+PI_ENV_FILE=${PI_ENV_FILE:-deploy/pi.env}
+if [ -f "$PI_ENV_FILE" ]; then
+  while IFS='=' read -r key value; do
+    case $key in
+      PI_HOST | PI_DIR | PLANNER_URL) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;;
+    esac
+  done <"$PI_ENV_FILE"
+fi
+PI_DIR=${PI_DIR:-apps/overland-planner}
+[ -n "$PI_HOST" ] || die "set PI_HOST (see deploy/pi.env.example)"
 
 whole_number() { case $1 in '' | *[!0-9]* | 0*) return 1 ;; esac; }
 whole_number "$N" || die "N must be a positive whole number, not '$N'"

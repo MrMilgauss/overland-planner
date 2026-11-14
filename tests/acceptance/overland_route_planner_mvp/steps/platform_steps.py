@@ -1,8 +1,9 @@
 """Platform steps: start-up, health, restarts, basic auth, deployment (US-01a, US-01b).
 
 `@requires_external` steps run only with --run-external on the right host (Pi over ssh, Docker, amd64 PC);
-their environment knobs are PLANNER_PI_SSH (default deploy@pi.example), PLANNER_PI_URL
-(default http://pi.example:8080), PLANNER_PI_DIR (default ~/apps/overland-planner), PLANNER_IMAGE.
+their environment knobs are PLANNER_PI_SSH and PLANNER_PI_URL (both default to PI_HOST and PLANNER_URL of the
+git-ignored deploy/pi.env; without a value the step is skipped), PLANNER_PI_DIR (default ~/apps/overland-planner),
+PLANNER_IMAGE.
 """
 
 from __future__ import annotations
@@ -36,8 +37,17 @@ from tests.common.state_delta import assert_state_delta
 REPO_ROOT = Path(__file__).resolve().parents[4]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yaml"
 FUTURE_REVISION = "f0f0f0f0f0f0"  # Alembic no-op stub revision standing for "a newer planner version" (waiver W3)
-PI_SSH = os.environ.get("PLANNER_PI_SSH", "deploy@pi.example")
-PI_URL = os.environ.get("PLANNER_PI_URL", "http://pi.example:8080")
+def _pi_env(key: str) -> str:
+    """One value of deploy/pi.env (the Pi's address is not in git); empty when the file or the key is missing."""
+    try:
+        lines = (REPO_ROOT / "deploy" / "pi.env").read_text().splitlines()
+    except OSError:
+        return ""
+    return next((line.partition("=")[2].strip() for line in lines if line.startswith(f"{key}=")), "")
+
+
+PI_SSH = os.environ.get("PLANNER_PI_SSH") or _pi_env("PI_HOST")
+PI_URL = (os.environ.get("PLANNER_PI_URL") or _pi_env("PLANNER_URL")).rstrip("/")
 PI_DIR = os.environ.get("PLANNER_PI_DIR", "~/apps/overland-planner")
 PI_COMPOSE = f"cd {PI_DIR} && docker compose -p overland --env-file .env --env-file release.env"
 
@@ -47,6 +57,8 @@ def _run(command: list[str], timeout: float = 600) -> subprocess.CompletedProces
 
 
 def _ssh(remote: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
+    if not PI_SSH:
+        pytest.skip("no Pi to reach: set PLANNER_PI_SSH or PI_HOST in deploy/pi.env (see deploy/pi.env.example)")
     return _run(["ssh", "-o", "BatchMode=yes", PI_SSH, remote], timeout=timeout)
 
 

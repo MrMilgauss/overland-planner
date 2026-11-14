@@ -15,8 +15,11 @@ KILL_RATE_MIN := 80
 ACTIONLINT_PY := actionlint-py==1.7.12.24
 SHELLCHECK_PY := shellcheck-py==0.11.0.1
 SHELL_SCRIPTS := .github/scripts/*.sh deploy/scripts/*.sh
-# make deploy target (D89); override for another host.
-PI_HOST ?= deploy@pi.example
+# make deploy target (D89). The Pi's address is not in git: copy deploy/pi.env.example to the git-ignored deploy/pi.env
+# (PI_HOST, PI_DIR, PLANNER_URL), or pass PI_HOST=... on the command line. A value on the command line wins.
+PI_ENV_FILE ?= deploy/pi.env
+-include $(PI_ENV_FILE)
+PI_HOST ?=
 PI_DIR ?= apps/overland-planner
 SHA ?=
 STEPS ?= 1
@@ -25,9 +28,15 @@ RELEASES_LOG ?= .data/ops/releases.log
 # shellcheck severity of every local and CI run (make lint-ci, pre-commit, CI job 1): all findings down to info.
 SHELLCHECK_SEVERITY := info
 # Pi operations (D99): only compose project `overland`, volumes overland_*, images of PLANNER_REPO; never a prune.
-# The remote shell is the deploy user's login shell on pi-host (bash); scripts/lib.sh is there since the first deploy.
+# The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
+PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi
+ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
+ifeq ($(strip $(PI_HOST)),)
+$(error set PI_HOST (see deploy/pi.env.example))
+endif
+endif
 PI_COMPOSE := docker compose -p overland --env-file .env --env-file release.env
 PURGE_WORD := purge overland
 # make perf-pi (D96, D146, D135): N measured runs of ITEMS items; POINTS (points per track) empty = the committed 12.

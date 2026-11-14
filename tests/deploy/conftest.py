@@ -56,7 +56,7 @@ PREVIOUS = _release("1", "2026-11-01T09:00:00Z", "0001_initial")
 CURRENT = _release("a", "2026-11-02T09:00:00Z", "0002_projects")
 NEW = _release("b", "2026-11-03T07:30:00Z", "0003_auth")
 
-PI_BIND = "192.168.1.10"
+PI_BIND = "192.168.1.10"  # a documentation-style placeholder, not a real address
 BASIC_AUTH_USER = "ferri"
 BASIC_AUTH_PASSWORD = 'sh4red "family" pw'  # noqa: S105 - test value
 # What the gh shim answers to `gh auth token` (D196: the Mac's token, delivered to deploy.sh on ssh stdin).
@@ -342,7 +342,7 @@ class MacCheckout:
 
     def make(self, target: str, *variables: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["make", "-s", "-C", str(self.dir), target, *variables],
+            ["make", "-s", "-C", str(self.dir), target, "PI_HOST=deploy@pi.example", *variables],
             env=shim_env(self.shim_home, GHCR_URL=self.registry.url),
             capture_output=True,
             text=True,

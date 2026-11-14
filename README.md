@@ -46,15 +46,15 @@ re-scans `main`, audits dependencies, runs the deep property profile and reports
 | Compressed image size, arm64 | 132.3 MB (same release; one release ≈ 268 MB of the 500 MB GHCR budget) |
 | Actions minutes per main push | ≈ 18 billed min (run 41603868244: 9.2 min wall; per-job rounding), + ≈ 1 when the mutation job runs |
 
-## Operations (pi-host)
+## Operations (the Pi)
 
-The planner runs on Marco's Raspberry Pi 5 (`deploy@pi.example`, install dir `~/apps/overland-planner`) as
+The planner runs on Marco's Raspberry Pi 5 (the deploy user's login and the install dir are in the git-ignored `deploy/pi.env`, copied from `deploy/pi.env.example`; default install dir `~/apps/overland-planner`) as
 compose project `overland`. Every Pi target acts only on project `overland`, the `overland_*` volumes and the
 `ghcr.io/mrmilgauss/overland-planner` images; none ever runs a docker prune or touches another stack (D99).
 
 | Target | What it does |
 |---|---|
-| `make pi-preflight` | Read-only: port 8080 on 192.168.1.10 free (or ours), disk, MemAvailable, compose projects, `.env` with `PLANNER_BIND`; warns if a ghcr.io login is stored (D196 expects none). Prints no secret. |
+| `make pi-preflight` | Read-only: port 8080 on the Pi's home-network address free (or ours), disk, MemAvailable, compose projects, `.env` with `PLANNER_BIND`; warns if a ghcr.io login is stored (D196 expects none). Prints no secret. |
 | `make deploy [SHA=]` | Deploys a CI-green main SHA (provenance-checked); loopback smoke first, then the LAN publish; rolls back by itself on failure. |
 | `make rollback [STEPS=1\|2]` | Back to `release.env.prev` (or `.prev2`); the image is already on the Pi. |
 | `make status` / `make logs [SVC=planner]` / `make diag` | Read-only: compose ps, serving digest, `/healthz`, `/api/health`; the JSON log; `docker stats --no-stream` and `/healthz`. |
@@ -63,7 +63,7 @@ compose project `overland`. Every Pi target acts only on project `overland`, the
 | `make purge` | Asks you to type `purge overland`; then removes the containers, every `overland_*` volume (all trip data) and the planner images. No backup is taken. |
 | `make dora` | Deployment frequency, lead time, change failure rate and time to restore from `.data/ops/releases.log` (copied back by every deploy and rollback). |
 
-Before the first deploy (D178): give pi-host a DHCP reservation for 192.168.1.10 on the home router (the planner
+Before the first deploy (D178): give the Pi a DHCP reservation for its home-network address on the router (the planner
 binds only that address).
 
 Registry access (D196): the Pi stores no GHCR credential. `make deploy` reads the Mac's token with `gh auth token`
@@ -100,4 +100,4 @@ docker compose -p overland --env-file .env --env-file release.env run --rm plann
 If the downgrade fails, restore that file into the volume (the image and mounts of `restore_snapshot` in
 `deploy/scripts/lib.sh`) before starting the planner again.
 
-Idle memory on pi-host: **67.3 MiB** (measured 2026-11-03 18:53 UTC, release `88d53e8`, `docker stats`, CPU 0.13%) (planner only, after 10 minutes idle; limit 300 MB, KPI G1).
+Idle memory on the Pi: **67.3 MiB** (measured 2026-11-03 18:53 UTC, release `88d53e8`, `docker stats`, CPU 0.13%) (planner only, after 10 minutes idle; limit 300 MB, KPI G1).

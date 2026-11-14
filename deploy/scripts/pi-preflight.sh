@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# make pi-preflight (D99, D178): read-only checks on pi-host before a deploy, streamed over ssh
+# make pi-preflight (D99, D178): read-only checks on the Pi before a deploy, streamed over ssh
 # (`ssh PI_HOST 'bash -s -- PI_DIR' < deploy/scripts/pi-preflight.sh`), so it works before the first deploy.
 # Never changes anything, never prints a secret (.env values other than PLANNER_BIND/PLANNER_PORT, registry auth).
 #
@@ -27,7 +27,7 @@ env_key() { [ -f "$dir/.env" ] && sed -n "s/^$1=//p" "$dir/.env" | tail -n 1; }
 
 if [ -f "$dir/.env" ]; then
   bind=$(env_key PLANNER_BIND)
-  if [ -n "$bind" ]; then ok ".env present, PLANNER_BIND=$bind"; else bad ".env has no PLANNER_BIND (e.g. 192.168.1.10)"; fi
+  if [ -n "$bind" ]; then ok ".env present, PLANNER_BIND=$bind"; else bad ".env has no PLANNER_BIND (its home-network address)"; fi
 else
   bind=
   bad "$dir/.env missing (copy deploy/.env.example and set PLANNER_BIND)"

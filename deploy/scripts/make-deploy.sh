@@ -12,9 +12,9 @@
 #    the token is never on a command line or in a file); copy releases.log back to .data/ops/releases.log
 set -uo pipefail
 
-PI_HOST=${PI_HOST:-deploy@pi.example}
-PI_DIR=${PI_DIR:-apps/overland-planner}
-PLANNER_URL=${PLANNER_URL:-http://pi.example:8080/}
+PI_HOST=${PI_HOST:-}
+PI_DIR=${PI_DIR:-}
+PLANNER_URL=${PLANNER_URL:-}
 SHA=${1:-}
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -23,6 +23,18 @@ die() {
   printf 'make deploy: %s\n' "$*" >&2
   exit 1
 }
+
+# The Pi's address is not in git (deploy/pi.env.example). A variable already in the environment wins over the file.
+PI_ENV_FILE=${PI_ENV_FILE:-deploy/pi.env}
+if [ -f "$PI_ENV_FILE" ]; then
+  while IFS='=' read -r key value; do
+    case $key in
+      PI_HOST | PI_DIR | PLANNER_URL) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;;
+    esac
+  done <"$PI_ENV_FILE"
+fi
+PI_DIR=${PI_DIR:-apps/overland-planner}
+[ -n "$PI_HOST" ] || die "set PI_HOST (see deploy/pi.env.example)"
 
 [ -z "$(git status --porcelain)" ] || die "working tree not clean; commit or stash first"
 

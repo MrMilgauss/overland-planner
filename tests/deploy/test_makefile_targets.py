@@ -24,6 +24,7 @@ from tests.deploy.conftest import (
     IMAGE,
     NEW,
     OLDEST,
+    PI_BIND,
     PREVIOUS,
     REPO,
     FakePi,
@@ -35,10 +36,17 @@ READ_ONLY = ("pi-preflight", "status", "logs", "diag")
 DOCKER = re.compile(r"\bdocker\s+(?P<args>[^;|&)']*)")
 MUTATING = re.compile(r"\b(rm|down|stop|kill|pull|up|run|create|restart|login|logout|prune)\b")
 PURGE_WORD = "purge overland"
+DEPLOY_USER = "deploy@pi.example"  # a placeholder: the real host lives in the untracked deploy/pi.env
+NO_PI_ENV = "PI_ENV_FILE=/nonexistent/pi.env"
 
 
 def dry_run(target: str) -> str:
-    result = subprocess.run(["make", "-n", "-C", str(REPO), target], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), target, f"PI_HOST={DEPLOY_USER}", NO_PI_ENV],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stderr
     return result.stdout + (REPO / "deploy/scripts/pi-preflight.sh").read_text() * (target == "pi-preflight")
 
@@ -52,7 +60,7 @@ def test_every_pi_target_stays_inside_project_overland(target: str) -> None:
     text = dry_run(target)
     commands = docker_commands(text)
 
-    assert "ssh -o BatchMode=yes deploy@pi.example" in text
+    assert f"ssh -o BatchMode=yes {DEPLOY_USER}" in text
     assert commands, f"make {target} sends no docker command"
     assert "prune" not in text and "system" not in " ".join(commands) and "daemon.json" not in text  # D99
     for command in commands:
@@ -71,7 +79,7 @@ def test_every_pi_target_stays_inside_project_overland(target: str) -> None:
 
 def run_make(target: str, shim_home: Path, stdin: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["make", "-s", "-C", str(REPO), target, "PI_DIR=overland-planner"],
+        ["make", "-s", "-C", str(REPO), target, f"PI_HOST={DEPLOY_USER}", NO_PI_ENV, "PI_DIR=overland-planner"],
         input=stdin,
         env=shim_env(shim_home),
         capture_output=True,
@@ -166,7 +174,7 @@ def test_diag_reads_the_diagnostics_with_the_env_credentials_and_never_prints_th
     assert result.returncode == 0, result.stderr
     assert diagnostics in result.stdout and '{"status":"ok"}' in result.stdout
     (call,) = [call for call in pi_home.calls("curl") if call["argv"][-1].endswith("/api/diagnostics")]
-    assert call["argv"][-1] == "http://192.168.1.10:8080/api/diagnostics"
+    assert call["argv"][-1] == f"http://{PI_BIND}:8080/api/diagnostics"
     assert "-K" in call["argv"] and f"{BASIC_AUTH_USER}:" in call["stdin"]  # the .env credentials, on stdin only
     shown = result.stdout + result.stderr + " ".join(call["argv"]) + " ".join(c["argv"][-1] for c in pi_home.calls())
     assert BASIC_AUTH_PASSWORD not in shown and "sh4red" not in shown
@@ -193,7 +201,7 @@ def test_pi_preflight_reads_only_and_never_prints_the_password(pi_home: FakePi, 
     result = preflight(pi_home, tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "PLANNER_BIND=192.168.1.10" in result.stdout and "all checks passed" in result.stdout
+    assert f"PLANNER_BIND={PI_BIND}" in result.stdout and "all checks passed" in result.stdout
     assert "WARN  registry access: per-deploy login (D196)" in result.stdout  # a stored ghcr.io login is unexpected
     assert BASIC_AUTH_PASSWORD not in result.stdout + result.stderr and "c2VjcmV0" not in result.stdout
     docker_verbs = [shlex.join(call["argv"][:2]) for call in pi_home.calls("docker")]
@@ -227,11 +235,14 @@ PERF_SCRIPT = REPO / "deploy/scripts/perf-pi.sh"
 def test_perf_pi_hands_its_mode_to_the_mac_side_script(variables: tuple[str, ...], expected: tuple[str, ...]) -> None:
     # bypass: a Makefile recipe is wiring; one dry run per mode shows the variables reach the script.
     result = subprocess.run(
-        ["make", "-n", "-C", str(REPO), "perf-pi", *variables], capture_output=True, text=True, timeout=30
+        ["make", "-n", "-C", str(REPO), "perf-pi", f"PI_HOST={DEPLOY_USER}", NO_PI_ENV, *variables],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
     assert result.returncode == 0, result.stderr
-    assert "bash deploy/scripts/perf-pi.sh" in result.stdout and "PI_HOST=deploy@pi.example" in result.stdout
+    assert "bash deploy/scripts/perf-pi.sh" in result.stdout and f"PI_HOST={DEPLOY_USER}" in result.stdout
     assert all(part in result.stdout + " " for part in expected), result.stdout
 
 
@@ -246,3 +257,61 @@ def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name
         if MUTATING.search(command):
             assert "planner-perf" in command, f"a mutating command must name planner-perf: docker {command}"
     assert "overland_planner-data" not in script and "prune" not in script
+
+
+@pytest.mark.parametrize("target", [*PI_TARGETS, "deploy", "rollback", "perf-pi"])
+def test_a_pi_target_without_a_host_stops_and_names_the_template(target: str) -> None:
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), target, NO_PI_ENV],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_no_host_env(),
+    )
+
+    assert result.returncode != 0
+    assert "set PI_HOST (see deploy/pi.env.example)" in result.stderr + result.stdout
+
+
+def _no_host_env() -> dict[str, str]:
+    import os
+
+    return {key: value for key, value in os.environ.items() if key != "PI_HOST"}
+
+
+def test_the_untracked_pi_env_file_supplies_the_host_and_the_install_dir(tmp_path: Path) -> None:
+    pi_env = tmp_path / "pi.env"
+    pi_env.write_text("PI_HOST=owner@my-pi.example\nPI_DIR=apps/elsewhere\n")
+
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "status", f"PI_ENV_FILE={pi_env}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_no_host_env(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ssh -o BatchMode=yes owner@my-pi.example" in result.stdout and "cd apps/elsewhere" in result.stdout
+
+
+def test_the_template_has_placeholders_only_and_the_real_file_is_git_ignored() -> None:
+    template = (REPO / "deploy/pi.env.example").read_text()
+    ignored = subprocess.run(
+        ["git", "-C", str(REPO), "check-ignore", "deploy/pi.env"], capture_output=True, text=True, timeout=30
+    )
+
+    assert "PI_HOST=deploy@pi.example" in template and "PI_DIR=" in template
+    assert ignored.returncode == 0, "deploy/pi.env must be git-ignored"
+
+
+@pytest.mark.parametrize("script", ["make-deploy.sh", "perf-pi.sh"])
+def test_a_mac_side_script_without_a_host_stops_and_names_the_template(script: str) -> None:
+    env = {**_no_host_env(), "PI_ENV_FILE": "/nonexistent/pi.env"}
+
+    result = subprocess.run(
+        ["bash", str(REPO / "deploy/scripts" / script)], capture_output=True, text=True, timeout=30, env=env, cwd=REPO
+    )
+
+    assert result.returncode != 0
+    assert "set PI_HOST (see deploy/pi.env.example)" in result.stderr

@@ -22,3 +22,6 @@ coverage.xml
 
 # Secrets stay out; the template is tracked.
 !.env.example
+
+# The Pi's address and login (template: deploy/pi.env.example).
+deploy/pi.env
