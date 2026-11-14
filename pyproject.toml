@@ -1,6 +1,7 @@
 [project]
 name = "overland-planner"
 version = "0.0.0"
+license = "MIT"
 description = "Self-hosted overland route planner (direction-safe, fixed-anchor itineraries on a Raspberry Pi)"
 readme = "REQUIREMENTS.md"
 requires-python = ">=3.12,<3.13"

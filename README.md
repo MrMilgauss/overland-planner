@@ -101,3 +101,12 @@ If the downgrade fails, restore that file into the volume (the image and mounts 
 `deploy/scripts/lib.sh`) before starting the planner again.
 
 Idle memory on the Pi: **67.3 MiB** (measured 2026-11-03 18:53 UTC, release `88d53e8`, `docker stats`, CPU 0.13%) (planner only, after 10 minutes idle; limit 300 MB, KPI G1).
+
+## License
+
+MIT, see `LICENSE`. Security reports: see `SECURITY.md`.
+
+## Data
+
+The spike fixtures contain routing responses derived from OpenStreetMap data (© OpenStreetMap contributors, ODbL),
+produced by a self-hosted Valhalla. All committed GPX files are synthetic; the repository holds no real recordings.
