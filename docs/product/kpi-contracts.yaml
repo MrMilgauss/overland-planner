@@ -105,6 +105,7 @@ kpis:
     baseline: "measured 2026-11-01 (SPIKE-1R/2R): sum of stage p95s 63.7 s, 73.7 s with UI + reserve; solve 47.56 s (dense)"
     instruments:
       gate: "make perf-pi (planner-perf on the Pi, leg cache cleared, client-observed from the Mac; N=10 -> gate on max, N=30 -> p95). AUTHORITATIVE for K5: every run counts, none is dropped (D177). Solves the golden I1/I2 first and checks the order hash (D175)"
+      e2e: "the e2e figure is measured by make perf-pi MODE=e2e (cold: planner-perf recreated before each run) and ends at the stored plan read back (GET /api/plan-runs/{id}) until slice 09 adds the road shapes; then it ends at the geometry answer (D236)"
       proxy: "/api/diagnostics K5 fields are a server-side proxy over production jobs (leg cache usually warm, no client time); they inform, they never open or close the claim (D177, F-25)"
       runtime_event: plan.job.finished (stage_ms, elapsed_ms) + plan.run.geometry_served (e2e_server_ms)
       diagnostics_fields:

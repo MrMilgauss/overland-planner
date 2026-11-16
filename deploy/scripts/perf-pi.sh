@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `make perf-pi [N=10] [ITEMS=60] [POINTS=]` on the Mac (slice 03-ops; D96, D135, D146, D147, D164, D175, D177).
+# `make perf-pi [N=10] [ITEMS=60] [POINTS=] [MODE=e2e]` on the Mac (slice 03-ops; D96, D135, D146, D147, D164, D175, D177).
 # Never runs on the Pi, and only at a start time the user names (the orchestrator runs it, never the crafter).
 #
 #  1 read the household user and password from the Pi's .env into this run (never printed, never in an argv)
@@ -12,6 +12,11 @@
 #  6 the report (every run's state and stage_ms, slowest, nearest-rank p95) in .data/perf/<timestamp>.json
 #  7 always: planner-perf stopped and removed (its volume overland_planner-perf-data stays); the user's planner and
 #    its volume are never touched
+# MODE=e2e (D236; needs a planner with the Valhalla adapter, slice 06a, and routing.env on the Pi): after step 4,
+#  5e planner-perf restarted with PERF_ROUTING_PROVIDER=valhalla, the 60-item I1 seeded once; then N cold runs: each
+#     one recreates planner-perf first (its in-memory legs are forgotten), presses Calculate with ignore_memo and
+#     ends when the stored plan is read back (or the geometry answer arrives, slice 09)
+#  6e the report (every run, slowest e2e and solve, retried and heavy-second-pass counts) in .data/perf/<timestamp>.json
 # Exit non-zero on any golden mismatch, failed run or missed gate.
 set -uo pipefail
 set +x
@@ -21,6 +26,7 @@ PI_DIR=${PI_DIR:-}
 N=${N:-10}
 ITEMS=${ITEMS:-60}
 POINTS=${POINTS:-}
+MODE=${MODE:-}
 PERF_OUT_DIR=${PERF_OUT_DIR:-.data/perf}
 PERF_PORT=18080
 PERF_URL="http://127.0.0.1:$PERF_PORT"
@@ -53,18 +59,24 @@ PI_DIR=${PI_DIR:-apps/overland-planner}
 [ -n "$PI_HOST" ] || die "set PI_HOST (see deploy/pi.env.example)"
 
 whole_number() { case $1 in '' | *[!0-9]* | 0*) return 1 ;; esac; }
+case $MODE in
+  '' | e2e) ;;
+  *) die "MODE must be empty or e2e, not '$MODE'" ;;
+esac
 whole_number "$N" || die "N must be a positive whole number, not '$N'"
 whole_number "$ITEMS" || die "ITEMS must be a positive whole number, not '$ITEMS'"
 [ -z "$POINTS" ] || whole_number "$POINTS" || die "POINTS must be empty or a positive whole number, not '$POINTS'"
 
 pi() {
   # shellcheck disable=SC2029 # PI_DIR and the command are meant to expand on the Mac
-  ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && $1"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$PI_HOST" "cd $PI_DIR && $1"
 }
 
-# perf_up MOCK_PLAN: (re)create planner-perf; an empty MOCK_PLAN is the default road map (I1, the measurement).
+# perf_up MOCK_PLAN [valhalla [recreate]]: (re)create planner-perf; an empty MOCK_PLAN is the default road map (I1, the
+# measurement). `valhalla` points it at the live engine (PERF_ROUTING_PROVIDER, D236); `recreate` forces a new container.
 perf_up() {
-  pi "mkdir -p perf && test -f release.env && PERF_MOCK_PLAN=$1 $PERF_COMPOSE up -d --wait --wait-timeout $WAIT_TIMEOUT planner-perf"
+  local provider=${2:+ PERF_ROUTING_PROVIDER=valhalla} recreate=${3:+ --force-recreate}
+  pi "mkdir -p perf && test -f release.env && PERF_MOCK_PLAN=$1$provider $PERF_COMPOSE up -d$recreate --wait --wait-timeout $WAIT_TIMEOUT planner-perf"
 }
 
 perf_down() {
@@ -88,6 +100,16 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+
+# e2e needs the engine: refuse before anything starts when no tileset was seeded (routing.env, make tiles-seed)
+if [ "$MODE" = e2e ]; then
+  pi 'test -f routing.env'
+  case $? in
+    0) ;;
+    1) die "routing.env does not exist on the Pi: run make tiles-seed first" ;;
+    *) die "could not reach the Pi" ;;
+  esac
+fi
 
 # 1 credentials: two lines (user, password) of the Pi's .env, kept in variables of this shell only.
 credentials=$(pi '. scripts/lib.sh && env_value .env PLANNER_BASIC_AUTH_USER && env_value .env PLANNER_BASIC_AUTH_PASSWORD') ||
@@ -113,17 +135,17 @@ golden() {
 # 2-3 planner-perf and the tunnel
 started=yes
 perf_up "" || die "planner-perf did not become healthy within $WAIT_TIMEOUT s (deploy first: it runs release.env's digest)"
-ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -N -L "$PERF_PORT:127.0.0.1:$PERF_PORT" "$PI_HOST" &
+ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -N -L "$PERF_PORT:127.0.0.1:$PERF_PORT" "$PI_HOST" &
 tunnel=$!
-reachable=
-for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 "$PERF_URL/healthz" >/dev/null 2>&1; then
-    reachable=yes
-    break
-  fi
-  sleep 1
-done
-[ -n "$reachable" ] || die "planner-perf is not reachable through the tunnel at $PERF_URL"
+wait_reachable() {
+  local _
+  for _ in $(seq 1 30); do
+    curl -fsS --max-time 5 "$PERF_URL/healthz" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+wait_reachable || die "planner-perf is not reachable through the tunnel at $PERF_URL"
 
 # 4 golden orders (D175): I1 on the default road map, I2 on its own
 golden i1
@@ -135,7 +157,36 @@ perf_up "" || die "planner-perf did not restart on the default road map"
 # 5-6 the measurement and its report
 mkdir -p "$PERF_OUT_DIR"
 report="$PERF_OUT_DIR/$(date -u +%Y%m%dT%H%M%SZ).json"
-if [ "$N" = 10 ] && [ "$ITEMS" = 60 ] && [ -z "$POINTS" ]; then
+if [ "$MODE" = e2e ]; then
+  # 5e-6e cold end-to-end runs on the live engine (D236): the project is seeded once, planner-perf recreated before each run
+  perf_up "" valhalla || die "planner-perf did not restart on the live engine (needs a planner with the Valhalla adapter, slice 06a)"
+  wait_reachable || die "planner-perf is not reachable through the tunnel at $PERF_URL"
+  project="$work/project"
+  runs="$work/e2e-runs.jsonl"
+  : >"$runs"
+  on_planner_perf uv run python -m tests.perf.perf_pi e2e-seed --items "$ITEMS" --project-file "$project" ||
+    die "could not seed the $ITEMS-item project on planner-perf"
+  broken=
+  for number in $(seq 1 "$N"); do
+    say "cold run $number of $N"
+    perf_up "" valhalla recreate || {
+      broken="planner-perf did not restart for run $number"
+      break
+    }
+    wait_reachable || {
+      broken="planner-perf is not reachable through the tunnel for run $number"
+      break
+    }
+    on_planner_perf uv run python -m tests.perf.perf_pi e2e-run --project-file "$project" --out "$runs" || {
+      broken="run $number could not be measured"
+      break
+    }
+  done
+  verdict=0
+  uv run python -m tests.perf.perf_pi e2e-report --runs "$runs" --n "$N" --items "$ITEMS" --out "$report" || verdict=$?
+  [ -z "$broken" ] || die "$broken; report: $report"
+  [ "$verdict" -eq 0 ] || die "the e2e gate is missed or a run did not finish; report: $report"
+elif [ "$N" = 10 ] && [ "$ITEMS" = 60 ] && [ -z "$POINTS" ]; then
   runs="$work/runs.jsonl"
   : >"$runs"
   scenarios=0

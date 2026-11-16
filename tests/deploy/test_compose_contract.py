@@ -207,7 +207,12 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
     assert perf["networks"] == ["edge", "routing"]
     assert perf["volumes"] == ["planner-perf-data:/data", "./perf:/perf:ro"]
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
-    assert perf["environment"] == planner["environment"] | {"MOCK_PLAN": "${PERF_MOCK_PLAN:-}"}
+    assert planner["environment"]["ROUTING_PROVIDER"] == "mock", "the household planner switches in slice 06a"
+    assert perf["environment"] == planner["environment"] | {
+        "MOCK_PLAN": "${PERF_MOCK_PLAN:-}",
+        "ROUTING_PROVIDER": "${PERF_ROUTING_PROVIDER:-mock}",  # D236: perf-pi MODE=e2e and acceptance-pi say valhalla
+        "VALHALLA_URL": "http://valhalla:8002",
+    }
     assert perf.get("restart", "no") == "no", "a measurement planner never comes back by itself"
 
 

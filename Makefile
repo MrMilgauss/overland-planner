@@ -1,6 +1,6 @@
 # Developer entry points (Mac and Pi).
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
-	pi-preflight status logs diag image-gc uninstall purge dora perf-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
+	pi-preflight status logs diag image-gc uninstall purge dora perf-pi acceptance-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
 
 PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -31,7 +31,7 @@ SHELLCHECK_SEVERITY := info
 # The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
-PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
+PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi acceptance-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
 ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
 ifeq ($(strip $(PI_HOST)),)
 $(error set PI_HOST (see deploy/pi.env.example))
@@ -49,6 +49,8 @@ SPIKE_WORD := delete valhalla-spike
 N ?= 10
 ITEMS ?= 60
 POINTS ?=
+# MODE=e2e: cold end-to-end runs on the live engine (D236); empty = the solve measurement on the mock road map.
+MODE ?=
 
 bootstrap: ## Install locked Python dependencies and the pre-commit + pre-push hooks
 	uv sync --locked
@@ -175,8 +177,11 @@ purge: ## Remove project overland with its overland_* volumes and planner images
 	    case "$${ref#*@}" in "<none>"|"") ;; *) docker image rm "$$ref" ;; esac; \
 	  done'
 
-perf-pi: ## K5 on planner-perf (deployed digest; deploy first): golden I1 + I2, warm-up, N runs (N=10 ITEMS=60 gate; POINTS=20000 guard gate); report in .data/perf/. Run by the orchestrator at a start time the user names, never by the crafter
-	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) N=$(N) ITEMS=$(ITEMS) POINTS=$(POINTS) bash deploy/scripts/perf-pi.sh
+perf-pi: ## K5 on planner-perf (deployed digest; deploy first): golden I1 + I2, warm-up, N runs (N=10 ITEMS=60 gate; POINTS=20000 guard gate); MODE=e2e: N cold 60-item plans on the live engine to the stored plan read back (needs a planner with the Valhalla adapter, slice 06a); report in .data/perf/. Run by the orchestrator at a start time the user names, never by the crafter
+	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) N=$(N) ITEMS=$(ITEMS) POINTS=$(POINTS) MODE=$(MODE) bash deploy/scripts/perf-pi.sh
+
+acceptance-pi: ## The @pi @real_provider scenarios of slice 06a against planner-perf on the live engine (D236; needs a planner with the Valhalla adapter, slice 06a). Run by the orchestrator at a start time the user names, never by the crafter
+	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) bash deploy/scripts/acceptance-pi.sh
 
 contract-live: ## The recorded Valhalla answers against the live engine (D235): tunnel on the Pi, ssh forward, checks, teardown. Run by the orchestrator at a start time the user names, never by the crafter
 	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) bash deploy/scripts/contract-live.sh

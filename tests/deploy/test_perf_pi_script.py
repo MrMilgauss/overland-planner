@@ -54,6 +54,20 @@ if argv[:2] == ["run", "pytest"]:
                 stages = {{"snapshot": 5, "matrix": 40, "reach_model": 10, "solve": solve_ms, "guard_persist": 300}}
                 runs.write(json.dumps({{"state": "done", "stage_ms": stages}}) + "\\n")
     sys.exit(answer["exit"])
+if "tests.perf.perf_pi" in joined and "e2e-seed" in argv:
+    Path(argv[argv.index("--project-file") + 1]).write_text("project-1\\n")
+    sys.exit(0)
+if "tests.perf.perf_pi" in joined and "e2e-run" in argv:
+    counter = home / "e2e-runs"
+    done = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(done + 1))
+    runs = answers.get("e2e_runs", [])
+    scripted = runs[done] if done < len(runs) else {{}}
+    record = {{"state": "done", "e2e_s": 100.0, "stage_ms": {{"solve": 45000}}}} | scripted
+    with open(argv[argv.index("--out") + 1], "a") as sink:
+        sink.write(json.dumps({{"legs_new": 40, "legs_cached": 0, "retried": False, "second_pass_pairs": 20,
+                               "end": "plan_read_back", **record}}) + "\\n")
+    sys.exit(answers.get("e2e_exit", {{}}).get(str(done + 1), 0))
 if "tests.perf.perf_pi" in joined and "measure" in argv:
     out = Path(argv[argv.index("--out") + 1])
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -266,3 +280,128 @@ def test_the_perf_compose_turns_the_routing_profile_on_exactly_when_routing_env_
     (compose_call,) = [json.loads(line)["argv"] for line in (shim / "calls.jsonl").read_text().splitlines()]
     assert routing_profile_on(compose_call) == routing_env
     assert ("--profile", "perf") in itertools.pairwise(compose_call)
+
+
+def force_recreates(mac: FakeMac) -> list[int]:
+    return [i for i in compose(mac, "up") if "--force-recreate" in mac.calls()[i]["argv"][-1]]
+
+
+def e2e_runs(mac: FakeMac) -> list[int]:
+    return uv_index(mac, lambda call: "e2e-run" in call["argv"])
+
+
+def test_e2e_mode_checks_the_golden_orders_then_recreates_planner_perf_before_every_cold_run(tmp_path: Path) -> None:
+    # bypass: the order of external calls of one run is wiring, a single example by nature (D236).
+    mac = FakeMac(tmp_path)
+
+    result = mac.run(MODE="e2e")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    ups, recreates, runs = compose(mac, "up"), force_recreates(mac), e2e_runs(mac)
+    commands = [mac.calls()[i]["argv"][-1] for i in ups]
+    (i1,), (i2,), (seed,) = (
+        uv_index(mac, golden("i1")),
+        uv_index(mac, golden("i2")),
+        uv_index(mac, lambda c: "e2e-seed" in c["argv"]),
+    )
+    (report_call,) = uv_index(mac, lambda c: "e2e-report" in c["argv"])
+    valhalla_up = next(i for i in ups if "PERF_ROUTING_PROVIDER=valhalla" in mac.calls()[i]["argv"][-1])
+    assert ups[0] < i1 < ups[1] < i2 < ups[2] < valhalla_up < seed < recreates[0], (
+        "golden checks stay on the mock road map"
+    )
+    assert all("PERF_ROUTING_PROVIDER" not in command for command in commands[:3])
+    assert len(runs) == 10 and len(recreates) == 10
+    assert all(
+        recreate < run < next_recreate
+        for recreate, run, next_recreate in zip(recreates, runs, [*recreates[1:], report_call], strict=True)
+    )
+    assert all("PERF_ROUTING_PROVIDER=valhalla" in mac.calls()[i]["argv"][-1] for i in recreates)
+    (stop,), (remove,) = compose(mac, "stop"), compose(mac, "rm")
+    assert report_call < stop < remove
+    assert all(mac.calls()[i]["env"]["credentials_handed_over"] for i in runs)
+    (report,) = mac.reports()
+    assert report["mode"] == "e2e" and report["verdict"] == "pass" and len(report["runs"]) == 10
+    assert report["end"] == "plan_read_back" and report["slowest_e2e_s"] == 100.0
+    assert uv_index(mac, measured) == [], "no scenario runs in e2e mode"
+
+
+@pytest.mark.parametrize(
+    ("answers", "what"),
+    [
+        ({"e2e_runs": [{}] * 9 + [{"e2e_s": 181.0}]}, "slowest e2e over 180 s"),
+        ({"e2e_runs": [{}] * 9 + [{"stage_ms": {"solve": 56_000}}]}, "slowest solve over 55 s"),
+        ({"e2e_runs": [{}] * 4 + [{"state": "failed", "stage_ms": {}}] + [{}] * 5}, "a failed run"),
+        ({"e2e_exit": {"3": 1}}, "a run that could not be measured"),
+    ],
+)
+def test_a_missed_e2e_gate_or_a_broken_run_exits_non_zero_and_takes_planner_perf_down(
+    tmp_path: Path, answers: dict[str, Any], what: str
+) -> None:
+    # bypass: one scripted answer per failure kind; the point is the exit code and the teardown (D177, D236).
+    mac = FakeMac(tmp_path)
+    mac.answers |= answers
+
+    result = mac.run(MODE="e2e")
+
+    assert result.returncode != 0, what
+    (report,) = mac.reports()
+    assert report["verdict"] == "fail", what
+    assert compose(mac, "stop") and compose(mac, "rm")
+
+
+def test_e2e_mode_refuses_before_starting_anything_when_routing_env_is_missing(tmp_path: Path) -> None:
+    # bypass: one scripted answer of the Pi (no routing.env); nothing may start (D236).
+    mac = FakeMac(tmp_path)
+    mac.rule("ssh", "test -f routing.env", exit=1)
+
+    result = mac.run(MODE="e2e")
+
+    assert result.returncode != 0 and "routing.env" in result.stderr and "make tiles-seed" in result.stderr
+    assert compose(mac, "up") == [] and mac.calls("uv") == []
+
+
+def test_an_unknown_mode_is_refused(tmp_path: Path) -> None:
+    # bypass: one wrong value of the input check.
+    mac = FakeMac(tmp_path)
+
+    result = mac.run(MODE="soak")
+
+    assert result.returncode != 0 and "MODE" in result.stderr and mac.calls("ssh") == []
+
+
+@given(user=secret_text, password=secret_text)
+@settings(max_examples=5, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_e2e_mode_shows_no_credential_and_never_mutates_the_users_planner(
+    user: str, password: str, tmp_path_factory: Any
+) -> None:
+    mac = FakeMac(tmp_path_factory.mktemp("mac"), user=user, password=password)
+    before = {"exit_code": 0, "credentials_shown": False, "user_planner_mutated": False, "reports": 1}
+
+    result = mac.run(MODE="e2e")
+
+    shown = result.stdout + result.stderr + json.dumps(mac.reports()) + json.dumps([c["argv"] for c in mac.calls()])
+    mutating = [
+        command for command in remote_commands(mac) if COMPOSE_VERB.search(command) and MUTATING.search(command)
+    ]
+    after = {
+        "exit_code": result.returncode,
+        "credentials_shown": user in shown or password in shown,
+        "user_planner_mutated": any(USER_VOLUME in command or PERF_SERVICE not in command for command in mutating),
+        "reports": len(mac.reports()),
+    }
+    assert_state_delta(
+        before,
+        after,
+        universe={"exit_code", "credentials_shown", "user_planner_mutated", "reports"},
+        expected={key: unchanged() for key in before},
+        strict=True,
+    )
+
+
+def test_every_ssh_call_of_perf_pi_has_a_connect_timeout(tmp_path: Path) -> None:
+    # bypass: the lesson of slice 03b (a missing timeout hangs the run); one full run shows every ssh call has it.
+    mac = FakeMac(tmp_path)
+
+    assert mac.run(MODE="e2e").returncode == 0
+
+    assert all("ConnectTimeout=10" in call["argv"] for call in mac.calls("ssh"))

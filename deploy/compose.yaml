@@ -95,6 +95,9 @@ services:
     environment:
       <<: *planner-environment
       MOCK_PLAN: ${PERF_MOCK_PLAN:-}
+      # make perf-pi MODE=e2e and make acceptance-pi set PERF_ROUTING_PROVIDER=valhalla (D236); the planner stays on mock.
+      ROUTING_PROVIDER: ${PERF_ROUTING_PROVIDER:-mock}
+      VALHALLA_URL: http://valhalla:8002
     volumes:
       - planner-perf-data:/data
       - ./perf:/perf:ro

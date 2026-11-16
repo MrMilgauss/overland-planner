@@ -2,6 +2,9 @@
 
     uv run python -m tests.perf.perf_pi report  --runs RUNS.jsonl --n 10 --items 60 --out REPORT.json
     uv run python -m tests.perf.perf_pi measure --n 30 --items 70 [--points 20000] --out REPORT.json
+    uv run python -m tests.perf.perf_pi e2e-seed   --items 60 --project-file PROJECT
+    uv run python -m tests.perf.perf_pi e2e-run    --project-file PROJECT --out RUNS.jsonl
+    uv run python -m tests.perf.perf_pi e2e-report --runs RUNS.jsonl --n 10 --items 60 --out REPORT.json
 
 Run by deploy/scripts/perf-pi.sh on the Mac, against planner-perf through the ssh tunnel (PLANNER_PERF_URL, with
 PLANNER_PERF_USER and PLANNER_PERF_PASSWORD when the Pi's .env sets a household password). `report` turns the runs the
@@ -13,6 +16,12 @@ slowest and the nearest-rank p95 of all N runs. A verdict is given only for the 
 slowest solve <= 55 s (US-06a, D159) with the committed 12 points per track, and slowest guard_persist <= 3 s with
 20,000 points per track (D135, D223 d); every other mode (N = 30, ITEMS = 70, D146) reports without a verdict. The exit
 code is 1 when a gate is missed or a run did not finish, else 0.
+
+MODE=e2e (D236, slice 06a-ops): `e2e-seed` seeds the 60-item I1 project once; `e2e-run` presses Calculate with
+ignore_memo on a planner-perf that perf-pi.sh has just recreated (cold) and appends one run to RUNS: the clock stops
+when the planner has answered `GET /api/plan-runs/{id}/geometry` (slice 09) or, while that path answers 404, when the
+stored plan has been read back (`GET /api/plan-runs/{id}`); each run and the report say which end was measured. The
+e2e gate (N = 10, ITEMS = 60): slowest e2e <= 180 s and slowest solve <= 55 s; every run counts (D147, D177).
 """
 
 from __future__ import annotations
@@ -34,7 +43,10 @@ GATE_ITEMS = 60
 GUARD_POINTS = 20_000
 SOLVE_LIMIT_MS = 55_000
 GUARD_PERSIST_LIMIT_MS = 5_000  # D230 (user, 2026-11-10): about 4.5 s accepted on 20,000-point tracks; was 3 s (D135)
+E2E_LIMIT_S = 180
+HEAVY_SECOND_PASS_PAIRS = 700  # D147, D177: runs above it are counted and reported, never excluded
 PLAN_DEADLINE_S = 600.0
+POLL_EVERY_S = 0.5
 URL_KEY = "PLANNER_PERF_URL"
 
 Run = Mapping[str, Any]
@@ -90,6 +102,66 @@ def run_record(job: Mapping[str, Any]) -> dict[str, Any]:
     return {"state": job.get("state"), "stage_ms": dict(job.get("stage_ms") or {}), "retried": job.get("retried")}
 
 
+def e2e_record(job: Mapping[str, Any], e2e_s: float, end: str) -> dict[str, Any]:
+    """One cold run: how it ended, its client-side seconds, and what the last poll said of its stages and legs."""
+    return {
+        "state": job.get("state"),
+        "e2e_s": round(e2e_s, 2),
+        "stage_ms": dict(job.get("stage_ms") or {}),
+        "legs_new": job.get("legs_new"),
+        "legs_cached": job.get("legs_cached"),
+        "retried": job.get("retried"),
+        "second_pass_pairs": job.get("second_pass_pairs"),
+        "end": end,
+    }
+
+
+def build_e2e_report(runs: Sequence[Run], *, n: int, items: int) -> dict[str, Any]:
+    solves = [r["stage_ms"]["solve"] for r in runs if "solve" in (r.get("stage_ms") or {})]
+    seconds = [r["e2e_s"] for r in runs if r.get("e2e_s") is not None]
+    ends = {r.get("end") for r in runs}
+    gated = n == GATE_RUNS and items == GATE_ITEMS
+    slowest_e2e, slowest_solve = (max(seconds) if seconds else None), (max(solves) if solves else None)
+    every_run_finished = len(runs) == n and len(solves) == n and all(r.get("state") == "done" for r in runs)
+    within = (
+        every_run_finished
+        and slowest_e2e is not None
+        and slowest_e2e <= E2E_LIMIT_S
+        and slowest_solve is not None
+        and slowest_solve <= SOLVE_LIMIT_MS
+    )
+    return {
+        "mode": "e2e",
+        "n": n,
+        "items": items,
+        "end": ends.pop() if len(ends) == 1 else "mixed",
+        "runs": [dict(r) for r in runs],
+        "slowest_e2e_s": slowest_e2e,
+        "slowest_solve_ms": slowest_solve,
+        "retried_runs": sum(1 for r in runs if r.get("retried")),
+        "heavy_runs": sum(1 for r in runs if (r.get("second_pass_pairs") or 0) > HEAVY_SECOND_PASS_PAIRS),
+        "gate": {"e2e_s": E2E_LIMIT_S, "solve_ms": SOLVE_LIMIT_MS} if gated else None,
+        "verdict": ("pass" if within else "fail") if gated else None,
+    }
+
+
+def e2e_summary(report: Mapping[str, Any]) -> str:
+    lines = [f"perf-pi e2e: N={report['n']} ITEMS={report['items']}, measured to: {report['end']}"]
+    for number, run in enumerate(report["runs"], start=1):
+        solve = (run.get("stage_ms") or {}).get("solve")
+        lines.append(
+            f"  run {number:2d}: {run.get('state')}, e2e {run.get('e2e_s')} s, solve {solve} ms, "
+            f"legs new {run.get('legs_new')} cached {run.get('legs_cached')}, retried {run.get('retried')}, "
+            f"second pass pairs {run.get('second_pass_pairs')}"
+        )
+    lines.append(f"  slowest e2e {report['slowest_e2e_s']} s, slowest solve {report['slowest_solve_ms']} ms")
+    lines.append(
+        f"  retried runs {report['retried_runs']}, runs over {HEAVY_SECOND_PASS_PAIRS} pairs {report['heavy_runs']}"
+    )
+    lines.append(f"  verdict: {report['verdict'] or 'none (this mode only reports)'}")
+    return "\n".join(lines)
+
+
 def summary(report: Mapping[str, Any]) -> str:
     def seconds(ms: float | None) -> str:
         return "-" if ms is None else f"{ms / 1000:.2f} s"
@@ -138,6 +210,70 @@ def measure(url: str, *, n: int, items: int, points: int | None) -> list[dict[st
             world.shutdown()
 
 
+def e2e_seed(url: str, *, items: int, project_file: Path) -> None:
+    """Seed the committed I1 (real Western Alps places) as one project and keep its id in `project_file`."""
+    from tests.acceptance.overland_route_planner_mvp.steps import performance_steps as steps
+    from tests.acceptance.overland_route_planner_mvp.steps.planner import RemotePlanner
+    from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
+    from tests.common.fakes import FakeClock, FakeMountTable
+    from tests.perf.golden_instances import I1_DENSE, POINTS_PER_TRACK, committed_trip, write
+
+    with tempfile.TemporaryDirectory(prefix="perf-pi-") as folder:
+        scratch = Path(folder)
+        (fixture, *_) = write(scratch, I1_DENSE, items=items, points_per_track=POINTS_PER_TRACK)
+        world = PlannerWorld(scratch, scratch, {}, FakeClock(), FakeMountTable())
+        planner = RemotePlanner(url)
+        world.planner = planner
+        planner.start()
+        try:
+            steps.bring_trip(world, f"__perf e2e {time.strftime('%Y%m%d-%H%M%S')}", committed_trip(fixture))
+            project_file.write_text(f"{world.project_id}\n", encoding="utf-8")
+        finally:
+            world.shutdown()
+
+
+def e2e_run(url: str, *, project_file: Path) -> dict[str, Any]:
+    """One cold run on the seeded project: Calculate with ignore_memo to the answer that ends the measurement."""
+    from tests.acceptance.overland_route_planner_mvp.steps.performance_steps import is_terminal
+    from tests.acceptance.overland_route_planner_mvp.steps.planner import RemotePlanner
+
+    planner = RemotePlanner(url)
+    planner.start()
+    try:
+        marco = planner.session()
+        project_id = project_file.read_text(encoding="utf-8").strip()
+        started = time.monotonic()
+        answer = marco.calculate(project_id, ignore_memo=True)
+        if answer.status_code != 202:
+            return e2e_record(
+                {"state": f"calculate_{answer.status_code}"}, time.monotonic() - started, "plan_read_back"
+            )
+        job_id = str(answer.json()["job_id"])
+        deadline = started + PLAN_DEADLINE_S
+        while True:
+            job = dict(marco.plan_job(job_id).json())
+            if is_terminal(job) or time.monotonic() >= deadline:
+                break
+            time.sleep(POLL_EVERY_S)
+        end = "plan_read_back"
+        if job.get("state") == "done" and job.get("plan_run_id"):
+            run_id = job["plan_run_id"]
+            geometry = marco._request("GET", f"/api/plan-runs/{run_id}/geometry")
+            if geometry.status_code == 200:
+                end = "geometry"
+            elif geometry.status_code != 404 or marco.plan_run(str(run_id)).status_code != 200:
+                job = {**job, "state": "failed"}
+        return e2e_record(job, time.monotonic() - started, end)
+    finally:
+        planner.stop()
+
+
+def _read_lines(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def _read_runs(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -146,26 +282,51 @@ def _read_runs(path: Path) -> list[dict[str, Any]]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tests.perf.perf_pi", description=__doc__.split("\n")[0])
-    parser.add_argument("command", choices=("report", "measure"))
-    parser.add_argument("--n", type=int, required=True)
-    parser.add_argument("--items", type=int, required=True)
+    parser.add_argument("command", choices=("report", "measure", "e2e-seed", "e2e-run", "e2e-report"))
+    parser.add_argument("--n", type=int)
+    parser.add_argument("--items", type=int)
     parser.add_argument("--points", type=int, default=None)
     parser.add_argument("--runs", type=Path, help="report: the runs the @pi scenario appended to PERF_REPORT")
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--project-file", type=Path, help="e2e-seed writes, e2e-run reads the seeded project's id")
+    parser.add_argument("--out", type=Path)
     arguments = parser.parse_args(argv)
-    if arguments.command == "report":
-        if arguments.runs is None:
-            parser.error("report needs --runs")
-        runs = _read_runs(arguments.runs)
+    command = arguments.command
+    needs = {
+        "report": ("n", "items", "runs", "out"),
+        "measure": ("n", "items", "out"),
+        "e2e-seed": ("items", "project_file"),
+        "e2e-run": ("project_file", "out"),
+        "e2e-report": ("n", "items", "runs", "out"),
+    }[command]
+    for name in needs:
+        if getattr(arguments, name) is None:
+            parser.error(f"{command} needs --{name.replace('_', '-')}")
+    if command in ("measure", "e2e-seed", "e2e-run") and not os.environ.get(URL_KEY):
+        parser.error(f"{command} needs {URL_KEY} (make perf-pi sets it)")
+    if command == "e2e-seed":
+        e2e_seed(os.environ[URL_KEY], items=arguments.items, project_file=arguments.project_file)
+        return 0
+    if command == "e2e-run":
+        run = e2e_run(os.environ[URL_KEY], project_file=arguments.project_file)
+        arguments.out.parent.mkdir(parents=True, exist_ok=True)
+        with arguments.out.open("a", encoding="utf-8") as sink:
+            sink.write(json.dumps(run) + "\n")
+        print(f"perf-pi e2e: run {run['state']} in {run['e2e_s']} s (ends at {run['end']})")
+        return 0
+    if command == "e2e-report":
+        report = build_e2e_report(_read_lines(arguments.runs), n=arguments.n, items=arguments.items)
+        text = e2e_summary(report)
     else:
-        url = os.environ.get(URL_KEY)
-        if not url:
-            parser.error(f"measure needs {URL_KEY} (make perf-pi sets it)")
-        runs = measure(url, n=arguments.n, items=arguments.items, points=arguments.points)
-    report = build_report(runs, n=arguments.n, items=arguments.items, points=arguments.points)
+        runs = (
+            _read_runs(arguments.runs)
+            if command == "report"
+            else measure(os.environ[URL_KEY], n=arguments.n, items=arguments.items, points=arguments.points)
+        )
+        report = build_report(runs, n=arguments.n, items=arguments.items, points=arguments.points)
+        text = summary(report)
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(summary(report))
+    print(text)
     print(f"perf-pi: report written to {arguments.out}")
     return exit_code(report)
 

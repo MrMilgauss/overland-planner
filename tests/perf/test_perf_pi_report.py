@@ -14,7 +14,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.perf.perf_pi import STAGES, build_report
+from tests.perf.perf_pi import STAGES, build_e2e_report, build_report, exit_code
 
 STATES = ("done", "failed", "stopped", "timed_out")
 UNIVERSE = {"n", "items", "points_per_track", "runs", "slowest_ms", "p95_ms", "gate", "verdict"}
@@ -92,3 +92,91 @@ def test_every_run_counts_and_the_verdict_follows_the_gate(
         },
         strict=True,
     )
+
+
+E2E_UNIVERSE = {
+    "mode", "n", "items", "end", "runs", "slowest_e2e_s", "slowest_solve_ms", "retried_runs", "heavy_runs", "gate",
+    "verdict",
+}  # fmt: skip
+e2e_run = st.fixed_dictionaries(
+    {
+        "state": st.sampled_from(STATES),
+        "e2e_s": st.floats(min_value=1, max_value=400, allow_nan=False),
+        "stage_ms": st.dictionaries(st.sampled_from(STAGES), stage_ms),
+        "legs_new": st.integers(0, 2000),
+        "legs_cached": st.integers(0, 2000),
+        "retried": st.booleans(),
+        "second_pass_pairs": st.integers(0, 1500),
+        "end": st.sampled_from(("plan_read_back", "geometry")),
+    }
+)
+e2e_done_run = e2e_run.map(
+    lambda r: r | {"state": "done", "stage_ms": {**r["stage_ms"], "solve": r["stage_ms"].get("solve", 1)}}
+)
+e2e_runs = st.one_of(
+    st.lists(e2e_done_run, min_size=10, max_size=10),
+    st.lists(st.one_of(e2e_done_run, e2e_run), min_size=10, max_size=10),
+    st.lists(st.one_of(e2e_done_run, e2e_run), min_size=1, max_size=12),
+)
+
+
+@given(measured=e2e_runs, items=st.sampled_from((60, 70)))
+@settings(max_examples=200, deadline=None)
+def test_the_e2e_report_counts_every_run_and_the_verdict_follows_the_two_limits(
+    measured: list[dict[str, Any]], items: int
+) -> None:
+    n = len(measured)
+    solves = [r["stage_ms"]["solve"] for r in measured if "solve" in r["stage_ms"]]
+    slowest_e2e = max(r["e2e_s"] for r in measured)
+    slowest_solve = max(solves) if solves else None
+    gated = n == 10 and items == 60
+    within = (
+        all(r["state"] == "done" for r in measured)
+        and len(solves) == n
+        and slowest_e2e <= 180
+        and slowest_solve is not None
+        and slowest_solve <= 55_000
+    )
+    ends = {r["end"] for r in measured}
+    before: dict[str, Any] = dict.fromkeys(E2E_UNIVERSE)
+
+    after = build_e2e_report(measured, n=n, items=items)
+
+    assert_state_delta(
+        before,
+        after,
+        universe=E2E_UNIVERSE,
+        expected={
+            "mode": set_to("e2e"),
+            "n": set_to(n),
+            "items": set_to(items),
+            "end": set_to(ends.pop() if len(ends) == 1 else "mixed"),
+            "runs": set_to(measured),
+            "slowest_e2e_s": set_to(slowest_e2e),
+            "slowest_solve_ms": set_to(slowest_solve),
+            "retried_runs": set_to(sum(1 for r in measured if r["retried"])),
+            "heavy_runs": set_to(sum(1 for r in measured if r["second_pass_pairs"] > 700)),
+            "gate": set_to({"e2e_s": 180, "solve_ms": 55_000} if gated else None),
+            "verdict": set_to(("pass" if within else "fail") if gated else None),
+        },
+        strict=True,
+    )
+
+
+def test_one_failed_run_fails_the_e2e_gate_however_fast_the_others_were() -> None:
+    # bypass: the named example of the gate's rule "a failed or unfinished run fails" (D177).
+    fast = {
+        "state": "done",
+        "e2e_s": 90.0,
+        "stage_ms": {"solve": 40_000},
+        "legs_new": 5,
+        "legs_cached": 0,
+        "retried": False,
+        "second_pass_pairs": 10,
+        "end": "plan_read_back",
+    }
+    runs = [*([fast] * 9), {**fast, "state": "failed", "stage_ms": {}}]
+
+    report = build_e2e_report(runs, n=10, items=60)
+
+    assert report["verdict"] == "fail" and exit_code(report) == 1

@@ -258,6 +258,31 @@ def test_perf_pi_hands_its_mode_to_the_mac_side_script(variables: tuple[str, ...
     assert all(part in result.stdout + " " for part in expected), result.stdout
 
 
+def test_perf_pi_hands_mode_e2e_to_the_script_and_both_targets_say_the_orchestrator_runs_them() -> None:
+    # bypass: a Makefile recipe is wiring; one dry run per target shows the variables reach the scripts (D236).
+    lines = (REPO / "Makefile").read_text().splitlines()
+    perf_help = next(line for line in lines if line.startswith("perf-pi:"))
+    acceptance_help = next(line for line in lines if line.startswith("acceptance-pi:"))
+    perf = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "perf-pi", f"PI_HOST={DEPLOY_USER}", NO_PI_ENV, "MODE=e2e"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    acceptance = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "acceptance-pi", f"PI_HOST={DEPLOY_USER}", NO_PI_ENV],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert perf.returncode == 0 and "MODE=e2e" in perf.stdout, perf.stderr
+    assert acceptance.returncode == 0 and "bash deploy/scripts/acceptance-pi.sh" in acceptance.stdout, acceptance.stderr
+    for help_line in (perf_help, acceptance_help):
+        assert "orchestrator" in help_line and "never by the crafter" in help_line
+        assert "slice 06a" in help_line
+
+
 def test_contract_live_hands_the_host_to_the_mac_side_script_and_says_the_orchestrator_runs_it() -> None:
     # bypass: a Makefile recipe is wiring; one dry run shows the variables reach the script.
     result = subprocess.run(
@@ -293,6 +318,7 @@ def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name
         "deploy",
         "rollback",
         "perf-pi",
+        "acceptance-pi",
         "contract-live",
         "tiles-seed",
         "tiles-rollback",
@@ -345,7 +371,7 @@ def test_the_template_has_placeholders_only_and_the_real_file_is_git_ignored() -
     assert ignored.returncode == 0, "deploy/pi.env must be git-ignored"
 
 
-@pytest.mark.parametrize("script", ["make-deploy.sh", "perf-pi.sh", "contract-live.sh"])
+@pytest.mark.parametrize("script", ["make-deploy.sh", "perf-pi.sh", "acceptance-pi.sh", "contract-live.sh"])
 def test_a_mac_side_script_without_a_host_stops_and_names_the_template(script: str) -> None:
     env = {**_no_host_env(), "PI_ENV_FILE": "/nonexistent/pi.env"}
 
