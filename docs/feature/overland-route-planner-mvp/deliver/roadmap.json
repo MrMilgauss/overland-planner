@@ -2,7 +2,7 @@
   "roadmap": {
     "project_id": "overland-route-planner-mvp",
     "created_at": "2026-11-02T19:53:04Z",
-    "total_steps": 75
+    "total_steps": 82
   },
   "phases": [
     {
@@ -2441,6 +2441,236 @@
           "implementation_notes": "Slice 03b; D170, D199, D216, D221, D226, D231; red-classification slice 03b 'Markers and CI cost'. FEATURE: one edit, the tag line (the scenario text is SSOT, D140; this is the only step of the phase that touches the feature file). MARKER AND PIN TOGETHER (the orchestrator's instruction and the DISTILL note): tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and_job_2_does_not asserts that job 10's collected names equal the set it builds (`slow = {*SLICE_02_PROPERTIES, *SLOW_SLICE_03, ...}`); setting the marker without the name in that set, or the name without the marker, fails it, which is why both change in this one commit. Job 2's expression already excludes heavy_property; at profile dev (pre-push) the property still runs. ALREADY-RED check: #2 ('never entered') starts no solver child, so it stays in pre-push; #1, #3-#6 are solver_child. WEEKLY: weekly.yml deep-properties also runs the slice from now on; report its next duration, no change here. ORCHESTRATOR GATE after this step: push (the range touches domain and application files, so CI job 8 will start and may be cancelled at its 75 minutes as in D224: say so beforehand; the local `make mutate` is the evidence), verify CI green with job 2 under 15 minutes and slow-properties and slow-a6 inside 40; no deploy needed (no migration, Confirmed-only plans unchanged), and `make perf-pi` need not be re-run unless the golden pin tripped. Dogfood moment (user's, not the crafter's): Marco adds the Sommeiller to a demo project and checks the plan goes up, comes back down and never starts from the top; with the offline road map this needs a scripted MOCK_PLAN with a `none` leg out of the pass (the real roads of 06a replace it). TDD PHASES: RED_ACCEPTANCE not applicable (all green before this step; the pins' RED is that the tag still says @pending, shown by the new pin failing first); RED_UNIT applicable for the CI pins. Local check: the full suite, `uv run pytest -q tests/ci/test_ci_workflow.py`, `make lint-ci`, `make mutate BASE=<slice-03b start>`. Commit: 'test(acceptance): slice 03b blocking in CI'. LAST STEP OF SLICE 03B: the crafter stops at the commit and never pushes.\n\nBATCH-2 RULE (UI-DELIVER-3, D207): RED phases log `--data FAIL`, with a `RED evidence:` block (failure class and message) in the commit body and hand-off; unit tests are written before production code.\n\nTEST PARADIGM (mandatory): Unit tests for this step MUST be written as property-based tests using Hypothesis @given strategies + state-delta matchers (assert_state_delta over a declared universe with strict=True). Single-example unit tests are FALLBACK only — document why in a `# bypass:` comment if used. Acceptance scenarios MUST be framed as Property: blocks (quantified preconditions + invariant outcomes) where the contract supports it; classic Scenario: is fallback. Integration and E2E tests REMAIN single-example — they verify wiring, not invariants. Universe declaration is mandatory even when only one slot is checked: the unchanged() predicate covers the rest.\n\nProject note: acceptance feature text is fixed SSOT (D140) and is not rewritten into Property blocks. PBT targets: none new: workflow and test-gate configuration with one observable outcome each (`# bypass:` with that reason on the pins); the slice's invariants are the properties of 07-04 to 07-10."
         }
       ]
+    },
+    {
+      "id": "08",
+      "name": "Slice 06a-ops: Valhalla serving on the Pi",
+      "status": "APPROVED 2026-11-16 (orchestrator as architect under the owner's delegation, D233; reviewed, findings applied, D234-D239)",
+      "description": "Enabler slice (D145), release R2a (D233). The routing engine runs in the owner's compose stack on the Pi with the SPIKE-2R map data, inside its caps (cpus 2, 4 GB), on an internal network and never published; the tools to seed and refresh its map data, to check it live against its recordings and to measure a plan end to end exist. No user story and no .feature of its own (the scenarios it enables are in slice 06a's feature file and stay pending): the offline deploy tests are the specification, and the Pi gate is the orchestrator's (seed, healthy on tileset 20261101, make contract-live green, make diag before and after, household projects unchanged). Design: ADR-013 Amendment 3 (D234 no depends_on and profile `routing`; D235 two-layer contract-live; D236 e2e tools first run at the 06a gate; D237 spike-cleanup and tiles-refresh not run at the gate; D238 CI job 8 manual). Roadmap review (nw-acceptance-designer-reviewer, 2026-11-16): NEEDS_REVISION with 1 BLOCKER, 8 HIGH, 7 MEDIUM, 8 LOW; all applied except the split of 08-01 (kept, with a fallback in its notes), recorded in D239. ESTIMATE: 24.5 h against the brief's 1.0 day; the reference class is phase 06's ops steps (06-05: 4.5 h for one target).",
+      "steps": [
+        {
+          "id": "08-01",
+          "name": "Valhalla in the compose stack: profile routing, caps, internal network, never published",
+          "description": "Adds the routing engine to deploy/compose.yaml as designed in ADR-013 Amendment 3 (D234): service `valhalla` in profile `routing`, the internal `routing` network, the volume overland_valhalla-data mounted by tileset subpath, caps and healthcheck. The planner and planner-perf join `routing`. The Pi tooling turns the profile on whenever routing.env exists, and a planner deploy brings valhalla to its definition without ever failing on it.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "07-13"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "deploy/compose.yaml defines `valhalla`: image `ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6` (overridable as `${VALHALLA_IMAGE:-...}` for an amd64 PC), `profiles: [routing]`, networks `[routing]` only, no `ports`, environment serve_tiles=True, use_tiles_ignore_pbf=True, force_rebuild=False, server_threads=2, update_existing_config=False, build_admins/build_time_zones/build_elevation/build_transit=False, `cpus: 2`, `mem_limit: 4g`, `memswap_limit: 4g`, `oom_score_adj: 500`, `restart: unless-stopped`, `security_opt: [no-new-privileges:true]`, `pids_limit: 512`, json-file logging 10m x 3, healthcheck `curl -fsS http://127.0.0.1:8002/status` (interval 30s, timeout 5s, retries 3, start_period 120s, start_interval 2s), and the volume `valhalla-data` (name `overland_valhalla-data`) mounted at /custom_files with `volume.subpath: tilesets/${VALHALLA_TILESET:-none}`. A compose contract test pins each of these.",
+            "Networks: `routing` is `internal: true`; `planner` and `planner-perf` are on `[edge, routing]`; nothing but `planner` (on PLANNER_BIND) and `planner-perf` (127.0.0.1:18080) publishes a port; `planner` has no `depends_on`. Offline (YAML read): the only service without a profile is `planner`, `valhalla` has `profiles: [routing]`, the subpath default is `none`, and the memory caps of the serving services sum to at most 5 GiB (planner 1g + valhalla 4g, D83). In CI job 7 only (a test marked `compose`, not run locally: no Docker on the Mac): `docker compose config` without VALHALLA_TILESET parses and `config --services` without a profile lists only `planner`.",
+            "Seen through the docker shim's recorded argv: `make status`, `make logs`, `make diag`, `make uninstall`, the deploy and rollback scripts and `make perf-pi` call `docker compose` with `--env-file routing.env --profile routing` exactly when routing.env exists in the install dir, and exactly as before when it does not (this amends D166's 'every Pi target uses --env-file routing.env': the file is optional until a tileset is seeded, D239).",
+            "deploy.sh and rollback.sh: after the planner is published (and after a rollback brought the previous release back), when routing.env exists they run `planner_compose up -d valhalla` without `--wait`; a failure prints one line and never changes the exit code, the releases.log line or the planner. Offline tests: with routing.env the docker shim sees that call after the publish; without it no valhalla call is made; a failing valhalla start leaves `deploy ok`.",
+            "`make diag` output includes the valhalla container in its `docker stats` when the profile is on (it lists `$(PI_COMPOSE) ps -q`); README or the Makefile help says in one line that valhalla runs only after `make tiles-seed`.",
+            "`make purge` also removes the volume overland_valhalla-data (it removes every overland_* volume, D99): its typed-confirmation text now says that the map data (about 4.9 GB, rebuilt only by `make tiles-seed` or `make tiles-refresh`) goes too; a test pins the text."
+          ],
+          "test_file": "tests/deploy/test_compose_contract.py",
+          "scenario_name": "tests/deploy/test_compose_contract.py | tests/deploy/test_deploy_script.py | tests/deploy/test_rollback_script.py | tests/deploy/test_makefile_targets.py | tests/deploy/test_perf_pi_script.py",
+          "files_to_modify": [
+            "deploy/compose.yaml",
+            "deploy/scripts/lib.sh",
+            "deploy/scripts/deploy.sh",
+            "deploy/scripts/rollback.sh",
+            "deploy/scripts/perf-pi.sh",
+            "Makefile",
+            ".env.example",
+            "README.md",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_deploy_script.py",
+            "tests/deploy/test_rollback_script.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/deploy/test_perf_pi_script.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/_shim.py"
+          ],
+          "implementation_notes": "Slice 06a-ops; ADR-013 Amendment 3; D81-D83, D92, D164, D166, D167, D234. Read deploy/compose.yaml, deploy/scripts/lib.sh, tests/deploy/test_compose_contract.py and conftest.py first and follow their style (the compose contract tests read the YAML; CI job 7 runs the real `docker compose config`, see tests marked `compose`). The planner's own environment is NOT changed here: ROUTING_PROVIDER stays `mock` (the adapter and the setting arrive in slice 06a). Keep the header comment of compose.yaml truthful (it says valhalla joins later). `VALHALLA_TILESET` default `none` only makes the file parse; a start with it fails at the mount, which is what a host without a seeded tileset should do. Do not add valhalla-build, valhalla-fetch or valhalla-tunnel here (08-04, 08-06). HARDENING: valhalla gets `no-new-privileges` and `pids_limit` only; the scripted image runs as root and its start script writes beside the tiles (SPIKE-2R edge case 12), so `cap_drop: ALL` and `read_only` are not applied untested (recorded in D239). @sizing-review-needed was raised by the roadmap review for this step (15 files): the compose definition and the tooling flag belong together because the tests of one need the other; if the turn budget runs short, commit the compose part with its tests first and report. Commit: 'feat(ops): valhalla service in the compose stack, profile routing'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-02",
+          "name": "CI job 8 (mutation) runs only when asked for (D238)",
+          "description": "Job 8 cannot finish (D224) and blocks every deploy after a domain or application push. It becomes a manual job: it runs only on workflow_dispatch with the input mutation=true. Publish keeps accepting its skip. The local `make mutate` stays the gate.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "07-13"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "`.github/workflows/ci.yml`: `workflow_dispatch` gains a boolean input `mutation` (default false); job `mutation` has `if: github.event_name == 'workflow_dispatch' && inputs.mutation` (no push trigger), and still needs test-python; `publish` still lists it in `needs` and accepts `success` or `skipped`.",
+            "tests/ci/test_ci_workflow.py pins the new condition, proves a main push with a domain file no longer selects job 8 and that publish's expression is unchanged in every other term; `make lint-ci` (actionlint) passes.",
+            "The comment above job 8 and README's CI section say in plain words: mutation testing is run locally with `make mutate BASE=<previous slice tag>` at each slice (kill rate >= 80 %), and on demand in CI (D238)."
+          ],
+          "test_file": "tests/ci/test_ci_workflow.py",
+          "scenario_name": "tests/ci/test_ci_workflow.py",
+          "files_to_modify": [
+            ".github/workflows/ci.yml",
+            "tests/ci/test_ci_workflow.py",
+            "README.md"
+          ],
+          "implementation_notes": "D238, D224, D213, D160. Read the existing pins of job 8 and of `publish` in tests/ci/test_ci_workflow.py first; change only what D238 needs. On workflow_dispatch the `changes` job outputs still apply to the other jobs; job 8 must not depend on `needs.changes.outputs.core` any more (a manual run mutates what `make mutate` selects against its BASE; keep the job's own steps as they are). Commit: 'ci: mutation job runs only on manual dispatch (D238)'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-03",
+          "name": "make tiles-seed and make spike-cleanup",
+          "description": "Seeds the first tileset from the SPIKE-2R files into the Valhalla volume, points routing.env at it and starts the engine; and the guarded clean-up of the spike directory. Both are Pi-side scripts called over ssh by make targets, tested offline with the shims. Neither is run by the crafter.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "08-01"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "`make tiles-seed [TILESET=20261101] [SEED_DIR=valhalla-spike/custom_files]` runs deploy/scripts/tiles-seed.sh on the Pi (after rsyncing deploy/ like make deploy does, never .env, release or routing pointers): preflight (the four files `valhalla_tiles.tar`, `admins.sqlite`, `timezones.sqlite`, `valhalla.json` exist in SEED_DIR under the deploy user's home; at least 10 GB free; TILESET is 8 digits), then copies them into `tilesets/<TILESET>/` of the volume overland_valhalla-data with a pinned helper container (`--network none`, the source mounted read-only), writes their sha256 to `tilesets/<TILESET>/SHA256SUMS` in the volume, and verifies the copies against the sources.",
+            "After a verified copy it writes `routing.env` with exactly `VALHALLA_TILESET=<TILESET>` (the previous file kept as routing.env.prev, D166), runs `planner_compose up -d --wait valhalla` and checks, from inside the compose network only (`docker compose exec valhalla curl ...`, nothing published), that `/status` answers with `version` 3.9.1 and a `tileset_last_modified` equal to EXPECT_TILESET_MODIFIED when that is given (the make target passes 1793560782 for the default TILESET 20261101, the value SPIKE-2R recorded, D92); a different value or version restores routing.env (and .prev) as they were, stops valhalla if it was not running before, and exits non-zero. It appends one line to releases.log-style `tiles.log` (ts, action seed, tileset, tileset_last_modified, result, reason).",
+            "Idempotent and safe: a second run with the same TILESET and matching checksums copies nothing and reports `unchanged`; a checksum mismatch, a missing file or a failed start exits non-zero, leaves routing.env as it was and names the problem; the planner container is never stopped or recreated; an existing tileset directory with different content is refused, not overwritten.",
+            "`make spike-cleanup` runs deploy/scripts/spike-cleanup.sh on the Pi. It refuses, removing nothing, unless all hold: the target is exactly `$HOME/valhalla-spike`, a real directory and not a symlink (resolved path equal to the literal path; no glob, no argument can change it); valhalla is healthy on the tileset of routing.env; the sha256 of the four originals, recomputed now, equal both the SHA256SUMS written at seed time and the sha256 of the seeded copies recomputed now (D92, D178). It then needs the typed confirmation `delete valhalla-spike` from the Mac's terminal (like `make purge`) and only then removes that one directory with a helper container (the files are root-owned; no sudo). The Makefile help says it is run only at a start time the owner names (D237).",
+            "Offline tests (fake Pi install dir, shims) cover: happy path call order, unchanged re-run, mismatch refusal, missing file refusal, routing.env and .prev content, no planner-mutating docker call, the wrong tileset_last_modified refusal with routing.env restored, cleanup refusal without confirmation, with a checksum mismatch, with a symlinked target and with valhalla not healthy; `make lint-ci` passes.",
+            "Testability: the scripts take their tool and path seams from the environment with production defaults (for example SHA256_CMD, the meminfo path as pi-preflight.sh's MEMINFO, HOME), and tests/deploy/shims gains what the scripts call (a docker handler for `run` of the helper container and for `compose exec valhalla curl`, and sha256sum where macOS has none); the criteria above are proven through those shims, never by calling a shell function directly."
+          ],
+          "test_file": "tests/deploy/test_tiles_seed_script.py",
+          "scenario_name": "tests/deploy/test_tiles_seed_script.py | tests/deploy/test_spike_cleanup_script.py | tests/deploy/test_makefile_targets.py",
+          "files_to_modify": [
+            "deploy/scripts/tiles-seed.sh",
+            "deploy/scripts/spike-cleanup.sh",
+            "deploy/scripts/lib.sh",
+            "Makefile",
+            "tests/deploy/test_tiles_seed_script.py",
+            "tests/deploy/test_spike_cleanup_script.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/_shim.py"
+          ],
+          "implementation_notes": "Slice 06a-ops; D92, D166, D178, D237; ADR-013 Amendment 3. Facts probed on the Pi (2026-11-16): the spike files are owned by root (the Valhalla image runs as uid 0), so the copy and the later removal go through a helper container, never sudo; reuse SNAPSHOT_IMAGE (alpine 3.22, pinned in lib.sh), which has cp, sha256sum, find. Compose volume subpath needs the directory to exist before valhalla starts: the copy creates it. The copy is about 4.9 GB on one NVMe: use plain `cp`, then `sha256sum` of source and copy (print progress lines to stderr). `valhalla.json` is copied as it is (it already holds the SPIKE-2R deltas: allow_second_pass=true, max_matrix_distance 2,000,000); do not edit it here. Put shared helpers (routing pointer writer, tiles.log line, a `valhalla_status` reader using `docker compose exec`) in lib.sh for 08-04 to reuse. The Makefile targets join PI_GUARDED. The Pi gate of the slice (orchestrator): `make tiles-seed` on the Pi, valhalla healthy on tileset 20261101 with tileset_last_modified 1793560782. The two targets stay in one step because they share the checksum helpers and the fake Pi fixture. Commit: 'feat(ops): make tiles-seed and make spike-cleanup'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-04",
+          "name": "Tile build services, the config overrides and make tiles-rollback",
+          "description": "Compose gains the one-shot services of a map-data refresh (`valhalla-fetch` for download and merge, `valhalla-build` for the tile build), the config deltas live in a file, and `make tiles-rollback` switches back to the previous tileset. Tested offline; never run by the crafter.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "08-03"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "deploy/compose.yaml defines `valhalla-build` in profile `valhalla-build`: the pinned Valhalla image, `network_mode: none` (the build needs no network; D239 amends D81's `egress`), the volume overland_valhalla-data mounted by subpath `build` at /custom_files, `cpus: 3`, `mem_limit` and `memswap_limit` `${VALHALLA_BUILD_MEM:-9g}`, `oom_score_adj: 500`, `restart: \"no\"`, json-file 10m x 2, build environment (build_admins and build_time_zones True, build_elevation and build_transit False, serve_tiles False, force_rebuild True, server_threads 3).",
+            "deploy/compose.yaml defines `valhalla-fetch` in the same profile: `debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`, network `egress` only (a plain bridge, created by compose when the service runs), the same volume subpath `build` at /work, `cpus: 2`, `mem_limit` and `memswap_limit` 6g, `oom_score_adj: 500`, `restart: \"no\"`, no ports. A compose contract test pins both services and that neither a default start nor profile `routing` includes them, and that only `valhalla-fetch` is on `egress`.",
+            "deploy/valhalla/valhalla.overrides.json holds exactly the two ADR-013 section 5 deltas and no other key: `thor.costmatrix.allow_second_pass` true and `service_limits.auto.max_matrix_distance` 2000000 (the pair limit stays at the image default 2,500); a test pins the file's content.",
+            "`make tiles-rollback` (deploy/scripts/tiles-rollback.sh on the Pi) swaps routing.env and routing.env.prev when the previous tileset's directory still exists in the volume, runs `up -d --wait valhalla`, checks `/status` and appends a tiles.log line; when the check fails it swaps back, starts valhalla on the tileset it came from and exits non-zero; with no previous pointer or directory it refuses and changes nothing (D239 names it as the third writer of routing.env). Offline tests cover the three cases through the shims."
+          ],
+          "test_file": "tests/deploy/test_tiles_rollback_script.py",
+          "scenario_name": "tests/deploy/test_tiles_rollback_script.py | tests/deploy/test_compose_contract.py | tests/deploy/test_makefile_targets.py",
+          "files_to_modify": [
+            "deploy/compose.yaml",
+            "deploy/scripts/tiles-rollback.sh",
+            "deploy/scripts/lib.sh",
+            "deploy/valhalla/valhalla.overrides.json",
+            "Makefile",
+            "tests/deploy/test_tiles_rollback_script.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/_shim.py"
+          ],
+          "implementation_notes": "Slice 06a-ops; D81, D83, D92, D166, D239; ADR-013 sections 1, 5, 7; spike/findings.md SPIKE-2R Setup (read only). The directory must exist in the volume before a subpath mount: the refresh script (08-05) creates `build/`; say so in a compose comment. Reuse the lib.sh helpers of 08-03 (routing pointer writer, tiles.log, status reader). Commit: 'feat(ops): tile build services, config overrides and make tiles-rollback'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-05",
+          "name": "make tiles-refresh",
+          "description": "The quarterly map-data refresh as the DEVOPS procedure describes it: download and merge while serving, stop serving, build under the build cap, promote, switch routing.env, start and check, with every failure leaving the old tileset serving. Tested offline with the shims; never run by the crafter, and not run at the R2a gates (D237).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "08-04"
+          ],
+          "estimated_hours": 4,
+          "criteria": [
+            "`make tiles-refresh` runs deploy/scripts/tiles-refresh.sh on the Pi. Preflight, read-only, each refusal changing nothing: the new tileset name is the UTC date <YYYYMMDD>, and it is refused when `tilesets/<YYYYMMDD>` already exists or equals the VALHALLA_TILESET of routing.env or routing.env.prev (a served or rollback tileset is never overwritten); disk free >= 25 GB; MemAvailable >= build cap + 1 GiB; no plan job running (the planner's /api/diagnostics through `curl_planner`).",
+            "While serving continues: `valhalla-fetch` downloads the five Geofabrik extracts into `build/src` and merges them with osmium into `build/alps.osm.pbf` (its caps: cpus 2, 6g, oom_score_adj 500; MemAvailable >= 7 GiB is checked again just before the merge). Then `planner_compose stop valhalla`, the tile build in `valhalla-build`, and the deltas of deploy/valhalla/valhalla.overrides.json applied to the built valhalla.json with jq inside the Valhalla image.",
+            "Any failure up to here (download, merge, build, overrides): valhalla is started again on the old tileset (`up -d valhalla`), routing.env is untouched, tiles.log gets `refresh failed` with the stage, exit non-zero.",
+            "Promote and switch: the four files move to `tilesets/<YYYYMMDD>/` with SHA256SUMS and `build/` is deleted; routing.env -> routing.env.prev, the new VALHALLA_TILESET, `up -d --wait valhalla`, `/status` version 3.9.1. If the start or the check fails: routing.env and .prev are restored, valhalla is started on the old tileset, the new directory is kept for inspection, tiles.log gets `refresh failed (switch)`, exit non-zero.",
+            "Only after the switch passed: tilesets other than the new and the previous one are deleted, and tiles.log gets `refresh ok` with the new tileset_last_modified. The script prints the follow-ups: `make contract-live` and one `make acceptance-pi` (D95).",
+            "Offline tests through the shims cover: each preflight refusal (existing target, disk, memory, running job), the call order of the happy path, a build failure, a failed switch (pointers restored, old tileset serving, nothing pruned), the prune only after success. `make lint-ci` passes. The Makefile help says: about 40 minutes without routing, only at a start time the owner names."
+          ],
+          "test_file": "tests/deploy/test_tiles_refresh_script.py",
+          "scenario_name": "tests/deploy/test_tiles_refresh_script.py | tests/deploy/test_makefile_targets.py",
+          "files_to_modify": [
+            "deploy/scripts/tiles-refresh.sh",
+            "deploy/scripts/lib.sh",
+            "Makefile",
+            "tests/deploy/test_tiles_refresh_script.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/_shim.py"
+          ],
+          "implementation_notes": "Slice 06a-ops; D83, D92, D166, D237, D239; feature-delta 'Valhalla quarterly tile refresh'; ADR-013 sections 1, 5, 7; spike/findings.md SPIKE-2R Setup (read only). Extract URLs (Geofabrik, https://download.geofabrik.de/): europe/italy-latest, europe/switzerland-latest, europe/austria-latest, europe/france/rhone-alpes-latest, europe/france/provence-alpes-cote-d-azur-latest (.osm.pbf). The merge is the spike's merge.sh: apt-get install osmium-tool (and curl or wget for the download) in the debian container, `osmium merge ... -o alps.osm.pbf --overwrite`. The scripted image builds from the PBF found in /custom_files when force_rebuild is True. The services of 08-04 are run with `planner_compose --profile valhalla-build run --rm <service> ...`. Use the same environment seams as 08-03 (meminfo path, sha256 command). Commit: 'feat(ops): make tiles-refresh'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-06",
+          "name": "Recorded answers, the maintenance tunnel and make contract-live (engine layer, D235)",
+          "description": "Copies the SPIKE-2R recordings into the contract fixtures with a manifest, adds the loopback-only tunnel service, and builds `make contract-live`: tunnel up, ssh forward, the live checks of the engine against its recordings, everything torn down. The adapter-level contract suite joins this target in slice 06a.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "08-01"
+          ],
+          "estimated_hours": 4.5,
+          "criteria": [
+            "tests/contract/fixtures/valhalla-3.9.1/ holds the files of the committed spike fixtures (taken with `git show HEAD:docs/feature/overland-route-planner-mvp/spike/fixtures/<name>`, never from the working tree) plus `MANIFEST.sha256`; a test proves every file matches the manifest, that the manifest lists every file, and that `status.json` says version 3.9.1.",
+            "deploy/compose.yaml defines `valhalla-tunnel` in profile `ops`: `alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e`, command `TCP-LISTEN:8002,fork,reuseaddr TCP:valhalla:8002`, ports only `127.0.0.1:18002:8002`, networks `[edge, routing]` (D164), `restart: \"no\"`, cap_drop ALL, no-new-privileges, read_only, mem_limit 64m. A compose contract test pins it and that valhalla itself still publishes nothing.",
+            "tests/contract/routing_port/test_engine_recordings.py asks a Valhalla at `--valhalla-url` the recorded questions and compares the answers (D235): `/status` version equals the recorded 3.9.1, else it stops with 'recorded for Valhalla 3.9.1, found <v> - re-record the answers'; the Torino to Susa route; the Confirmed 5x5 matrix; the island null row and its `/route` 442; the 2,501-pair refusal (error 150); the 170 refusal for a batch with a far place; the 171 route refusal; the `/locate` answer with empty edges for a far point. Shapes, error codes, HTTP statuses and null cells are compared exactly; distances and times exactly when the live `tileset_last_modified` equals the recorded one, else within 5 %. Without `--valhalla-url` the same checks replay the recordings through respx, so they run (and block) in CI job 2.",
+            "`make contract-live` (deploy/scripts/contract-live.sh, Mac side, like perf-pi.sh): starts `valhalla-tunnel` on the Pi, opens `ssh -L 18002:127.0.0.1:18002` with `-o ExitOnForwardFailure=yes -o ConnectTimeout=10`, waits for `/status` through the tunnel, runs `uv run pytest -q -p no:cacheprovider --run-external tests/contract/routing_port --valhalla-url http://127.0.0.1:18002`, and always stops and removes the tunnel container and the ssh forward, also after a failure. It refuses with one clear line when routing.env does not exist on the Pi. An offline test with the shims proves the order, the teardown on failure and that no credential or address is printed.",
+            "The pending routing-port contract scenarios (routing-engine-contract.feature) are untouched and still collected as pending.",
+            "Pi gate of the slice (orchestrator, not the crafter): `make contract-live` passes against the engine serving tileset 20261101 (tileset_last_modified 1793560782), and MemAvailable on the Pi stays at or above 6 GiB after it (`make diag` before and after)."
+          ],
+          "test_file": "tests/contract/routing_port/test_engine_recordings.py",
+          "scenario_name": "tests/contract/routing_port/test_engine_recordings.py | tests/contract/routing_port/test_fixture_manifest.py | tests/deploy/test_contract_live_script.py | tests/deploy/test_compose_contract.py",
+          "files_to_modify": [
+            "tests/contract/fixtures/valhalla-3.9.1/MANIFEST.sha256",
+            "tests/contract/routing_port/test_engine_recordings.py",
+            "tests/contract/routing_port/test_fixture_manifest.py",
+            "deploy/compose.yaml",
+            "deploy/scripts/contract-live.sh",
+            "Makefile",
+            "tests/deploy/test_contract_live_script.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/ci/test_repo_hygiene.py",
+            "README.md",
+            "tests/conftest.py"
+          ],
+          "implementation_notes": "Slice 06a-ops; D95, D164, D235; ADR-013 Amendment (DEVOPS) and Amendment 3; spike/findings.md SPIKE-2R 'Edge cases observed' 1, 2, 3, 8 (read only). Each spike fixture is a JSON with the recorded request and response (look at two or three with `git show HEAD:...` to learn the layout; index.json names endpoint, status and error code). httpx and respx are already dependencies. `--valhalla-url` is a pytest option registered in the root tests/conftest.py next to --run-external (a live run without --run-external is refused). The live test file carries the markers the repo uses for external runs so job 2 runs the replay mode only. README's Data note already covers the OpenStreetMap-derived answers (ODbL): add the new directory to that note. The fixtures are data: exclude them from ruff/prettier if needed, and extend the repo-hygiene test only if it lists fixture directories. The fixtures contain public places only; tests/ci/test_repo_hygiene.py gains a test that fails when a file under tests/contract/fixtures contains a private address (192.168., 10., 172.16-31.), a `.local` host name, `/Users/` or `/home/`, or the words password or token. Commit: 'feat(ops): recorded Valhalla answers, maintenance tunnel and make contract-live'.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "08-07",
+          "name": "make perf-pi MODE=e2e and make acceptance-pi (D236)",
+          "description": "The end-to-end tools of K5 and of the live scenarios: planner-perf on the live engine. `make perf-pi MODE=e2e` measures N cold 60-item plans from pressing Calculate to the stored plan read back; `make acceptance-pi` runs the @pi @real_provider scenarios. Built and tested offline here; first run at the slice 06a gate, when the planner can use Valhalla. The scenario it serves, 'A 60-item trip with no known roads is on screen within 3 minutes', belongs to slice 06a's feature file and is run there with --run-pending=slice-06a; nothing of it is enabled here. D167's re-verification of the caps: the solve stage under cpus 1 was verified at the slice 03 and 03b gates (50.11 s and 52.14 s); the end-to-end part moves to the 06a gate (D236).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "08-06"
+          ],
+          "estimated_hours": 4.5,
+          "criteria": [
+            "deploy/compose.yaml: planner-perf's environment takes `ROUTING_PROVIDER: ${PERF_ROUTING_PROVIDER:-mock}` and `VALHALLA_URL: http://valhalla:8002`; the planner's own ROUTING_PROVIDER is unchanged (slice 06a switches it). Contract test pins both.",
+            "`make perf-pi MODE=e2e [N=10] [ITEMS=60]`: after the golden check of I1 and I2 on the mock road map (D175, unchanged), planner-perf is restarted with PERF_ROUTING_PROVIDER=valhalla; each measured run is cold: planner-perf is recreated before it (its in-memory legs are forgotten; the persistent cache and its clearing are slice 05), the 60-item fixture project is seeded once and reused, Calculate is pressed with ignore_memo=true, and the run ends when the client has read the stored plan back (`GET /api/plan-runs/{id}`); when the planner offers `GET /api/plan-runs/{id}/geometry` (slice 09) the run ends when that answer is received, and the report says which end was measured. MODE defaults to the existing behaviour, which must not change.",
+            "The e2e report (.data/perf/<timestamp>.json) lists for every run: terminal state, e2e seconds client-side, stage_ms, legs_new, legs_cached, retried, second_pass_pairs; then the slowest e2e, the slowest solve, the counts of retried runs and of runs with second_pass_pairs > 700 (reported, never excluded: D147, D177). Verdict for N=10 ITEMS=60: slowest e2e <= 180 s and slowest solve <= 55 s; a failed or unfinished run fails the gate. Unit tests of the report cover the verdicts, the counts and a failed run.",
+            "`make acceptance-pi` (deploy/scripts/acceptance-pi.sh): planner-perf up with PERF_ROUTING_PROVIDER=valhalla, tunnel 18080, then `uv run pytest -q -p no:cacheprovider --run-external --run-pending=slice-06a -m \"pi and real_provider\" tests/acceptance/overland_route_planner_mvp` with the credentials in the environment only, planner-perf always removed afterwards. It refuses when routing.env is missing on the Pi. The Makefile help of both targets says: run by the orchestrator, never by the crafter.",
+            "Offline tests with the shims: e2e call order (golden first, then the valhalla restart, a recreate before every measured run, teardown on failure), no credential in any output, the household planner and its volume never named in a mutating command; the existing perf-pi tests still pass unchanged."
+          ],
+          "test_file": "tests/deploy/test_perf_pi_script.py",
+          "scenario_name": "tests/deploy/test_perf_pi_script.py | tests/deploy/test_acceptance_pi_script.py | tests/perf/test_perf_pi_report.py | tests/deploy/test_compose_contract.py",
+          "files_to_modify": [
+            "deploy/compose.yaml",
+            "deploy/scripts/perf-pi.sh",
+            "deploy/scripts/acceptance-pi.sh",
+            "Makefile",
+            "tests/perf/perf_pi.py",
+            "tests/perf/test_perf_pi_report.py",
+            "tests/deploy/test_perf_pi_script.py",
+            "tests/deploy/test_acceptance_pi_script.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_makefile_targets.py",
+            "docs/product/kpi-contracts.yaml"
+          ],
+          "implementation_notes": "Slice 06a-ops; D96, D100, D147, D159, D177, D236; ADR-014. Read deploy/scripts/perf-pi.sh, tests/perf/perf_pi.py and tests/deploy/test_perf_pi_script.py first; extend, do not fork: the e2e mode is a branch of the same script and the same report module. The planner image of this slice does not accept ROUTING_PROVIDER=valhalla yet, so nothing here can be run against a real planner: that is expected and said in the Makefile help ('needs a planner with the Valhalla adapter, slice 06a'). The 60-item fixture is the committed I1 (tests/perf/golden_instances.py): real Western Alps places, so the live engine can route them. kpi-contracts.yaml K5: add one line saying the e2e figure is measured by `make perf-pi MODE=e2e` and ends at the stored plan read back until slice 09 adds the road shapes (D236). Add `-o ConnectTimeout=10` to the ssh calls of perf-pi.sh and the new script (the evolution document of slice 03b lists the missing timeout as a lesson); keep make-deploy.sh for a later change unless its tests make it trivial. Commit: 'feat(ops): make perf-pi MODE=e2e and make acceptance-pi'. LAST STEP OF SLICE 06a-OPS.\n\nPHASE RULES (every step of phase 08): infrastructure steps, no .feature scenario (enabler slice, D145): RED_ACCEPTANCE is logged NOT_APPLICABLE with the reason 'enabler slice without scenarios; the offline deploy tests are the executable specification'. RED_UNIT: write the failing offline tests first (tests/deploy with the PATH shims of tests/deploy/shims, tests/ci pins, tests/perf), log `--data FAIL` with a `RED evidence:` block (failure class and message) in the commit body and hand-off (BATCH-2 RULE, D207). The crafter has NO Pi access and no Docker: never run ssh, make deploy, make perf-pi or any make target that reaches the Pi; scripts are driven with the fake ssh/docker/curl/rsync shims as tests/deploy/test_deploy_script.py and test_perf_pi_script.py do. SECRETS (public repository): never write a real host name, IP address, login, user name, password or token into any tracked file, test, commit message or log; tests use the placeholders already in tests/deploy/conftest.py (PI_BIND 192.168.1.10, `deploy@pi.example`). Scope on the Pi (D99): only compose project `overland`, volumes `overland_*`, files under the install dir; never prune, never sudo, never another stack. Shell scripts stay bash-3.2 compatible where the offline tests run them on macOS, pass `make lint-ci` (shellcheck severity info) and print credentials nowhere (curl gets them with `-K -` on stdin, as `curl_planner`). Never touch docs/feature/overland-route-planner-mvp/spike/ (the owner's uncommitted edits): do not stage, edit, format or delete anything there; stage explicit paths only. Golden order (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green; never run bless. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), `make lint`, `make lint-ci`, `npx --no-install markdownlint-cli2@0.24.0 \"**/*.md\"` when a .md changed. The crafter stops at the commit and never pushes."
+        }
+      ]
     }
   ],
   "implementation_scope": {
@@ -2472,24 +2702,30 @@
   },
   "validation": {
     "status": "approved",
-    "scope": "phase 06 (slices 03-ops, 03)",
-    "reviewer": "nw-acceptance-designer-reviewer (2nd pass APPROVED; 1st pass NEEDS_REVISION with 5 HIGH, 8 MEDIUM, 7 LOW; fixes and user rulings D223 applied; M4 rejected by the orchestrator; gate and integrity re-run by the orchestrator)",
-    "approved_at": "2026-11-09",
+    "scope": "phase 08 (slice 06a-ops)",
+    "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 1 BLOCKER, 8 HIGH, 7 MEDIUM, 8 LOW; every blocking finding checked by the orchestrator against the files and applied; D239; integrity re-run by the orchestrator)",
+    "approved_at": "2026-11-16",
     "previous_approval": {
       "status": "approved",
-      "scope": "phase 05 (slice 02)",
-      "reviewer": "nw-acceptance-designer-reviewer (1st pass APPROVED with 1 HIGH, 2 MEDIUM, 9 LOW; all applied with user decisions D217-D220; gate and integrity re-run by the orchestrator)",
-      "approved_at": "2026-11-08",
+      "scope": "phase 06 (slices 03-ops, 03)",
+      "reviewer": "nw-acceptance-designer-reviewer (2nd pass APPROVED; 1st pass NEEDS_REVISION with 5 HIGH, 8 MEDIUM, 7 LOW; fixes and user rulings D223 applied; M4 rejected by the orchestrator; gate and integrity re-run by the orchestrator)",
+      "approved_at": "2026-11-09",
       "previous_approval": {
         "status": "approved",
-        "scope": "phase 04 (slice 01b)",
-        "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
-        "approved_at": "2026-11-04",
+        "scope": "phase 05 (slice 02)",
+        "reviewer": "nw-acceptance-designer-reviewer (1st pass APPROVED with 1 HIGH, 2 MEDIUM, 9 LOW; all applied with user decisions D217-D220; gate and integrity re-run by the orchestrator)",
+        "approved_at": "2026-11-08",
         "previous_approval": {
           "status": "approved",
-          "scope": "phases 01-03",
-          "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
-          "approved_at": "2026-11-02"
+          "scope": "phase 04 (slice 01b)",
+          "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
+          "approved_at": "2026-11-04",
+          "previous_approval": {
+            "status": "approved",
+            "scope": "phases 01-03",
+            "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
+            "approved_at": "2026-11-02"
+          }
         }
       }
     }

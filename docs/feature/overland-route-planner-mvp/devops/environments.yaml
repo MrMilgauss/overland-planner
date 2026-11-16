@@ -89,10 +89,10 @@ environments:
         restart: unless-stopped
         healthcheck: {test: python -c urllib /healthz, interval: 30s, timeout: 5s, retries: 3, start_period: 30s}
         logging: {driver: json-file, max-size: 10m, max-file: "5"}
-        depends_on: {valhalla: service_started}     # from slice 06a-ops; never waits for healthy (ADR-013 s8)
+        depends_on: none                            # D234 (ADR-013 Amendment 3): the planner starts and deploys with the engine down
       valhalla:
         image: ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6
-        profile: default (added in slice 06a-ops)
+        profile: routing (slice 06a-ops, D234; on whenever routing.env exists)
         networks: [routing]                          # internal: true. Never published
         volumes: ["valhalla-data:/custom_files (subpath tilesets/${VALHALLA_TILESET})"]   # VALHALLA_TILESET from routing.env (D166)
         env: {serve_tiles: "True", use_tiles_ignore_pbf: "True", force_rebuild: "False", server_threads: "2",

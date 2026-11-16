@@ -364,8 +364,8 @@ Contracts in `pyproject.toml`, run in pre-commit and CI:
   - one Uvicorn worker;
   - healthcheck = Python one-liner on `/healthz`.
 - **Compose services**:
-  - `planner` (depends on `valhalla`, `service_started` only);
-  - `valhalla` (`restart: unless-stopped`, volume `valhalla-data`);
+  - `planner` (no `depends_on`: it starts and deploys whether or not the engine is up, ADR-013 Amendment 3, D234);
+  - `valhalla` (profile `routing`, on whenever `routing.env` exists; `restart: unless-stopped`, volume `valhalla-data`);
   - `valhalla-build` (profile `valhalla-build`, one-shot).
 - **`.env` keys** (indicative):
   - server and auth: `PLANNER_PORT`, `PLANNER_BASIC_AUTH_USER`, `PLANNER_BASIC_AUTH_PASSWORD`, `DATA_DIR=/data`, `LOG_LEVEL`;
@@ -400,7 +400,7 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 | ADR-010 | Consideration report in GPX 1.1 | Accepted + Amendment 1 |
 | ADR-011 | Composition root, probes, degraded mode | Accepted + Amendment 1, DEVOPS amendment, final gate D121 |
 | ADR-012 | Solver port in a child process | **Superseded by ADR-015** |
-| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133 |
+| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133; Amendment 3 slice 06a-ops (D234-D238) |
 | ADR-014 | End-to-end budget, limits, determinism | Accepted; stage budget measured by the spikes (D77); final gate D124/D126/D127/D131/D132/D135 |
 | ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; measured by SPIKE-1R; final gate D122/D130/D133/D136 |
 | ADR-016 | Confidence levels + lexicographic optimisation | Accepted; amended after the spikes (D78, D79); final gate D125 |
@@ -412,7 +412,7 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 Owner: nw-platform-architect. Details: `docs/feature/overland-route-planner-mvp/feature-delta.md` "## Wave: DEVOPS" (D80-D102, D160-D179) and `devops/environments.yaml`. This section adds deployment-level containers and networks to the L2 view; it changes no application component.
 
 - Compose project `overland` in `~/apps/overland-planner/` on `pi.example`, next to the household stacks (`vlc-pi-prod`, `fate-ledger`), which it never touches.
-- Always on: `planner` (published on `192.168.1.10:8080`, networks `edge` + `routing`) and, from slice 06a, `valhalla` (network `routing`, `internal: true`, never published).
+- Always on: `planner` (published on `192.168.1.10:8080`, networks `edge` + `routing`) and, from slice 06a, `valhalla` (network `routing`, `internal: true`, never published). `valhalla` is in compose profile `routing`, which the Pi tooling turns on whenever `routing.env` exists; the planner has no `depends_on` (D234).
 - On demand (compose profiles): `valhalla-build` (network `egress`, tile build with serving stopped); `planner-perf` (same image, own volume `overland_perf-data`, loopback 18080, for `make perf-pi` / `make acceptance-pi`); `valhalla-tunnel` (socat on loopback 18002, for `make contract-live`). Both join `edge` + `routing`, because Docker publishes no port of a container on an internal-only network (D164).
 - Runtime limits and hardening: planner `cpus 1`, `mem 1g`, `cap_drop ALL`, `no-new-privileges`, read-only root fs with a 64 MB `/tmp` tmpfs (the app writes only to `/data` and `/tmp`); valhalla `cpus 2` (`server_threads 2`), `mem 4g` (D167, D173). The planner port is `${PLANNER_BIND:?}` (fail closed, D174).
 - Release state on the Pi: `release.env` (planner digest only, two rollback pointers) and `routing.env` (`VALHALLA_TILESET` only) are separate, so an app rollback never changes the tileset (D166, D176). A deploy starts the new planner on 127.0.0.1, smoke-tests it, and only then publishes it on the LAN (publish = write gate, D165).
