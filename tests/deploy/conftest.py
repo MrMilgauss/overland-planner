@@ -57,6 +57,10 @@ PREVIOUS = _release("1", "2026-11-01T09:00:00Z", "0001_initial")
 CURRENT = _release("a", "2026-11-02T09:00:00Z", "0002_projects")
 NEW = _release("b", "2026-11-03T07:30:00Z", "0003_auth")
 
+TILES_FILES = ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json")
+TILESET = "20261101"
+SEED_DIR = "valhalla-spike/custom_files"
+SPIKE_MODIFIED = "1793560782"  # tileset_last_modified SPIKE-2R recorded (D92)
 PI_BIND = "192.168.1.10"  # a documentation-style placeholder, not a real address
 BASIC_AUTH_USER = "ferri"
 BASIC_AUTH_PASSWORD = 'sh4red "family" pw'  # noqa: S105 - test value
@@ -85,7 +89,7 @@ class FakePi:
         (self.dir / "scripts").mkdir(parents=True)
         self.shim_home.mkdir()
         shutil.copy(REPO / "deploy/compose.yaml", self.dir)
-        for script in ("deploy.sh", "rollback.sh", "lib.sh"):
+        for script in ("deploy.sh", "rollback.sh", "lib.sh", "tiles-seed.sh", "spike-cleanup.sh"):
             source = REPO / "deploy/scripts" / script
             if source.exists():
                 shutil.copy(source, self.dir / "scripts")
@@ -132,6 +136,51 @@ class FakePi:
             text=True,
             timeout=60,
         )
+
+    def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+        """scripts/<script> as make runs it over ssh (`cd install dir && bash scripts/...`), HOME = the fake home."""
+        return subprocess.run(
+            ["bash", str(self.dir / "scripts" / script), *args],
+            cwd=self.root,
+            env=shim_env(self.shim_home, HOME=str(self.root)),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def tiles_seed(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script("tiles-seed.sh", *args or (TILESET, SEED_DIR, SPIKE_MODIFIED))
+
+    @property
+    def spike(self) -> Path:
+        return self.root / "valhalla-spike"
+
+    @property
+    def volume(self) -> Path:
+        """overland_valhalla-data as the docker shim keeps it on the host."""
+        return self.shim_home / "volumes" / "overland_valhalla-data"
+
+    def seed_files(self) -> dict[str, bytes]:
+        """The four SPIKE-2R files, root-owned on the real Pi; small distinct contents here."""
+        source = self.spike / "custom_files"
+        source.mkdir(parents=True)
+        contents = {name: f"content of {name}\n".encode() for name in TILES_FILES}
+        for name, content in contents.items():
+            (source / name).write_bytes(content)
+        return contents
+
+    def tiles_log(self) -> list[dict[str, str]]:
+        log = self.dir / "tiles.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def helper_runs(self, label: str | None = None) -> list[list[str]]:
+        """argv of the helper-container runs (the `sh -c SCRIPT LABEL` form), optionally of one LABEL."""
+        runs = []
+        for call in self.calls("docker"):
+            argv = call["argv"]
+            if argv[:1] == ["run"] and "-c" in argv and any(m in " ".join(argv) for m in ("/seed", "/vol", "/target")):
+                runs.append(argv)
+        return [a for a in runs if label is None or a[a.index("-c") + 2] == label]
 
     def calls(self, tool: str | None = None) -> list[dict[str, Any]]:
         log = self.shim_home / "calls.jsonl"

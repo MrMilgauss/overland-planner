@@ -6,6 +6,7 @@ which then runs against a fake install dir with the docker/curl/ss/df shims, so 
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import subprocess
@@ -78,9 +79,19 @@ def test_every_pi_target_stays_inside_project_overland(target: str) -> None:
             assert not MUTATING.search(command), f"make {target} is read-only but runs docker {command}"
 
 
-def run_make(target: str, shim_home: Path, stdin: str = "") -> subprocess.CompletedProcess[str]:
+def run_make(target: str, shim_home: Path, stdin: str = "", *variables: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["make", "-s", "-C", str(REPO), target, f"PI_HOST={DEPLOY_USER}", NO_PI_ENV, "PI_DIR=overland-planner"],
+        [
+            "make",
+            "-s",
+            "-C",
+            str(REPO),
+            target,
+            f"PI_HOST={DEPLOY_USER}",
+            NO_PI_ENV,
+            "PI_DIR=overland-planner",
+            *variables,
+        ],
         input=stdin,
         env=shim_env(shim_home),
         capture_output=True,
@@ -260,7 +271,7 @@ def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name
     assert "overland_planner-data" not in script and "prune" not in script
 
 
-@pytest.mark.parametrize("target", [*PI_TARGETS, "deploy", "rollback", "perf-pi"])
+@pytest.mark.parametrize("target", [*PI_TARGETS, "deploy", "rollback", "perf-pi", "tiles-seed", "spike-cleanup"])
 def test_a_pi_target_without_a_host_stops_and_names_the_template(target: str) -> None:
     result = subprocess.run(
         ["make", "-n", "-C", str(REPO), target, NO_PI_ENV],
@@ -351,3 +362,71 @@ def test_purge_says_the_map_data_goes_too_and_removes_the_valhalla_volume(pi_hom
         c["argv"][-1] for c in pi_home.calls("docker") if c["argv"][:2] == ["volume", "rm"]
     ]
     assert result.returncode == 0, result.stderr
+
+
+SPIKE_WORD = "delete valhalla-spike"
+
+
+def dry_run_with(target: str, *variables: str) -> str:
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), target, f"PI_HOST={DEPLOY_USER}", NO_PI_ENV, *variables],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("variables", "script_call"),
+    [
+        ((), "bash scripts/tiles-seed.sh 20261101 valhalla-spike/custom_files 1793560782"),
+        (("TILESET=20270201", "SEED_DIR=other/files"), "bash scripts/tiles-seed.sh 20270201 other/files "),
+        (
+            ("TILESET=20270201", "EXPECT_TILESET_MODIFIED=1800000000"),
+            "bash scripts/tiles-seed.sh 20270201 valhalla-spike/custom_files 1800000000",
+        ),
+    ],
+)
+def test_tiles_seed_syncs_deploy_without_the_pointers_then_runs_the_script_on_the_pi(
+    variables: tuple[str, ...], script_call: str
+) -> None:
+    text = " ".join(dry_run_with("tiles-seed", *variables).replace("\\\n", " ").split())
+
+    rsync = text[text.index("rsync -a --exclude") : text.index("ssh -o")]
+    for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
+        assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
+    assert f"deploy/ {DEPLOY_USER}:apps/overland-planner/" in rsync and "--delete" not in rsync
+    assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && {script_call}" in text
+    assert text.index("rsync -a --exclude") < text.index("tiles-seed.sh")
+
+
+def test_spike_cleanup_help_says_it_runs_only_at_a_start_time_the_owner_names() -> None:
+    help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("spike-cleanup:"))
+
+    assert "start time" in help_line and "owner" in help_line
+
+
+def ssh_commands(shim_home: Path) -> list[str]:
+    log = shim_home / "calls.jsonl"
+    records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return [record["argv"][-1] for record in records if record["tool"] == "ssh"]
+
+
+@pytest.mark.parametrize("answer", ["\n", "yes\n", "delete valhalla-spike please\n", ""])
+def test_spike_cleanup_without_the_typed_words_checks_but_never_deletes(tmp_path: Path, answer: str) -> None:
+    result = run_make("spike-cleanup", tmp_path, stdin=answer)
+
+    assert result.returncode != 0 and "aborted, nothing removed" in result.stderr
+    assert ssh_commands(tmp_path) == ["cd overland-planner && bash scripts/spike-cleanup.sh check"]
+
+
+def test_spike_cleanup_with_the_typed_words_deletes_after_the_check_and_ignores_other_variables(tmp_path: Path) -> None:
+    result = run_make("spike-cleanup", tmp_path, SPIKE_WORD + "\n", "TILESET=19990101", "SEED_DIR=/")
+
+    assert result.returncode == 0, result.stderr
+    assert ssh_commands(tmp_path) == [
+        "cd overland-planner && bash scripts/spike-cleanup.sh check",
+        "cd overland-planner && bash scripts/spike-cleanup.sh delete",
+    ]

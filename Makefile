@@ -1,6 +1,6 @@
 # Developer entry points (Mac and Pi).
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
-	pi-preflight status logs diag image-gc uninstall purge dora perf-pi
+	pi-preflight status logs diag image-gc uninstall purge dora perf-pi tiles-seed spike-cleanup
 
 PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -31,7 +31,7 @@ SHELLCHECK_SEVERITY := info
 # The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
-PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi
+PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi tiles-seed spike-cleanup
 ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
 ifeq ($(strip $(PI_HOST)),)
 $(error set PI_HOST (see deploy/pi.env.example))
@@ -40,6 +40,11 @@ endif
 # routing.env (written by make tiles-seed) turns on valhalla's profile (D239); the remote shell tests for it.
 PI_COMPOSE := docker compose -p overland --env-file .env $$(test -f routing.env && echo "--env-file routing.env --profile routing") --env-file release.env
 PURGE_WORD := purge overland
+# make tiles-seed (D92, D166): the first tileset from the SPIKE-2R files; EXPECT_TILESET_MODIFIED is what SPIKE-2R recorded for 20261101.
+TILESET ?= 20261101
+SEED_DIR ?= valhalla-spike/custom_files
+EXPECT_TILESET_MODIFIED ?= $(if $(filter 20261101,$(TILESET)),1793560782)
+SPIKE_WORD := delete valhalla-spike
 # make perf-pi (D96, D146, D135): N measured runs of ITEMS items; POINTS (points per track) empty = the committed 12.
 N ?= 10
 ITEMS ?= 60
@@ -172,6 +177,25 @@ purge: ## Remove project overland with its overland_* volumes and planner images
 
 perf-pi: ## K5 on planner-perf (deployed digest; deploy first): golden I1 + I2, warm-up, N runs (N=10 ITEMS=60 gate; POINTS=20000 guard gate); report in .data/perf/. Run by the orchestrator at a start time the user names, never by the crafter
 	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) N=$(N) ITEMS=$(ITEMS) POINTS=$(POINTS) bash deploy/scripts/perf-pi.sh
+
+tiles-seed: ## Seed the first Valhalla tileset from the SPIKE-2R files (TILESET=20261101 SEED_DIR=valhalla-spike/custom_files, under the Pi home): copy, verify, routing.env, start valhalla, check /status. Copies ~5 GB: run at a start time the owner names
+	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
+	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=__pycache__/ \
+	  deploy/ $(PI_HOST):$(PI_DIR)/
+	@status=0; \
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-seed.sh $(TILESET) $(SEED_DIR) $(EXPECT_TILESET_MODIFIED)' || status=$$?; \
+	mkdir -p .data/ops; \
+	if rsync -a $(PI_HOST):$(PI_DIR)/tiles.log .data/ops/tiles.log; then tail -n 3 .data/ops/tiles.log; \
+	else echo "make tiles-seed: could not copy tiles.log back" >&2; fi; \
+	if [ $$status -ne 0 ]; then echo "make tiles-seed: failed on the Pi (exit $$status); see tiles.log" >&2; exit 1; fi
+
+spike-cleanup: ## Remove ~/valhalla-spike on the Pi after every checksum guard holds and 'delete valhalla-spike' is typed (D237: run only at a start time the owner names)
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/spike-cleanup.sh check'
+	@printf '%s\n' "make spike-cleanup removes ~/valhalla-spike on $(PI_HOST) (the seeded tileset stays)." \
+	  "Type '$(SPIKE_WORD)' to go on:"; \
+	read -r answer || answer=; \
+	if [ "$$answer" != "$(SPIKE_WORD)" ]; then echo "make spike-cleanup: aborted, nothing removed" >&2; exit 1; fi; \
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/spike-cleanup.sh delete'
 
 dora: ## DORA metrics (deployment frequency, lead time, change failure rate, time to restore) from RELEASES_LOG
 	uv run python deploy/scripts/dora.py $(RELEASES_LOG)

@@ -2871,6 +2871,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-16T07:05:01Z"
+    },
+    {
+      "sid": "08-02",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-16T07:05:09Z"
+    },
+    {
+      "sid": "08-03",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-16T07:07:29Z"
+    },
+    {
+      "sid": "08-03",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: enabler slice without scenarios; the offline deploy tests are the executable specification",
+      "t": "2026-11-16T07:07:32Z"
+    },
+    {
+      "sid": "08-03",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-16T07:12:55Z"
+    },
+    {
+      "sid": "08-03",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS: tests/deploy 209 passed 4 skipped; fast suite 742 passed 141 skipped 78 deselected; make lint and make lint-ci clean",
+      "t": "2026-11-16T07:19:42Z"
     }
   ]
 }

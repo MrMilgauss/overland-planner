@@ -220,3 +220,86 @@ publish() {
     fail "publish: planner not healthy on $bind" || return 1
   healthz_ok "publish smoke" "http://$bind:$(planner_port)/healthz"
 }
+
+# ---- tilesets (06a-ops: make tiles-seed, make spike-cleanup; D92, D166, D178, D237; ADR-013 Amendment 3) -------------
+
+VALHALLA_VOLUME=overland_valhalla-data
+VALHALLA_VERSION_WANTED=3.9.1
+TILES_FILES=(valhalla_tiles.tar admins.sqlite timezones.sqlite valhalla.json)
+# Set by valhalla_status.
+VALHALLA_VERSION=
+VALHALLA_MODIFIED=
+
+# The tileset files and the spike directory are owned by root: every read of them that needs it, every copy and every
+# removal goes through a pinned helper container without network (never sudo).
+# dir_sums LABEL DIR: "<sha256>  <name>" of the four tileset files of the host directory DIR (mounted read-only).
+dir_sums() {
+  # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
+  docker run --rm --network none -v "$2:/seed:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'cd /seed && sha256sum "$@"' "$1" "${TILES_FILES[@]}"
+}
+
+# volume_sums LABEL SUBDIR: the same listing for SUBDIR (e.g. tilesets/20261101) of the valhalla volume.
+volume_sums() {
+  # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'cd "/vol/$1" && shift && sha256sum "$@"' "$1" "$2" "${TILES_FILES[@]}"
+}
+
+# volume_stored_sums SUBDIR: the SHA256SUMS file written at seed time.
+volume_stored_sums() {
+  # shellcheck disable=SC2016 # $1 is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'cat "/vol/$1/SHA256SUMS"' stored-sums "$1"
+}
+
+# sums_diff A B: the file names whose "<sha256>  <name>" line is not the same in both listings.
+sums_diff() {
+  { printf '%s\n' "$1"; printf '%s\n' "$2"; } | sort | uniq -u | awk 'NF > 1 { print $2 }' | sort -u | tr '\n' ' '
+}
+
+# valhalla_status: /status of the engine, read from inside the compose network (nothing is published); sets
+# VALHALLA_VERSION and VALHALLA_MODIFIED (tileset_last_modified). Fails when it does not answer or has no version.
+valhalla_status() {
+  local body
+  VALHALLA_VERSION=
+  VALHALLA_MODIFIED=
+  body=$(planner_compose exec -T valhalla curl -fsS --max-time 10 http://127.0.0.1:8002/status) || return 1
+  body=$(printf '%s' "$body" | tr -d ' \n\r')
+  VALHALLA_VERSION=$(printf '%s' "$body" | sed -nE 's/.*"version":"([^"]*)".*/\1/p')
+  VALHALLA_MODIFIED=$(printf '%s' "$body" | sed -nE 's/.*"tileset_last_modified":([0-9]+).*/\1/p')
+  [ -n "$VALHALLA_VERSION" ]
+}
+
+# routing.env (D166): exactly VALHALLA_TILESET=<name>; the previous file stays as routing.env.prev.
+# backup_routing keeps both files as they are until discard_routing_backup (success) or restore_routing (failure).
+backup_routing() {
+  local file
+  for file in routing.env routing.env.prev; do
+    if [ -f "$file" ]; then cp -p "$file" ".$file.orig"; fi
+  done
+}
+
+write_routing() {
+  if [ -f routing.env ]; then cp -p routing.env routing.env.prev; fi
+  printf 'VALHALLA_TILESET=%s\n' "$1" >"routing.env.tmp.$$" && mv "routing.env.tmp.$$" routing.env
+}
+
+restore_routing() {
+  local file
+  rm -f routing.env routing.env.prev
+  for file in routing.env routing.env.prev; do
+    if [ -f ".$file.orig" ]; then mv ".$file.orig" "$file"; fi
+  done
+}
+
+discard_routing_backup() { rm -f .routing.env.orig .routing.env.prev.orig; }
+
+# ---- tiles.log (ts, action, tileset, tileset_last_modified, result, reason), one JSON line ----------------------
+
+# append_tiles_log ACTION TILESET MODIFIED RESULT REASON
+append_tiles_log() {
+  printf '{"ts":"%s","action":"%s","tileset":"%s","tileset_last_modified":"%s","result":"%s","reason":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_text "$1")" "$(json_text "$2")" "$(json_text "$3")" \
+    "$(json_text "$4")" "$(json_text "$5")" >>tiles.log
+}

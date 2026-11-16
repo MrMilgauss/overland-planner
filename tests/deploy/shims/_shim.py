@@ -11,6 +11,10 @@ environment, curl's stdin config, the PLANNER_IMAGE of the release.env compose w
 `$SHIM_HOME/images.json` maps a digest to its OCI labels; `docker pull` of an unknown digest fails.
 GHCR is private: `docker login ghcr.io --password-stdin` stores `$SHIM_HOME/docker-auth.json` (docker's transient
 login state), `docker logout ghcr.io` removes it, and `docker pull` / `docker manifest inspect` fail without it.
+`docker run ... sh -c SCRIPT LABEL ARG...` of the tile helper container (mounts at /seed, /vol, /target) really runs
+SCRIPT with the local sh: the mount destinations are replaced by the host directories (a volume NAME by
+`$SHIM_HOME/volumes/NAME`), so cp, find, test and the `sha256sum` shim act on real files; a scripted rule can still
+answer a call by its LABEL (the `$0` of the script).
 The stdin of `docker login --password-stdin` and of an ssh running deploy.sh is recorded (the D196 token channel).
 `flock -n <fd>` takes a real non-blocking flock(2) on the inherited descriptor, exactly like util-linux flock.
 """
@@ -21,12 +25,15 @@ import fcntl
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 HOME = Path(os.environ["SHIM_HOME"])
 HEALTHZ_OK = '{"status":"ok"}'
+VALHALLA_STATUS_OK = '{"version":"3.9.1","tileset_last_modified":1793560782,"available_actions":["status","route"]}'
+HELPER_MOUNTS = ("/seed", "/vol", "/target")
 API_HEALTH_OK = '{"status":"ok","components":{"database":{"outcome":"ok","reason":null}},"banners":[]}'
 
 
@@ -121,6 +128,10 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
     elif (argv[:1] == ["pull"] or argv[:2] == ["manifest", "inspect"]) and not auth.is_file():
         sys.stderr.write("unauthorized: authentication required\n")
         sys.exit(1)
+    elif argv[:1] == ["run"] and _helper_mounts(argv):
+        _helper(argv)
+    elif argv[:1] == ["compose"] and "exec" in argv:
+        print(VALHALLA_STATUS_OK)
     elif argv[:1] == ["compose"] and "logs" in argv:
         version = _release_value("PLANNER_GIT_SHA", argv) or "dev"
         print(
@@ -142,6 +153,27 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
         archive = argv[argv.index("czf") + 1]
         host_dir = mounts[os.path.dirname(archive)]
         (Path(host_dir) / os.path.basename(archive)).write_text("snapshot of overland_planner-data\n")
+
+
+def _helper_mounts(argv: list[str]) -> dict[str, str]:
+    """Mount destination -> host directory of a tile helper `docker run` (empty for any other `run`)."""
+    mounts: dict[str, str] = {}
+    for i, arg in enumerate(argv[:-1]):
+        if arg == "-v":
+            source, destination = argv[i + 1].split(":")[:2]
+            if destination in HELPER_MOUNTS:
+                host = source if source.startswith("/") else str(HOME / "volumes" / source)
+                Path(host).mkdir(parents=True, exist_ok=True)
+                mounts[destination] = host
+    return mounts
+
+
+def _helper(argv: list[str]) -> None:
+    mounts = _helper_mounts(argv)
+    start = next(i for i, arg in enumerate(argv) if arg == "sh" and argv[i + 1 : i + 2] == ["-c"])
+    pattern = re.compile("(" + "|".join(mounts) + ")(?![A-Za-z0-9_-])")
+    translated = [pattern.sub(lambda m: mounts[m.group(1)], arg) for arg in argv[start + 1 :]]
+    sys.exit(subprocess.run(["sh", *translated], check=False).returncode)
 
 
 def _curl(argv: list[str], record: dict[str, Any]) -> None:
