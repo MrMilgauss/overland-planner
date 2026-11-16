@@ -130,6 +130,8 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
         sys.exit(1)
     elif argv[:1] == ["run"] and _helper_mounts(argv):
         _helper(argv)
+    elif argv[:1] == ["compose"] and "run" in argv and {"valhalla-fetch", "valhalla-build"} & set(argv):
+        _compose_run(argv)
     elif argv[:1] == ["compose"] and "exec" in argv:
         print(VALHALLA_STATUS_OK)
     elif argv[:1] == ["compose"] and "logs" in argv:
@@ -153,6 +155,33 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
         archive = argv[argv.index("czf") + 1]
         host_dir = mounts[os.path.dirname(archive)]
         (Path(host_dir) / os.path.basename(archive)).write_text("snapshot of overland_planner-data\n")
+
+
+def _compose_run(argv: list[str]) -> None:
+    """`compose run` of the one-shot map-data services: their effect on the `build` subpath of the fake volume.
+
+    valhalla-fetch: a download run leaves one extract per URL in build/src, a merge run leaves build/alps.osm.pbf.
+    valhalla-build (the image's own entrypoint, not an `--entrypoint sh` run): needs build/alps.osm.pbf as the only
+    *.pbf below build/ and leaves the four tileset files in build/ (/custom_files). A scripted rule makes any of them
+    fail first; a subpath that does not exist fails the mount, as it does in compose."""
+    build = HOME / "volumes" / "overland_valhalla-data" / "build"
+    if not build.is_dir():
+        sys.stderr.write("error mounting volume subpath build: no such directory\n")
+        sys.exit(1)
+    joined = " ".join(argv)
+    if "valhalla-fetch" in argv and "curl" in joined:
+        (build / "src").mkdir(exist_ok=True)
+        for url in (arg for arg in argv if arg.endswith(".osm.pbf")):
+            (build / "src" / url.rsplit("/", 1)[-1]).write_text("extract\n")
+    elif "valhalla-fetch" in argv and "osmium merge" in joined:
+        (build / "alps.osm.pbf").write_text("merged\n")
+    elif "valhalla-build" in argv and "--entrypoint" not in argv:
+        others = [p for p in build.rglob("*.pbf") if p != build / "alps.osm.pbf"]
+        if not (build / "alps.osm.pbf").is_file() or others:
+            sys.stderr.write("valhalla-scripted: need exactly one pbf in /custom_files\n")
+            sys.exit(1)
+        for name in ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json"):
+            (build / name).write_text(f"built {name}\n")
 
 
 def _helper_mounts(argv: list[str]) -> dict[str, str]:

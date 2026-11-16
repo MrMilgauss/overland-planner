@@ -272,7 +272,8 @@ def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name
 
 
 @pytest.mark.parametrize(
-    "target", [*PI_TARGETS, "deploy", "rollback", "perf-pi", "tiles-seed", "tiles-rollback", "spike-cleanup"]
+    "target",
+    [*PI_TARGETS, "deploy", "rollback", "perf-pi", "tiles-seed", "tiles-rollback", "tiles-refresh", "spike-cleanup"],
 )
 def test_a_pi_target_without_a_host_stops_and_names_the_template(target: str) -> None:
     result = subprocess.run(
@@ -411,6 +412,17 @@ def test_tiles_rollback_syncs_deploy_without_the_pointers_then_runs_the_script_o
     for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
         assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
     assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-rollback.sh'" in text
+
+
+def test_tiles_refresh_syncs_deploy_without_the_pointers_then_runs_the_script_and_says_when_to_run_it() -> None:
+    text = " ".join(dry_run_with("tiles-refresh").replace("\\\n", " ").split())
+
+    rsync = text[text.index("rsync -a --exclude") : text.index("ssh -o")]
+    for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
+        assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
+    assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-refresh.sh'" in text
+    help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("tiles-refresh:"))
+    assert "about 40 minutes without routing" in help_line and "start time" in help_line and "owner" in help_line
 
 
 def test_spike_cleanup_help_says_it_runs_only_at_a_start_time_the_owner_names() -> None:

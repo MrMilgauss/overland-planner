@@ -59,6 +59,7 @@ NEW = _release("b", "2026-11-03T07:30:00Z", "0003_auth")
 
 TILES_FILES = ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json")
 TILESET = "20261101"
+REFRESH_DATE = "20270201"  # the UTC date the offline refresh tests pin through TILES_DATE
 SEED_DIR = "valhalla-spike/custom_files"
 SPIKE_MODIFIED = "1793560782"  # tileset_last_modified SPIKE-2R recorded (D92)
 PI_BIND = "192.168.1.10"  # a documentation-style placeholder, not a real address
@@ -89,10 +90,19 @@ class FakePi:
         (self.dir / "scripts").mkdir(parents=True)
         self.shim_home.mkdir()
         shutil.copy(REPO / "deploy/compose.yaml", self.dir)
-        for script in ("deploy.sh", "rollback.sh", "lib.sh", "tiles-seed.sh", "tiles-rollback.sh", "spike-cleanup.sh"):
+        for script in (
+            "deploy.sh",
+            "rollback.sh",
+            "lib.sh",
+            "tiles-seed.sh",
+            "tiles-rollback.sh",
+            "tiles-refresh.sh",
+            "spike-cleanup.sh",
+        ):
             source = REPO / "deploy/scripts" / script
             if source.exists():
                 shutil.copy(source, self.dir / "scripts")
+        shutil.copytree(REPO / "deploy/valhalla", self.dir / "valhalla")
         (self.dir / ".env").write_text(
             f"PLANNER_BIND={PI_BIND}\nPLANNER_PORT=8080\nLOG_LEVEL=INFO\n"
             f"PLANNER_BASIC_AUTH_USER={BASIC_AUTH_USER}\nPLANNER_BASIC_AUTH_PASSWORD={BASIC_AUTH_PASSWORD}\n"
@@ -137,12 +147,14 @@ class FakePi:
             timeout=60,
         )
 
-    def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    def run_script(
+        self, script: str, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         """scripts/<script> as make runs it over ssh (`cd install dir && bash scripts/...`), HOME = the fake home."""
         return subprocess.run(
             ["bash", str(self.dir / "scripts" / script), *args],
             cwd=self.root,
-            env=shim_env(self.shim_home, HOME=str(self.root)),
+            env=shim_env(self.shim_home, HOME=str(self.root), **(env or {})),
             capture_output=True,
             text=True,
             timeout=60,
@@ -150,6 +162,15 @@ class FakePi:
 
     def tiles_seed(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.run_script("tiles-seed.sh", *args or (TILESET, SEED_DIR, SPIKE_MODIFIED))
+
+    def tiles_refresh(
+        self, available_kb: int = 12 * 1024 * 1024, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """tiles-refresh.sh with the UTC date pinned (TILES_DATE) and /proc/meminfo replaced (MEMINFO)."""
+        meminfo = self.root / "meminfo"
+        meminfo.write_text(f"MemTotal:       16000000 kB\nMemAvailable:   {available_kb} kB\n")
+        pinned = {"TILES_DATE": REFRESH_DATE, "MEMINFO": str(meminfo), **(env or {})}
+        return self.run_script("tiles-refresh.sh", env=pinned)
 
     def tiles_rollback(self) -> subprocess.CompletedProcess[str]:
         return self.run_script("tiles-rollback.sh")
