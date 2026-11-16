@@ -1,0 +1,12 @@
+{
+  "thor": {
+    "costmatrix": {
+      "allow_second_pass": true
+    }
+  },
+  "service_limits": {
+    "auto": {
+      "max_matrix_distance": 2000000
+    }
+  }
+}

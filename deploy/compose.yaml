@@ -12,6 +12,12 @@
 # `--env-file routing.env --profile routing` only when routing.env exists; `none` as the default tileset only lets the
 # file parse (a start without a seeded tileset fails at the mount, as it should).
 #
+# valhalla-fetch and valhalla-build (profile `valhalla-build`, slice 06a-ops; D81, D239): the one-shot services of a map
+# data refresh, run by `make tiles-refresh` (08-05) with `compose run --rm`, never started by `up`. valhalla-fetch
+# downloads and merges the extract and is the only service on the plain bridge `egress`; valhalla-build converts it to
+# tiles with no network at all. Both mount the subpath `build` of overland_valhalla-data, which must exist before the
+# mount: the refresh script creates it.
+#
 # planner-perf (profile `perf`, slice 03-ops; D96, D164, D167, D173): the planner's image (the deployed digest of
 # release.env), environment, caps, hardening and healthcheck, on its own volume overland_planner-perf-data and only on
 # 127.0.0.1:18080, reached by `make perf-pi` through an ssh tunnel. MOCK_PLAN comes from PERF_MOCK_PLAN (I2's road map,
@@ -134,8 +140,61 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Map data refresh (D239): the tile build needs no network, so it has none; the fetch is the only way out.
+  valhalla-fetch:
+    image: debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+    profiles: ["valhalla-build"]
+    restart: "no"
+    networks:
+      - egress
+    volumes:
+      - type: volume
+        source: valhalla-data
+        target: /work
+        volume:
+          subpath: build
+    cpus: 2
+    mem_limit: 6g
+    memswap_limit: 6g
+    oom_score_adj: 500
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  valhalla-build:
+    image: ${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6}
+    profiles: ["valhalla-build"]
+    restart: "no"
+    network_mode: none
+    environment:
+      build_admins: "True"
+      build_time_zones: "True"
+      build_elevation: "False"
+      build_transit: "False"
+      serve_tiles: "False"
+      force_rebuild: "True"
+      server_threads: "3"
+    volumes:
+      - type: volume
+        source: valhalla-data
+        target: /custom_files
+        volume:
+          subpath: build
+    cpus: 3
+    mem_limit: ${VALHALLA_BUILD_MEM:-9g}
+    memswap_limit: ${VALHALLA_BUILD_MEM:-9g}
+    oom_score_adj: 500
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
 networks:
   edge: {}
+  egress: {}
   routing:
     internal: true
 

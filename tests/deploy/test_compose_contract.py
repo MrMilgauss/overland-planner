@@ -7,6 +7,7 @@ PLANNER_BIND is proven here whenever Docker is available (CI job 7, -m compose),
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -62,6 +63,19 @@ VALHALLA_ENVIRONMENT = {
 }
 
 
+FETCH_IMAGE = "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc"
+BUILD_ENVIRONMENT = {
+    "build_admins": "True",
+    "build_time_zones": "True",
+    "build_elevation": "False",
+    "build_transit": "False",
+    "serve_tiles": "False",
+    "force_rebuild": "True",
+    "server_threads": "3",
+}
+LOG_10M = {"driver": "json-file", "options": {"max-size": "10m", "max-file": "2"}}
+
+
 class _ComposeLoader(yaml.SafeLoader):
     """SafeLoader that keeps compose merge tags (`!override`, `!reset`) as plain values."""
 
@@ -101,10 +115,10 @@ def test_only_the_planner_is_published_on_the_fail_closed_home_address() -> None
     planner = compose["services"]["planner"]
 
     assert compose["name"] == "overland"
-    assert set(compose["services"]) == {"planner", "planner-perf", "valhalla"}
+    assert set(compose["services"]) == {"planner", "planner-perf", "valhalla", "valhalla-build", "valhalla-fetch"}
     assert "profiles" not in planner, "the default profile starts the planner"
     assert planner["ports"] == [FAIL_CLOSED_PORTS], "PLANNER_BIND has no default: compose refuses to start without it"
-    assert planner["networks"] == ["edge", "routing"] and set(compose["networks"]) == {"edge", "routing"}
+    assert planner["networks"] == ["edge", "routing"] and set(compose["networks"]) == {"edge", "routing", "egress"}
     assert "depends_on" not in planner, "the planner never depends on the routing engine (D234)"
     assert planner["image"].startswith("${PLANNER_IMAGE:?"), "the image comes from release.env (deploy.sh)"
     assert "build" not in planner, "the Pi runs the published image, never a local build"
@@ -226,6 +240,55 @@ def test_valhalla_serves_a_seeded_tileset_capped_hardened_and_never_published() 
     assert "privileged" not in valhalla and "cap_add" not in valhalla
 
 
+def _subpath_mount(service: dict[str, Any], target: str) -> list[dict[str, Any]]:
+    return [{"type": "volume", "source": "valhalla-data", "target": target, "volume": {"subpath": "build"}}]
+
+
+def test_valhalla_build_runs_offline_capped_and_only_on_demand() -> None:
+    build = _load(COMPOSE)["services"]["valhalla-build"]
+
+    assert build["image"] == VALHALLA_IMAGE and build["profiles"] == ["valhalla-build"]
+    assert build["network_mode"] == "none" and "networks" not in build and "ports" not in build
+    assert build["environment"] == BUILD_ENVIRONMENT
+    assert build["volumes"] == _subpath_mount(build, "/custom_files")
+    assert (build["cpus"], build["mem_limit"], build["memswap_limit"]) == (
+        3,
+        "${VALHALLA_BUILD_MEM:-9g}",
+        "${VALHALLA_BUILD_MEM:-9g}",
+    )
+    assert (build["oom_score_adj"], build["restart"], build["logging"]) == (500, "no", LOG_10M)
+
+
+def test_valhalla_fetch_is_the_only_service_on_egress_and_publishes_nothing() -> None:
+    compose = _load(COMPOSE)
+    fetch = compose["services"]["valhalla-fetch"]
+
+    assert fetch["image"] == FETCH_IMAGE and fetch["profiles"] == ["valhalla-build"]
+    assert fetch["networks"] == ["egress"] and "ports" not in fetch and "network_mode" not in fetch
+    assert fetch["volumes"] == _subpath_mount(fetch, "/work")
+    assert (fetch["cpus"], fetch["mem_limit"], fetch["memswap_limit"]) == (2, "6g", "6g")
+    assert (fetch["oom_score_adj"], fetch["restart"], fetch["logging"]) == (500, "no", LOG_10M)
+    assert compose["networks"]["egress"] in ({}, None, {"driver": "bridge"})
+    assert [n for n, s in compose["services"].items() if "egress" in s.get("networks", [])] == ["valhalla-fetch"]
+
+
+@pytest.mark.parametrize("service", ["valhalla-build", "valhalla-fetch"])
+def test_neither_default_start_nor_the_routing_profile_includes_the_tile_build(service: str) -> None:
+    services = _load(COMPOSE)["services"]
+
+    assert [n for n, s in services.items() if "profiles" not in s] == ["planner"]
+    assert "routing" not in services[service]["profiles"]
+
+
+def test_the_config_overrides_hold_exactly_the_two_adr_013_deltas() -> None:
+    overrides = json.loads((REPO_ROOT / "deploy/valhalla/valhalla.overrides.json").read_text())
+
+    assert overrides == {
+        "thor": {"costmatrix": {"allow_second_pass": True}},
+        "service_limits": {"auto": {"max_matrix_distance": 2000000}},
+    }
+
+
 def test_the_routing_network_is_internal_and_only_the_planners_publish_a_port() -> None:
     compose = _load(COMPOSE)
     services = compose["services"]
@@ -233,7 +296,7 @@ def test_the_routing_network_is_internal_and_only_the_planners_publish_a_port() 
     assert compose["networks"]["routing"] == {"internal": True}
     assert sorted(name for name, service in services.items() if "ports" in service) == ["planner", "planner-perf"]
     assert [name for name, service in services.items() if "profiles" not in service] == ["planner"]
-    assert [name for name, service in services.items() if "routing" in service["networks"]] == [
+    assert [name for name, service in services.items() if "routing" in service.get("networks", [])] == [
         "planner",
         "planner-perf",
         "valhalla",

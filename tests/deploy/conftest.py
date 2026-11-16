@@ -89,7 +89,7 @@ class FakePi:
         (self.dir / "scripts").mkdir(parents=True)
         self.shim_home.mkdir()
         shutil.copy(REPO / "deploy/compose.yaml", self.dir)
-        for script in ("deploy.sh", "rollback.sh", "lib.sh", "tiles-seed.sh", "spike-cleanup.sh"):
+        for script in ("deploy.sh", "rollback.sh", "lib.sh", "tiles-seed.sh", "tiles-rollback.sh", "spike-cleanup.sh"):
             source = REPO / "deploy/scripts" / script
             if source.exists():
                 shutil.copy(source, self.dir / "scripts")
@@ -150,6 +150,9 @@ class FakePi:
 
     def tiles_seed(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.run_script("tiles-seed.sh", *args or (TILESET, SEED_DIR, SPIKE_MODIFIED))
+
+    def tiles_rollback(self) -> subprocess.CompletedProcess[str]:
+        return self.run_script("tiles-rollback.sh")
 
     @property
     def spike(self) -> Path:

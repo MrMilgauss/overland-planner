@@ -1,6 +1,6 @@
 # Developer entry points (Mac and Pi).
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
-	pi-preflight status logs diag image-gc uninstall purge dora perf-pi tiles-seed spike-cleanup
+	pi-preflight status logs diag image-gc uninstall purge dora perf-pi tiles-seed tiles-rollback spike-cleanup
 
 PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -31,7 +31,7 @@ SHELLCHECK_SEVERITY := info
 # The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
-PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi tiles-seed spike-cleanup
+PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi tiles-seed tiles-rollback spike-cleanup
 ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
 ifeq ($(strip $(PI_HOST)),)
 $(error set PI_HOST (see deploy/pi.env.example))
@@ -188,6 +188,17 @@ tiles-seed: ## Seed the first Valhalla tileset from the SPIKE-2R files (TILESET=
 	if rsync -a $(PI_HOST):$(PI_DIR)/tiles.log .data/ops/tiles.log; then tail -n 3 .data/ops/tiles.log; \
 	else echo "make tiles-seed: could not copy tiles.log back" >&2; fi; \
 	if [ $$status -ne 0 ]; then echo "make tiles-seed: failed on the Pi (exit $$status); see tiles.log" >&2; exit 1; fi
+
+tiles-rollback: ## Switch valhalla back to the previous tileset (routing.env.prev) and check /status; swaps back when the check fails (D239)
+	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
+	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=__pycache__/ \
+	  deploy/ $(PI_HOST):$(PI_DIR)/
+	@status=0; \
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-rollback.sh' || status=$$?; \
+	mkdir -p .data/ops; \
+	if rsync -a $(PI_HOST):$(PI_DIR)/tiles.log .data/ops/tiles.log; then tail -n 3 .data/ops/tiles.log; \
+	else echo "make tiles-rollback: could not copy tiles.log back" >&2; fi; \
+	if [ $$status -ne 0 ]; then echo "make tiles-rollback: failed on the Pi (exit $$status); see tiles.log" >&2; exit 1; fi
 
 spike-cleanup: ## Remove ~/valhalla-spike on the Pi after every checksum guard holds and 'delete valhalla-spike' is typed (D237: run only at a start time the owner names)
 	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/spike-cleanup.sh check'
