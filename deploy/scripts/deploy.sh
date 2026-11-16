@@ -86,6 +86,7 @@ roll_back() {
     exit 1
   fi
   if start_loopback && smoke_loopback && publish; then
+    start_routing deploy
     record auto-rollback ok "$reason; back on ${previous#"$PLANNER_REPO"@}"
   else
     record auto-rollback failed "$reason; previous release did not come back: $FAIL_REASON"
@@ -158,7 +159,8 @@ smoke_loopback || roll_back "$FAIL_REASON" yes
 # 8. Publish (write gate). From here on a failure keeps the data: digest-only rollback.
 publish || roll_back "$FAIL_REASON" no
 
-# 9. Done.
+# 9. Done. The routing engine follows the planner and never fails the deploy (D234).
+start_routing deploy
 prune_snapshots
 record deploy ok
 say "deploy: $TARGET serving on $(env_value .env PLANNER_BIND):$(planner_port) (git $NEW_SHA)"

@@ -59,8 +59,9 @@ compose project `overland`. Every Pi target acts only on project `overland`, the
 | `make rollback [STEPS=1\|2]` | Back to `release.env.prev` (or `.prev2`); the image is already on the Pi. |
 | `make status` / `make logs [SVC=planner]` / `make diag` | Read-only: compose ps, serving digest, `/healthz`, `/api/health`; the JSON log; `docker stats --no-stream` and `/healthz`. |
 | `make image-gc` | Removes planner images except the three digests of `release.env`, `.prev` and `.prev2` (what rollback needs). |
-| `make uninstall` | `docker compose down`: containers and network go, the data volume and files stay. |
-| `make purge` | Asks you to type `purge overland`; then removes the containers, every `overland_*` volume (all trip data) and the planner images. No backup is taken. |
+| `make uninstall` | `docker compose down`: containers and networks go, the data volumes and files stay. |
+| `make purge` | Asks you to type `purge overland`; then removes the containers, every `overland_*` volume (all trip data and the map data, about 4.9 GB, rebuilt only by `make tiles-seed` or `make tiles-refresh`) and the planner images. No backup is taken. |
+| (routing engine) | Valhalla runs only after `make tiles-seed` has written `routing.env`; a deploy or rollback then starts it after the planner and never fails because of it. |
 | `make dora` | Deployment frequency, lead time, change failure rate and time to restore from `.data/ops/releases.log` (copied back by every deploy and rollback). |
 
 Before the first deploy (D178): give the Pi a DHCP reservation for its home-network address on the router (the planner

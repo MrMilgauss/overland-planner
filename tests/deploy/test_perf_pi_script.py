@@ -8,6 +8,7 @@ Pi answers the credential read with the household user and password; nothing may
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -16,11 +17,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from tests.common.state_delta import assert_state_delta, unchanged
-from tests.deploy.conftest import REPO, SHIMS
+from tests.deploy.conftest import REPO, SHIMS, routing_profile_on
 
 SCRIPT = REPO / "deploy/scripts/perf-pi.sh"
 PERF_SERVICE = "planner-perf"
@@ -233,3 +235,34 @@ def test_credentials_never_show_and_the_users_planner_is_never_mutated(
         expected={key: unchanged() for key in before},
         strict=True,
     )
+
+
+@pytest.mark.parametrize("routing_env", [False, True], ids=["without routing.env", "with routing.env"])
+def test_the_perf_compose_turns_the_routing_profile_on_exactly_when_routing_env_exists(
+    tmp_path: Path, routing_env: bool
+) -> None:
+    # bypass: the remote command string is wiring; it runs here in a fake install dir against the docker shim.
+    mac = FakeMac(tmp_path)
+    assert mac.run().returncode == 0
+    (up, *_) = [c["argv"][-1] for c in mac.calls("ssh") if re.search(r"\bup\b.*\bplanner-perf\b", c["argv"][-1])]
+    install = tmp_path / "apps" / "overland-planner"  # the PI_DIR the remote command changes into
+    install.mkdir(parents=True)
+    (install / "release.env").write_text("PLANNER_IMAGE=x\n")
+    if routing_env:
+        (install / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+    shim = tmp_path / "docker-home"
+    shim.mkdir()
+
+    subprocess.run(
+        ["bash", "-c", up],
+        cwd=tmp_path,
+        env=os.environ | {"PATH": f"{SHIMS}{os.pathsep}{os.environ['PATH']}", "SHIM_HOME": str(shim)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    (compose_call,) = [json.loads(line)["argv"] for line in (shim / "calls.jsonl").read_text().splitlines()]
+    assert routing_profile_on(compose_call) == routing_env
+    assert ("--profile", "perf") in itertools.pairwise(compose_call)

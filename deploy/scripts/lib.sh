@@ -41,9 +41,10 @@ env_value() {
 }
 
 # docker compose for this install: always `-p overland`, .env, then routing.env (06a-ops) and release.env if present.
+# routing.env also turns the compose profile `routing` on (valhalla, D239); without it the call is the planner's alone.
 planner_compose() {
   local files=(--env-file .env)
-  if [ -f routing.env ]; then files+=(--env-file routing.env); fi
+  if [ -f routing.env ]; then files+=(--env-file routing.env --profile routing); fi
   if [ -f release.env ]; then files+=(--env-file release.env); fi
   docker compose -p "$COMPOSE_PROJECT" "${files[@]}" "$@"
 }
@@ -52,6 +53,14 @@ planner_port() {
   local port
   port=$(env_value .env PLANNER_PORT)
   printf '%s\n' "${port:-8080}"
+}
+
+# start_routing WHO: bring valhalla to its definition once the planner is published, without --wait. It never changes
+# the outcome of the caller: a failure prints one line (D234).
+start_routing() {
+  [ -f routing.env ] || return 0
+  planner_compose up -d valhalla >&2 || say "$1: valhalla did not start (the planner is not affected)"
+  return 0
 }
 
 # ---- registry access (D196): per-deploy login with the Mac's gh token, nothing stored on the Pi -----------------

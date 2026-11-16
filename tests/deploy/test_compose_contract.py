@@ -44,6 +44,22 @@ HARDENING = (
     "logging",
 )
 PERF_VOLUMES = {"planner-perf-data": {"name": "overland_planner-perf-data"}}
+VALHALLA_VOLUMES = {"valhalla-data": {"name": "overland_valhalla-data"}}
+VALHALLA_IMAGE = (
+    "${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64"
+    "@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6}"
+)
+VALHALLA_ENVIRONMENT = {
+    "serve_tiles": "True",
+    "use_tiles_ignore_pbf": "True",
+    "force_rebuild": "False",
+    "server_threads": "2",
+    "update_existing_config": "False",
+    "build_admins": "False",
+    "build_time_zones": "False",
+    "build_elevation": "False",
+    "build_transit": "False",
+}
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -85,10 +101,11 @@ def test_only_the_planner_is_published_on_the_fail_closed_home_address() -> None
     planner = compose["services"]["planner"]
 
     assert compose["name"] == "overland"
-    assert set(compose["services"]) == {"planner", "planner-perf"}
+    assert set(compose["services"]) == {"planner", "planner-perf", "valhalla"}
     assert "profiles" not in planner, "the default profile starts the planner"
     assert planner["ports"] == [FAIL_CLOSED_PORTS], "PLANNER_BIND has no default: compose refuses to start without it"
-    assert planner["networks"] == ["edge"] and set(compose["networks"]) == {"edge"}
+    assert planner["networks"] == ["edge", "routing"] and set(compose["networks"]) == {"edge", "routing"}
+    assert "depends_on" not in planner, "the planner never depends on the routing engine (D234)"
     assert planner["image"].startswith("${PLANNER_IMAGE:?"), "the image comes from release.env (deploy.sh)"
     assert "build" not in planner, "the Pi runs the published image, never a local build"
 
@@ -116,7 +133,7 @@ def test_data_volume_log_rotation_and_curl_free_healthcheck() -> None:
     planner = compose["services"]["planner"]
 
     assert planner["volumes"] == ["planner-data:/data"]
-    assert compose["volumes"] == {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES
+    assert compose["volumes"] == {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES | VALHALLA_VOLUMES
     assert planner["logging"] == {"driver": "json-file", "options": {"max-size": "10m", "max-file": "5"}}
     probe = " ".join(planner["healthcheck"]["test"])
     assert "/healthz" in probe and "curl" not in probe and planner["healthcheck"]["test"][0] == "CMD"
@@ -165,11 +182,90 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
     assert perf["profiles"] == ["perf"], "only `--profile perf` starts planner-perf"
     assert {key: perf.get(key) for key in HARDENING} == {key: planner.get(key) for key in HARDENING}
     assert perf["ports"] == ["127.0.0.1:18080:8080"], "reached only through the ssh tunnel of make perf-pi"
-    assert perf["networks"] == ["edge"]
+    assert perf["networks"] == ["edge", "routing"]
     assert perf["volumes"] == ["planner-perf-data:/data", "./perf:/perf:ro"]
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
     assert perf["environment"] == planner["environment"] | {"MOCK_PLAN": "${PERF_MOCK_PLAN:-}"}
     assert perf.get("restart", "no") == "no", "a measurement planner never comes back by itself"
+
+
+def test_valhalla_serves_a_seeded_tileset_capped_hardened_and_never_published() -> None:
+    # bypass: a compose file is one document; this is a single-example contract check (ADR-013 Amendment 3, D234).
+    valhalla = _load(COMPOSE)["services"]["valhalla"]
+
+    assert valhalla["image"] == VALHALLA_IMAGE and valhalla["profiles"] == ["routing"]
+    assert valhalla["networks"] == ["routing"] and "ports" not in valhalla and "expose" not in valhalla
+    assert valhalla["environment"] == VALHALLA_ENVIRONMENT
+    assert {
+        key: valhalla.get(key) for key in ("cpus", "mem_limit", "memswap_limit", "oom_score_adj", "pids_limit")
+    } == {
+        "cpus": 2,
+        "mem_limit": "4g",
+        "memswap_limit": "4g",
+        "oom_score_adj": 500,
+        "pids_limit": 512,
+    }
+    assert (valhalla["restart"], valhalla["security_opt"]) == ("unless-stopped", ["no-new-privileges:true"])
+    assert valhalla["logging"] == {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    assert valhalla["healthcheck"] == {
+        "test": ["CMD", "curl", "-fsS", "http://127.0.0.1:8002/status"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "120s",
+        "start_interval": "2s",
+    }
+    assert valhalla["volumes"] == [
+        {
+            "type": "volume",
+            "source": "valhalla-data",
+            "target": "/custom_files",
+            "volume": {"subpath": "tilesets/${VALHALLA_TILESET:-none}"},
+        }
+    ]
+    assert "privileged" not in valhalla and "cap_add" not in valhalla
+
+
+def test_the_routing_network_is_internal_and_only_the_planners_publish_a_port() -> None:
+    compose = _load(COMPOSE)
+    services = compose["services"]
+
+    assert compose["networks"]["routing"] == {"internal": True}
+    assert sorted(name for name, service in services.items() if "ports" in service) == ["planner", "planner-perf"]
+    assert [name for name, service in services.items() if "profiles" not in service] == ["planner"]
+    assert [name for name, service in services.items() if "routing" in service["networks"]] == [
+        "planner",
+        "planner-perf",
+        "valhalla",
+    ]
+
+
+def test_the_serving_services_stay_within_the_pi_memory_budget() -> None:
+    services = _load(COMPOSE)["services"]
+    gib = {"g": 1}
+
+    serving = [services["planner"], services["valhalla"]]  # planner-perf is a measurement profile, never co-running
+    total = sum(int(s["mem_limit"][:-1]) * gib[s["mem_limit"][-1]] for s in serving)
+
+    assert total <= 5, "planner 1g + valhalla 4g leave room for the Pi's OS (D83)"
+
+
+@pytest.mark.compose
+@pytest.mark.skipif(shutil.which("docker") is None, reason="Docker is not available on this host")
+def test_valhalla_parses_without_a_tileset_and_only_the_planner_starts_without_a_profile() -> None:
+    env = os.environ | {"PLANNER_IMAGE": "overland-planner:unused", "PLANNER_BIND": "127.0.0.1"}
+    env.pop("VALHALLA_TILESET", None)
+    base = ["docker", "compose", "-p", "overland", "--env-file", os.devnull, "-f", str(COMPOSE)]
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([*base, *args], env=env, capture_output=True, text=True, timeout=60, check=False)
+
+    config = run("--profile", "routing", "config", "--quiet")
+    services = run("config", "--services")
+
+    assert config.returncode == 0, config.stderr
+    assert services.returncode == 0, services.stderr
+    assert services.stdout.split() == ["planner"]
 
 
 @pytest.mark.compose

@@ -28,6 +28,7 @@ from tests.deploy.conftest import (
     PREVIOUS,
     REPO,
     FakePi,
+    routing_profile_on,
     shim_env,
 )
 
@@ -315,3 +316,38 @@ def test_a_mac_side_script_without_a_host_stops_and_names_the_template(script: s
 
     assert result.returncode != 0
     assert "set PI_HOST (see deploy/pi.env.example)" in result.stderr
+
+
+ROUTING_TARGETS = ("status", "logs", "diag", "uninstall")
+
+
+def compose_argvs(pi: FakePi) -> list[list[str]]:
+    return [c["argv"] for c in pi.calls("docker") if c["argv"][:1] == ["compose"]]
+
+
+@pytest.mark.parametrize("target", ROUTING_TARGETS)
+def test_pi_targets_turn_the_routing_profile_on_exactly_when_routing_env_exists(target: str, tmp_path: Path) -> None:
+    without, with_routing = FakePi(tmp_path / "without"), FakePi(tmp_path / "with")
+    (with_routing.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+
+    assert remote(without, target).returncode == 0
+    assert remote(with_routing, target).returncode == 0
+
+    off, on = compose_argvs(without), compose_argvs(with_routing)
+    assert off and all("--profile" not in argv and "routing.env" not in argv for argv in off)
+    assert on and all(routing_profile_on(argv) for argv in on)
+
+
+def test_purge_says_the_map_data_goes_too_and_removes_the_valhalla_volume(pi_home: FakePi) -> None:
+    pi_home.rule("docker", "volume ls", stdout="overland_planner-data\noverland_valhalla-data\n")
+
+    out = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "purge", f"PI_HOST={DEPLOY_USER}", NO_PI_ENV], capture_output=True, text=True
+    ).stdout
+    result = remote(pi_home, "purge", stdin=PURGE_WORD + "\n")
+
+    assert "map data (about 4.9 GB, rebuilt only by make tiles-seed or make tiles-refresh)" in out
+    assert "overland_valhalla-data" in [
+        c["argv"][-1] for c in pi_home.calls("docker") if c["argv"][:2] == ["volume", "rm"]
+    ]
+    assert result.returncode == 0, result.stderr

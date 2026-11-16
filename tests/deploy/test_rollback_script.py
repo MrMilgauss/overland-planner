@@ -24,6 +24,7 @@ from tests.deploy.conftest import (
     MacCheckout,
     Release,
     release_env_text,
+    routing_profile_on,
 )
 
 LOOPBACK = "127.0.0.1"
@@ -347,3 +348,34 @@ def test_rollback_keeps_only_the_two_newest_prerollback_snapshots(pi: FakePi) ->
     ]
     assert len(fresh) == 1, remaining
     assert remaining == sorted([older[1], fresh[0], *others])
+
+
+def test_rollback_starts_valhalla_after_the_planner_is_back_only_when_routing_env_exists(pi: FakePi) -> None:
+    assert pi.rollback().returncode == 0
+    assert pi.valhalla_ups() == []
+
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+    (pi.dir / "release.env.prev").write_text(release_env_text(OLDEST))
+    assert pi.rollback().returncode == 0
+
+    (valhalla,) = pi.valhalla_ups()
+    assert valhalla["argv"][-3:] == ["up", "-d", "valhalla"] and "--wait" not in valhalla["argv"]
+    assert routing_profile_on(valhalla["argv"])
+    calls = pi.calls()
+    planner_ups = [
+        i for i, c in enumerate(calls) if c["tool"] == "docker" and "up" in c["argv"] and c["argv"][-1] == "planner"
+    ]
+    assert planner_ups and max(planner_ups) < calls.index(valhalla)
+
+
+def test_a_failing_valhalla_start_leaves_the_rollback_ok(pi: FakePi) -> None:
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+    pi.rule("docker", "compose", "valhalla", exit=1)
+
+    result = pi.rollback()
+
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stderr.splitlines() if "valhalla" in line.lower()] == [
+        "rollback: valhalla did not start (the planner is not affected)"
+    ]
+    assert (pi.releases_log()[-1]["action"], pi.releases_log()[-1]["result"]) == ("rollback", "ok")

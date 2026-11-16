@@ -37,7 +37,8 @@ ifeq ($(strip $(PI_HOST)),)
 $(error set PI_HOST (see deploy/pi.env.example))
 endif
 endif
-PI_COMPOSE := docker compose -p overland --env-file .env --env-file release.env
+# routing.env (written by make tiles-seed) turns on valhalla's profile (D239); the remote shell tests for it.
+PI_COMPOSE := docker compose -p overland --env-file .env $$(test -f routing.env && echo "--env-file routing.env --profile routing") --env-file release.env
 PURGE_WORD := purge overland
 # make perf-pi (D96, D146, D135): N measured runs of ITEMS items; POINTS (points per track) empty = the committed 12.
 N ?= 10
@@ -131,7 +132,7 @@ rollback: ## Roll the Pi back to release.env.prev (STEPS=2: .prev2); image alrea
 pi-preflight: ## Read-only Pi check before the first deploy: port 8080 free or ours, disk, MemAvailable, compose projects, .env, ghcr login
 	$(PI_SSH) 'bash -s -- $(PI_DIR)' < deploy/scripts/pi-preflight.sh
 
-status: ## compose ps of project overland, the serving digest, /healthz and /api/health (read-only)
+status: ## compose ps of project overland (valhalla runs only after make tiles-seed), the serving digest, /healthz and /api/health (read-only)
 	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) ps && grep "^PLANNER_IMAGE=" release.env && . scripts/lib.sh && \
 	  url="http://$$(env_value .env PLANNER_BIND):$$(planner_port)" && curl -fsS --max-time 10 "$$url/healthz" && echo && \
 	  curl_planner "$$url/api/health" && echo'
@@ -158,7 +159,8 @@ uninstall: ## Stop and remove the overland containers and network; the data volu
 	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) down'
 
 purge: ## Remove project overland with its overland_* volumes and planner images (typed confirmation; NO backup is taken)
-	@printf '%s\n' "make purge removes the overland containers, every overland_* volume (ALL trip data) and the" \
+	@printf '%s\n' "make purge removes the overland containers, every overland_* volume (ALL trip data and the" \
+	  "map data (about 4.9 GB, rebuilt only by make tiles-seed or make tiles-refresh)) and the" \
 	  "$(PLANNER_REPO) images on $(PI_HOST). No backup is taken (D91). Type '$(PURGE_WORD)' to go on:"; \
 	read -r answer || answer=; \
 	if [ "$$answer" != "$(PURGE_WORD)" ]; then echo "make purge: aborted, nothing removed" >&2; exit 1; fi; \

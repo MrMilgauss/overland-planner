@@ -28,7 +28,9 @@ I2_ROAD_MAP=tests/acceptance/overland_route_planner_mvp/fixtures/golden/i2-spars
 I2_MOCK_PLAN=/perf/i2-sparse.road-map.yaml
 SCENARIOS=tests/acceptance/overland_route_planner_mvp/test_slice_03.py
 WAIT_TIMEOUT=180
-PERF_COMPOSE='docker compose -p overland --profile perf --env-file .env --env-file release.env'
+# The remote shell adds routing.env and the routing profile when the file exists (D239): planner-perf joins that network.
+# shellcheck disable=SC2016 # the $(...) is meant for the Pi's shell
+PERF_COMPOSE='docker compose -p overland --profile perf --env-file .env $(test -f routing.env && echo "--env-file routing.env --profile routing") --env-file release.env'
 
 cd "$(dirname "$0")/../.." || exit 1
 

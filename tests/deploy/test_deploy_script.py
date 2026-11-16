@@ -26,6 +26,7 @@ from tests.deploy.conftest import (
     FakePi,
     MacCheckout,
     release_env_text,
+    routing_profile_on,
 )
 
 LOOPBACK = "127.0.0.1"
@@ -431,3 +432,45 @@ def test_make_deploy_refuses_without_pi_settings(mac: MacCheckout) -> None:
     assert result.returncode != 0
     assert "PLANNER_BIND" in result.stderr and ".env.example" in result.stderr
     assert mac.calls("rsync") == [] and len(mac.calls("ssh")) == 1
+
+
+# ---- the routing engine follows a planner deploy without ever failing it (D234, D239) ---------------------------
+
+
+def test_with_routing_env_every_compose_call_turns_the_profile_on_and_valhalla_starts_after_the_publish(
+    pi: FakePi,
+) -> None:
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+
+    result = pi.deploy(NEW.digest)
+
+    assert result.returncode == 0, result.stderr
+    compose = [c for c in pi.calls("docker") if c["argv"][:1] == ["compose"]]
+    assert compose and all(routing_profile_on(c["argv"]) for c in compose)
+    (valhalla,) = pi.valhalla_ups()
+    assert valhalla["argv"][-3:] == ["up", "-d", "valhalla"] and "--wait" not in valhalla["argv"]
+    calls = pi.calls()
+    publish = index_of(calls, lambda c: c in compose_ups(pi) and published(c))
+    assert publish < calls.index(valhalla)
+    assert pi.releases_log()[-1]["result"] == "ok"
+
+
+def test_without_routing_env_deploy_makes_no_valhalla_call_and_no_profile_flag(pi: FakePi) -> None:
+    assert pi.deploy(NEW.digest).returncode == 0
+
+    assert pi.valhalla_ups() == []
+    assert all("--profile" not in c["argv"] and "routing.env" not in c["argv"] for c in pi.calls("docker"))
+
+
+def test_a_failing_valhalla_start_leaves_the_deploy_ok_and_says_so_in_one_line(pi: FakePi) -> None:
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+    pi.rule("docker", "compose", "valhalla", exit=1)
+
+    result = pi.deploy(NEW.digest)
+
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stderr.splitlines() if "valhalla" in line.lower()] == [
+        "deploy: valhalla did not start (the planner is not affected)"
+    ]
+    assert (pi.releases_log()[-1]["action"], pi.releases_log()[-1]["result"]) == ("deploy", "ok")
+    assert pi.pointers()["release.env"].startswith(f"PLANNER_IMAGE={NEW.image}")

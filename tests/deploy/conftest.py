@@ -7,6 +7,7 @@ External commands are the shims in tests/deploy/shims (PATH-prefixed); see shims
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import shutil
@@ -137,11 +138,21 @@ class FakePi:
         records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
         return [record for record in records if tool is None or record["tool"] == tool]
 
+    def valhalla_ups(self) -> list[dict[str, Any]]:
+        """The compose calls that start the routing engine (D234)."""
+        return [c for c in self.calls("docker") if c["argv"][:1] == ["compose"] and "valhalla" in c["argv"]]
+
     def releases_log(self) -> list[dict[str, Any]]:
         return [json.loads(line) for line in (self.dir / "releases.log").read_text().splitlines()]
 
     def pointers(self) -> dict[str, str]:
         return {name: (self.dir / name).read_text() for name in self.pointer_files}
+
+
+def routing_profile_on(argv: list[str]) -> bool:
+    """A compose call carries the routing env file and the routing profile (D239)."""
+    pairs = list(itertools.pairwise(argv))
+    return ("--env-file", "routing.env") in pairs and ("--profile", "routing") in pairs
 
 
 def shim_env(shim_home: Path, **extra: str) -> dict[str, str]:

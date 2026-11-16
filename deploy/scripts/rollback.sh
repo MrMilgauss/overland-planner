@@ -13,7 +13,7 @@
 #  5 release.env -> release.env.failed; rewrite only the PLANNER_* keys of release.env. release.env.prev/.prev2 stay
 #    as they are, so a repeated rollback never flips back to the failed release
 #  6 the same loopback start, smoke and publish as deploy.sh (D165)
-#  7 one releases.log line (action `rollback`). routing.env is never written (D166).
+#  7 valhalla follows when routing.env exists (never fails the rollback); one releases.log line (action `rollback`). routing.env is never written (D166).
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -138,6 +138,7 @@ write_release release.env "$TARGET" "$NEW_SHA" "$NEW_TS" "$NEW_HEAD" || refuse "
 
 # 6-7. Loopback start, smoke, publish.
 if start_loopback && smoke_loopback && publish; then
+  start_routing rollback
   record ok "$DATA_NOTE"
   prune_snapshots
   say "rollback: $TARGET serving on $(env_value .env PLANNER_BIND):$(planner_port) (git $NEW_SHA)"
