@@ -32,11 +32,14 @@ and the **S/E**, **Start** or **End** badge. A refusal is shown with the planner
 ## CI
 
 `.github/workflows/ci.yml`: lint, test-python and test-web on every push and pull request; on main pushes the
-image jobs (amd64, arm64), e2e on the amd64 image, scoped mutation testing and publish. The image jobs push with
+image jobs (amd64, arm64), e2e on the amd64 image and publish. The image jobs push with
 buildx in-registry SBOM and provenance (no GitHub attestations, D195). Publish creates the manifest list
 `ghcr.io/mrmilgauss/overland-planner:sha-<12>` and `:main`, fails unless the provenance of both platforms names this
 repository and commit, uploads `release.json` and prunes GHCR to that release. `.github/workflows/weekly.yml`
 re-scans `main`, audits dependencies, runs the deep property profile and reports storage; deploys never wait for it.
+
+Mutation testing is run locally with `make mutate BASE=<previous slice tag>` at each slice (kill rate >= 80 %), and on
+demand in CI: start the workflow by hand with the input `mutation` set to true (D238). A push never runs it.
 
 ### CI budget
 
@@ -44,7 +47,7 @@ re-scans `main`, audits dependencies, runs the deep property profile and reports
 | --- | --- |
 | Compressed image size, amd64 | 135.7 MB (release `sha256:83a835f8…`, 2026-11-03) |
 | Compressed image size, arm64 | 132.3 MB (same release; one release ≈ 268 MB of the 500 MB GHCR budget) |
-| Actions minutes per main push | ≈ 18 billed min (run 41603868244: 9.2 min wall; per-job rounding), + ≈ 1 when the mutation job runs |
+| Actions minutes per main push | ≈ 18 billed min (run 41603868244: 9.2 min wall; per-job rounding), + the mutation job only when started by hand |
 
 ## Operations (the Pi)
 

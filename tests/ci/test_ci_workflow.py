@@ -490,16 +490,18 @@ def test_empty_pytest_selection_passes_only_by_design(
     assert summary_fragment in summary.read_text()
 
 
-def test_mutation_job_runs_only_for_domain_or_application_changes() -> None:
+def test_mutation_job_runs_only_when_asked_for_on_manual_dispatch() -> None:
+    """D238: job 8 cannot finish (D224); a push never selects it, `workflow_dispatch` with mutation=true does."""
     workflow = _workflow()
     job = _job(workflow, "mutation")
-    changes = _job(workflow, "changes")
-    filter_script = "\n".join(_runs(changes))
+    dispatch = _triggers(workflow)["workflow_dispatch"]
 
-    assert _needs(job) == {"changes", "test-python"}, "mutation needs job 2"
-    assert job["if"] == f"{MAIN_PUSH} && needs.changes.outputs.core == 'true'"
-    assert changes["outputs"]["core"] == "${{ steps.filter.outputs.core }}"
-    assert "^src/overland_planner/(domain|application)/" in filter_script
+    assert dispatch["inputs"]["mutation"]["type"] == "boolean"
+    assert dispatch["inputs"]["mutation"]["default"] is False
+    assert _needs(job) == {"test-python"}, "mutation needs job 2 and no longer the changes filter"
+    assert job["if"] == "github.event_name == 'workflow_dispatch' && inputs.mutation"
+    assert "needs.changes.outputs.core" not in job["if"]
+    assert "push" not in job["if"], "a main push with a domain file no longer selects job 8"
     assert job["timeout-minutes"] == 75  # D213
     assert _index(job, "vite build") < _index(job, "make mutate"), "mutmut copies web/dist (D162)"
     mutate = job["steps"][_index(job, "make mutate")]

@@ -1,7 +1,7 @@
 # Commit stage (slice 00a, step 01-07): jobs 1 lint, 2 test-python, 4 test-web on every push and PR (D169); step 06-02
 # job 3 golden-order (I1 and I2 against their blessed order, D96), which gates publish (D160).
 # Step 01-08: jobs 5 image-amd64 and 6 image-arm64 on main pushes and manual runs only. Step 01-09: job 7 e2e on the
-# loaded amd64 image, job 8 scoped mutation (main pushes touching domain/application), job 9 publish (D160).
+# loaded amd64 image, job 8 mutation (manual dispatch only, D238), job 9 publish (D160).
 # Actions pinned by commit SHA (D85), runners pinned (D178). Weekly scans live in weekly.yml (never gate deploys).
 name: ci
 
@@ -10,6 +10,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      mutation:
+        description: "Run job 8 (mutation testing); it never runs on a push (D238)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -711,10 +716,13 @@ jobs:
       - name: pytest --run-external -m "compose or security" (D170)
         run: .github/scripts/pytest-selection.sh "compose or security"
 
+  # D238: mutation testing is run locally with `make mutate BASE=<previous slice tag>` at each slice (kill rate
+  # >= 80 %) and on demand in CI (workflow_dispatch with mutation=true). It cannot finish on a push (D224), so
+  # publish accepts its skip.
   mutation:
     name: "8 mutation"
-    needs: [changes, test-python]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.core == 'true'
+    needs: [test-python]
+    if: github.event_name == 'workflow_dispatch' && inputs.mutation
     runs-on: ubuntu-24.04
     timeout-minutes: 75 # D213: a whole slice in one push took about 55 min
     env:
