@@ -1,0 +1,13 @@
+{
+ "has_time_restrictions": true,
+ "has_toll": true,
+ "has_highway": true,
+ "has_ferry": false,
+ "min_lat": 45.068999,
+ "min_lon": 7.047776,
+ "max_lat": 45.138622,
+ "max_lon": 7.692674,
+ "time": 3251.041,
+ "length": 56.487,
+ "cost": 3859.875
+}

@@ -1,6 +1,6 @@
 # Developer entry points (Mac and Pi).
 .PHONY: bootstrap lint lint-ci test test-web web-dist mutate openapi-snapshot run-local e2e-local deploy rollback \
-	pi-preflight status logs diag image-gc uninstall purge dora perf-pi tiles-seed tiles-rollback tiles-refresh spike-cleanup
+	pi-preflight status logs diag image-gc uninstall purge dora perf-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
 
 PYTEST_FAST := -m "not slow and not solver_child"
 # The production command (Dockerfile at 01-06 uses the same factory; stdout carries only JSON event lines because the
@@ -31,7 +31,7 @@ SHELLCHECK_SEVERITY := info
 # The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
 PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
-PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi tiles-seed tiles-rollback tiles-refresh spike-cleanup
+PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
 ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
 ifeq ($(strip $(PI_HOST)),)
 $(error set PI_HOST (see deploy/pi.env.example))
@@ -177,6 +177,9 @@ purge: ## Remove project overland with its overland_* volumes and planner images
 
 perf-pi: ## K5 on planner-perf (deployed digest; deploy first): golden I1 + I2, warm-up, N runs (N=10 ITEMS=60 gate; POINTS=20000 guard gate); report in .data/perf/. Run by the orchestrator at a start time the user names, never by the crafter
 	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) N=$(N) ITEMS=$(ITEMS) POINTS=$(POINTS) bash deploy/scripts/perf-pi.sh
+
+contract-live: ## The recorded Valhalla answers against the live engine (D235): tunnel on the Pi, ssh forward, checks, teardown. Run by the orchestrator at a start time the user names, never by the crafter
+	PI_HOST=$(PI_HOST) PI_DIR=$(PI_DIR) bash deploy/scripts/contract-live.sh
 
 tiles-seed: ## Seed the first Valhalla tileset from the SPIKE-2R files (TILESET=20261101 SEED_DIR=valhalla-spike/custom_files, under the Pi home): copy, verify, routing.env, start valhalla, check /status. Copies ~5 GB: run at a start time the owner names
 	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \

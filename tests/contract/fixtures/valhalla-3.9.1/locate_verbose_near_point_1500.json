@@ -1,0 +1,299 @@
+{
+ "endpoint": "/locate",
+ "request": {
+  "locations": [
+   {
+    "lat": 44.83506,
+    "lon": 6.68945,
+    "search_cutoff": 1500
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  },
+  "verbose": true
+ },
+ "status": 200,
+ "response": [
+  {
+   "input_lat": 44.83506,
+   "input_lon": 6.68945,
+   "edges": [
+    {
+     "access_restrictions": [],
+     "live_speed": {},
+     "correlated_lat": 44.828314,
+     "correlated_lon": 6.677251,
+     "side_of_street": "neither",
+     "bounding_circle": {
+      "lat": 44.827075,
+      "lon": 6.677663,
+      "radius": 150
+     },
+     "linear_reference": "KwS/uB/gSnrgBv9GALo6Q7g=",
+     "percent_along": 0.72225,
+     "distance": 1221.1,
+     "shoulder": false,
+     "heading": 336.6,
+     "outbound_reach": 50,
+     "inbound_reach": 50,
+     "edge_info": {
+      "way_id": 933667052,
+      "bike_network": {
+       "national": false,
+       "regional": false,
+       "local": false,
+       "mountain": false
+      },
+      "names": [],
+      "shape": "m_aotA{qnvKu@cA}QgWyHmR_DwBsBaAmA}@[gABqA`@_Bp@g@pEuBtEqAxFi@hNkC~HgAxFiApHqCxDyB~DkDjCsApEo@fLcFrHoDnS{CfHmBtBo@jBAzAHpBZ`Bh@",
+      "mean_elevation": null,
+      "speed_limit": 0
+     },
+     "edge": {
+      "end_node": {
+       "level": 2,
+       "tile_id": 776906,
+       "id": 25085,
+       "value": 841719141970
+      },
+      "speeds": {
+       "default": 8,
+       "type": "classified",
+       "free_flow": 0,
+       "constrained_flow": 0,
+       "predicted": false
+      },
+      "access_restriction": false,
+      "start_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "end_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "part_of_complex_restriction": false,
+      "has_sign": false,
+      "toll": false,
+      "destination_only": false,
+      "destination_only_hgv": false,
+      "tunnel": false,
+      "bridge": false,
+      "round_about": false,
+      "traffic_signal": false,
+      "forward": false,
+      "not_thru": false,
+      "stop_sign": false,
+      "yield_sign": false,
+      "cycle_lane": "none",
+      "bike_network": false,
+      "truck_route": false,
+      "lane_count": 1,
+      "country_crossing": false,
+      "sidewalk_left": false,
+      "sidewalk_right": false,
+      "sac_scale": "none",
+      "deadend": false,
+      "geo_attributes": {
+       "length": 405,
+       "weighted_grade": 0.0,
+       "max_up_slope": 0.0,
+       "max_down_slope": 0.0,
+       "curvature": 15
+      },
+      "access": {
+       "bicycle": true,
+       "bus": true,
+       "car": true,
+       "emergency": false,
+       "HOV": true,
+       "pedestrian": true,
+       "taxi": true,
+       "truck": true,
+       "wheelchair": true,
+       "moped": true,
+       "motorcycle": true
+      },
+      "classification": {
+       "classification": "service_other",
+       "use": "track",
+       "surface": "gravel",
+       "link": false,
+       "internal": false
+      }
+     },
+     "edge_id": {
+      "level": 2,
+      "tile_id": 776906,
+      "id": 54255,
+      "value": 1820501923410
+     },
+     "predicted_speeds": []
+    },
+    {
+     "access_restrictions": [],
+     "live_speed": {},
+     "correlated_lat": 44.828314,
+     "correlated_lon": 6.677251,
+     "side_of_street": "neither",
+     "bounding_circle": {
+      "lat": 0.0,
+      "lon": 0.0,
+      "radius": 0
+     },
+     "linear_reference": "KwS/YR/goHrjBgC8/0g6QEc=",
+     "percent_along": 0.27774,
+     "distance": 1221.1,
+     "shoulder": false,
+     "heading": 156.6,
+     "outbound_reach": 50,
+     "inbound_reach": 50,
+     "edge_info": {
+      "way_id": 933667052,
+      "bike_network": {
+       "national": false,
+       "regional": false,
+       "local": false,
+       "mountain": false
+      },
+      "names": [],
+      "shape": "m_aotA{qnvKu@cA}QgWyHmR_DwBsBaAmA}@[gABqA`@_Bp@g@pEuBtEqAxFi@hNkC~HgAxFiApHqCxDyB~DkDjCsApEo@fLcFrHoDnS{CfHmBtBo@jBAzAHpBZ`Bh@",
+      "mean_elevation": null,
+      "speed_limit": 0
+     },
+     "edge": {
+      "end_node": {
+       "level": 2,
+       "tile_id": 776906,
+       "id": 25081,
+       "value": 841584924242
+      },
+      "speeds": {
+       "default": 8,
+       "type": "classified",
+       "free_flow": 0,
+       "constrained_flow": 0,
+       "predicted": false
+      },
+      "access_restriction": false,
+      "start_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "end_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "part_of_complex_restriction": false,
+      "has_sign": false,
+      "toll": false,
+      "destination_only": false,
+      "destination_only_hgv": false,
+      "tunnel": false,
+      "bridge": false,
+      "round_about": false,
+      "traffic_signal": false,
+      "forward": true,
+      "not_thru": false,
+      "stop_sign": false,
+      "yield_sign": false,
+      "cycle_lane": "none",
+      "bike_network": false,
+      "truck_route": false,
+      "lane_count": 1,
+      "country_crossing": false,
+      "sidewalk_left": false,
+      "sidewalk_right": false,
+      "sac_scale": "none",
+      "deadend": false,
+      "geo_attributes": {
+       "length": 405,
+       "weighted_grade": 0.0,
+       "max_up_slope": 0.0,
+       "max_down_slope": 0.0,
+       "curvature": 15
+      },
+      "access": {
+       "bicycle": true,
+       "bus": true,
+       "car": true,
+       "emergency": false,
+       "HOV": true,
+       "pedestrian": true,
+       "taxi": true,
+       "truck": true,
+       "wheelchair": true,
+       "moped": true,
+       "motorcycle": true
+      },
+      "classification": {
+       "classification": "service_other",
+       "use": "track",
+       "surface": "gravel",
+       "link": false,
+       "internal": false
+      }
+     },
+     "edge_id": {
+      "level": 2,
+      "tile_id": 776906,
+      "id": 54266,
+      "value": 1820871022162
+     },
+     "predicted_speeds": []
+    }
+   ],
+   "nodes": []
+  }
+ ],
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

@@ -1,0 +1,146 @@
+{
+ "locate_far_point_empty_edges_cutoff250": {
+  "endpoint": "/locate",
+  "status": 200,
+  "error_code": null
+ },
+ "locate_ok_nonverbose": {
+  "endpoint": "/locate",
+  "status": 200,
+  "error_code": null
+ },
+ "locate_permissive_access_restricted_point": {
+  "endpoint": "/locate",
+  "status": 200,
+  "error_code": null
+ },
+ "locate_verbose_near_point_1500": {
+  "endpoint": "/locate",
+  "status": 200,
+  "error_code": null
+ },
+ "matrix_150_pair_limit": {
+  "endpoint": "/sources_to_targets",
+  "status": 400,
+  "error_code": 150
+ },
+ "matrix_170_unsnappable_location_kills_call": {
+  "endpoint": "/sources_to_targets",
+  "status": 400,
+  "error_code": 170
+ },
+ "matrix_U1_permissive_access_restricted_source": {
+  "endpoint": "/sources_to_targets",
+  "status": 200,
+  "error_code": null
+ },
+ "matrix_confirmed_5x5": {
+  "endpoint": "/sources_to_targets",
+  "status": 200,
+  "error_code": null
+ },
+ "matrix_legal_access_restricted_source_170": {
+  "endpoint": "/sources_to_targets",
+  "status": 400,
+  "error_code": 170
+ },
+ "matrix_170_near_point_cutoff250": {
+  "endpoint": "/sources_to_targets",
+  "status": 400,
+  "error_code": 170
+ },
+ "matrix_confirmed_with_island_null_row": {
+  "endpoint": "/sources_to_targets",
+  "status": 200,
+  "error_code": null
+ },
+ "matrix_permissive_footway_snap_null_cells": {
+  "endpoint": "/sources_to_targets",
+  "status": 200,
+  "error_code": null
+ },
+ "route_171_access_restricted_point_legal": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 171
+ },
+ "route_442_permissive_isolated_track": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 442
+ },
+ "route_171_near_point_cutoff250": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 171
+ },
+ "route_442_island_source": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 442
+ },
+ "route_442_permissive_regression_torino_briancon": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 442
+ },
+ "route_country_crossing_cost_0": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_country_crossing_cost_3600": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_near_point_cutoff1500": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_geometry_leg": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_torino_susa_4x4v1": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_torino_susa_4x4v1_nocutoff": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_torino_susa_default_auto": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "status": {
+  "endpoint": "/status",
+  "status": 200,
+  "error_code": null
+ },
+ "matrix_k4_full_request_2_calls": {
+  "endpoint": "/sources_to_targets",
+  "note": "61x31 + 61x30 = 3,721 requested for 3,660 needed"
+ },
+ "route_442_permissive_footway_snap_destination": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 442
+ },
+ "route_U1_permissive_ok_access_restricted_exit": {
+  "endpoint": "/route",
+  "status": 200,
+  "error_code": null
+ },
+ "route_legal_from_access_restricted_exit_171": {
+  "endpoint": "/route",
+  "status": 400,
+  "error_code": 171
+ }
+}

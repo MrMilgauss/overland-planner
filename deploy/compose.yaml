@@ -18,6 +18,10 @@
 # tiles with no network at all. Both mount the subpath `build` of overland_valhalla-data, which must exist before the
 # mount: the refresh script creates it.
 #
+# valhalla-tunnel (profile `ops`, slice 06a-ops; D95, D164, D235): started only by `make contract-live`, it forwards
+# 127.0.0.1:18002 of the Pi to valhalla:8002 so the Mac reaches the engine through `ssh -L`. valhalla itself is never
+# published. Stopped and removed by the same run.
+#
 # planner-perf (profile `perf`, slice 03-ops; D96, D164, D167, D173): the planner's image (the deployed digest of
 # release.env), environment, caps, hardening and healthcheck, on its own volume overland_planner-perf-data and only on
 # 127.0.0.1:18080, reached by `make perf-pi` through an ssh tunnel. MOCK_PLAN comes from PERF_MOCK_PLAN (I2's road map,
@@ -139,6 +143,24 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # The maintenance tunnel (D164, D235): a socat forwarder on the Pi's loopback, for `make contract-live` only.
+  valhalla-tunnel:
+    image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
+    profiles: ["ops"]
+    restart: "no"
+    command: TCP-LISTEN:8002,fork,reuseaddr TCP:valhalla:8002
+    ports:
+      - "127.0.0.1:18002:8002"
+    networks:
+      - edge
+      - routing
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    mem_limit: 64m
 
   # Map data refresh (D239): the tile build needs no network, so it has none; the fetch is the only way out.
   valhalla-fetch:

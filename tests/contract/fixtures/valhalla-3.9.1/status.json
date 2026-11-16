@@ -1,0 +1,27 @@
+{
+ "endpoint": "/status",
+ "request": {},
+ "status": 200,
+ "response": {
+  "version": "3.9.1",
+  "tileset_last_modified": 1793560782,
+  "available_actions": [
+   "route",
+   "locate",
+   "sources_to_targets",
+   "optimized_route",
+   "isochrone",
+   "trace_route",
+   "trace_attributes",
+   "height",
+   "transit_available",
+   "expansion",
+   "centroid",
+   "status",
+   "tile"
+  ]
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

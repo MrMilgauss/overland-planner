@@ -1,0 +1,116 @@
+{
+ "endpoint": "/sources_to_targets",
+ "request": {
+  "sources": [
+   {
+    "lat": 45.0703,
+    "lon": 7.6869,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.023996,
+    "lon": 7.202379,
+    "search_cutoff": 250
+   }
+  ],
+  "targets": [
+   {
+    "lat": 45.097939,
+    "lon": 6.928046,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.899,
+    "lon": 6.643,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  }
+ },
+ "status": 200,
+ "response": {
+  "sources_to_targets": [
+   [
+    {
+     "from_index": 0,
+     "to_index": 0,
+     "time": 4058,
+     "distance": 68.613,
+     "cost": 4568.779,
+     "begin_heading": 18.8,
+     "end_heading": 241.7,
+     "begin_lat": 45.070322,
+     "begin_lon": 7.686863,
+     "end_lat": 45.097939,
+     "end_lon": 6.928045
+    },
+    {
+     "from_index": 0,
+     "to_index": 1,
+     "time": 6140,
+     "distance": 112.134,
+     "cost": 6549.018,
+     "begin_heading": 18.8,
+     "end_heading": 172.8,
+     "begin_lat": 45.070322,
+     "begin_lon": 7.686863,
+     "end_lat": 44.898786,
+     "end_lon": 6.642409
+    }
+   ],
+   [
+    {
+     "from_index": 1,
+     "to_index": 0,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 1,
+     "time": null,
+     "distance": null,
+     "cost": null
+    }
+   ]
+  ],
+  "sources": [
+   {
+    "lat": 45.070322,
+    "lon": 7.686863
+   },
+   {
+    "lat": 44.023996,
+    "lon": 7.202379
+   }
+  ],
+  "targets": [
+   {
+    "lat": 45.097939,
+    "lon": 6.928045
+   },
+   {
+    "lat": 44.898786,
+    "lon": 6.642409
+   }
+  ],
+  "units": "kilometers",
+  "algorithm": "costmatrix"
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

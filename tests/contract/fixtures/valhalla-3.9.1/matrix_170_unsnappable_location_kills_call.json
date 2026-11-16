@@ -1,0 +1,52 @@
+{
+ "endpoint": "/sources_to_targets",
+ "request": {
+  "sources": [
+   {
+    "lat": 45.0703,
+    "lon": 7.6869,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.37355,
+    "lon": 6.96584,
+    "search_cutoff": 250
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.899,
+    "lon": 6.643,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.315,
+    "lon": 7.296,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  }
+ },
+ "status": 400,
+ "response": {
+  "error_code": 170,
+  "error": "Locations are in unconnected regions. Go check/edit the map at osm.org",
+  "status_code": 400,
+  "status": "Bad Request"
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

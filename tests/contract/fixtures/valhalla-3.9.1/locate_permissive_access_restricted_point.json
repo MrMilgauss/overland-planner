@@ -1,0 +1,307 @@
+{
+ "endpoint": "/locate",
+ "request": {
+  "locations": [
+   {
+    "lat": 44.64866,
+    "lon": 7.04741,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false,
+    "ignore_access": true,
+    "ignore_closures": true,
+    "ignore_restrictions": true,
+    "ignore_non_vehicular_restrictions": true
+   }
+  },
+  "verbose": true
+ },
+ "status": 200,
+ "response": [
+  {
+   "input_lat": 44.64866,
+   "input_lon": 7.04741,
+   "edges": [
+    {
+     "access_restrictions": [],
+     "live_speed": {},
+     "correlated_lat": 44.648615,
+     "correlated_lon": 7.047506,
+     "side_of_street": "left",
+     "bounding_circle": {
+      "lat": 44.651592,
+      "lon": 7.04879,
+      "radius": 1500
+     },
+     "linear_reference": "KwUDfx++6X/9J/6xByM/UFc=",
+     "percent_along": 0.34037,
+     "distance": 9.1,
+     "shoulder": false,
+     "heading": 32.0,
+     "outbound_reach": 50,
+     "inbound_reach": 50,
+     "edge_info": {
+      "way_id": 133369522,
+      "bike_network": {
+       "national": false,
+       "regional": false,
+       "local": false,
+       "mountain": false
+      },
+      "names": [
+       "Normale a punta Tre Chiosis"
+      ],
+      "shape": "khwctA_mimLmFvEaPpLuYhGgK`AaMrNyPlIu\\bAqPkBuNjDcFhQiGjOyK~OeN~BaPkDqF?qQ`D}QaAqG`CkJrAqGTqGtGsE~FkFhQmH~RaHjFmHHcK~G{SUsEiDmN_MqPiD}IkOqF_UoHuOoH_IcOiPkFkMoHeNiLaAuMtEqG~HaQrAaPi@yOiAsO?cPhFyOj@uRuGaBk@c^_N{XiJcNiDmWkD{S~HuW~NmNjB}`@~B{\\hDwQ?s]UqPTaYtEyTtEsOr@wLjEgd@hOmWhDoRdJiO~c@sKpe@cGbNgGcC",
+      "mean_elevation": null,
+      "speed_limit": 0
+     },
+     "edge": {
+      "end_node": {
+       "level": 2,
+       "tile_id": 775468,
+       "id": 1205,
+       "value": 40439294306
+      },
+      "speeds": {
+       "default": 12,
+       "type": "classified",
+       "free_flow": 0,
+       "constrained_flow": 0,
+       "predicted": false
+      },
+      "access_restriction": false,
+      "start_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "end_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "part_of_complex_restriction": false,
+      "has_sign": false,
+      "toll": false,
+      "destination_only": false,
+      "destination_only_hgv": false,
+      "tunnel": false,
+      "bridge": false,
+      "round_about": false,
+      "traffic_signal": false,
+      "forward": true,
+      "not_thru": false,
+      "stop_sign": false,
+      "yield_sign": false,
+      "cycle_lane": "shared",
+      "bike_network": false,
+      "truck_route": false,
+      "lane_count": 1,
+      "country_crossing": false,
+      "sidewalk_left": false,
+      "sidewalk_right": false,
+      "sac_scale": "mountain hiking",
+      "deadend": false,
+      "geo_attributes": {
+       "length": 2302,
+       "weighted_grade": 0.0,
+       "max_up_slope": 0.0,
+       "max_down_slope": 0.0,
+       "curvature": 11
+      },
+      "access": {
+       "bicycle": true,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": true,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": true,
+       "moped": false,
+       "motorcycle": false
+      },
+      "classification": {
+       "classification": "service_other",
+       "use": "path",
+       "surface": "path",
+       "link": false,
+       "internal": false
+      }
+     },
+     "edge_id": {
+      "level": 2,
+      "tile_id": 775468,
+      "id": 2647,
+      "value": 88824785250
+     },
+     "predicted_speeds": []
+    },
+    {
+     "access_restrictions": [],
+     "live_speed": {},
+     "correlated_lat": 44.648615,
+     "correlated_lon": 7.047506,
+     "side_of_street": "right",
+     "bounding_circle": {
+      "lat": 0.0,
+      "lon": 0.0,
+      "radius": 0
+     },
+     "linear_reference": "KwUC4h/CPH/wJwFT+N8/Xag=",
+     "percent_along": 0.65962,
+     "distance": 9.1,
+     "shoulder": false,
+     "heading": 212.0,
+     "outbound_reach": 50,
+     "inbound_reach": 50,
+     "edge_info": {
+      "way_id": 133369522,
+      "bike_network": {
+       "national": false,
+       "regional": false,
+       "local": false,
+       "mountain": false
+      },
+      "names": [
+       "Normale a punta Tre Chiosis"
+      ],
+      "shape": "khwctA_mimLmFvEaPpLuYhGgK`AaMrNyPlIu\\bAqPkBuNjDcFhQiGjOyK~OeN~BaPkDqF?qQ`D}QaAqG`CkJrAqGTqGtGsE~FkFhQmH~RaHjFmHHcK~G{SUsEiDmN_MqPiD}IkOqF_UoHuOoH_IcOiPkFkMoHeNiLaAuMtEqG~HaQrAaPi@yOiAsO?cPhFyOj@uRuGaBk@c^_N{XiJcNiDmWkD{S~HuW~NmNjB}`@~B{\\hDwQ?s]UqPTaYtEyTtEsOr@wLjEgd@hOmWhDoRdJiO~c@sKpe@cGbNgGcC",
+      "mean_elevation": null,
+      "speed_limit": 0
+     },
+     "edge": {
+      "end_node": {
+       "level": 2,
+       "tile_id": 775468,
+       "id": 1200,
+       "value": 40271522146
+      },
+      "speeds": {
+       "default": 12,
+       "type": "classified",
+       "free_flow": 0,
+       "constrained_flow": 0,
+       "predicted": false
+      },
+      "access_restriction": false,
+      "start_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "end_restriction": {
+       "bicycle": false,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": false,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": false,
+       "moped": false,
+       "motorcycle": false
+      },
+      "part_of_complex_restriction": false,
+      "has_sign": false,
+      "toll": false,
+      "destination_only": false,
+      "destination_only_hgv": false,
+      "tunnel": false,
+      "bridge": false,
+      "round_about": false,
+      "traffic_signal": false,
+      "forward": false,
+      "not_thru": false,
+      "stop_sign": false,
+      "yield_sign": false,
+      "cycle_lane": "shared",
+      "bike_network": false,
+      "truck_route": false,
+      "lane_count": 1,
+      "country_crossing": false,
+      "sidewalk_left": false,
+      "sidewalk_right": false,
+      "sac_scale": "mountain hiking",
+      "deadend": false,
+      "geo_attributes": {
+       "length": 2302,
+       "weighted_grade": 0.0,
+       "max_up_slope": 0.0,
+       "max_down_slope": 0.0,
+       "curvature": 11
+      },
+      "access": {
+       "bicycle": true,
+       "bus": false,
+       "car": false,
+       "emergency": false,
+       "HOV": false,
+       "pedestrian": true,
+       "taxi": false,
+       "truck": false,
+       "wheelchair": true,
+       "moped": false,
+       "motorcycle": false
+      },
+      "classification": {
+       "classification": "service_other",
+       "use": "path",
+       "surface": "path",
+       "link": false,
+       "internal": false
+      }
+     },
+     "edge_id": {
+      "level": 2,
+      "tile_id": 775468,
+      "id": 2659,
+      "value": 89227438434
+     },
+     "predicted_speeds": []
+    }
+   ],
+   "nodes": []
+  }
+ ],
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

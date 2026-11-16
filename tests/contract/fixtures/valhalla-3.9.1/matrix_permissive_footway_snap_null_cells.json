@@ -1,0 +1,149 @@
+{
+ "endpoint": "/sources_to_targets",
+ "request": {
+  "sources": [
+   {
+    "lat": 45.0703,
+    "lon": 7.6869,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.899,
+    "lon": 6.643,
+    "search_cutoff": 250
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.648615,
+    "lon": 7.047506,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.899,
+    "lon": 6.643,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 45.0703,
+    "lon": 7.6869,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false,
+    "ignore_access": true,
+    "ignore_closures": true,
+    "ignore_restrictions": true,
+    "ignore_non_vehicular_restrictions": true
+   }
+  }
+ },
+ "status": 200,
+ "response": {
+  "sources_to_targets": [
+   [
+    {
+     "from_index": 0,
+     "to_index": 0,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 0,
+     "to_index": 1,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 0,
+     "to_index": 2,
+     "time": 0,
+     "distance": 0.0,
+     "cost": 0.0,
+     "begin_heading": 322.3,
+     "end_heading": 322.3,
+     "begin_lat": 45.070322,
+     "begin_lon": 7.686863,
+     "end_lat": 45.070322,
+     "end_lon": 7.686863
+    }
+   ],
+   [
+    {
+     "from_index": 1,
+     "to_index": 0,
+     "time": null,
+     "distance": null,
+     "cost": null
+    },
+    {
+     "from_index": 1,
+     "to_index": 1,
+     "time": 0,
+     "distance": 0.0,
+     "cost": 0.0,
+     "begin_heading": 103.9,
+     "end_heading": 103.9,
+     "begin_lat": 44.898948,
+     "begin_lon": 6.642981,
+     "end_lat": 44.898948,
+     "end_lon": 6.642981
+    },
+    {
+     "from_index": 1,
+     "to_index": 2,
+     "time": 6151,
+     "distance": 111.528,
+     "cost": 6590.174,
+     "begin_heading": 283.9,
+     "end_heading": 31.0,
+     "begin_lat": 44.898948,
+     "begin_lon": 6.642981,
+     "end_lat": 45.070322,
+     "end_lon": 7.686863
+    }
+   ]
+  ],
+  "sources": [
+   {
+    "lat": 45.070322,
+    "lon": 7.686863
+   },
+   {
+    "lat": 44.898948,
+    "lon": 6.642981
+   }
+  ],
+  "targets": [
+   {
+    "lat": 44.648614,
+    "lon": 7.047506
+   },
+   {
+    "lat": 44.898948,
+    "lon": 6.642981
+   },
+   {
+    "lat": 45.070322,
+    "lon": 7.686863
+   }
+  ],
+  "units": "kilometers",
+  "algorithm": "costmatrix"
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

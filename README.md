@@ -112,5 +112,6 @@ MIT, see `LICENSE`. Security reports: see `SECURITY.md`.
 
 ## Data
 
-The spike fixtures contain routing responses derived from OpenStreetMap data (© OpenStreetMap contributors, ODbL),
-produced by a self-hosted Valhalla. All committed GPX files are synthetic; the repository holds no real recordings.
+The spike fixtures and their copy in `tests/contract/fixtures/valhalla-3.9.1/` contain routing responses derived
+from OpenStreetMap data (© OpenStreetMap contributors, ODbL), produced by a self-hosted Valhalla. All committed GPX
+files are synthetic; the repository holds no real recordings.

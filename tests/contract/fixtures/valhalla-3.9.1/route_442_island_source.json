@@ -1,0 +1,41 @@
+{
+ "endpoint": "/route",
+ "request": {
+  "locations": [
+   {
+    "lat": 44.023996,
+    "lon": 7.202379,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.899,
+    "lon": 6.643,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  },
+  "directions_type": "none"
+ },
+ "status": 400,
+ "response": {
+  "error_code": 442,
+  "error": "No path could be found for input",
+  "status_code": 400,
+  "status": "Bad Request"
+ },
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

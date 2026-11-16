@@ -7,8 +7,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
-        exclude: (execution-log|\.develop-progress)\.json$  # written by the DES CLI
+        exclude: (execution-log|\.develop-progress)\.json$|^tests/contract/fixtures/  # DES CLI output; recorded answers (byte-exact)
       - id: trailing-whitespace
+        exclude: ^tests/contract/fixtures/  # recorded answers stay byte-identical to the spike blobs
       - id: check-added-large-files
         args: [--maxkb=5120]
         exclude: ^tests/(fixtures|acceptance/overland_route_planner_mvp/fixtures)/

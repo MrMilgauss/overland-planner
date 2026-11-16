@@ -1,0 +1,63 @@
+{
+ "endpoint": "/locate",
+ "request": {
+  "locations": [
+   {
+    "lat": 45.37355,
+    "lon": 6.96584,
+    "search_cutoff": 250
+   },
+   {
+    "lat": 44.315,
+    "lon": 7.296,
+    "search_cutoff": 250
+   }
+  ],
+  "costing": "auto",
+  "costing_options": {
+   "auto": {
+    "use_tracks": 1.0,
+    "exclude_unpaved": false,
+    "use_highways": 0.5,
+    "use_tolls": 0.5,
+    "use_ferry": 0.5,
+    "country_crossing_cost": 0,
+    "country_crossing_penalty": 0,
+    "ignore_oneways": false
+   }
+  }
+ },
+ "status": 200,
+ "response": [
+  {
+   "input_lat": 45.37355,
+   "input_lon": 6.96584,
+   "edges": [],
+   "nodes": []
+  },
+  {
+   "input_lat": 44.315,
+   "input_lon": 7.296,
+   "edges": [
+    {
+     "way_id": 160668143,
+     "correlated_lat": 44.314909,
+     "correlated_lon": 7.296014,
+     "side_of_street": "left",
+     "percent_along": 0.4984
+    },
+    {
+     "way_id": 160668143,
+     "correlated_lat": 44.314909,
+     "correlated_lon": 7.296014,
+     "side_of_street": "right",
+     "percent_along": 0.50159
+    }
+   ],
+   "nodes": []
+  }
+ ],
+ "valhalla": "3.9.1",
+ "tileset_last_modified": 1793560782,
+ "redaction": "synthetic SPIKE-1R points (public Western Alps places); no user data, no names, no project ids"
+}

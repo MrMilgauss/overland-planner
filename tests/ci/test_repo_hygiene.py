@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -71,3 +72,38 @@ def test_import_contracts_hold() -> None:
         "ortools only in adapters.solver",
     ):
         assert contract in result.stdout, f"contract '{contract}' not configured"
+
+
+PRIVATE_DETAIL = re.compile(
+    r"192\.168\.|\b10\.\d+\.\d+\.\d+|\b172\.(?:1[6-9]|2\d|3[01])\.|\.local\b|/Users/|/home/|password|token",
+    re.IGNORECASE,
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "private"),
+    [
+        ("pi at 192.168.1.10", True),
+        ("host 10.0.0.7", True),
+        ("host 172.20.1.1", True),
+        ("host 172.32.1.1", False),
+        ("raspberrypi.local", True),
+        ("/Users/someone/x", True),
+        ("/home/someone/x", True),
+        ("a Password here", True),
+        ("an access token", True),
+        ("lat 45.0703, lon 7.6869, time 4058, 110.5 km", False),
+    ],
+)
+def test_the_private_detail_pattern_tells_private_from_public(text: str, private: bool) -> None:
+    assert bool(PRIVATE_DETAIL.search(text)) is private
+
+
+def test_recorded_fixtures_hold_no_private_address_host_path_or_secret_word() -> None:
+    files = [p for p in (REPO_ROOT / "tests/contract/fixtures").rglob("*") if p.is_file()]
+
+    assert files, "no recorded fixtures"
+    leaks = {
+        p.relative_to(REPO_ROOT).as_posix(): m.group(0) for p in files if (m := PRIVATE_DETAIL.search(p.read_text()))
+    }
+    assert leaks == {}

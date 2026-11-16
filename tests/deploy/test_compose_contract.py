@@ -63,6 +63,7 @@ VALHALLA_ENVIRONMENT = {
 }
 
 
+TUNNEL_IMAGE = "alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e"
 FETCH_IMAGE = "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc"
 BUILD_ENVIRONMENT = {
     "build_admins": "True",
@@ -115,7 +116,14 @@ def test_only_the_planner_is_published_on_the_fail_closed_home_address() -> None
     planner = compose["services"]["planner"]
 
     assert compose["name"] == "overland"
-    assert set(compose["services"]) == {"planner", "planner-perf", "valhalla", "valhalla-build", "valhalla-fetch"}
+    assert set(compose["services"]) == {
+        "planner",
+        "planner-perf",
+        "valhalla",
+        "valhalla-build",
+        "valhalla-fetch",
+        "valhalla-tunnel",
+    }
     assert "profiles" not in planner, "the default profile starts the planner"
     assert planner["ports"] == [FAIL_CLOSED_PORTS], "PLANNER_BIND has no default: compose refuses to start without it"
     assert planner["networks"] == ["edge", "routing"] and set(compose["networks"]) == {"edge", "routing", "egress"}
@@ -201,6 +209,24 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
     assert perf["environment"] == planner["environment"] | {"MOCK_PLAN": "${PERF_MOCK_PLAN:-}"}
     assert perf.get("restart", "no") == "no", "a measurement planner never comes back by itself"
+
+
+def test_valhalla_tunnel_forwards_the_engine_to_the_pis_loopback_only_for_make_contract_live() -> None:
+    # bypass: a compose file is one document; this is a single-example contract check (D164, D235).
+    compose = _load(COMPOSE)
+    tunnel, valhalla = compose["services"]["valhalla-tunnel"], compose["services"]["valhalla"]
+
+    assert tunnel["image"] == TUNNEL_IMAGE and tunnel["profiles"] == ["ops"]
+    assert tunnel["command"] == "TCP-LISTEN:8002,fork,reuseaddr TCP:valhalla:8002"
+    assert tunnel["ports"] == ["127.0.0.1:18002:8002"] and tunnel["networks"] == ["edge", "routing"]
+    assert (tunnel["restart"], tunnel["cap_drop"], tunnel["security_opt"]) == (
+        "no",
+        ["ALL"],
+        ["no-new-privileges:true"],
+    )
+    assert (tunnel["read_only"], tunnel["mem_limit"]) == (True, "64m")
+    assert "ports" not in valhalla and "expose" not in valhalla, "valhalla itself is never published"
+    assert "ops" not in valhalla["profiles"] and "depends_on" not in tunnel
 
 
 def test_valhalla_serves_a_seeded_tileset_capped_hardened_and_never_published() -> None:
@@ -294,12 +320,17 @@ def test_the_routing_network_is_internal_and_only_the_planners_publish_a_port() 
     services = compose["services"]
 
     assert compose["networks"]["routing"] == {"internal": True}
-    assert sorted(name for name, service in services.items() if "ports" in service) == ["planner", "planner-perf"]
+    assert sorted(name for name, service in services.items() if "ports" in service) == [
+        "planner",
+        "planner-perf",
+        "valhalla-tunnel",
+    ]
     assert [name for name, service in services.items() if "profiles" not in service] == ["planner"]
     assert [name for name, service in services.items() if "routing" in service.get("networks", [])] == [
         "planner",
         "planner-perf",
         "valhalla",
+        "valhalla-tunnel",
     ]
 
 

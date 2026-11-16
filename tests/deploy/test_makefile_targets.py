@@ -258,6 +258,21 @@ def test_perf_pi_hands_its_mode_to_the_mac_side_script(variables: tuple[str, ...
     assert all(part in result.stdout + " " for part in expected), result.stdout
 
 
+def test_contract_live_hands_the_host_to_the_mac_side_script_and_says_the_orchestrator_runs_it() -> None:
+    # bypass: a Makefile recipe is wiring; one dry run shows the variables reach the script.
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO), "contract-live", f"PI_HOST={DEPLOY_USER}", NO_PI_ENV],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("contract-live:"))
+
+    assert result.returncode == 0, result.stderr
+    assert "bash deploy/scripts/contract-live.sh" in result.stdout and f"PI_HOST={DEPLOY_USER}" in result.stdout
+    assert "orchestrator" in help_line and "start time" in help_line
+
+
 def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name_only_planner_perf() -> None:
     help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("perf-pi:"))
     script = PERF_SCRIPT.read_text()
@@ -273,7 +288,17 @@ def test_perf_pi_help_says_the_orchestrator_runs_it_and_its_docker_commands_name
 
 @pytest.mark.parametrize(
     "target",
-    [*PI_TARGETS, "deploy", "rollback", "perf-pi", "tiles-seed", "tiles-rollback", "tiles-refresh", "spike-cleanup"],
+    [
+        *PI_TARGETS,
+        "deploy",
+        "rollback",
+        "perf-pi",
+        "contract-live",
+        "tiles-seed",
+        "tiles-rollback",
+        "tiles-refresh",
+        "spike-cleanup",
+    ],
 )
 def test_a_pi_target_without_a_host_stops_and_names_the_template(target: str) -> None:
     result = subprocess.run(
@@ -320,7 +345,7 @@ def test_the_template_has_placeholders_only_and_the_real_file_is_git_ignored() -
     assert ignored.returncode == 0, "deploy/pi.env must be git-ignored"
 
 
-@pytest.mark.parametrize("script", ["make-deploy.sh", "perf-pi.sh"])
+@pytest.mark.parametrize("script", ["make-deploy.sh", "perf-pi.sh", "contract-live.sh"])
 def test_a_mac_side_script_without_a_host_stops_and_names_the_template(script: str) -> None:
     env = {**_no_host_env(), "PI_ENV_FILE": "/nonexistent/pi.env"}
 

@@ -2976,6 +2976,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-16T21:44:32Z"
+    },
+    {
+      "sid": "08-05",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-16T21:44:47Z"
+    },
+    {
+      "sid": "08-06",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-16T21:50:49Z"
+    },
+    {
+      "sid": "08-06",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: enabler slice without scenarios; the offline tests are the executable specification",
+      "t": "2026-11-16T21:50:51Z"
+    },
+    {
+      "sid": "08-06",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-16T21:52:21Z"
+    },
+    {
+      "sid": "08-06",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS: fast suite 819 passed 150 skipped; contract+deploy+ci 383 passed; lint, lint-ci, markdownlint clean",
+      "t": "2026-11-16T22:00:45Z"
     }
   ]
 }
