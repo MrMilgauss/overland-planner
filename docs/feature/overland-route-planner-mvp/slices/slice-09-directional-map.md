@@ -35,7 +35,7 @@ Marco does the 5-track blind direction check with Giulia.
 
 ## Delivery order (D232, 2026-11-10)
 
-Delivered right after slice 06a. The scenarios that need slices 08, 06b or 03b ("The map follows a reversed track", "Compromise legs stand out on the map") are deferred and arrive with those slices. Slice 12 (UI foundation) follows.
+Delivered right after slice 06a, as the last part of release R2a (D233). The scenarios that need slices 08, 06b or 03b ("The map follows a reversed track", "Compromise legs stand out on the map") are deferred and arrive with those slices. Slice 12 (UI foundation) follows.
 
 ## Dependencies
 

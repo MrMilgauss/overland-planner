@@ -39,7 +39,7 @@ Marco compares mock and Valhalla road km for his Assietta weekend.
 
 ## Dependencies
 
-Slice 05 (legs reused per provider; a map-data rebuild counts as a provider change) and slice 06a-ops (Valhalla serving on the Pi). OD#1 resolved: self-hosted Valhalla (DESIGN D40).
+Slice 06a-ops (Valhalla serving on the Pi). Slice 05 is no longer a prerequisite (D233): the in-memory leg cache serves this slice, keyed by provider id and map-data date, so a map-data rebuild counts as a provider change; persistence stays in slice 05. OD#1 resolved: self-hosted Valhalla (DESIGN D40).
 
 ## Effort and reference class
 
