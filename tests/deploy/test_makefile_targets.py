@@ -40,6 +40,7 @@ MUTATING = re.compile(r"\b(rm|down|stop|kill|pull|up|run|create|restart|login|lo
 PURGE_WORD = "purge overland"
 DEPLOY_USER = "deploy@pi.example"  # a placeholder: the real host lives in the untracked deploy/pi.env
 NO_PI_ENV = "PI_ENV_FILE=/nonexistent/pi.env"
+SSH_OPTIONS = "-o BatchMode=yes -o ConnectTimeout=10"  # a dead Pi must not hang a make target
 
 
 def dry_run(target: str) -> str:
@@ -62,7 +63,7 @@ def test_every_pi_target_stays_inside_project_overland(target: str) -> None:
     text = dry_run(target)
     commands = docker_commands(text)
 
-    assert f"ssh -o BatchMode=yes {DEPLOY_USER}" in text
+    assert f"ssh {SSH_OPTIONS} {DEPLOY_USER}" in text
     assert commands, f"make {target} sends no docker command"
     assert "prune" not in text and "system" not in " ".join(commands) and "daemon.json" not in text  # D99
     for command in commands:
@@ -175,6 +176,20 @@ def test_purge_with_the_word_removes_only_overland_volumes_and_planner_images(pi
     assert image_rm_refs(pi_home) == [CURRENT.image]
     downs = [c["argv"] for c in pi_home.calls("docker") if "down" in c["argv"]]
     assert len(downs) == 1 and downs[0][:3] == ["compose", "-p", "overland"] and "-v" not in downs[0]
+    profiles = [downs[0][i + 1] for i, arg in enumerate(downs[0]) if arg == "--profile"]
+    assert {"routing", "perf", "ops", "valhalla-build"} <= set(profiles)  # no overland container survives
+
+
+def test_purge_fails_when_any_volume_cannot_be_removed_and_still_tries_the_others(pi_home: FakePi) -> None:
+    pi_home.rule("docker", "volume ls", stdout="overland_planner-data\noverland_valhalla-data\noverland_extra\n")
+    pi_home.rule("docker", "volume rm", "overland_valhalla-data", exit=1)
+
+    result = remote(pi_home, "purge", stdin=PURGE_WORD + "\n")
+
+    assert result.returncode != 0
+    removed = [c["argv"][-1] for c in pi_home.calls("docker") if c["argv"][:2] == ["volume", "rm"]]
+    assert removed == ["overland_planner-data", "overland_valhalla-data", "overland_extra"]
+    assert image_rm_refs(pi_home) == []  # a purge that did not finish does not go on to the images
 
 
 def test_diag_reads_the_diagnostics_with_the_env_credentials_and_never_prints_them(pi_home: FakePi) -> None:
@@ -358,7 +373,7 @@ def test_the_untracked_pi_env_file_supplies_the_host_and_the_install_dir(tmp_pat
     )
 
     assert result.returncode == 0, result.stderr
-    assert "ssh -o BatchMode=yes owner@my-pi.example" in result.stdout and "cd apps/elsewhere" in result.stdout
+    assert f"ssh {SSH_OPTIONS} owner@my-pi.example" in result.stdout and "cd apps/elsewhere" in result.stdout
 
 
 def test_the_template_has_placeholders_only_and_the_real_file_is_git_ignored() -> None:
@@ -432,28 +447,48 @@ def dry_run_with(target: str, *variables: str) -> str:
     return result.stdout
 
 
+def remote_words(text: str, script: str) -> list[str]:
+    """The words the Pi's shell sees for the ssh call that runs `script` (what is left after local unquoting)."""
+    line = next(part for part in text.split("\n") if f"scripts/{script}" in part)
+    local = shlex.split(line[line.index("ssh -o") : line.index("|| status")])
+    remote = shlex.split(local[-1])
+    return remote[remote.index("bash") :]
+
+
 @pytest.mark.parametrize(
-    ("variables", "script_call"),
+    ("variables", "words"),
     [
-        ((), "bash scripts/tiles-seed.sh 20261101 valhalla-spike/custom_files 1793560782"),
-        (("TILESET=20270201", "SEED_DIR=other/files"), "bash scripts/tiles-seed.sh 20270201 other/files "),
+        ((), ["bash", "scripts/tiles-seed.sh", "20261101", "valhalla-spike/custom_files", "1793560782"]),
+        (
+            ("TILESET=20270201", "SEED_DIR=other/files"),
+            ["bash", "scripts/tiles-seed.sh", "20270201", "other/files", ""],
+        ),
         (
             ("TILESET=20270201", "EXPECT_TILESET_MODIFIED=1800000000"),
-            "bash scripts/tiles-seed.sh 20270201 valhalla-spike/custom_files 1800000000",
+            ["bash", "scripts/tiles-seed.sh", "20270201", "valhalla-spike/custom_files", "1800000000"],
         ),
+        (("SEED_DIR=a b  c",), ["bash", "scripts/tiles-seed.sh", "20261101", "a b  c", "1793560782"]),
     ],
-)
+)  # fmt: skip
 def test_tiles_seed_syncs_deploy_without_the_pointers_then_runs_the_script_on_the_pi(
-    variables: tuple[str, ...], script_call: str
+    variables: tuple[str, ...], words: list[str]
 ) -> None:
-    text = " ".join(dry_run_with("tiles-seed", *variables).replace("\\\n", " ").split())
+    text = " ".join(dry_run_with("tiles-seed", *variables).replace("\\\n", " ").split(" "))
 
     rsync = text[text.index("rsync -a --exclude") : text.index("ssh -o")]
     for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
         assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
     assert f"deploy/ {DEPLOY_USER}:apps/overland-planner/" in rsync and "--delete" not in rsync
-    assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && {script_call}" in text
+    assert remote_words(text, "tiles-seed.sh") == words  # the variables arrive as the words they were given as
     assert text.index("rsync -a --exclude") < text.index("tiles-seed.sh")
+
+
+@pytest.mark.parametrize("target", ["tiles-seed", "tiles-rollback", "tiles-refresh"])
+def test_every_rsync_of_deploy_to_the_pi_leaves_the_pi_s_own_address_file_alone(target: str) -> None:
+    text = dry_run_with(target).replace("\\\n", " ")
+
+    sends = [part for part in re.findall(r"rsync -a [^\n]*?deploy/ ", text)]
+    assert len(sends) == 1 and "--exclude=pi.env" in sends[0]
 
 
 def test_tiles_rollback_syncs_deploy_without_the_pointers_then_runs_the_script_on_the_pi() -> None:
@@ -462,7 +497,7 @@ def test_tiles_rollback_syncs_deploy_without_the_pointers_then_runs_the_script_o
     rsync = text[text.index("rsync -a --exclude") : text.index("ssh -o")]
     for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
         assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
-    assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-rollback.sh'" in text
+    assert f"ssh {SSH_OPTIONS} {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-rollback.sh'" in text
 
 
 def test_tiles_refresh_syncs_deploy_without_the_pointers_then_runs_the_script_and_says_when_to_run_it() -> None:
@@ -471,7 +506,7 @@ def test_tiles_refresh_syncs_deploy_without_the_pointers_then_runs_the_script_an
     rsync = text[text.index("rsync -a --exclude") : text.index("ssh -o")]
     for excluded in (".env", "release.env*", "releases.log", "snapshots/", "routing.env*", "tiles.log"):
         assert f"--exclude={excluded}" in rsync or f"--exclude='{excluded}'" in rsync, excluded
-    assert f"ssh -o BatchMode=yes {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-refresh.sh'" in text
+    assert f"ssh {SSH_OPTIONS} {DEPLOY_USER} 'cd apps/overland-planner && bash scripts/tiles-refresh.sh'" in text
     help_line = next(line for line in (REPO / "Makefile").read_text().splitlines() if line.startswith("tiles-refresh:"))
     assert "about 40 minutes without routing" in help_line and "start time" in help_line and "owner" in help_line
 

@@ -203,6 +203,7 @@ def test_invalid_arguments_stop_with_exit_2_before_any_docker_call(
             "version '3.8.0', expected 3.9.1",
         ),
         ({"args_contain": ["exec"], "exit": 1}, "/status did not answer"),
+        ({"args_contain": ["exec"], "stdout": '{"version":"3.9.1"}'}, "/status did not answer"),
         ({"args_contain": ["up", "valhalla"], "exit": 1}, "did not become healthy"),
     ],
 )
@@ -235,6 +236,75 @@ def test_a_failed_start_restores_routing_env_and_stops_valhalla_only_if_it_was_n
     stops = [argv for argv in compose_verbs(pi) if "stop" in argv]
     assert bool(stops) is (not running_before)
     assert pi.tiles_log()[-1]["result"] == "failed" and reason in pi.tiles_log()[-1]["reason"]
+
+
+def test_a_probe_that_cannot_inspect_the_volume_is_a_refusal_and_nothing_is_copied(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    (pi.dir / "routing.env").write_text(OLD_ROUTING)
+    pi.rule("docker", "tileset-exists", exit=125)
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "cannot inspect the volume" in result.stderr
+    assert labels(pi) == ["source-sums", "tileset-exists"] and not tileset_dir(pi).exists()
+    assert (pi.dir / "routing.env").read_text() == OLD_ROUTING and not mutating_compose(pi)
+    assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+def test_a_destination_that_appears_before_the_finish_is_never_written_into(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    pi.rule("docker", "verify-copy", mkdir=f"tilesets/{TILESET}", passthrough=True)
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and f"could not finish tilesets/{TILESET}" in result.stderr
+    assert list(tileset_dir(pi).iterdir()) == []
+    assert not (pi.dir / "routing.env").exists() and not mutating_compose(pi)
+
+
+def test_a_routing_env_that_cannot_be_backed_up_stops_before_any_change(pi: FakePi, source: dict[str, bytes]) -> None:
+    (pi.dir / "routing.env").write_text(OLD_ROUTING)
+
+    with pi.read_only_install():
+        result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "cannot back up routing.env" in result.stderr
+    assert (pi.dir / "routing.env").read_text() == OLD_ROUTING and not mutating_compose(pi)
+    assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+def test_a_docker_ps_that_fails_is_not_taken_for_a_valhalla_that_is_not_running(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    pi.rule("docker", "ps", "service=valhalla", exit=1)
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "cannot tell whether valhalla is running" in result.stderr
+    assert labels(pi) == ["source-sums"] and not mutating_compose(pi) and not (pi.dir / "routing.env").exists()
+    assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+@pytest.mark.parametrize("running_before", [False, True])
+def test_a_dropped_session_while_valhalla_starts_puts_the_pointers_and_the_engine_back(
+    pi: FakePi, source: dict[str, bytes], running_before: bool
+) -> None:
+    (pi.dir / "routing.env").write_text(OLD_ROUTING)
+    if running_before:
+        pi.rule("docker", "ps", "service=valhalla", stdout="0123abcd\n")
+    pi.rule("docker", "up", "--wait", kill_parent="TERM")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 143
+    assert (pi.dir / "routing.env").read_text() == OLD_ROUTING and not (pi.dir / "routing.env.prev").exists()
+    stops = [argv for argv in compose_verbs(pi) if "stop" in argv]
+    assert bool(stops) is (not running_before)
+    assert (compose_verbs(pi)[-1][-3:] == ["up", "-d", "valhalla"]) is running_before
+    assert pi.tiles_log()[-1]["result"] == "failed" and "interrupted" in pi.tiles_log()[-1]["reason"]
+    assert not [p for p in pi.dir.iterdir() if p.name.endswith(".orig") or ".tmp." in p.name]
 
 
 def test_no_docker_call_touches_the_planner_or_anything_outside_project_overland(

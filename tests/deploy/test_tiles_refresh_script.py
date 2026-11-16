@@ -9,6 +9,7 @@ order of the docker calls. The real refresh (about 40 minutes) is never run offl
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -19,7 +20,8 @@ from tests.deploy.conftest import REFRESH_DATE, TILES_FILES, FakePi
 SERVED, KEPT, OLDER = "20261101", "20260901", "20260801"
 SERVED_ROUTING = f"VALHALLA_TILESET={SERVED}\n"
 KEPT_ROUTING = f"VALHALLA_TILESET={KEPT}\n"
-STATUS_MODIFIED = "1793560782"  # what the docker shim's valhalla /status answers
+STATUS_MODIFIED = "1793560782"  # what the docker shim's valhalla /status answers on the new tileset
+OLD_MODIFIED = "1790000000"  # what it answers while the served tileset is the old one
 MUTATING_VERBS = {"up", "stop", "down", "restart", "rm", "kill", "pull", "create", "run"}
 LOW_DISK = (
     "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/nvme0n1p2 245000000 225000000 20000000 92% /\n"
@@ -34,6 +36,7 @@ def serving(pi: FakePi) -> FakePi:
     for name in (SERVED, KEPT, OLDER):
         (pi.volume / "tilesets" / name).mkdir(parents=True)
         (pi.volume / "tilesets" / name / "valhalla_tiles.tar").write_text(f"tiles {name}\n")
+    (pi.shim_home / "status_by_tileset.json").write_text(json.dumps({SERVED: OLD_MODIFIED}))
     return pi
 
 
@@ -82,6 +85,7 @@ def test_refresh_builds_while_serving_stops_for_the_build_switches_and_prunes_on
     assert result.returncode == 0, result.stderr
     assert timeline(serving) == [
         "tileset-exists",
+        "status",  # the old tileset_last_modified, read before the engine is stopped
         "prepare-build",
         "run valhalla-fetch",  # download, valhalla still serving
         "run valhalla-fetch merge",
@@ -217,7 +221,7 @@ def test_a_failure_before_the_promotion_starts_the_old_tileset_again_and_touches
     assert result.returncode == 1
     labels = timeline(serving)
     assert labels[-1] == "up valhalla" and ("stop valhalla" in labels) is stopped
-    assert not {"promote", "prune-tilesets", "status"} & set(labels)
+    assert not {"promote", "prune-tilesets"} & set(labels) and labels.count("status") == 1
     assert pointers(serving) == before
     assert tilesets(serving) == [OLDER, KEPT, SERVED]
     assert (last_log(serving)["result"], last_log(serving)["reason"]) == ("failed", f"refresh failed ({stage})")
@@ -231,7 +235,13 @@ def test_too_little_memory_just_before_the_merge_stops_the_refresh_while_the_old
     result = serving.tiles_refresh(available_kb=6 * 1024 * 1024)  # enough for a 4g build, not for the 7 GiB merge
 
     assert result.returncode == 1
-    assert timeline(serving) == ["tileset-exists", "prepare-build", "run valhalla-fetch", "up valhalla"]
+    assert timeline(serving) == [
+        "tileset-exists",
+        "status",
+        "prepare-build",
+        "run valhalla-fetch",
+        "up valhalla",
+    ]
     assert "7 GB" in result.stderr
     assert last_log(serving)["reason"] == "refresh failed (merge)"
 
@@ -240,8 +250,13 @@ def test_too_little_memory_just_before_the_merge_stops_the_refresh_while_the_old
     "rule",
     [
         {"args_contain": ["up", "--wait"], "exit": 1},
-        {"args_contain": ["exec"], "exit": 1},
-        {"args_contain": ["exec"], "stdout": '{"version":"3.8.0","tileset_last_modified":1700000000}'},
+        {"args_contain": ["exec"], "routing_tileset": REFRESH_DATE, "exit": 1},
+        {
+            "args_contain": ["exec"],
+            "routing_tileset": REFRESH_DATE,
+            "stdout": '{"version":"3.8.0","tileset_last_modified":1700000000}',
+        },
+        {"args_contain": ["exec"], "routing_tileset": REFRESH_DATE, "stdout": '{"version":"3.9.1"}'},
     ],
 )
 def test_a_failed_switch_restores_the_pointers_serves_the_old_tileset_and_prunes_nothing(
@@ -262,6 +277,82 @@ def test_a_failed_switch_restores_the_pointers_serves_the_old_tileset_and_prunes
     assert (serving.volume / "tilesets" / REFRESH_DATE / "SHA256SUMS").is_file()
     assert (last_log(serving)["result"], last_log(serving)["reason"]) == ("failed", "refresh failed (switch)")
     assert not [p for p in serving.dir.iterdir() if p.name.endswith(".orig") or ".tmp." in p.name]
+
+
+@pytest.mark.parametrize("modified", [OLD_MODIFIED, ""])
+def test_a_switch_whose_engine_still_serves_the_old_map_data_is_undone(serving: FakePi, modified: str) -> None:
+    body = f'{{"version":"3.9.1","tileset_last_modified":{modified}}}' if modified else '{"version":"3.9.1"}'
+    serving.rule("docker", "exec", routing_tileset=REFRESH_DATE, stdout=body)
+    before = pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 1
+    assert ("still serves the old map data" in result.stderr) is bool(modified)
+    assert pointers(serving) == before and timeline(serving)[-1] == "up valhalla"
+    assert (last_log(serving)["result"], last_log(serving)["reason"]) == ("failed", "refresh failed (switch)")
+
+
+def test_a_dropped_session_during_the_build_starts_the_old_tileset_and_leaves_the_pointers(serving: FakePi) -> None:
+    serving.rule("docker", "-T valhalla-build", kill_parent="TERM")
+    before = pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 143
+    last_compose = [c["argv"] for c in serving.calls("docker") if c["argv"][:1] == ["compose"]][-1]
+    assert last_compose[-3:] == ["up", "-d", "valhalla"]
+    assert pointers(serving) == before
+    assert [(line["result"], line["reason"]) for line in serving.tiles_log()] == [
+        ("failed", "refresh failed (interrupted)")
+    ]
+
+
+def test_an_interruption_after_the_pointers_changed_puts_them_back(serving: FakePi) -> None:
+    serving.rule("docker", "up", "--wait", kill_parent="HUP")
+    before = pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 129
+    assert pointers(serving) == before and timeline(serving)[-1] == "up valhalla"
+    assert [line["reason"] for line in serving.tiles_log()] == ["refresh failed (interrupted)"]
+    assert not [p for p in serving.dir.iterdir() if p.name.endswith(".orig") or ".tmp." in p.name]
+
+
+def test_a_probe_that_cannot_inspect_the_volume_is_a_refusal_not_an_absent_tileset(serving: FakePi) -> None:
+    serving.rule("docker", "tileset-exists", exit=125)
+    tree, before = volume_tree(serving), pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 1 and "cannot inspect the volume" in result.stderr
+    assert mutating(serving) == [] and (volume_tree(serving), pointers(serving)) == (tree, before)
+    assert last_log(serving)["result"] == "failed"
+
+
+def test_a_destination_that_appears_before_the_promotion_is_never_written_into(serving: FakePi) -> None:
+    serving.rule("docker", "promote", mkdir=f"tilesets/{REFRESH_DATE}", passthrough=True)
+    before = pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 1
+    assert list((serving.volume / "tilesets" / REFRESH_DATE).iterdir()) == []
+    assert pointers(serving) == before and timeline(serving)[-1] == "up valhalla"
+    assert last_log(serving)["reason"] == "refresh failed (promote)"
+
+
+def test_a_routing_env_that_cannot_be_backed_up_changes_no_pointer(serving: FakePi) -> None:
+    before = pointers(serving)
+
+    with serving.read_only_install():
+        result = serving.tiles_refresh()
+        assert pointers(serving) == before
+
+    assert result.returncode == 1 and "cannot back up routing.env" in result.stderr
+    assert timeline(serving)[-1] == "up valhalla"
+    assert last_log(serving)["result"] == "failed"
 
 
 def test_every_call_stays_in_project_overland_and_nothing_is_pruned_or_taken_down(serving: FakePi) -> None:

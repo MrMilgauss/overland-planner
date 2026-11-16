@@ -16,6 +16,8 @@
 #  5 only then: every tileset but the new and the previous one is deleted; tiles.log gets `ok`
 # Any failure before 4 starts valhalla again on the old tileset (routing.env untouched); a failed switch restores
 # routing.env and .prev, starts the old tileset and keeps the new directory for inspection. One tiles.log line per run.
+# An interrupted run (the ssh session drops) is a failed run: valhalla starts on the old tileset, the pointers come back.
+# After the switch /status must name other map data (tileset_last_modified) than before the stop.
 # The planner is never touched. Seams for the offline tests: TILES_DATE (the UTC date), MEMINFO (/proc/meminfo),
 # DOCKER_ROOT (the disk checked).
 set -uo pipefail
@@ -31,8 +33,18 @@ EXTRACTS=(europe/italy-latest europe/switzerland-latest europe/austria-latest eu
 MIN_FREE_KB=$((25 * 1024 * 1024))
 MERGE_MIN_KB=$((7 * 1024 * 1024))
 MODIFIED=
+OLD_MODIFIED=
+# on from the start of the download until the switch has passed: any exit in between starts valhalla on the old tileset
+# again (the engine may be stopped) and puts the pointers back when they were backed up.
+GUARD=off
+POINTERS_BACKED_UP=no
+FAIL_WHY="refresh failed (interrupted)"
+FAILED_LOGGED=no
 
-record() { append_tiles_log refresh "$NEW" "$MODIFIED" "$1" "${2:-}"; }
+record() {
+  append_tiles_log refresh "$NEW" "$MODIFIED" "$1" "${2:-}"
+  if [ "$1" = failed ]; then FAILED_LOGGED=yes; fi
+}
 
 # refuse WHY: a preflight refusal, nothing was changed.
 refuse() {
@@ -41,22 +53,38 @@ refuse() {
   exit 1
 }
 
-# fail_stage STAGE WHY: the old tileset keeps (or gets back) the serving; routing.env was never touched.
+# fail_stage STAGE WHY: the old tileset keeps (or gets back) the serving; the exit trap starts it and logs the line.
 fail_stage() {
   say "tiles-refresh: $2; starting valhalla on the old tileset again"
-  planner_compose up -d valhalla >&2 || say "tiles-refresh: the old valhalla did not start either"
-  record failed "refresh failed ($1)"
+  FAIL_WHY="refresh failed ($1)"
   exit 1
 }
 
 # undo_switch WHY: pointers back as they were, valhalla on the old tileset, the new directory stays for inspection.
 undo_switch() {
   say "tiles-refresh: $1; restoring routing.env, tilesets/$NEW is kept for inspection"
-  restore_routing
-  planner_compose up -d valhalla >&2 || say "tiles-refresh: the old valhalla did not start either"
-  record failed "refresh failed (switch)"
+  FAIL_WHY="refresh failed (switch)"
   exit 1
 }
+
+on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$GUARD" = on ]; then
+    GUARD=off
+    if [ "$POINTERS_BACKED_UP" = yes ]; then
+      restore_routing || say "tiles-refresh: routing.env could not be restored; check routing.env and routing.env.prev"
+    fi
+    planner_compose up -d valhalla >&2 || say "tiles-refresh: the old valhalla did not start either"
+    if [ "$FAILED_LOGGED" = no ]; then record failed "$FAIL_WHY"; fi
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mem_available_kb() { awk '$1 == "MemAvailable:" { print $2 }' "${MEMINFO:-/proc/meminfo}" 2>/dev/null; }
 
@@ -85,11 +113,13 @@ esac
 if [ "$NEW" = "$current" ] || [ "$NEW" = "$previous" ]; then
   refuse "tileset $NEW is served or kept for rollback; a served or rollback tileset is not overwritten"
 fi
-# shellcheck disable=SC2016 # $1 is expanded by the container's sh
-if docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-  sh -c 'test -d "/vol/$1"' tileset-exists "tilesets/$NEW" >/dev/null 2>&1; then
-  refuse "tilesets/$NEW already exists; one refresh a day at most, nothing is overwritten"
-fi
+present=0
+volume_has_dir "tilesets/$NEW" || present=$?
+case $present in
+  0) refuse "tilesets/$NEW already exists; one refresh a day at most, nothing is overwritten" ;;
+  1) ;;
+  *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" ;;
+esac
 root=${DOCKER_ROOT:-/var/lib/docker}
 [ -d "$root" ] || root=$HOME
 free_kb=$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')
@@ -105,8 +135,12 @@ fi
 if ! curl_planner "http://$(env_value .env PLANNER_BIND):$(planner_port)/api/diagnostics" >/dev/null 2>&1; then
   say "tiles-refresh: note: the planner's /api/diagnostics did not answer; carrying on"
 fi
+# The map data served now: after the switch /status must name other map data, or the new tileset is not what answers.
+valhalla_status || refuse "valhalla /status did not answer (or names no tileset_last_modified); nothing was changed"
+OLD_MODIFIED=$VALHALLA_MODIFIED
 
 # 2. Download and merge while valhalla serves.
+GUARD=on
 say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset serves"
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
@@ -148,12 +182,14 @@ planner_compose --profile valhalla-build run --rm -T -v "$PWD/valhalla/valhalla.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c 'set -e; name=$1; shift; part="/vol/tilesets/.$name.partial"
+    [ ! -e "/vol/tilesets/$name" ] || exit 1
     rm -rf "$part"; mkdir -p "$part"
     for f in "$@"; do mv "/vol/build/$f" "$part/$f"; done
     (cd "$part" && sha256sum "$@" >SHA256SUMS)
     mv "$part" "/vol/tilesets/$name"; rm -rf /vol/build' promote "$NEW" "${TILES_FILES[@]}" >&2 ||
   fail_stage promote "could not move the built files to tilesets/$NEW"
-backup_routing
+backup_routing || fail_stage switch "cannot back up routing.env"
+POINTERS_BACKED_UP=yes
 write_routing "$NEW" || undo_switch "cannot write routing.env"
 planner_compose up -d --wait --wait-timeout "$WAIT_TIMEOUT" valhalla >&2 ||
   undo_switch "valhalla did not become healthy within ${WAIT_TIMEOUT} s on tileset $NEW"
@@ -162,7 +198,11 @@ MODIFIED=$VALHALLA_MODIFIED
 if [ "$VALHALLA_VERSION" != "$VALHALLA_VERSION_WANTED" ]; then
   undo_switch "valhalla reports version '$VALHALLA_VERSION', expected $VALHALLA_VERSION_WANTED"
 fi
+if [ "$VALHALLA_MODIFIED" = "$OLD_MODIFIED" ]; then
+  undo_switch "valhalla still serves the old map data (tileset_last_modified $OLD_MODIFIED)"
+fi
 discard_routing_backup
+GUARD=off
 
 # 5. The new tileset passed: only it and the previous one stay.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh

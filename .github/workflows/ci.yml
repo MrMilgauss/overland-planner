@@ -752,6 +752,7 @@ jobs:
         env:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
+          set -o pipefail
           base="$PUSH_BEFORE"
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
             || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then

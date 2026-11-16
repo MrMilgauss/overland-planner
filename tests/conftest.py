@@ -6,7 +6,8 @@
   DELIVER removes `@pending` from one scenario at a time.
 - `@requires_external` scenarios are skipped unless `--run-external` is given (Pi, Docker, PC, live Valhalla).
 - `--valhalla-url URL` points the recorded-answers checks (tests/contract/routing_port) at a live engine; it needs
-  `--run-external`, and without it those checks replay the recordings.
+  `--run-external`, and without it those checks replay the recordings. `--expect-tileset-modified N` names the map data
+  (`tileset_last_modified`) that live engine must serve.
 - `@manual` scenarios are always skipped here; their evidence is logged by hand (docs/demo/).
 - Git isolation: pytest started inside a git hook (e.g. pre-push from a linked worktree) inherits GIT_DIR,
   GIT_INDEX_FILE, GIT_WORK_TREE...; tests that shell out to git would then act on the hook's repository. The
@@ -45,6 +46,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="URL",
         help="Ask the live Valhalla at URL the recorded questions (make contract-live); needs --run-external.",
     )
+    group.addoption(
+        "--expect-tileset-modified",
+        default=None,
+        metavar="N",
+        help="With --valhalla-url: the tileset_last_modified the live engine must serve (from tiles.log).",
+    )
 
 
 _CONFIG: list[pytest.Config] = []
@@ -54,6 +61,8 @@ def pytest_configure(config: pytest.Config) -> None:
     _CONFIG.append(config)
     if config.getoption("--valhalla-url") and not config.getoption("--run-external"):
         raise pytest.UsageError("--valhalla-url needs --run-external: a live run is refused without it")
+    if config.getoption("--expect-tileset-modified") and not config.getoption("--valhalla-url"):
+        raise pytest.UsageError("--expect-tileset-modified needs --valhalla-url: there is no live engine to check")
 
 
 def _marker_name(tag: str) -> str:

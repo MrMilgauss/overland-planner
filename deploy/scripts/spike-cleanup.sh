@@ -28,6 +28,13 @@ refuse() {
   exit 1
 }
 
+# partly WHY: the removal started and did not finish, so "nothing removed" would be false.
+partly() {
+  say "spike-cleanup: $1; removal failed part-way; ~/valhalla-spike may be partly removed"
+  record failed "$1; removal failed part-way; ~/valhalla-spike may be partly removed"
+  exit 1
+}
+
 case $MODE in
   check | delete) ;;
   *)
@@ -45,8 +52,7 @@ if [ "$resolved" != "$home_physical/valhalla-spike" ]; then refuse "$TARGET reso
 # 2. Valhalla is healthy on the tileset of routing.env.
 TILESET=$(env_value routing.env VALHALLA_TILESET)
 [ -n "$TILESET" ] || refuse "routing.env names no tileset: run make tiles-seed first"
-logged=$(grep -F "\"tileset\":\"$TILESET\"" tiles.log 2>/dev/null | grep -E '"action":"(seed|refresh)"' |
-  grep -E '"result":"(ok|unchanged)"' | tail -n 1 | sed -nE 's/.*"tileset_last_modified":"([^"]*)".*/\1/p')
+logged=$(logged_modified "$TILESET")
 valhalla_status || refuse "valhalla does not answer /status"
 MODIFIED=$VALHALLA_MODIFIED
 if [ -z "$logged" ] || [ "$VALHALLA_MODIFIED" != "$logged" ]; then
@@ -73,7 +79,7 @@ fi
 # 4. Removal: contents through the helper (root-owned), then the now empty directory itself.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$TARGET:/target" "$SNAPSHOT_IMAGE" \
-  sh -c 'find /target -mindepth 1 -delete' remove-spike >&2 || refuse "removal in the helper container failed"
-rmdir "$TARGET" || refuse "could not remove the emptied $TARGET"
+  sh -c 'find /target -mindepth 1 -delete' remove-spike >&2 || partly "removal in the helper container failed"
+rmdir "$TARGET" || partly "could not remove the emptied $TARGET"
 record ok
 say "spike-cleanup: $TARGET removed"

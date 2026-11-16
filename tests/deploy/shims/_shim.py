@@ -15,6 +15,12 @@ login state), `docker logout ghcr.io` removes it, and `docker pull` / `docker ma
 SCRIPT with the local sh: the mount destinations are replaced by the host directories (a volume NAME by
 `$SHIM_HOME/volumes/NAME`), so cp, find, test and the `sha256sum` shim act on real files; a scripted rule can still
 answer a call by its LABEL (the `$0` of the script).
+A rule may also carry: `kill_parent` (a signal name sent to the calling script before the answer: a dropped ssh
+session), `mkdir` (a path made below the fake volume first: something that appears between two calls), `passthrough`
+(after those side effects the call gets the default behaviour, not the rule's answer), `routing_tileset` (matches only
+while routing.env of the current directory names that tileset), `sleep` (seconds to wait before answering).
+`$SHIM_HOME/status_by_tileset.json` maps a tileset to the tileset_last_modified the valhalla /status answers while
+routing.env names it. An `ssh ... -N -L` forward lives (sleeps) until it is killed, unless a rule makes it exit.
 The stdin of `docker login --password-stdin` and of an ssh running deploy.sh is recorded (the D196 token channel).
 `flock -n <fd>` takes a real non-blocking flock(2) on the inherited descriptor, exactly like util-linux flock.
 """
@@ -25,8 +31,10 @@ import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +52,9 @@ def main(tool: str) -> None:
         log.write(json.dumps(record) + "\n")
     rule = _matching_rule(tool, argv)
     if rule is not None:
-        _answer(tool, argv, rule)
+        _side_effects(rule)
+        if not rule.get("passthrough"):
+            _answer(tool, argv, rule)
     _default(tool, argv, record)
 
 
@@ -87,6 +97,8 @@ def _matching_rule(tool: str, argv: list[str]) -> dict[str, Any] | None:
             continue
         if "bind_env" in rule and os.environ.get("PLANNER_BIND") != rule["bind_env"]:
             continue
+        if "routing_tileset" in rule and _routing_tileset() != rule["routing_tileset"]:
+            continue
         if "times" in rule:
             if rule["times"] <= 0:
                 continue
@@ -94,6 +106,34 @@ def _matching_rule(tool: str, argv: list[str]) -> dict[str, Any] | None:
             rules_file.write_text(json.dumps(rules))
         return rule
     return None
+
+
+def _side_effects(rule: dict[str, Any]) -> None:
+    if "mkdir" in rule:
+        (HOME / "volumes" / "overland_valhalla-data" / rule["mkdir"]).mkdir(parents=True, exist_ok=True)
+    if "kill_parent" in rule:
+        os.kill(os.getppid(), getattr(signal, "SIG" + rule["kill_parent"]))
+    if "sleep" in rule:
+        time.sleep(rule["sleep"])
+
+
+def _routing_tileset() -> str | None:
+    """VALHALLA_TILESET of routing.env in the current directory (the install dir), if any."""
+    routing = Path("routing.env")
+    if not routing.is_file():
+        return None
+    for line in routing.read_text().splitlines():
+        if line.startswith("VALHALLA_TILESET="):
+            return line.split("=", 1)[1]
+    return None
+
+
+def _status_body() -> str:
+    by_tileset = HOME / "status_by_tileset.json"
+    modified = json.loads(by_tileset.read_text()).get(_routing_tileset() or "") if by_tileset.is_file() else None
+    if modified is None:
+        return VALHALLA_STATUS_OK
+    return VALHALLA_STATUS_OK.replace("1793560782", str(modified))
 
 
 def _answer(tool: str, argv: list[str], rule: dict[str, Any]) -> None:
@@ -107,7 +147,7 @@ def _answer(tool: str, argv: list[str], rule: dict[str, Any]) -> None:
 
 
 def _default(tool: str, argv: list[str], record: dict[str, Any]) -> None:
-    handler = {"docker": _docker, "curl": _curl, "df": _df, "flock": _flock}.get(tool)
+    handler = {"docker": _docker, "curl": _curl, "df": _df, "flock": _flock, "ssh": _ssh}.get(tool)
     if handler is not None:
         handler(argv, record)
     sys.exit(0)
@@ -133,7 +173,7 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
     elif argv[:1] == ["compose"] and "run" in argv and {"valhalla-fetch", "valhalla-build"} & set(argv):
         _compose_run(argv)
     elif argv[:1] == ["compose"] and "exec" in argv:
-        print(VALHALLA_STATUS_OK)
+        print(_status_body())
     elif argv[:1] == ["compose"] and "logs" in argv:
         version = _release_value("PLANNER_GIT_SHA", argv) or "dev"
         print(
@@ -203,6 +243,11 @@ def _helper(argv: list[str]) -> None:
     pattern = re.compile("(" + "|".join(mounts) + ")(?![A-Za-z0-9_-])")
     translated = [pattern.sub(lambda m: mounts[m.group(1)], arg) for arg in argv[start + 1 :]]
     sys.exit(subprocess.run(["sh", *translated], check=False).returncode)
+
+
+def _ssh(argv: list[str], record: dict[str, Any]) -> None:
+    if "-N" in argv:  # a port forward stays up until its owner kills it
+        time.sleep(60)
 
 
 def _curl(argv: list[str], record: dict[str, Any]) -> None:

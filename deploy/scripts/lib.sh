@@ -268,29 +268,55 @@ valhalla_status() {
   body=$(printf '%s' "$body" | tr -d ' \n\r')
   VALHALLA_VERSION=$(printf '%s' "$body" | sed -nE 's/.*"version":"([^"]*)".*/\1/p')
   VALHALLA_MODIFIED=$(printf '%s' "$body" | sed -nE 's/.*"tileset_last_modified":([0-9]+).*/\1/p')
-  [ -n "$VALHALLA_VERSION" ]
+  [ -n "$VALHALLA_VERSION" ] && [ -n "$VALHALLA_MODIFIED" ]
+}
+
+# volume_has_dir SUBDIR: does the valhalla volume hold SUBDIR (e.g. tilesets/20261101)? Exit 0 present, 1 absent, 2 when
+# the probe itself failed (docker, the volume): that is "cannot inspect", never "absent".
+volume_has_dir() {
+  local status=0
+  # shellcheck disable=SC2016 # $1 is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'test -d "/vol/$1"' tileset-exists "$1" >/dev/null 2>&1 || status=$?
+  case $status in 0 | 1) return "$status" ;; *) return 2 ;; esac
+}
+
+# logged_modified TILESET: the tileset_last_modified of the last ok or unchanged seed/refresh/rollback line of
+# tiles.log for TILESET (what the engine was proven to serve); empty when there is none.
+logged_modified() {
+  grep -F "\"tileset\":\"$1\"" tiles.log 2>/dev/null | grep -E '"action":"(seed|refresh|rollback)"' |
+    grep -E '"result":"(ok|unchanged)"' | tail -n 1 | sed -nE 's/.*"tileset_last_modified":"([^"]*)".*/\1/p'
 }
 
 # routing.env (D166): exactly VALHALLA_TILESET=<name>; the previous file stays as routing.env.prev.
 # backup_routing keeps both files as they are until discard_routing_backup (success) or restore_routing (failure).
+# All three return non-zero when a copy or move failed; a failed backup leaves no copy behind.
 backup_routing() {
   local file
+  rm -f .routing.env.orig .routing.env.prev.orig
   for file in routing.env routing.env.prev; do
-    if [ -f "$file" ]; then cp -p "$file" ".$file.orig"; fi
+    if [ -f "$file" ] && ! cp -p "$file" ".$file.orig"; then
+      rm -f .routing.env.orig .routing.env.prev.orig
+      return 1
+    fi
   done
 }
 
 write_routing() {
-  if [ -f routing.env ]; then cp -p routing.env routing.env.prev; fi
-  printf 'VALHALLA_TILESET=%s\n' "$1" >"routing.env.tmp.$$" && mv "routing.env.tmp.$$" routing.env
+  if [ -f routing.env ]; then cp -p routing.env routing.env.prev || return 1; fi
+  if ! { printf 'VALHALLA_TILESET=%s\n' "$1" >"routing.env.tmp.$$" && mv "routing.env.tmp.$$" routing.env; }; then
+    rm -f "routing.env.tmp.$$"
+    return 1
+  fi
 }
 
 restore_routing() {
-  local file
-  rm -f routing.env routing.env.prev
+  local file status=0
+  rm -f routing.env routing.env.prev || status=1
   for file in routing.env routing.env.prev; do
-    if [ -f ".$file.orig" ]; then mv ".$file.orig" "$file"; fi
+    if [ -f ".$file.orig" ]; then mv ".$file.orig" "$file" || status=1; fi
   done
+  return "$status"
 }
 
 discard_routing_backup() { rm -f .routing.env.orig .routing.env.prev.orig; }

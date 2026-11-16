@@ -67,19 +67,19 @@ digest=$(python3 deploy/scripts/verify_provenance.py --release-json "$work/$run_
   die "refusing to deploy $SHA: provenance check failed"
 
 # shellcheck disable=SC2029 # PI_DIR is meant to expand on the Mac
-ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && test -f .env && grep -Eq '^PLANNER_BIND=[^[:space:]]+' .env" ||
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$PI_HOST" "cd $PI_DIR && test -f .env && grep -Eq '^PLANNER_BIND=[^[:space:]]+' .env" ||
   die "the Pi has no ~/$PI_DIR/.env with PLANNER_BIND set; create it from .env.example (mode 600) first"
 
 token=$(gh auth token 2>/dev/null) && [ -n "$token" ] ||
   die "gh is not logged in — run: gh auth login -h github.com -s read:packages"
 
 rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
-  --exclude=.deploy.lock --exclude='routing.env*' --exclude=__pycache__/ \
+  --exclude=.deploy.lock --exclude='routing.env*' --exclude=pi.env --exclude=__pycache__/ \
   deploy/ "$PI_HOST:$PI_DIR/" || die "rsync to $PI_HOST failed"
 
 status=0
 # shellcheck disable=SC2029 # expanded on the Mac on purpose
-printf '%s\n' "$token" | ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && bash scripts/deploy.sh $digest" || status=$?
+printf '%s\n' "$token" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$PI_HOST" "cd $PI_DIR && bash scripts/deploy.sh $digest" || status=$?
 token=
 
 mkdir -p .data/ops

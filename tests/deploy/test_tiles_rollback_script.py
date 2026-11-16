@@ -7,6 +7,7 @@ exit code and the compose calls.
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any
 
 import pytest
@@ -47,11 +48,27 @@ def test_rollback_swaps_the_pointers_starts_valhalla_checks_status_and_logs_one_
     assert (line["action"], line["tileset"], line["result"]) == ("rollback", PREVIOUS_SET, "ok")
 
 
+def test_the_modified_value_of_the_served_tileset_is_read_back_from_the_last_ok_line(pi: FakePi) -> None:
+    two_tilesets(pi)
+    assert pi.tiles_rollback().returncode == 0
+    reader = "cd {dir} && . scripts/lib.sh && logged_modified {name}"
+
+    served, other = (
+        subprocess.run(
+            ["bash", "-c", reader.format(dir=pi.dir, name=name)], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        for name in (PREVIOUS_SET, CURRENT_SET)
+    )
+
+    assert (served, other) == ("1793560782", "")  # the rollback line counts; a tileset never proven has none
+
+
 @pytest.mark.parametrize(
     "rule",
     [
         {"args_contain": ["exec"], "exit": 1},
         {"args_contain": ["exec"], "stdout": '{"version":"3.8.0","tileset_last_modified":1700000000}'},
+        {"args_contain": ["exec"], "stdout": '{"version":"3.9.1"}'},
     ],
 )
 def test_a_failed_check_swaps_back_starts_the_engine_on_the_tileset_it_came_from_and_fails(
@@ -90,6 +107,41 @@ def test_without_a_usable_previous_tileset_it_refuses_and_changes_nothing(pi: Fa
     assert {p.name: p.read_text() for p in pi.dir.glob("routing.env*")} == before
     assert not mutating_compose(pi)
     assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+def test_a_probe_that_cannot_inspect_the_volume_is_a_refusal_not_a_missing_tileset(pi: FakePi) -> None:
+    two_tilesets(pi)
+    pi.rule("docker", "tileset-exists", exit=125)
+
+    result = pi.tiles_rollback()
+
+    assert result.returncode == 1 and "cannot inspect the volume" in result.stderr
+    assert "no longer in the volume" not in result.stderr and not mutating_compose(pi)
+    assert (pi.dir / "routing.env").read_text() == CURRENT_ROUTING
+
+
+def test_a_routing_env_that_cannot_be_backed_up_stops_before_any_change(pi: FakePi) -> None:
+    two_tilesets(pi)
+
+    with pi.read_only_install():
+        result = pi.tiles_rollback()
+
+    assert result.returncode == 1 and "cannot back up routing.env" in result.stderr
+    assert (pi.dir / "routing.env").read_text() == CURRENT_ROUTING and not mutating_compose(pi)
+    assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+def test_a_dropped_session_while_valhalla_starts_swaps_the_pointers_back_and_restarts_the_engine(pi: FakePi) -> None:
+    two_tilesets(pi)
+    pi.rule("docker", "up", "--wait", kill_parent="TERM", times=1)
+
+    result = pi.tiles_rollback()
+
+    assert result.returncode == 143
+    assert (pi.dir / "routing.env").read_text() == CURRENT_ROUTING
+    assert (pi.dir / "routing.env.prev").read_text() == PREVIOUS_ROUTING
+    assert len([argv for argv in mutating_compose(pi) if "up" in argv]) == 2
+    assert "interrupted" in pi.tiles_log()[-1]["reason"] and pi.tiles_log()[-1]["result"] == "failed"
 
 
 def test_docker_calls_stay_in_project_overland_on_valhalla_only(pi: FakePi) -> None:

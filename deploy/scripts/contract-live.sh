@@ -5,7 +5,10 @@
 #  1 refuse with one line when routing.env does not exist on the Pi (no engine seeded yet)
 #  2 valhalla-tunnel up (profile ops): the Pi's 127.0.0.1:18002 -> valhalla:8002, nothing else published
 #  3 ssh -L 18002:127.0.0.1:18002 from this Mac, then wait for /status through it
+#    (refuse with one line when tiles.log has no ok or unchanged line for the tileset of routing.env: the map data
+#    the engine must serve is the tileset_last_modified of that line)
 #  4 uv run pytest --run-external tests/contract/routing_port --valhalla-url http://127.0.0.1:18002
+#    --expect-tileset-modified <that value>
 #  5 always: the ssh forward closed, valhalla-tunnel stopped and removed (valhalla itself is never touched)
 # Exit non-zero when the checks fail or the engine cannot be reached. Layer 2 (the adapter suite) joins in slice 06a.
 set -uo pipefail
@@ -41,7 +44,7 @@ PI_DIR=${PI_DIR:-apps/overland-planner}
 
 pi() {
   # shellcheck disable=SC2029 # PI_DIR and the command are meant to expand on the Mac
-  ssh -o BatchMode=yes "$PI_HOST" "cd $PI_DIR && $1"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$PI_HOST" "cd $PI_DIR && $1"
 }
 
 tunnel=
@@ -67,6 +70,14 @@ case $? in
   *) die "could not reach the Pi" ;;
 esac
 
+# The map data the engine must serve: the tileset_last_modified tiles.log recorded for the tileset of routing.env.
+# shellcheck disable=SC2016 # the command runs on the Pi
+expected=$(pi '. scripts/lib.sh && logged_modified "$(env_value routing.env VALHALLA_TILESET)"') ||
+  die "could not read tiles.log on the Pi"
+case $expected in
+  '' | *[!0-9]*) die "tiles.log has no ok or unchanged line for the tileset of routing.env: run make tiles-seed or make tiles-refresh first" ;;
+esac
+
 started=yes
 pi "test -f release.env && $COMPOSE up -d --no-deps valhalla-tunnel" >/dev/null ||
   die "valhalla-tunnel did not start (deploy first: it needs release.env)"
@@ -74,7 +85,10 @@ ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -N -L "$TU
 tunnel=$!
 reachable=
 for _ in $(seq 1 "$WAIT_TIMEOUT"); do
+  # An answer only counts while our own forward lives: a stale listener on the Mac port would be tested instead.
+  kill -0 "$tunnel" 2>/dev/null || die "the ssh forward to the Pi has exited; nothing is tested (is port $TUNNEL_PORT in use?)"
   if curl -fsS --max-time 5 "$ENGINE_URL/status" >/dev/null 2>&1; then
+    kill -0 "$tunnel" 2>/dev/null || die "the ssh forward to the Pi has exited; nothing is tested (is port $TUNNEL_PORT in use?)"
     reachable=yes
     break
   fi
@@ -82,4 +96,5 @@ for _ in $(seq 1 "$WAIT_TIMEOUT"); do
 done
 [ -n "$reachable" ] || die "the engine does not answer /status through the tunnel at $ENGINE_URL"
 
-uv run pytest -q -p no:cacheprovider --run-external tests/contract/routing_port --valhalla-url "$ENGINE_URL"
+uv run pytest -q -p no:cacheprovider --run-external tests/contract/routing_port --valhalla-url "$ENGINE_URL" \
+  --expect-tileset-modified "$expected"

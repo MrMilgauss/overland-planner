@@ -90,7 +90,8 @@ def test_planner_perf_comes_up_on_valhalla_the_live_scenarios_run_through_the_tu
         mac.index("uv", r"pytest"),
     )
     (stop,), (remove,) = mac.index("ssh", r"\bstop\b.*planner-perf"), mac.index("ssh", r"\brm\b.*planner-perf")
-    assert marker < up < forward < healthy < pytest_run < stop < remove
+    # the forward and the first probe start back to back as fresh processes: their log order is not pinned
+    assert marker < up < forward < pytest_run < stop < remove and up < healthy < pytest_run
     calls = mac.calls()
     assert "PERF_ROUTING_PROVIDER=valhalla" in calls[up]["argv"][-1]
     assert calls[pytest_run]["argv"] == [
@@ -132,3 +133,15 @@ def test_it_refuses_when_routing_env_is_missing_on_the_pi_and_starts_nothing(tmp
 
     assert result.returncode != 0 and "routing.env" in result.stderr and "make tiles-seed" in result.stderr
     assert mac.index("ssh", r"\bup\b") == [] and mac.index("uv", r".") == []
+
+
+def test_a_forward_that_dies_stops_the_run_instead_of_testing_a_stale_listener(tmp_path: Path) -> None:
+    # bypass: one scripted failure (the ssh forward exits at once while something else answers on the port).
+    mac = FakeMac(tmp_path)
+    mac.rule("ssh", "-N", "-L", exit=255)
+    mac.rule("curl", "18080/healthz", sleep=1, passthrough=True)
+
+    result = mac.run()
+
+    assert result.returncode != 0 and "the ssh forward to the Pi has exited" in result.stderr
+    assert mac.index("uv", r"pytest") == [] and mac.index("ssh", r"\bstop\b.*planner-perf")

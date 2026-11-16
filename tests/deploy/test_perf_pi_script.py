@@ -405,3 +405,16 @@ def test_every_ssh_call_of_perf_pi_has_a_connect_timeout(tmp_path: Path) -> None
     assert mac.run(MODE="e2e").returncode == 0
 
     assert all("ConnectTimeout=10" in call["argv"] for call in mac.calls("ssh"))
+
+
+def test_a_forward_that_dies_stops_the_run_instead_of_testing_a_stale_listener(tmp_path: Path) -> None:
+    # bypass: one scripted failure (the ssh forward exits at once while something else answers on the port).
+    mac = FakeMac(tmp_path)
+    mac.rule("ssh", "-N", "-L", exit=255)
+    mac.rule("curl", "18080/healthz", sleep=1, passthrough=True)
+
+    result = mac.run()
+
+    assert result.returncode != 0
+    assert "the ssh forward to the Pi has exited" in result.stderr
+    assert uv_index(mac, lambda call: "pytest" in call["argv"]) == [] and compose(mac, "stop") and compose(mac, "rm")

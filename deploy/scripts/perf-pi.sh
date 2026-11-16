@@ -137,10 +137,20 @@ started=yes
 perf_up "" || die "planner-perf did not become healthy within $WAIT_TIMEOUT s (deploy first: it runs release.env's digest)"
 ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -N -L "$PERF_PORT:127.0.0.1:$PERF_PORT" "$PI_HOST" &
 tunnel=$!
+# An answer only counts while our own forward lives: a stale listener on the Mac port would be tested instead.
+forward_alive() {
+  kill -0 "$tunnel" 2>/dev/null && return 0
+  say "the ssh forward to the Pi has exited; nothing is tested (is port $PERF_PORT in use?)"
+  return 1
+}
 wait_reachable() {
   local _
   for _ in $(seq 1 30); do
-    curl -fsS --max-time 5 "$PERF_URL/healthz" >/dev/null 2>&1 && return 0
+    forward_alive || return 1
+    if curl -fsS --max-time 5 "$PERF_URL/healthz" >/dev/null 2>&1; then
+      forward_alive
+      return
+    fi
     sleep 1
   done
   return 1

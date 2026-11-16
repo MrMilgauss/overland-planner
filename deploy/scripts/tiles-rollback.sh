@@ -15,6 +15,9 @@ cd "$(dirname "$0")/.." || exit 1
 
 TARGET=
 MODIFIED=
+# on from the first change to routing.env (backup made) until the engine is verified: any exit in between swaps back
+GUARD=off
+FAIL_WHY=interrupted
 
 record() { append_tiles_log rollback "$TARGET" "$MODIFIED" "$1" "${2:-}"; }
 
@@ -26,11 +29,30 @@ refuse() {
 
 undo() {
   say "tiles-rollback: $1; restoring routing.env"
-  restore_routing
-  planner_compose up -d --wait --wait-timeout "$WAIT_TIMEOUT" valhalla >&2 ||
-    say "tiles-rollback: valhalla did not come back on the tileset it came from either"
-  refuse "$1"
+  FAIL_WHY=$1
+  exit 1
 }
+
+# The exit trap: while GUARD is on, every exit that is not the verified success (a failed check, a dropped ssh session)
+# restores the pointers and starts valhalla on the tileset it came from.
+on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$GUARD" = on ]; then
+    GUARD=off
+    restore_routing || say "tiles-rollback: routing.env could not be restored; check routing.env and routing.env.prev"
+    planner_compose up -d --wait --wait-timeout "$WAIT_TIMEOUT" valhalla >&2 ||
+      say "tiles-rollback: valhalla did not come back on the tileset it came from either"
+    say "tiles-rollback: $FAIL_WHY"
+    record failed "$FAIL_WHY"
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 exec 9>>.deploy.lock
 flock -n 9 || refuse "a deploy, rollback or tiles run is already running"
@@ -43,12 +65,16 @@ case $TARGET in
   [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
   *) refuse "routing.env.prev names '$TARGET', not an 8-digit tileset" ;;
 esac
-# shellcheck disable=SC2016 # $1 is expanded by the container's sh
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-  sh -c 'test -d "/vol/$1"' tileset-exists "tilesets/$TARGET" >/dev/null 2>&1 ||
-  refuse "the previous tileset tilesets/$TARGET is no longer in the volume"
+present=0
+volume_has_dir "tilesets/$TARGET" || present=$?
+case $present in
+  0) ;;
+  1) refuse "the previous tileset tilesets/$TARGET is no longer in the volume" ;;
+  *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" ;;
+esac
 
-backup_routing
+backup_routing || refuse "cannot back up routing.env; nothing was changed"
+GUARD=on
 # write_routing keeps the file it replaces as routing.env.prev: the two pointers swap.
 write_routing "$TARGET" || undo "cannot write routing.env"
 planner_compose up -d --wait --wait-timeout "$WAIT_TIMEOUT" valhalla >&2 ||
@@ -60,5 +86,6 @@ if [ "$VALHALLA_VERSION" != "$VALHALLA_VERSION_WANTED" ]; then
 fi
 
 discard_routing_backup
+GUARD=off
 record ok
 say "tiles-rollback: ok: valhalla $VALHALLA_VERSION serves tileset $TARGET (was $current)"

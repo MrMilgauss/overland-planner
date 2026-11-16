@@ -21,6 +21,7 @@ from tests.deploy.conftest import REPO, SHIMS
 SCRIPT = REPO / "deploy/scripts/contract-live.sh"
 PI_HOST = "deploy@pi.example"
 PI_ADDRESS_PART = "pi.example"
+LOGGED_MODIFIED = "1793560782"  # what tiles.log recorded for the tileset of routing.env
 FAKE_UV = """#!{python}
 import json, os, sys
 from pathlib import Path
@@ -42,6 +43,7 @@ class FakeMac:
         uv.write_text(FAKE_UV.format(python=sys.executable))
         uv.chmod(0o755)
         (self.home / "uv.exit").write_text("0")
+        self.rule("ssh", "logged_modified", stdout=f"{LOGGED_MODIFIED}\n")
 
     def rule(self, tool: str, *args_contain: str, **answer: Any) -> None:
         rules_file = self.home / "rules.json"
@@ -96,7 +98,8 @@ def test_the_tunnel_comes_up_the_engine_checks_run_through_it_and_everything_is_
         mac.index("uv", r"pytest"),
     )
     (stop,), (remove,) = mac.index("ssh", r"\bstop\b.*valhalla-tunnel"), mac.index("ssh", r"\brm\b.*valhalla-tunnel")
-    assert marker < up < forward < status < pytest_run < stop < remove
+    # the forward and the first probe start back to back as fresh processes: their log order is not pinned
+    assert marker < up < forward < pytest_run < stop < remove and up < status < pytest_run
     calls = mac.calls()
     assert calls[pytest_run]["argv"] == [
         "run",
@@ -108,6 +111,8 @@ def test_the_tunnel_comes_up_the_engine_checks_run_through_it_and_everything_is_
         "tests/contract/routing_port",
         "--valhalla-url",
         "http://127.0.0.1:18002",
+        "--expect-tileset-modified",
+        LOGGED_MODIFIED,
     ]
     ssh_forward = calls[forward]["argv"]
     assert ssh_forward[: ssh_forward.index("-N")] == [
@@ -123,6 +128,7 @@ def test_the_tunnel_comes_up_the_engine_checks_run_through_it_and_everything_is_
     assert "--profile ops" in start and "--profile routing" in start and "--env-file routing.env" in start
     assert "up -d --no-deps valhalla-tunnel" in start
     assert shows_no_address(result)
+    assert all("ConnectTimeout=10" in call["argv"] for call in calls if call["tool"] == "ssh")
 
 
 @pytest.mark.parametrize("failing", ["checks", "tunnel never answers"])
@@ -156,3 +162,34 @@ def test_without_routing_env_on_the_pi_it_refuses_with_one_line_and_starts_nothi
         "make contract-live: routing.env does not exist on the Pi: run make tiles-seed first"
     ]
     assert len(mac.calls()) == 1 and shows_no_address(result)
+
+
+def test_a_forward_that_dies_stops_the_run_instead_of_testing_a_stale_listener(tmp_path: Path) -> None:
+    # bypass: one scripted failure (the ssh forward exits at once while something else answers on the port).
+    mac = FakeMac(tmp_path)
+    mac.rule("ssh", "-N", "-L", exit=255)
+    mac.rule("curl", "18002/status", sleep=1, passthrough=True)
+
+    result = mac.run()
+
+    assert result.returncode != 0 and "the ssh forward to the Pi has exited" in result.stderr
+    assert mac.index("uv", r"pytest") == [] and teardown_follows(mac)
+
+
+@pytest.mark.parametrize("answer", [{"stdout": "\n"}, {"stdout": "oops\n"}])
+def test_without_a_logged_tileset_it_refuses_with_one_line_and_starts_nothing(
+    tmp_path: Path, answer: dict[str, str]
+) -> None:
+    # bypass: one scripted answer of the Pi (tiles.log has no ok or unchanged line for the tileset).
+    mac = FakeMac(tmp_path)
+    mac.rule("ssh", "logged_modified", **answer)
+    (mac.home / "rules.json").write_text(json.dumps(list(reversed(json.loads((mac.home / "rules.json").read_text())))))
+
+    result = mac.run()
+
+    assert result.returncode != 0
+    assert [line for line in result.stderr.splitlines() if line.strip()] == [
+        "make contract-live: tiles.log has no ok or unchanged line for the tileset of routing.env: "
+        "run make tiles-seed or make tiles-refresh first"
+    ]
+    assert mac.index("ssh", r"\bup\b") == [] and mac.index("uv", r".") == [] and shows_no_address(result)

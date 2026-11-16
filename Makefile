@@ -30,7 +30,7 @@ SHELLCHECK_SEVERITY := info
 # Pi operations (D99): only compose project `overland`, volumes overland_*, images of PLANNER_REPO; never a prune.
 # The remote shell is the deploy user's login shell on the Pi (bash); scripts/lib.sh is there since the first deploy.
 PLANNER_REPO := ghcr.io/mrmilgauss/overland-planner
-PI_SSH = ssh -o BatchMode=yes $(PI_HOST)
+PI_SSH = ssh -o BatchMode=yes -o ConnectTimeout=10 $(PI_HOST)
 PI_GUARDED := deploy rollback pi-preflight status logs diag image-gc uninstall purge perf-pi acceptance-pi contract-live tiles-seed tiles-rollback tiles-refresh spike-cleanup
 ifneq ($(filter $(PI_GUARDED),$(MAKECMDGOALS)),)
 ifeq ($(strip $(PI_HOST)),)
@@ -45,6 +45,9 @@ TILESET ?= 20261101
 SEED_DIR ?= valhalla-spike/custom_files
 EXPECT_TILESET_MODIFIED ?= $(if $(filter 20261101,$(TILESET)),1793560782)
 SPIKE_WORD := delete valhalla-spike
+# rq VALUE: VALUE as one word for the Pi's shell, inside the single-quoted ssh command text (so it cannot be split).
+SQ := '
+rq = $(if $(findstring $(SQ),$(1)),$(error no quote character in '$(1)'),'\''$(1)'\'')
 # make perf-pi (D96, D146, D135): N measured runs of ITEMS items; POINTS (points per track) empty = the committed 12.
 N ?= 10
 ITEMS ?= 60
@@ -130,7 +133,7 @@ deploy: ## Deploy a CI-green main SHA to the Pi (default: newest with release.js
 rollback: ## Roll the Pi back to release.env.prev (STEPS=2: .prev2); image already on the Pi, so no provenance check (D195)
 	@case "$(STEPS)" in 1|2) ;; *) echo "make rollback: STEPS must be 1 or 2" >&2; exit 2 ;; esac; \
 	status=0; \
-	ssh -o BatchMode=yes $(PI_HOST) 'cd $(PI_DIR) && bash scripts/rollback.sh $(STEPS)' || status=$$?; \
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/rollback.sh $(STEPS)' || status=$$?; \
 	mkdir -p .data/ops; \
 	if rsync -a $(PI_HOST):$(PI_DIR)/releases.log .data/ops/releases.log; then tail -n 3 .data/ops/releases.log; \
 	else echo "make rollback: could not copy releases.log back" >&2; fi; \
@@ -171,8 +174,8 @@ purge: ## Remove project overland with its overland_* volumes and planner images
 	  "$(PLANNER_REPO) images on $(PI_HOST). No backup is taken (D91). Type '$(PURGE_WORD)' to go on:"; \
 	read -r answer || answer=; \
 	if [ "$$answer" != "$(PURGE_WORD)" ]; then echo "make purge: aborted, nothing removed" >&2; exit 1; fi; \
-	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) down && \
-	  docker volume ls -q | while read -r volume; do case "$$volume" in overland_*) docker volume rm "$$volume" ;; esac; done && \
+	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) --profile routing --profile perf --profile ops --profile valhalla-build down && \
+	  docker volume ls -q | { failed=0; while read -r volume; do case "$$volume" in overland_*) docker volume rm "$$volume" || failed=1 ;; esac; done; [ "$$failed" -eq 0 ]; } && \
 	  docker image ls --digests --format "{{.Repository}}@{{.Digest}}" $(PLANNER_REPO) | while read -r ref; do \
 	    case "$${ref#*@}" in "<none>"|"") ;; *) docker image rm "$$ref" ;; esac; \
 	  done'
@@ -188,10 +191,10 @@ contract-live: ## The recorded Valhalla answers against the live engine (D235): 
 
 tiles-seed: ## Seed the first Valhalla tileset from the SPIKE-2R files (TILESET=20261101 SEED_DIR=valhalla-spike/custom_files, under the Pi home): copy, verify, routing.env, start valhalla, check /status. Copies ~5 GB: run at a start time the owner names
 	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
-	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=__pycache__/ \
+	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=pi.env --exclude=__pycache__/ \
 	  deploy/ $(PI_HOST):$(PI_DIR)/
 	@status=0; \
-	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-seed.sh $(TILESET) $(SEED_DIR) $(EXPECT_TILESET_MODIFIED)' || status=$$?; \
+	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-seed.sh $(call rq,$(TILESET)) $(call rq,$(SEED_DIR)) $(call rq,$(EXPECT_TILESET_MODIFIED))' || status=$$?; \
 	mkdir -p .data/ops; \
 	if rsync -a $(PI_HOST):$(PI_DIR)/tiles.log .data/ops/tiles.log; then tail -n 3 .data/ops/tiles.log; \
 	else echo "make tiles-seed: could not copy tiles.log back" >&2; fi; \
@@ -199,7 +202,7 @@ tiles-seed: ## Seed the first Valhalla tileset from the SPIKE-2R files (TILESET=
 
 tiles-rollback: ## Switch valhalla back to the previous tileset (routing.env.prev) and check /status; swaps back when the check fails (D239)
 	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
-	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=__pycache__/ \
+	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=pi.env --exclude=__pycache__/ \
 	  deploy/ $(PI_HOST):$(PI_DIR)/
 	@status=0; \
 	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-rollback.sh' || status=$$?; \
@@ -210,7 +213,7 @@ tiles-rollback: ## Switch valhalla back to the previous tileset (routing.env.pre
 
 tiles-refresh: ## Quarterly map-data refresh: download and merge while serving, then build and switch the Valhalla tileset (about 40 minutes without routing; only at a start time the owner names, D237); any failure keeps the old tileset serving
 	rsync -a --exclude=.env --exclude='release.env*' --exclude=releases.log --exclude=snapshots/ \
-	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=__pycache__/ \
+	  --exclude=.deploy.lock --exclude='routing.env*' --exclude=tiles.log --exclude=pi.env --exclude=__pycache__/ \
 	  deploy/ $(PI_HOST):$(PI_DIR)/
 	@status=0; \
 	$(PI_SSH) 'cd $(PI_DIR) && bash scripts/tiles-refresh.sh' || status=$$?; \

@@ -1,4 +1,6 @@
-"""The recorded Valhalla 3.9.1 answers are byte-for-byte what SPIKE-2R committed (D235): the manifest pins them."""
+"""The recorded Valhalla 3.9.1 answers equal their manifest (D235): every file's sha256 is the one MANIFEST.sha256 lists
+and the manifest lists every file, so the recordings cannot change unnoticed. That they equal the committed SPIKE-2R
+files was checked once, when they were copied (32 of 32); this test proves no more than the manifest equality."""
 
 from __future__ import annotations
 

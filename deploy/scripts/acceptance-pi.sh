@@ -87,7 +87,10 @@ ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -N -L "$PE
 tunnel=$!
 reachable=
 for _ in $(seq 1 30); do
+  # An answer only counts while our own forward lives: a stale listener on the Mac port would be tested instead.
+  kill -0 "$tunnel" 2>/dev/null || die "the ssh forward to the Pi has exited; nothing is tested (is port $PERF_PORT in use?)"
   if curl -fsS --max-time 5 "$PERF_URL/healthz" >/dev/null 2>&1; then
+    kill -0 "$tunnel" 2>/dev/null || die "the ssh forward to the Pi has exited; nothing is tested (is port $PERF_PORT in use?)"
     reachable=yes
     break
   fi

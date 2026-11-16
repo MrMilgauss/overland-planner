@@ -119,3 +119,17 @@ def test_no_argument_can_change_the_target_the_only_modes_are_check_and_delete(
 
     assert result.returncode == 2 and "usage" in result.stderr
     assert len(seeded.calls("docker")) == before and seeded.spike.exists()
+
+
+@pytest.mark.parametrize("rule", [{"exit": 1}, {"exit": 0}], ids=["helper fails", "helper leaves files so rmdir fails"])
+def test_a_removal_that_fails_part_way_does_not_claim_that_nothing_was_removed(
+    seeded: FakePi, rule: dict[str, int]
+) -> None:
+    seeded.rule("docker", "remove-spike", **rule)
+
+    result = seeded.run_script("spike-cleanup.sh", "delete")
+
+    assert result.returncode == 1
+    assert "removal failed part-way; ~/valhalla-spike may be partly removed" in result.stderr
+    assert "nothing removed" not in result.stderr
+    assert (seeded.tiles_log()[-1]["result"], "partly removed" in seeded.tiles_log()[-1]["reason"]) == ("failed", True)

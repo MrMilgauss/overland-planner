@@ -340,10 +340,12 @@ def test_make_deploy_ships_the_verified_digest_to_the_pi(mac: MacCheckout) -> No
     assert ".env" in steps[0][1] and "PLANNER_BIND" in steps[0][1]
     assert (
         "--exclude=.env" in steps[1][1]
+        and "--exclude=pi.env" in steps[1][1]
         and "--delete" not in steps[1][1]
         and steps[1][1].endswith("apps/overland-planner/")
     )
     assert f"scripts/deploy.sh {digest}" in steps[2][1]
+    assert all("ConnectTimeout=10" in call["argv"] for call in mac.calls("ssh"))
     assert "releases.log" in steps[3][1] and ".data/ops/releases.log" in steps[3][1]
 
 

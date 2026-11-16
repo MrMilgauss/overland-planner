@@ -6,6 +6,7 @@ External commands are the shims in tests/deploy/shims (PATH-prefixed); see shims
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import itertools
 import json
@@ -192,6 +193,19 @@ class FakePi:
         for name, content in contents.items():
             (source / name).write_bytes(content)
         return contents
+
+    @contextlib.contextmanager
+    def read_only_install(self) -> Iterator[None]:
+        """The install dir cannot take new files (a failed backup copy); tiles.log and .deploy.lock still can."""
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions")
+        for name in ("tiles.log", ".deploy.lock"):
+            (self.dir / name).touch()
+        self.dir.chmod(0o555)
+        try:
+            yield
+        finally:
+            self.dir.chmod(0o755)
 
     def tiles_log(self) -> list[dict[str, str]]:
         log = self.dir / "tiles.log"

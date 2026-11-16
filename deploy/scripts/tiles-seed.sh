@@ -27,6 +27,9 @@ MODIFIED=
 WAS_RUNNING=
 COPIED=no
 POINTER_CHANGED=no
+# on from the first change to routing.env (backup made) until the engine is verified: any exit in between puts it back
+GUARD=off
+FAIL_WHY=interrupted
 
 record() { append_tiles_log seed "$TILESET" "$MODIFIED" "$1" "${2:-}"; }
 
@@ -42,16 +45,36 @@ drop_partial() {
     sh -c 'rm -rf "/vol/tilesets/.$1.partial"' drop-partial "$TILESET" >&2 || true
 }
 
-# undo REASON: the engine did not come up on the new tileset; the pointers return as they were.
+# undo REASON: the engine did not come up on the new tileset; the exit trap puts the pointers back.
 undo() {
   say "tiles-seed: $1; restoring routing.env"
-  if [ -z "$WAS_RUNNING" ]; then planner_compose stop valhalla >&2 || true; fi
-  restore_routing
-  if [ -n "$WAS_RUNNING" ]; then
-    planner_compose up -d valhalla >&2 || say "tiles-seed: the previous valhalla did not come back either"
-  fi
-  refuse "$1"
+  FAIL_WHY=$1
+  exit 1
 }
+
+# The exit trap: while GUARD is on, every exit that is not the verified success (a failed start, a dropped ssh session)
+# restores routing.env and .prev and returns valhalla to how it was: stopped when it was not running before, started
+# again when it was.
+on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$GUARD" = on ]; then
+    GUARD=off
+    if [ -z "$WAS_RUNNING" ]; then planner_compose stop valhalla >&2 || true; fi
+    restore_routing || say "tiles-seed: routing.env could not be restored; check routing.env and routing.env.prev"
+    if [ -n "$WAS_RUNNING" ]; then
+      planner_compose up -d valhalla >&2 || say "tiles-seed: the previous valhalla did not come back either"
+    fi
+    say "tiles-seed: $FAIL_WHY"
+    record failed "$FAIL_WHY"
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # 1. Preflight.
 case $TILESET in
@@ -80,12 +103,14 @@ flock -n 9 || refuse "a deploy, rollback or tiles run is already running"
 say "tiles-seed: checksums of the source files (this takes a while)"
 SOURCE_SUMS=$(dir_sums source-sums "$SOURCE") || refuse "cannot read the source files in ~/${SEED_DIR%/}"
 WAS_RUNNING=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-  --filter label=com.docker.compose.service=valhalla 2>/dev/null)
+  --filter label=com.docker.compose.service=valhalla) ||
+  refuse "cannot tell whether valhalla is running (docker ps failed); nothing was changed"
 
 # 2. The tileset directory.
-# shellcheck disable=SC2016 # $1 is expanded by the container's sh
-if docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-  sh -c 'test -d "/vol/$1"' tileset-exists "tilesets/$TILESET" >/dev/null 2>&1; then
+present=0
+volume_has_dir "tilesets/$TILESET" || present=$?
+case $present in 0 | 1) ;; *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" ;; esac
+if [ "$present" -eq 0 ]; then
   copy_sums=$(volume_sums tileset-sums "tilesets/$TILESET") || copy_sums=
   stored_sums=$(volume_stored_sums "tilesets/$TILESET") || stored_sums=
   if [ "$copy_sums" != "$SOURCE_SUMS" ] || [ "$stored_sums" != "$SOURCE_SUMS" ]; then
@@ -111,7 +136,8 @@ else
   fi
   # shellcheck disable=SC2016 # the script is expanded by the container's sh
   docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-    sh -c 'set -e; printf "%s\n" "$2" >"/vol/tilesets/.$1.partial/SHA256SUMS"
+    sh -c 'set -e; [ ! -e "/vol/tilesets/$1" ] || exit 1
+      printf "%s\n" "$2" >"/vol/tilesets/.$1.partial/SHA256SUMS"
       mv "/vol/tilesets/.$1.partial" "/vol/tilesets/$1"' finalize-tileset "$TILESET" "$SOURCE_SUMS" >&2 ||
     {
       drop_partial
@@ -122,7 +148,8 @@ fi
 
 # 3. Pointer, start, status.
 current=$(env_value routing.env VALHALLA_TILESET)
-backup_routing
+backup_routing || refuse "cannot back up routing.env; nothing was changed"
+GUARD=on
 if [ "$current" != "$TILESET" ]; then
   write_routing "$TILESET" || undo "cannot write routing.env"
   POINTER_CHANGED=yes
@@ -139,6 +166,7 @@ if [ -n "$EXPECT" ] && [ "$VALHALLA_MODIFIED" != "$EXPECT" ]; then
 fi
 
 discard_routing_backup
+GUARD=off
 if [ "$COPIED" = no ] && [ "$POINTER_CHANGED" = no ]; then result=unchanged; else result=ok; fi
 record "$result"
 say "tiles-seed: $result: valhalla $VALHALLA_VERSION serves tileset $TILESET (tileset_last_modified $MODIFIED)"

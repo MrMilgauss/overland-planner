@@ -508,6 +508,7 @@ def test_mutation_job_runs_only_when_asked_for_on_manual_dispatch() -> None:
     assert "BASE=" in mutate["run"] and "github.event.before" in str(mutate.get("env", {}))
     assert "0000000000000000000000000000000000000000" in mutate["run"], "new branch or forced push mutates all"
     assert "GITHUB_STEP_SUMMARY" in mutate["run"]
+    assert mutate["run"].splitlines()[0] == "set -o pipefail", "`make mutate | tee` must keep make's exit code"
     dry = subprocess.run(
         ["make", "-n", "mutate", "BASE=all"], cwd=REPO_ROOT, capture_output=True, text=True, check=False
     )
