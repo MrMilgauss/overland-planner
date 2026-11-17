@@ -239,9 +239,10 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
     assert set(job) == {
         *("state", "reason", "message", "plan_run_id", "elapsed_s", "memo_hit", "ignore_memo"),
         *("stage_ms", "legs_total", "legs_new", "legs_cached", "items_included", "incumbent", "stoppable"),
-        "notices",
+        *("second_pass_pairs", "retried", "notices"),  # 09-05: the poll shows them (brief section 5 field table)
     }
     assert (job["state"], job["reason"], job["message"], job["stoppable"]) == ("done", None, None, False)
+    assert (job["retried"], job["second_pass_pairs"]) == (False, 0)
     stop = client.post(f"/api/plan-jobs/{job_id}/stop")
     assert (stop.status_code, stop.json()) == (200, job), "a Stop on a done job answers its final payload (D136)"
     assert set(job["stage_ms"]) == {"snapshot", "matrix", "reach_model", "solve", "guard_persist"}

@@ -440,7 +440,7 @@
         "type": "object"
       },
       "PlanJobResource": {
-        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and\n`legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);\n`incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the\nrun has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every\nstate before `finalising` and false from then on (D136). `notices` repeats Calculate's, once the project is read.",
+        "description": "The poll payload (brief \u00a75): the subset filled so far; later fields are additive. `memo_hit` is true when the\norder came from the fingerprint memo (05-10) instead of a solve. `stage_ms` holds the whole milliseconds of each\nstage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);\n`legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and\n`legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);\n`second_pass_pairs` (the retrace pairs asked after the first pass) and `retried` (the road map retried a call) are\nnull until the look-up says;\n`incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the\nrun has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every\nstate before `finalising` and false from then on (D136). `notices` repeats Calculate's, once the project is read.",
         "properties": {
           "elapsed_s": {
             "title": "Elapsed S",
@@ -548,6 +548,28 @@
             ],
             "title": "Reason"
           },
+          "retried": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retried"
+          },
+          "second_pass_pairs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Pass Pairs"
+          },
           "stage_ms": {
             "anyOf": [
               {
@@ -595,6 +617,8 @@
           "legs_new",
           "legs_cached",
           "items_included",
+          "second_pass_pairs",
+          "retried",
           "incumbent",
           "stoppable",
           "notices"

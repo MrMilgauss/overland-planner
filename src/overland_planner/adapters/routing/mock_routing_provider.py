@@ -20,10 +20,18 @@ The optional `off_network: [[lat, lon], ...]` (06a, D245) lists places no road o
 at 6 decimals): every pair from or to one answers an `OffNetwork` naming that end or those ends, except a place to
 itself; a malformed list is `InvalidRoadMapError`.
 
-`provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted; its
+The optional `faults: {fail_after_pairs: N, fail_once_on_call: k, kind: unreachable|unavailable}` (06a, D248; `kind`
+and at least one of the two) makes the engine's failures testable offline. The pairs answered and the matrix calls made
+are counted over the road map's life, from its start or from `arm_faults`: once N pairs have been answered every later
+call raises the typed error of `kind`; call number k is retried inside the road map, so it answers and the call's
+observer hears one `retried()`. The probe's calls are never failed nor counted; a malformed plan is
+`InvalidRoadMapError`. `arm_faults(None)` ends the faults.
+
+`provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted (faults
+included, as they are part of the file); arming faults later changes nothing of it, so the legs found stay known. Its
 `profile` is `mock.v1`. The start-up probe proves Torino -> Susa (when the script does not list it), identical points,
 that one scripted pair answers as scripted, that one pair of each level the script lists does and that one listed
-off-network point answers so. The fault plan arrives with slice 06a's later steps.
+off-network point answers so.
 """
 
 from __future__ import annotations
@@ -39,7 +47,13 @@ from typing import cast
 import yaml
 
 from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
-from overland_planner.application.ports.routing_provider import RoadCell, RoutingObserver
+from overland_planner.application.ports.routing_provider import (
+    ProviderUnavailable,
+    ProviderUnreachable,
+    RoadCell,
+    RoutingObserver,
+    RoutingProviderError,
+)
 from overland_planner.domain.catalog.coordinate import Coordinate, CoordinateOutOfRangeError
 from overland_planner.domain.routing.road_leg import NOTHING_TO_DRIVE, OffNetwork, RoadMeasure, RoadPair
 
@@ -56,7 +70,12 @@ _KNOWN_PAIR_TOLERANCE_S = 1
 _PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s", "level"})
 _PAIR_MANDATORY_KEYS = frozenset({"from", "to"})
 _UNCONFIRMED_PREFIX = "unconfirmed:"
-_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency", "off_network"})
+_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency", "off_network", "faults"})
+_FAULT_KEYS = frozenset({"fail_after_pairs", "fail_once_on_call", "kind"})
+_FAILURES: dict[str, type[RoutingProviderError]] = {
+    "unreachable": ProviderUnreachable,
+    "unavailable": ProviderUnavailable,
+}
 PROFILE = "mock.v1"
 _LATENCY_KEYS = frozenset({"answered_at_once_pairs", "then_each_call_s"})
 
@@ -77,6 +96,16 @@ class RoadLookUpLatency:
 
 
 @dataclass(frozen=True)
+class RoadMapFaults:
+    """The scripted failures: after `fail_after_pairs` pairs answered every call fails, and call number
+    `fail_once_on_call` is retried inside the road map; `kind` is the error, `unreachable` or `unavailable`."""
+
+    kind: str
+    fail_after_pairs: int | None = None
+    fail_once_on_call: int | None = None
+
+
+@dataclass(frozen=True)
 class RoadMapScript:
     """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file, its latency and
     the places off the network."""
@@ -86,6 +115,7 @@ class RoadMapScript:
     sha256: str
     latency: RoadLookUpLatency | None = None
     off_network: frozenset[Coordinate] = frozenset()
+    faults: RoadMapFaults | None = None
 
 
 def read_road_map(path: Path) -> RoadMapScript:
@@ -95,15 +125,17 @@ def read_road_map(path: Path) -> RoadMapScript:
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         raise InvalidRoadMapError(path, f"cannot be read ({type(error).__name__}: {error})") from None
     try:
-        detour_factor, pairs, latency, off_network = _parse(document)
+        detour_factor, pairs, latency, off_network, faults = _parse(document)
     except (ValueError, TypeError) as error:
         raise InvalidRoadMapError(path, str(error)) from None
-    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency, off_network)
+    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency, off_network, faults)
 
 
 def _parse(
     document: object,
-) -> tuple[float, dict[RoadPair, RoadMeasure | None], RoadLookUpLatency | None, frozenset[Coordinate]]:
+) -> tuple[
+    float, dict[RoadPair, RoadMeasure | None], RoadLookUpLatency | None, frozenset[Coordinate], RoadMapFaults | None
+]:
     if not isinstance(document, dict) or not set(document) <= _TOP_LEVEL_KEYS or "pairs" not in document:
         raise ValueError("must be a mapping with `pairs` and an optional `detour_factor` and `latency`")
     detour_factor = document.get("detour_factor", DETOUR_FACTOR)
@@ -117,7 +149,34 @@ def _parse(
         pair, measure = _pair(index, entry)
         if pairs.setdefault(pair, measure) != measure:
             raise ValueError(f"pairs[{index}] lists a pair again with different values or levels")
-    return float(detour_factor), pairs, _latency(document.get("latency")), _off_network(document.get("off_network", []))
+    return (
+        float(detour_factor),
+        pairs,
+        _latency(document.get("latency")),
+        _off_network(document.get("off_network", [])),
+        _faults(document.get("faults")),
+    )
+
+
+def _faults(value: object) -> RoadMapFaults | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not set(value) <= _FAULT_KEYS or value.get("kind") not in _FAILURES:
+        raise ValueError(
+            "faults must have a kind (unreachable or unavailable) and fail_after_pairs or fail_once_on_call"
+        )
+    after, once = value.get("fail_after_pairs"), value.get("fail_once_on_call")
+    if after is None and once is None:
+        raise ValueError("faults must have fail_after_pairs or fail_once_on_call")
+    if after is not None and (not _is_whole(after) or after < 0):
+        raise ValueError("faults fail_after_pairs must be a whole number of at least 0")
+    if once is not None and (not _is_whole(once) or once < 1):
+        raise ValueError("faults fail_once_on_call must be a whole number of at least 1")
+    return RoadMapFaults(value["kind"], after, once)
+
+
+def _is_whole(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _off_network(listed: object) -> frozenset[Coordinate]:
@@ -213,6 +272,39 @@ class _LookUpPace:
         self._probing.on = on
 
 
+class _FaultCourse:
+    """The fault plan over the road map's life: counts the matrix calls and the pairs answered since it was armed, and
+    fails or retries a call as the plan says. The probe's calls are never failed nor counted."""
+
+    def __init__(self, faults: RoadMapFaults | None) -> None:
+        self._faults = faults
+        self._calls = 0
+        self._answered = 0
+        self._lock = threading.Lock()
+        self._probing = threading.local()
+
+    def probing(self, on: bool) -> None:
+        self._probing.on = on
+
+    def before_answering(self, observer: RoutingObserver | None) -> None:
+        """Raises the typed error once the pairs answered have reached the plan; tells the observer of the one retry."""
+        if self._faults is None or getattr(self._probing, "on", False):
+            return
+        with self._lock:
+            self._calls += 1
+            call, answered = self._calls, self._answered
+        if self._faults.fail_after_pairs is not None and answered >= self._faults.fail_after_pairs:
+            raise _FAILURES[self._faults.kind](f"scripted fault: {answered} pairs answered")
+        if call == self._faults.fail_once_on_call and observer is not None:
+            observer.retried()
+
+    def answered(self, pairs: int) -> None:
+        if getattr(self._probing, "on", False):
+            return
+        with self._lock:
+            self._answered += pairs
+
+
 class MockRoutingProvider:
     """The offline road map; with `script`, the script's detour factor replaces `detour_factor`; `sleep` waits out the
     script's latency."""
@@ -229,7 +321,12 @@ class MockRoutingProvider:
         self._pairs: Mapping[RoadPair, RoadMeasure | None] = {} if script is None else script.pairs
         self._off_network = frozenset[Coordinate]() if script is None else script.off_network
         self._pace = _LookUpPace(None if script is None else script.latency)
+        self._faults = _FaultCourse(None if script is None else script.faults)
         self._sleep = sleep
+
+    def arm_faults(self, faults: RoadMapFaults | None) -> None:
+        """Fail as `faults` say from now on, counting the calls and pairs from now; `None` ends the faults."""
+        self._faults = _FaultCourse(faults)
 
     @property
     def provider_id(self) -> str:
@@ -243,17 +340,21 @@ class MockRoutingProvider:
     def matrix(
         self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
     ) -> Sequence[Sequence[RoadCell]]:
+        faults = self._faults  # the plan of this call, even if it is re-armed while the call waits
+        faults.before_answering(observer)
         wait_s = self._pace.wait_s()
         if wait_s is not None:
             self._sleep(wait_s)
         answer = [[self._measure(source, target) for target in targets] for source in sources]
         self._pace.answered(len(sources) * len(targets))
+        faults.answered(len(sources) * len(targets))
         return answer
 
     def probe(self) -> ProbeResult:
         """Fatal when it fails: nothing here can recover by itself, so a wrong answer is a defect (brief section 7).
         Its calls are never delayed by the latency, nor counted."""
         self._pace.probing(True)
+        self._faults.probing(True)
         try:
             return first_failure(
                 (
@@ -267,6 +368,7 @@ class MockRoutingProvider:
             )
         finally:
             self._pace.probing(False)
+            self._faults.probing(False)
 
     def _measure(self, source: Coordinate, target: Coordinate) -> RoadCell:
         if source == target:

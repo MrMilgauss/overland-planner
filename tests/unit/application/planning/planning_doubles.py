@@ -24,7 +24,7 @@ from overland_planner.application.ports.plan_job_log import PlanJobLogEntry
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
-from overland_planner.application.ports.routing_provider import RoutingObserver
+from overland_planner.application.ports.routing_provider import RoutingObserver, RoutingProviderError
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
@@ -249,7 +249,8 @@ class RecordingRoadMap:
     """Road legs from a table; `asked` counts every pair the road map was asked for.
 
     The road time of a leg is `leg_s[pair]` when given, else the distance driven at about 60 km/h (at least 1 s).
-    A pair in `no_road` has no road at any level: its cell is `None`, as the port says.
+    A pair in `no_road` has no road at any level: its cell is `None`, as the port says. Call number `fails_on_call[0]`
+    raises `fails_on_call[1]` and answers nothing; call number `retries_on_call` tells the observer of one retry.
     """
 
     provider_id = "road-map-double"
@@ -262,7 +263,12 @@ class RecordingRoadMap:
         leg_s: Mapping[tuple[Coordinate, Coordinate], int] | None = None,
         gate: Gate | None = None,
         no_road: Collection[tuple[Coordinate, Coordinate]] = (),
+        fails_on_call: tuple[int, RoutingProviderError] | None = None,
+        retries_on_call: int | None = None,
     ) -> None:
+        self._fails_on_call = fails_on_call
+        self._retries_on_call = retries_on_call
+        self.calls = 0
         self._leg_m = leg_m
         self._leg_s = leg_s
         self._no_road = frozenset(no_road)
@@ -276,6 +282,11 @@ class RecordingRoadMap:
         self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
     ) -> Sequence[Sequence[RoadMeasure | OffNetwork | None]]:
         self.gate.passing()
+        self.calls += 1
+        if self._fails_on_call is not None and self._fails_on_call[0] == self.calls:
+            raise self._fails_on_call[1]
+        if self._retries_on_call == self.calls and observer is not None:
+            observer.retried()
         self.asked.update((source, target) for source in sources for target in targets)
         return [[self._measure(source, target) for target in targets] for source in sources]
 

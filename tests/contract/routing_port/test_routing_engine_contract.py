@@ -3,7 +3,7 @@
 The same checks run against the recorded Valhalla 3.9.1 answers (respx, CI), the offline road map (MockRoutingProvider)
 and, with --run-external, the live Valhalla on the Pi (make contract-live). A scenario loses `@pending` in the step that
 turns it green and blocks in CI job 2 at once. Bound so far: the matrix scenarios (09-02), the 170 flow,
-the version stop and the failures (09-03).
+the version stop and the failures (09-03), the hiccup and the offline road map's parity (09-05).
 Fixtures: tests/contract/fixtures/valhalla-3.9.1/ with its sha256 manifest.
 """
 
@@ -43,6 +43,20 @@ def test_the_contract_checks_stop_when_the_engine_is_not_the_recorded_version() 
 @scenario(FEATURE, "Routing engine failures are reported as failures, never as missing roads", **FEATURES)
 def test_routing_engine_failures_are_reported_as_failures_never_as_missing_roads() -> None:
     """Unreachable and unavailable are typed errors, never an answer."""
+
+
+@scenario(
+    FEATURE, "A passing server hiccup is retried and the plan still counts toward the 3-minute promise", **FEATURES
+)
+def test_a_passing_server_hiccup_is_retried_and_the_plan_still_counts_toward_the_promise() -> None:
+    """One 5xx then the recorded answer: one Confirmed leg, and the plan job shows `retried`."""
+
+
+@scenario(
+    FEATURE, "The offline road map reports connections and failures the same way as the routing engine", **FEATURES
+)
+def test_the_offline_road_map_reports_connections_and_failures_like_the_routing_engine() -> None:
+    """The scripted offline road map gives the recorded engine's typed results, check by check."""
 
 
 scenarios(FEATURE, **FEATURES)  # the other scenarios stay @pending until their step

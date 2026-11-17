@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from overland_planner.application.ports.routing_provider import RoutingProvider
 from overland_planner.application.ports.tour_solver import TourSolver
 from overland_planner.bootstrap.app_factory import ExternalPorts
 from tests.acceptance.overland_route_planner_mvp.steps.planner import (
@@ -61,6 +62,7 @@ class PlannerWorld:
     clock: FakeClock
     mount_table: FakeMountTable
     tour_solver: TourSolver | None = None  # None = the real optimizer; doubles only under waivers W1/W2
+    routing_provider: RoutingProvider | None = None  # a road map the scenario arms while it runs; None = MOCK_PLAN's
     planner: InProcessPlanner | ServerPlanner | RemotePlanner | None = None
     marco_auth: Auth = None
     project_id: str | None = None
@@ -80,7 +82,12 @@ class PlannerWorld:
         if self.planner is None:
             self.planner = InProcessPlanner(
                 self.environ,
-                ExternalPorts(clock=self.clock, mount_table=self.mount_table, tour_solver=self.tour_solver),
+                ExternalPorts(
+                    clock=self.clock,
+                    mount_table=self.mount_table,
+                    tour_solver=self.tour_solver,
+                    routing_provider=self.routing_provider,
+                ),
             )
             self.planner.start()
 

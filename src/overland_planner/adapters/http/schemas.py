@@ -167,6 +167,8 @@ class PlanJobResource(BaseModel):
     stage finished so far (`snapshot`, `matrix`, `reach_model`, `solve`, `guard_persist`; no `solve` on a memo hit);
     `legs_total` and `items_included` are null until known; `legs_new` (road legs asked of the road map) and
     `legs_cached` (known without asking) count up while the legs are looked up, the cached ones first (06-09);
+    `second_pass_pairs` (the retrace pairs asked after the first pass) and `retried` (the road map retried a call) are
+    null until the look-up says;
     `incumbent` is null until the first valid route. An ended job's `message` names its Failed run in words when the
     run has them (D151), or says what a job without a run did (`cancelled`, `timed_out`). `stoppable` is true in every
     state before `finalising` and false from then on (D136). `notices` repeats Calculate's, once the project is read."""
@@ -183,6 +185,8 @@ class PlanJobResource(BaseModel):
     legs_new: int | None
     legs_cached: int | None
     items_included: int | None
+    second_pass_pairs: int | None
+    retried: bool | None
     incumbent: IncumbentResource | None
     stoppable: bool
     notices: list[str]

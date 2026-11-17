@@ -8,10 +8,28 @@ first plan is a real solve in the solver child, so pre-push leaves it to CI job 
 import pytest
 from pytest_bdd import scenario
 
+from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
+
 FEATURE = "slice-06a-valhalla-on-the-pi.feature"
+REFERENCE_PLACES = ("Cortina d'Ampezzo", "Lago di Braies", "Aosta", "Bardonecchia", "Cuneo", "Rochemolles")
 
 
 @pytest.mark.solver_child
 @scenario(FEATURE, "A place far from any road fails the plan and names it")
 def test_a_place_far_from_any_road_fails_the_plan_and_names_it() -> None:
     """Off-network place scripted on the offline road map; ends at the reachability check."""
+
+
+@pytest.fixture
+def a_reference_trip_with_an_armable_road_map(world: PlannerWorld) -> None:
+    """Plan run #4 is computed on 8 items other than the anchors (the day trip has 2), on a road map the scenario can
+    arm: the far-place scenario's own world is untouched."""
+    world.scratch["reference_places"] = REFERENCE_PLACES
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "Road legs found before the routing engine failed are kept for next time")
+def test_road_legs_found_before_the_routing_engine_failed_are_kept_for_next_time(
+    a_reference_trip_with_an_armable_road_map: None,
+) -> None:
+    """Five legs answered, the sixth call fails: the job ends failed, no run, and the five legs are served next time."""

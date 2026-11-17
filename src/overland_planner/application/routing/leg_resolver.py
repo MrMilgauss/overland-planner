@@ -15,7 +15,9 @@ road map is asked. The
 persistent `leg_cache` table is slice 05's; until then a restart forgets them (a recorded deviation from ADR-015). A
 request reports the legs it already holds before it asks anything (`cached`, identical points included), and the
 legs found after every road-map call (`new`); at the end `new + cached = total`, its distinct pairs. A leg answered
-is kept even when the progress that hears of it ends the request.
+is kept even when the progress that hears of it ends the request, and when the road map fails on a later call (D248):
+the failure propagates, and the legs answered before it are served from the memory next time. The `observer` is handed
+to every road-map call, to hear its retries.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from overland_planner.application.ports.routing_provider import RoutingProvider
+from overland_planner.application.ports.routing_provider import RoutingObserver, RoutingProvider
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.routing.road_leg import LegTable, OffNetwork, RoadLeg, RoadMeasure, RoadPair
 
@@ -59,7 +61,12 @@ class LegResolver:
     def profile(self) -> str:
         return self._provider.profile
 
-    def resolve(self, pairs: Iterable[RoadPair], progress: Callable[[LegsFound], None] = _unheard) -> LegTable:
+    def resolve(
+        self,
+        pairs: Iterable[RoadPair],
+        progress: Callable[[LegsFound], None] = _unheard,
+        observer: RoutingObserver | None = None,
+    ) -> LegTable:
         """A table that covers every pair; a road map failure, or one raised by `progress`, propagates."""
         road_map = (self.provider_id, self.profile)
         distinct = list(dict.fromkeys(pairs))
@@ -70,7 +77,7 @@ class LegResolver:
         progress(found)
         off_network: set[Coordinate] = set()
         for origin, targets in targets_by_origin.items():
-            answered = self._answer(road_map, origin, targets, off_network)
+            answered = self._answer(road_map, origin, targets, off_network, observer)
             held.update(answered)
             found = LegsFound(found.new + len(answered), found.cached, found.total)
             progress(found)
@@ -81,7 +88,12 @@ class LegResolver:
             return {pair: self._known[road_map, pair] for pair in roads if (road_map, pair) in self._known}
 
     def _answer(
-        self, road_map: RoadMapKey, origin: Coordinate, targets: list[Coordinate], off_network: set[Coordinate]
+        self,
+        road_map: RoadMapKey,
+        origin: Coordinate,
+        targets: list[Coordinate],
+        off_network: set[Coordinate],
+        observer: RoutingObserver | None,
     ) -> dict[RoadPair, RoadMeasure | None]:
         """The pairs from or to a place already named off the network are answered here, the others by the road map."""
         known_far = origin in off_network
@@ -90,13 +102,18 @@ class LegResolver:
         }
         to_ask = [target for target in targets if (origin, target) not in answered]
         if to_ask:
-            answered.update(self._ask(road_map, origin, to_ask, off_network))
+            answered.update(self._ask(road_map, origin, to_ask, off_network, observer))
         return answered
 
     def _ask(
-        self, road_map: RoadMapKey, origin: Coordinate, targets: list[Coordinate], off_network: set[Coordinate]
+        self,
+        road_map: RoadMapKey,
+        origin: Coordinate,
+        targets: list[Coordinate],
+        off_network: set[Coordinate],
+        observer: RoutingObserver | None,
     ) -> dict[RoadPair, RoadMeasure | None]:
-        (row,) = self._provider.matrix([origin], targets)
+        (row,) = self._provider.matrix([origin], targets, observer)
         answered: dict[RoadPair, RoadMeasure | None] = {}
         kept: dict[RoadPair, RoadMeasure | None] = {}
         for target, cell in zip(targets, row, strict=True):

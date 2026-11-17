@@ -6,10 +6,11 @@ run stored (`run_time_ms`): one decimal below 10 s, whole seconds from there on 
 "1 h 02 min 05 s"). A ready run that is not fully optimised names why in words; the code stays in its
 `not_fully_optimised`. A memo hit names the run it reused by number (ADR-014 section 5). A run that failed on the
 feasibility limit names itself by number (D151); the reason code stays `timeout` (ADR-015). A run stopped before a valid
-route was found says so in the feature's words (US-06b), its code `stopped`. A run that failed as `unreachable` names
-each item no order can connect, one line per item, with the run's number (US-08 S1); the job's ending message says the
-same, the lines joined. A project of more than 60 Included items other than its anchors is planned with a notice, never
-refused (D146).
+route was found says so in the feature's words (US-06b), its code `stopped`. A job whose road look-up the routing
+engine failed ends with the engine's reason and words (ADR-013 D248); no run is stored, so they belong to the job only.
+A run that failed as `unreachable` names each item no order can connect, one line per item, with the run's number
+(US-08 S1); the job's ending message says the same, the lines joined. A project of more than 60 Included items
+other than its anchors is planned with a notice, never refused (D146).
 """
 
 from __future__ import annotations
@@ -30,6 +31,10 @@ _FAILED: dict[str, str] = {
     "timeout": "No valid route found within the time limit - plan run #{number} failed",
     "stopped": "stopped before a valid route was found",
 }
+ENGINE_UNREACHABLE_REASON = "routing_engine_unreachable"
+ENGINE_UNREACHABLE_MESSAGE = "Routing engine unreachable - nothing was changed. Try again later."
+ENGINE_NOT_READY_REASON = "routing_engine_not_ready"
+ENGINE_NOT_READY_MESSAGE = "Routing engine not ready - nothing was changed. Try again shortly."
 UNREACHABLE = "unreachable"
 _UNREACHABLE = "Plan run #{number} failed: '{item}' cannot be connected to any other stop at any confidence level"
 _MS_PER_TENTH = 100

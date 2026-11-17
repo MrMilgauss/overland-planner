@@ -63,14 +63,14 @@ Feature: The planner and the routing engine understand each other
       | does not answer within the time limit    | unreachable |
       | keeps answering with a server error      | unavailable |
 
-  @pending @slice-06a @US-10a @J-01 @K5 @edge
+  @slice-06a @US-10a @J-01 @K5 @edge
   Scenario: A passing server hiccup is retried and the plan still counts toward the 3-minute promise
     Given the routing engine answers with a server error once and then with its recorded Torino to Susa route
     When the planner asks for the leg from Torino to Susa
     Then it gets one Confirmed leg with the recorded distance and duration
     And the plan is marked as retried, and still counts toward the 3-minute promise
 
-  @pending @slice-06a @US-10a @J-01
+  @slice-06a @US-10a @J-01
   Scenario: The offline road map reports connections and failures the same way as the routing engine
     Given the offline road map scripted with the same connections and failures as the recorded answers
     When the routing-engine contract checks run against the offline road map

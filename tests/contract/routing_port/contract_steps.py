@@ -1,33 +1,79 @@
 """Step definitions of the routing-port contract (slice 06a). The Then steps may assert how the planner questions the
-engine (D186): that is the contract. The engine is scripted through respx, from the recorded Valhalla 3.9.1 answers."""
+engine (D186): that is the contract. The engine is scripted through respx, from the recorded Valhalla 3.9.1 answers.
+
+The offline road map (MockRoutingProvider) runs the same checks, scripted with the same connections and failures
+(parity scenario). Not applicable to it, because it has neither: the 2,500-leg batch limit (it answers any batch at
+once) and the engine version check (it has no version)."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
+import yaml
 from pytest_bdd import given, parsers, then, when
 
+from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, read_road_map
 from overland_planner.adapters.routing.valhalla_routing_provider import ValhallaRoutingProvider
+from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob
 from overland_planner.application.ports.routing_provider import (
     ProviderUnavailable,
     ProviderUnreachable,
     RoadCell,
     RoutingProviderError,
 )
+from overland_planner.application.routing.facade import LegResolver
 from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
+from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
+from tests.common.fakes import FakeClock
 from tests.contract.routing_port.recordings import REPLAY_URL, BatchLimitedEngine, recording
 from tests.contract.routing_port.test_engine_recordings import require_recorded_engine
+from tests.unit.application.planning.planning_doubles import InMemoryPlanJobLog, InMemoryPlanning, job_when_ended
+from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
+from tests.unit.domain.planning.trips import PROJECT
 
 SNAP_M = 250
 TORINO_SUSA = [{"lat": 45.0703, "lon": 7.6869}, {"lat": 45.1370, "lon": 7.0500}]
 TRIP_ITEMS = 60  # 60 items + Start and End: 61 places ask 60 destinations (D131), 3,660 pairs
+
+
+class _Observer:
+    """Counts the retries the road map made, as the plan job's look-up hears them."""
+
+    def __init__(self) -> None:
+        self.retries = 0
+
+    def retried(self) -> None:
+        self.retries += 1
+
+
+class _Hiccup:
+    """A scripted engine that answers one server error, then the recorded 1x1 cell for every cell asked."""
+
+    def __init__(self, cell: dict[str, Any]) -> None:
+        self._cell = cell
+        self.calls = 0
+
+    def rearm(self) -> None:
+        self.calls = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        if self.calls == 1:
+            return httpx.Response(503, text="busy")
+        body = json.loads(request.content)
+        rows = [[self._cell for _ in body["targets"]] for _ in body["sources"]]
+        return httpx.Response(200, json={"sources_to_targets": rows})
 
 
 @dataclass
@@ -40,6 +86,9 @@ class ContractWorld:
     failure: RoutingProviderError | None = None
     stopped: str | None = None
     far_place: Coordinate | None = None
+    observer: _Observer = field(default_factory=_Observer)
+    hiccup: _Hiccup | None = None
+    offline: dict[str, Any] = field(default_factory=dict)
 
 
 @pytest.fixture
@@ -92,7 +141,7 @@ def _engine_with_torino_susa_route(router: respx.MockRouter, world: ContractWorl
 def _ask_torino_susa(world: ContractWorld) -> None:
     origin, destination = (_place(location) for location in world.recorded.get("locations", TORINO_SUSA))
     try:
-        world.answer = _provider().matrix([origin], [destination])
+        world.answer = _provider().matrix([origin], [destination], world.observer)
     except RoutingProviderError as failure:
         world.failure = failure
 
@@ -103,7 +152,8 @@ def _one_confirmed_leg(router: respx.MockRouter, world: ContractWorld) -> None:
     assert world.answer == [[RoadMeasure(distance_m=56099, duration_s=3342)]]
     origin, destination = world.recorded["locations"]
     asked = {key: world.recorded[key] for key in ("costing", "costing_options")}
-    assert _posted(router) == [{"sources": [origin], "targets": [destination], **asked}]
+    asked_once = {"sources": [origin], "targets": [destination], **asked}
+    assert _posted(router) == [asked_once] * (1 + world.observer.retries)  # a retry asks the same question again
 
 
 # Scenario: A missing matrix answer confirmed by a route check means no connection at that level
@@ -301,3 +351,220 @@ def _failure_is_reported(world: ContractWorld, reported: str) -> None:
 @then("no leg is recorded as having no connection")
 def _no_leg_recorded(world: ContractWorld) -> None:
     assert list(world.answer) == []
+
+
+# Scenario: A passing server hiccup is retried and the plan still counts toward the 3-minute promise
+
+
+@given("the routing engine answers with a server error once and then with its recorded Torino to Susa route")
+def _engine_with_a_hiccup(router: respx.MockRouter, world: ContractWorld) -> None:
+    route = recording("route_torino_susa_4x4v1")
+    summary = route["response"]["trip"]["legs"][0]["summary"]
+    cell = {"from_index": 0, "to_index": 0, "time": round(summary["time"]), "distance": summary["length"]}
+    world.hiccup = _Hiccup(cell)
+    router.post("/sources_to_targets").mock(side_effect=world.hiccup)
+    world.recorded = route["request"]
+
+
+@then("the plan is marked as retried, and still counts toward the 3-minute promise")
+def _the_plan_is_marked_as_retried(world: ContractWorld) -> None:
+    """A plan job whose look-up asks Torino and Susa of this engine hears the hiccup: the poll and the job's log row say
+    `retried`, and the job is a done one, with its elapsed time, which every K5 count reads."""
+    assert world.hiccup is not None and world.observer.retries == 1
+    world.hiccup.rearm()
+    torino, susa = (_place(location) for location in world.recorded["locations"])
+    home = PoiItem(id="start", project_id=PROJECT, name="Torino", location=torino)
+    stop = PoiItem(id="susa", project_id=PROJECT, name="Susa", location=susa)
+    planning = InMemoryPlanning()
+    planning.add_project(PROJECT, ProjectSnapshot(home.id, home.id, (home, stop)))
+    clock, log = FakeClock(), RecordingEventLog()
+    job = PlanRequestJob(
+        planning.unit_of_work, LegResolver(_provider()), ScriptedTourSolver(None), 500, clock, log, InMemoryFileStore()
+    )
+    job_log = InMemoryPlanJobLog(planning)
+    registry = PlanJobRegistry(clock, job, log, job_log=job_log)
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    ended = job_when_ended(registry, job_id)
+    (entry,) = job_log.rows
+    row = entry.columns()
+    assert (ended.state, ended.retried, ended.legs_new) == ("done", True, 2)
+    assert (row["terminal_state"], row["retried"], row["elapsed_ms"]) == ("done", True, 0)
+
+
+# Scenario: The offline road map reports connections and failures the same way as the routing engine
+
+_FAILURES = {
+    "refuses connections": ("unreachable", httpx.ConnectError("connection refused")),
+    "does not answer within the time limit": ("unreachable", httpx.ReadTimeout("no answer")),
+    "keeps answering with a server error": ("unavailable", httpx.Response(503, text="busy")),
+}
+
+
+def _outcome(ask: Callable[[_Observer], Sequence[Sequence[RoadCell]]]) -> tuple[Any, ...]:
+    """What a check gives: the cells answered and the retries heard, or the typed failure."""
+    observer = _Observer()
+    try:
+        answer = ask(observer)
+    except RoutingProviderError as failure:
+        return ("failed", type(failure).__name__)
+    return ("answered", tuple(tuple(row) for row in answer), observer.retries)
+
+
+@contextmanager
+def _recorded_engine() -> Iterator[respx.MockRouter]:
+    with respx.mock(base_url=REPLAY_URL, assert_all_called=False) as mocked:
+        mocked.get("/status").respond(json=recording("status")["response"])
+        yield mocked
+
+
+def _places(entries: Sequence[dict[str, Any]]) -> list[Coordinate]:
+    return [_place(entry) for entry in entries]
+
+
+def _measured(cell: dict[str, Any]) -> RoadMeasure | None:
+    return (
+        None
+        if cell["time"] is None
+        else RoadMeasure(distance_m=round(cell["distance"] * 1000), duration_s=cell["time"])
+    )
+
+
+def _far_place_engine(router: respx.MockRouter, world: ContractWorld) -> None:
+    _engine_refuses_batch_with_a_far_place(router, world)
+
+
+def _checks_of_the_recorded_engine(world: ContractWorld) -> dict[str, tuple[Any, ...]]:
+    """The recorded engine's outcome of each check, each against its own scripted engine."""
+    outcomes: dict[str, tuple[Any, ...]] = {}
+    torino, susa = _places(TORINO_SUSA)
+    with _recorded_engine() as router:
+        _engine_with_torino_susa_route(router, world)
+        outcomes["Torino to Susa"] = _outcome(lambda _: _provider().matrix([torino], [susa]))
+    island = recording("matrix_confirmed_with_island_null_row")
+    with _recorded_engine() as router:
+        router.post("/sources_to_targets", json=island["request"]).respond(island["status"], json=island["response"])
+        sources, targets = _places(island["request"]["sources"]), _places(island["request"]["targets"])
+        outcomes["the island"] = _outcome(lambda _: _provider().matrix(sources, targets))
+    far = recording("matrix_170_unsnappable_location_kills_call")
+    with _recorded_engine() as router:
+        _far_place_engine(router, world)
+        sources, targets = _places(far["request"]["sources"]), _places(far["request"]["targets"])
+        outcomes["the far place"] = _outcome(lambda _: _provider().matrix(sources, targets))
+    for failure, (_, step) in _FAILURES.items():
+        with _recorded_engine() as router:
+            route = router.post("/sources_to_targets")
+            if isinstance(step, Exception):
+                route.mock(side_effect=step)
+            else:
+                route.mock(return_value=step)
+            outcomes[failure] = _outcome(lambda _: _provider().matrix([torino], [susa]))
+    with _recorded_engine() as router:
+        _engine_with_a_hiccup(router, world)
+        outcomes["a server hiccup"] = _outcome(lambda observer: _provider().matrix([torino], [susa], observer))
+    return outcomes
+
+
+def _scripted_road_maps(tmp_path: Path) -> dict[str, Path]:
+    """The recorded answers as offline road maps: `connections` (Torino to Susa, the island with no connection) and
+    `far place` (the other places' legs, the far place off the network). The far-place engine's answers repeat a pair
+    the island's recording answers differently, so each has its own script."""
+    torino, susa = TORINO_SUSA
+    connections: list[dict[str, Any]] = [
+        {
+            "from": [torino["lat"], torino["lon"]],
+            "to": [susa["lat"], susa["lon"]],
+            "distance_m": 56099,
+            "duration_s": 3342,
+        }
+    ]
+    island = recording("matrix_confirmed_with_island_null_row")
+    sources, targets = island["request"]["sources"], island["request"]["targets"]
+    for a, row in enumerate(island["response"]["sources_to_targets"]):
+        for b, cell in enumerate(row):
+            measure = _measured(cell)
+            entry: dict[str, Any] = {
+                "from": [sources[a]["lat"], sources[a]["lon"]],
+                "to": [targets[b]["lat"], targets[b]["lon"]],
+            }
+            figures = (
+                {"level": "none"}
+                if measure is None
+                else {"distance_m": measure.distance_m, "duration_s": measure.duration_s}
+            )
+            connections.append(entry | figures)
+    far = recording("matrix_170_unsnappable_location_kills_call")["request"]
+    first, far_place = far["sources"]
+    others: list[dict[str, Any]] = [  # what the far-place engine answers for the first source
+        {
+            "from": [first["lat"], first["lon"]],
+            "to": [t["lat"], t["lon"]],
+            "distance_m": 1000 * (b + 1),
+            "duration_s": 100 * (b + 1),
+        }
+        for b, t in enumerate(far["targets"])
+    ]
+    documents = {
+        "connections": {"pairs": connections},
+        "far place": {"pairs": others, "off_network": [[far_place["lat"], far_place["lon"]]]},
+    }
+    paths = {name: tmp_path / f"{name.replace(' ', '-')}-road-map.yaml" for name in documents}
+    for name, document in documents.items():
+        paths[name].write_text(yaml.safe_dump(document), encoding="utf-8")
+    return paths
+
+
+def _checks_of_the_offline_road_map(paths: dict[str, Path]) -> dict[str, tuple[Any, ...]]:
+    path = paths["connections"]
+
+    def armed(faults: dict[str, object] | None) -> MockRoutingProvider:
+        provider = MockRoutingProvider(script=read_road_map(path))
+        if faults is not None:
+            document = {"pairs": [], "faults": faults}
+            faults_path = path.with_name("faults.yaml")
+            faults_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            provider.arm_faults(read_road_map(faults_path).faults)
+        return provider
+
+    torino, susa = _places(TORINO_SUSA)
+    island = recording("matrix_confirmed_with_island_null_row")["request"]
+    far = recording("matrix_170_unsnappable_location_kills_call")["request"]
+    outcomes = {
+        "Torino to Susa": _outcome(lambda _: armed(None).matrix([torino], [susa])),
+        "the island": _outcome(lambda _: armed(None).matrix(_places(island["sources"]), _places(island["targets"]))),
+        "the far place": _outcome(
+            lambda _: MockRoutingProvider(script=read_road_map(paths["far place"])).matrix(
+                _places(far["sources"]), _places(far["targets"])
+            )
+        ),
+    }
+    for failure, (kind, _) in _FAILURES.items():
+        outcomes[failure] = _outcome(
+            lambda _, kind=kind: armed({"fail_after_pairs": 0, "kind": kind}).matrix([torino], [susa])
+        )
+    outcomes["a server hiccup"] = _outcome(
+        lambda observer: armed({"fail_once_on_call": 1, "kind": "unavailable"}).matrix([torino], [susa], observer)
+    )
+    return outcomes
+
+
+@given("the offline road map scripted with the same connections and failures as the recorded answers")
+def _offline_road_map_scripted_like_the_recordings(world: ContractWorld, tmp_path: Path) -> None:
+    world.recorded = {"road_maps": _scripted_road_maps(tmp_path)}
+
+
+@when("the routing-engine contract checks run against the offline road map")
+def _run_the_checks_against_the_offline_road_map(world: ContractWorld) -> None:
+    world.offline = _checks_of_the_offline_road_map(world.recorded["road_maps"])
+
+
+@then("every check gives the same result as for the recorded routing engine")
+def _every_check_gives_the_same_result(world: ContractWorld) -> None:
+    recorded = _checks_of_the_recorded_engine(world)
+    assert recorded["Torino to Susa"] == ("answered", ((RoadMeasure(56099, 3342),),), 0)
+    assert recorded["a server hiccup"] == ("answered", ((RoadMeasure(56099, 3342),),), 1)
+    assert [recorded[name][1] for name in ("refuses connections", "keeps answering with a server error")] == [
+        "ProviderUnreachable",
+        "ProviderUnavailable",
+    ]
+    assert world.offline == recorded

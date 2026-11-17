@@ -59,8 +59,19 @@ from typing import Literal, Protocol
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.plan_job_log import PlanJobLog, PlanJobLogEntry
+from overland_planner.application.ports.routing_provider import (
+    ProviderUnavailable,
+    ProviderUnreachable,
+    RoutingProviderError,
+)
 from overland_planner.application.ports.tour_solver import SolveLimits, StopSignal
-from overland_planner.domain.planning.run_messages import NotFullyOptimised
+from overland_planner.domain.planning.run_messages import (
+    ENGINE_NOT_READY_MESSAGE,
+    ENGINE_NOT_READY_REASON,
+    ENGINE_UNREACHABLE_MESSAGE,
+    ENGINE_UNREACHABLE_REASON,
+    NotFullyOptimised,
+)
 
 PlanJobState = Literal[
     "queued",
@@ -104,6 +115,10 @@ _NULL_UNTIL_NOTED = (
     "provider_id",
 )
 _POLL_ONLY = ("incumbent", "notices")
+_ENGINE_ENDINGS: dict[type[RoutingProviderError], tuple[str, str]] = {  # D248: the engine's reason and words
+    ProviderUnreachable: (ENGINE_UNREACHABLE_REASON, ENGINE_UNREACHABLE_MESSAGE),
+    ProviderUnavailable: (ENGINE_NOT_READY_REASON, ENGINE_NOT_READY_MESSAGE),
+}
 
 
 @dataclass(frozen=True)
@@ -124,6 +139,8 @@ class PlanJobView:
     legs_new: int | None = None
     legs_cached: int | None = None
     items_included: int | None = None
+    second_pass_pairs: int | None = None
+    retried: bool | None = None
     incumbent: dict[str, float] | None = None
     stoppable: bool = True
     notices: tuple[str, ...] = ()
@@ -367,6 +384,8 @@ class _Job:
             legs_new=_fact(facts, "legs_new", int),
             legs_cached=_fact(facts, "legs_cached", int),
             items_included=_fact(facts, "items_included", int),
+            second_pass_pairs=_fact(facts, "second_pass_pairs", int),
+            retried=_fact(facts, "retried", bool),
             incumbent=_fact(facts, "incumbent", dict),
             stoppable=shown.state not in _NOT_STOPPABLE,
             notices=_fact(facts, "notices", tuple) or (),
@@ -472,10 +491,30 @@ class PlanJobRegistry:
             stored = work.outcome()
         except _EndedBeforeSolving as ended:
             return self._ended_before_solving(job, ended)
+        except RoutingProviderError as error:
+            return self._ended_by_the_engine(job, error)
         except BaseException as error:
             job.note(error_class=type(error).__name__)
             return self._ended_now("failed", None, FAILED_MESSAGE)
         return self._ended_now("done", stored.reason, stored.message, stored.plan_run_id)
+
+    def _ended_by_the_engine(self, job: _Job, error: RoutingProviderError) -> _Ending:
+        """The routing engine failed during the look-up (D248): `failed` with the engine's reason and words, no run; the
+        legs answered stay with the leg resolver. A rejection has no words of its own: the failed job's."""
+        reason, message = next(
+            (ending for kind, ending in _ENGINE_ENDINGS.items() if isinstance(error, kind)), (None, FAILED_MESSAGE)
+        )
+        job.note(error_class=type(error).__name__)
+        if reason is not None:
+            job.ended_for(reason)
+        self._event_log.warning(
+            "routing.engine.error",
+            job_id=job.id,
+            project_id=job.project_id,
+            error_class=type(error).__name__,
+            reason=reason,
+        )
+        return self._ended_now("failed", reason, message)
 
     def _ended_before_solving(self, job: _Job, ended: _EndedBeforeSolving) -> _Ending:
         job.ended_for(ended.reason)

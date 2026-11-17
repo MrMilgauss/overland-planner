@@ -14,8 +14,9 @@ by every ending; the active job check keeps its place in the pre-checks and cann
 the `ignore_memo` it was given and refuses alike with or without it; every ending writes one `plan_job_log` row with
 the values of its line, a refusal none, and a failing write changes nothing else; a Stop ends the job as ADR-015's
 state table names and answers the current payload; a job waiting for the optimizer gives up at the feasibility limit;
-a Stop or the feasibility limit during the road look-up ends the job at once, with no run and the legs found kept)
-x 2 = 24; 18 used.
+a Stop or the feasibility limit during the road look-up ends the job at once, with no run and the legs found kept;
+an engine failure during the look-up ends the job failed with the engine's reason and words, no run, the legs answered
+kept; a look-up that heard a retry shows `retried` in its poll and row) x 2 = 28; 20 used.
 """
 
 from __future__ import annotations
@@ -53,6 +54,12 @@ from overland_planner.application.platform.facade import HealthDetail, HealthSer
 from overland_planner.application.ports.plan_job_log import PLAN_JOB_LOG_FIELDS
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
+from overland_planner.application.ports.routing_provider import (
+    ProviderRejected,
+    ProviderUnavailable,
+    ProviderUnreachable,
+    RoutingProviderError,
+)
 from overland_planner.application.ports.tour_solver import (
     Incumbent,
     IncumbentObserver,
@@ -136,6 +143,7 @@ FIELDS_OF_LATER_SLICES = KPI_FIELDS - {
     "incumbents",  # 06-06 fills these three (test_plan_request_job_outcomes.py)
     "reproducible",
     "not_fully_optimised_reason",
+    "retried",  # 09-05: false for a look-up that heard no retry
     "second_pass_pairs",  # 07-08 fills these three: 0 for a run that reached the solve, the counts of a stored plan
     "unconfirmed_legs",
     "retraces",
@@ -498,6 +506,7 @@ def test_a_job_logs_one_finished_event_and_a_stored_run_one_completed_event(plan
         job.plan_run_id,
     )
     assert all(fields[name] is None for name in FIELDS_OF_LATER_SLICES)
+    assert fields["retried"] is False, "the look-up heard no retry"
     counts = (0, 0) if isinstance(plan.script, TourFound) else (None, None)  # a ready run, confirmed roads only
     assert (fields["unconfirmed_legs"], fields["retraces"], fields["second_pass_pairs"]) == (*counts, 0)
     assert (fields["memo_hit"], fields["ignore_memo"]) == (False, False)  # a plain Calculate of a job without a memo
@@ -1540,3 +1549,90 @@ def _look_up_desk(trip: Trip, road_map: RecordingRoadMap, limits: SolveLimits) -
     job = PlanRequestJob(planning.unit_of_work, LegResolver(road_map), solver, BUDGET, clock, log, files, limits=limits)
     job_log = InMemoryPlanJobLog(planning)
     return StopDesk(planning, solver, clock, log, PlanJobRegistry(clock, job, log, job_log=job_log), job_log, {})
+
+
+# ------------------------------------------------ an engine failure during the road look-up (09-05, ADR-013 D248)
+ENGINE_UNIVERSE = LOOK_UP_UNIVERSE | {"engine_errors_logged"}
+ENGINE_ENDINGS = {  # the error -> the job's reason and words
+    ProviderUnreachable: (
+        "routing_engine_unreachable",
+        "Routing engine unreachable - nothing was changed. Try again later.",
+    ),
+    ProviderUnavailable: (
+        "routing_engine_not_ready",
+        "Routing engine not ready - nothing was changed. Try again shortly.",
+    ),
+    ProviderRejected: (None, FAILED_MESSAGE),
+}
+
+
+def _engine_view(desk: StopDesk, road_map: RecordingRoadMap) -> dict[str, Any]:
+    return {
+        **_look_up_view(desk, road_map),
+        "engine_errors_logged": tuple(
+            (fields["job_id"], fields["project_id"], fields["error_class"], fields["reason"])
+            for fields in desk.log.fields_of("routing.engine.error")
+        ),
+    }
+
+
+@settings(deadline=None, max_examples=20)
+@given(trip=trips(), data=st.data(), error=st.sampled_from(sorted(ENGINE_ENDINGS, key=lambda kind: kind.__name__)))
+def test_an_engine_failure_during_the_look_up_ends_the_job_failed_with_no_run_and_keeps_the_legs_answered(
+    trip: Trip, data: st.DataObject, error: type[RoutingProviderError]
+) -> None:
+    calls = list(_calls_of(trip).values())
+    assume(calls)
+    failing_call = data.draw(st.integers(0, len(calls) - 1), label="the road-map call that fails")
+    road_map = RecordingRoadMap(trip.leg_m, fails_on_call=(failing_call + 1, error()))
+    desk = _look_up_desk(trip, road_map, SolveLimits())
+    distinct = set(SolverModelBuilder(trip.snapshot).required_pairs())
+    roads = {pair for call in calls for pair in call}
+    found = {pair for call in calls[:failing_call] for pair in call}  # answered before the failure
+    reason, words = ENGINE_ENDINGS[error]
+    before = _engine_view(desk, road_map)
+
+    job_id = desk.start(PROJECT)
+    ended = job_when_ended(desk.registry, job_id)
+
+    assert (ended.state, ended.reason, ended.message, ended.plan_run_id) == ("failed", reason, words, None)
+    assert (ended.legs_new, ended.legs_cached) == (len(found), len(distinct - roads))
+    assert_state_delta(
+        before,
+        _engine_view(desk, road_map),
+        ENGINE_UNIVERSE,
+        {
+            "plan_job_log": gained((job_id, PROJECT, "failed", None, reason, error.__name__)),
+            "engine_errors_logged": gained((job_id, PROJECT, error.__name__, reason)),
+            "road_map.asked": set_to(Counter(found)),
+        },
+        strict=True,
+    )
+
+    next_id = desk.start(PROJECT)  # the road map answers again: the legs answered are not asked twice
+    recalculated = job_when_ended(desk.registry, next_id)
+    assert recalculated.state == "done" and recalculated.legs_new is not None
+    assert recalculated.legs_new == len(roads - found), "only the legs that were not answered were asked"
+    assert recalculated.legs_cached == len(distinct) - len(roads - found)
+
+
+@settings(deadline=None, max_examples=20)
+@given(trip=trips(), data=st.data())
+def test_a_look_up_that_heard_a_retry_shows_retried_in_its_poll_and_its_row_and_still_finishes_the_plan(
+    trip: Trip, data: st.DataObject
+) -> None:
+    calls = list(_calls_of(trip).values())
+    assume(calls)
+    retried_call = data.draw(st.integers(1, len(calls)), label="the road-map call that is retried inside the engine")
+    road_map = RecordingRoadMap(trip.leg_m, retries_on_call=retried_call)
+    desk = _look_up_desk(trip, road_map, SolveLimits())
+
+    job_id = desk.start(PROJECT)
+    ended = job_when_ended(desk.registry, job_id)
+    _until(lambda: len(desk.job_log.rows) == 1, "the job's row")
+
+    (entry,) = desk.job_log.rows
+    row = entry.columns()
+    assert (ended.state, ended.retried, ended.second_pass_pairs) == ("done", True, 0)
+    assert (row["terminal_state"], row["retried"], row["second_pass_pairs"]) == ("done", True, 0)
+    assert desk.log.fields_of("plan.job.finished")[0]["retried"] is True

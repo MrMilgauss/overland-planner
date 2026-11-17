@@ -31,7 +31,12 @@ from overland_planner.adapters.routing.mock_routing_provider import (
     RoadMapScript,
     read_road_map,
 )
-from overland_planner.application.ports.routing_provider import RoutingObserver
+from overland_planner.application.ports.routing_provider import (
+    ProviderUnavailable,
+    ProviderUnreachable,
+    RoutingObserver,
+    RoutingProviderError,
+)
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
 from tests.common.state_delta import assert_state_delta, set_to
@@ -496,3 +501,116 @@ class _OffNetworkIgnored(MockRoutingProvider):
         self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
     ) -> Sequence[Sequence[RoadMeasure | OffNetwork | None]]:
         return MockRoutingProvider().matrix(sources, targets)
+
+
+# ----------------------------------------------------------------------------------- the fault plan (09-05, D248)
+KINDS = {"unreachable": ProviderUnreachable, "unavailable": ProviderUnavailable}
+
+
+class _Retries:
+    def __init__(self) -> None:
+        self.heard = 0
+
+    def retried(self) -> None:
+        self.heard += 1
+
+
+def _with_faults(folder: Path, faults: dict[str, Any]) -> MockRoutingProvider:
+    return MockRoutingProvider(
+        script=read_road_map(_write(folder, "faults.yaml", yaml.safe_dump({"pairs": [], "faults": faults})))
+    )
+
+
+@given(
+    fail_after=st.integers(0, 12),
+    kind=st.sampled_from(sorted(KINDS)),
+    call_sizes=st.lists(st.integers(1, 4), min_size=1, max_size=10),
+)
+def test_once_the_pairs_answered_reach_the_plan_every_later_call_raises_the_typed_error_and_a_probe_never_counts(
+    fail_after: int, kind: str, call_sizes: list[int]
+) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        provider = _with_faults(Path(folder), {"fail_after_pairs": fail_after, "kind": kind})
+    assert provider.probe().outcome == "ok", "a probe is never failed"
+    outcomes: list[str] = []
+    answered = 0
+    expected: list[str] = []
+    for size in call_sizes:
+        try:
+            provider.matrix([TORINO], [SUSA] * size)
+            outcomes.append("answered")
+        except RoutingProviderError as failure:
+            outcomes.append(type(failure).__name__)
+        expected.append("answered" if answered < fail_after else KINDS[kind].__name__)
+        answered += size if expected[-1] == "answered" else 0
+    assert_state_delta(
+        {"road_map.outcomes": None},
+        {"road_map.outcomes": outcomes},
+        {"road_map.outcomes"},
+        {"road_map.outcomes": set_to(expected)},
+        strict=True,
+    )
+
+
+@given(on_call=st.integers(1, 6), calls_made=st.integers(1, 8), kind=st.sampled_from(sorted(KINDS)))
+def test_the_call_numbered_k_is_retried_inside_the_road_map_so_it_answers_and_the_observer_hears_one_retry(
+    on_call: int, calls_made: int, kind: str
+) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        provider = _with_faults(Path(folder), {"fail_once_on_call": on_call, "kind": kind})
+    plain = MockRoutingProvider()
+    heard: list[int] = []
+    answers: list[Any] = []
+    for _ in range(calls_made):
+        observer = _Retries()
+        answers.append(provider.matrix([TORINO], [SUSA], observer))
+        heard.append(observer.heard)
+    assert_state_delta(
+        {"road_map.answers": None, "road_map.retries": None},
+        {"road_map.answers": answers, "road_map.retries": heard},
+        {"road_map.answers", "road_map.retries"},
+        {
+            "road_map.answers": set_to([plain.matrix([TORINO], [SUSA])] * calls_made),
+            "road_map.retries": set_to([1 if number == on_call else 0 for number in range(1, calls_made + 1)]),
+        },
+        strict=True,
+    )
+
+
+def test_arming_faults_counts_from_then_on_and_none_ends_them(tmp_path: Path) -> None:
+    # bypass: one scripted sequence of arm, answer, fail, clear; the rules over inputs are the properties above
+    provider = MockRoutingProvider()
+    provider.matrix([TORINO], [SUSA, AOSTA])  # answered before the plan is armed: not counted against it
+    armed = read_road_map(
+        _write(
+            tmp_path,
+            "faults.yaml",
+            yaml.safe_dump({"pairs": [], "faults": {"fail_after_pairs": 1, "kind": "unreachable"}}),
+        )
+    ).faults
+
+    provider.arm_faults(armed)
+    assert provider.matrix([TORINO], [SUSA]) == [[TORINO_SUSA]]
+    with pytest.raises(ProviderUnreachable):
+        provider.matrix([TORINO], [SUSA])
+    provider.arm_faults(None)
+
+    assert provider.matrix([TORINO], [SUSA]) == [[TORINO_SUSA]]
+
+
+@pytest.mark.parametrize(
+    "faults",
+    [
+        "faults: [1]",
+        "faults: {kind: unreachable}",
+        "faults: {fail_after_pairs: 3}",
+        "faults: {fail_after_pairs: 3, kind: quota}",
+        "faults: {fail_after_pairs: -1, kind: unreachable}",
+        "faults: {fail_after_pairs: true, kind: unreachable}",
+        "faults: {fail_once_on_call: 0, kind: unavailable}",
+        "faults: {fail_once_on_call: 1, kind: unavailable, extra: 1}",
+    ],
+)
+def test_a_malformed_fault_plan_is_an_invalid_road_map(tmp_path: Path, faults: str) -> None:
+    with pytest.raises(InvalidRoadMapError, match="faults"):
+        read_road_map(_write(tmp_path, "bad.yaml", f"pairs: []\n{faults}\n"))

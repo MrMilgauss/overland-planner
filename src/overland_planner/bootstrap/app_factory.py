@@ -79,7 +79,7 @@ from overland_planner.application.platform.facade import (
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
-from overland_planner.application.ports.routing_provider import RoutingProviderError
+from overland_planner.application.ports.routing_provider import RoutingProvider, RoutingProviderError
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.bootstrap.registry import ProbeRegistry
@@ -98,6 +98,7 @@ class ExternalPorts:
     mount_table: MountTable | None = None
     tour_solver: TourSolver | None = None
     routing_transport: httpx.BaseTransport | None = None  # the scripted engine of ROUTING_PROVIDER=valhalla
+    routing_provider: RoutingProvider | None = None  # a road map the test holds, to arm its faults while it runs
 
 
 class _Wiring:
@@ -123,7 +124,7 @@ class _Wiring:
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
         self._gpx_writer = GpxpyWriter()
-        self._routing_provider: MockRoutingProvider | ValhallaRoutingProvider = (
+        self._routing_provider: RoutingProvider = ports.routing_provider or (
             ValhallaRoutingProvider(
                 settings.valhalla_url,
                 expected_version=settings.valhalla_expected_version,

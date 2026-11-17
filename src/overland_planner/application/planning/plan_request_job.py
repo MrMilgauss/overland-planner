@@ -40,8 +40,10 @@ The road legs come from the leg resolver, which keeps those found for the proces
 `legs_cached` and `legs_new` as they arrive, and `legs_total` once the look-up is done. After the first pass it asks
 the second pass, the retrace pairs of the arcs whose first pair has no road (ADR-017 section 2), and notes how many
 they were (`second_pass_pairs`: 0 for a run that reached the solve, null for one that failed unreachable asking none);
-they join `legs_total`. A job its registry ended
-during the look-up raises that ending at its next fact or state, so a late road-map answer stores no run.
+they join `legs_total`. The job notes `retried` as soon as the road map says it retried a call, and false when the
+look-up is over without one. A road-map failure ends the job (the registry maps it, D248); the legs answered stay
+known. A job its registry ended during the look-up raises that ending at its next fact or state, so a late road-map
+answer stores no run.
 
 Every run stores its `run_time_ms`, from the start of the job's work to the run stored, by the `Clock` port's monotonic
 time, rounded (06-10). A memo hit stores the run it reused (`memo_source_run_id`) and inherits its label and
@@ -281,14 +283,15 @@ class PlanRequestJob:
             first_found = found
             _note_legs(progress, found)
 
-        legs = self.legs.resolve(pairs, first_pass_heard)
+        retries = _Retries(progress)
+        legs = self.legs.resolve(pairs, first_pass_heard, retries)
         known = set(pairs)
         second = tuple(pair for pair in builder.retrace_pairs(legs) if pair not in known)
         if second:
             legs = legs.merged_with(
-                self.legs.resolve(second, lambda found: _note_legs(progress, _added(first_found, found)))
+                self.legs.resolve(second, lambda found: _note_legs(progress, _added(first_found, found)), retries)
             )
-        progress.note(legs_total=len(known) + len(second), provider_id=self.legs.provider_id)
+        progress.note(legs_total=len(known) + len(second), provider_id=self.legs.provider_id, retried=retries.heard)
         return legs, len(second)
 
     def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, TourFound | None]:
@@ -395,6 +398,18 @@ class _Incumbents:
             "found_at_s": self._clock.monotonic() - self._work_started_s,
         }
         self._progress.note(incumbents=self.count, incumbent=shown)
+
+
+class _Retries:
+    """What the road map says of its retries during the look-up: noted on the job as soon as the first is heard."""
+
+    def __init__(self, progress: PlanJobProgress) -> None:
+        self._progress = progress
+        self.heard = False
+
+    def retried(self) -> None:
+        self.heard = True
+        self._progress.note(retried=True)
 
 
 class _Stages:
