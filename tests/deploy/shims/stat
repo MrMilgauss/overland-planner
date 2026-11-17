@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Fake `stat -c %Y FILE` (the helper container's busybox form; macOS stat spells it -f %m). Anything else goes to the
+real stat."""
+
+import os
+import sys
+from pathlib import Path
+
+if sys.argv[1:3] == ["-c", "%Y"] and len(sys.argv) == 4:
+    print(int(Path(sys.argv[3]).stat().st_mtime))
+else:
+    os.execv("/usr/bin/stat", ["stat", *sys.argv[1:]])  # noqa: S606

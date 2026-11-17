@@ -106,6 +106,7 @@ def test_refresh_builds_while_serving_stops_for_the_build_switches_and_prunes_on
     }
     sums = "\n".join(f"{hashlib.sha256(BUILT[n].encode()).hexdigest()}  {n}" for n in TILES_FILES) + "\n"
     assert (new / "SHA256SUMS").read_text() == sums
+    assert int((new / "valhalla_tiles.tar").stat().st_mtime) == 1700000000  # the promote keeps the build's time
     assert not (serving.volume / "build").exists()
     assert tilesets(serving) == [SERVED, REFRESH_DATE]  # the new and the previous one stay, the older one goes
     assert pointers(serving) == {

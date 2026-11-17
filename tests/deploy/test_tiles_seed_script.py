@@ -9,6 +9,8 @@ code and the docker calls. The Pi gate (valhalla healthy on tileset 20261101) is
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 from typing import Any
 
 import pytest
@@ -111,7 +113,13 @@ def test_a_second_run_with_the_same_tileset_copies_nothing_and_says_unchanged(
     result = pi.tiles_seed()
 
     assert result.returncode == 0, result.stderr
-    assert set(labels(pi)[first_calls:]) == {"source-sums", "tileset-exists", "tileset-sums", "stored-sums"}
+    assert set(labels(pi)[first_calls:]) == {
+        "source-sums",
+        "tileset-exists",
+        "tileset-sums",
+        "stored-sums",
+        "tileset-times",
+    }
     assert (pi.dir / "routing.env.prev").read_text() == OLDER_ROUTING  # the pointer did not change: no rotation
     assert [line["result"] for line in pi.tiles_log()] == ["ok", "unchanged"]
     assert "unchanged" in result.stderr
@@ -142,6 +150,7 @@ def seed_partial_tileset(pi: FakePi, source: dict[str, bytes], present: tuple[st
     target.mkdir(parents=True)
     for name in present:
         (target / name).write_bytes(source[name])
+        shutil.copystat(pi.spike / "custom_files" / name, target / name)  # what a time-keeping copy leaves
     (target / "SHA256SUMS").write_text("\n".join(checksums(source).splitlines()[:sums_lines]) + "\n")
 
 
@@ -163,11 +172,107 @@ def test_an_incomplete_tileset_that_matches_the_source_is_completed_with_the_mis
     assert {name: (tileset_dir(pi) / name).stat().st_ino for name in FOUR} == before  # nothing rewritten
     assert not list(tileset_dir(pi).glob("*.partial"))
     assert labels(pi) == ["source-sums", "tileset-exists", "tileset-sums", "complete-tileset", "verify-missing",
-                          "finalize-missing"]  # fmt: skip
+                          "finalize-missing", "tileset-times"]  # fmt: skip
     (copy,) = pi.helper_runs("complete-tileset")
     assert copy[-1] == "default_speeds.json" and not set(FOUR) & set(copy[copy.index("-c") + 3 :])
     assert (pi.dir / "routing.env").read_text() == f"VALHALLA_TILESET={TILESET}\n"
     assert pi.tiles_log()[-1]["result"] == "ok"
+
+
+def mtimes(directory: Any) -> dict[str, int]:
+    return {name: int((directory / name).stat().st_mtime) for name in TILES_FILES if (directory / name).exists()}
+
+
+def stamp_source(pi: FakePi) -> dict[str, int]:
+    """Give every source file its own distinct, old modification time (what the tile build left)."""
+    for i, name in enumerate(TILES_FILES):
+        os.utime(pi.spike / "custom_files" / name, (1700000000 + 100 * i, 1700000000 + 100 * i))
+    return mtimes(pi.spike / "custom_files")
+
+
+def test_a_full_seed_gives_every_copied_file_the_modification_time_of_its_source(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    wanted = stamp_source(pi)
+
+    assert pi.tiles_seed().returncode == 0
+
+    assert mtimes(tileset_dir(pi)) == wanted
+
+
+def test_a_completion_gives_the_added_file_the_modification_time_of_its_source(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    wanted = stamp_source(pi)
+    seed_partial_tileset(pi, source, FOUR, 4)
+
+    assert pi.tiles_seed().returncode == 0
+
+    assert mtimes(tileset_dir(pi)) == wanted
+
+
+def copied_with_other_times(pi: FakePi, source: dict[str, bytes]) -> dict[str, int]:
+    """tilesets/TILESET as the plain-cp seed left it on the Pi: five matching files, SHA256SUMS, the copy's times."""
+    wanted = stamp_source(pi)
+    seed_partial_tileset(pi, source, TILES_FILES, 5)
+    os.utime(tileset_dir(pi) / "valhalla_tiles.tar", (1900000000, 1900000000))
+    return wanted
+
+
+def test_a_matching_tileset_with_another_tar_time_is_repaired_without_rewriting_a_file(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    wanted = copied_with_other_times(pi, source)
+    before = {name: (tileset_dir(pi) / name).stat().st_ino for name in TILES_FILES}
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert mtimes(tileset_dir(pi))["valhalla_tiles.tar"] == wanted["valhalla_tiles.tar"]
+    assert {name: (tileset_dir(pi) / name).stat().st_ino for name in TILES_FILES} == before
+    assert {f.name: f.read_bytes() for f in tileset_dir(pi).iterdir() if f.name != "SHA256SUMS"} == source
+    assert not {"complete-tileset", "copy-tileset"} & set(labels(pi))
+    assert (pi.dir / "routing.env").read_text() == f"VALHALLA_TILESET={TILESET}\n"
+    assert pi.tiles_log()[-1]["result"] == "ok"
+
+    again = pi.tiles_seed()
+
+    assert again.returncode == 0, again.stderr
+    assert labels(pi).count("repair-times") == 1
+    assert [line["result"] for line in pi.tiles_log()] == ["ok", "unchanged"]
+
+
+def test_a_served_tileset_whose_valhalla_json_time_changed_and_extra_files_is_unchanged(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    wanted = stamp_source(pi)
+    seed_partial_tileset(pi, source, TILES_FILES, 5)
+    os.utime(tileset_dir(pi) / "valhalla.json", (1900000000, 1900000000))  # the engine rewrites it on every start
+    (tileset_dir(pi) / "file_hashes.txt").write_text("")
+    (pi.dir / "routing.env").write_text(f"VALHALLA_TILESET={TILESET}\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert mtimes(tileset_dir(pi))["valhalla.json"] == 1900000000
+    assert mtimes(tileset_dir(pi))["valhalla_tiles.tar"] == wanted["valhalla_tiles.tar"]
+    assert "repair-times" not in labels(pi)
+    assert pi.tiles_log()[-1]["result"] == "unchanged"
+
+
+@pytest.mark.parametrize("pointer", ["routing.env", "routing.env.prev"])
+def test_a_served_or_rollback_tileset_with_another_tar_time_is_refused_and_untouched(
+    pi: FakePi, source: dict[str, bytes], pointer: str
+) -> None:
+    copied_with_other_times(pi, source)
+    (pi.dir / pointer).write_text(f"VALHALLA_TILESET={TILESET}\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "file times differ from the source" in result.stderr
+    assert mtimes(tileset_dir(pi))["valhalla_tiles.tar"] == 1900000000
+    assert "repair-times" not in labels(pi) and not mutating_compose(pi)
+    assert pi.tiles_log()[-1]["result"] == "failed"
 
 
 def test_an_incomplete_tileset_without_a_sha256sums_is_completed_too(pi: FakePi, source: dict[str, bytes]) -> None:

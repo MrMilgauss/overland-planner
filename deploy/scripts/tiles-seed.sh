@@ -6,11 +6,14 @@
 #
 #  TILESET  8 digits (YYYYMMDD); SEED_DIR under $HOME (default valhalla-spike/custom_files)
 #  1 preflight: the five files exist (default_speeds.json too: the engine has no network to download it), >= 10 GB free, TILESET valid, no other deploy or tiles run (.deploy.lock)
-#  2 tilesets/<TILESET>/ absent: copy (plain cp, helper container, --network none) into a .partial directory, verify
+#  2 tilesets/<TILESET>/ absent: copy (cp -p: the files keep the modification time of the source, which is what Valhalla
+#    reports as tileset_last_modified; helper container, --network none) into a .partial directory, verify
 #    the copy against the source, write SHA256SUMS, rename. Present with the same checksums: nothing is copied
 #    (`unchanged`); present with other content: refused, never overwritten. Present and incomplete (files missing, the
 #    ones there equal to the source) and neither served nor kept for rollback: only the missing files are copied
-#    (.partial names, verified against the source), SHA256SUMS is rewritten for all five
+#    (.partial names, verified against the source), SHA256SUMS is rewritten for all five. A valhalla_tiles.tar whose modification
+#    time differs from the source's (copied by a plain cp) is set to it (touch -r), unless the tileset is served or kept
+#    for rollback: then refused
 #  3 routing.env <- VALHALLA_TILESET=<TILESET> (the previous one kept as routing.env.prev), valhalla started and
 #    waited for, /status read inside the compose network: version 3.9.1 and, when given, tileset_last_modified equal
 #    to EXPECT_TILESET_MODIFIED. Otherwise routing.env (and .prev) come back as they were, valhalla is stopped when it
@@ -18,7 +21,7 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
-# shellcheck source=deploy/scripts/lib.sh
+# shellcheck source=deploy/scripts/lib.sh disable=SC1091 # followed by make lint-ci; the pre-commit hook gets no -x
 . scripts/lib.sh
 
 TILESET=${1:-}
@@ -28,6 +31,7 @@ MIN_FREE_KB=$((10 * 1024 * 1024))
 MODIFIED=
 WAS_RUNNING=
 COPIED=no
+REPAIRED=no
 POINTER_CHANGED=no
 # on from the first change to routing.env (backup made) until the engine is verified: any exit in between puts it back
 GUARD=off
@@ -86,7 +90,7 @@ complete_tileset() {
   # shellcheck disable=SC2016 # the script is expanded by the container's sh
   docker run --rm --network none -v "$SOURCE:/seed:ro" -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
     sh -c 'set -e; dir="/vol/tilesets/$1"; shift
-      for f in "$@"; do echo "tiles-seed: copying $f" >&2; cp "/seed/$f" "$dir/$f.partial"; done' complete-tileset "$TILESET" "${missing[@]}" >&2 ||
+      for f in "$@"; do echo "tiles-seed: copying $f" >&2; cp -p "/seed/$f" "$dir/$f.partial"; done' complete-tileset "$TILESET" "${missing[@]}" >&2 ||
     {
       drop_missing_partials
       refuse "copy into tilesets/$TILESET failed"
@@ -118,6 +122,31 @@ drop_missing_partials() {
   # shellcheck disable=SC2016 # the script is expanded by the container's sh
   docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
     sh -c 'cd "/vol/tilesets/$1" && rm -f ./*.partial' drop-partial "$TILESET" >&2 || true
+}
+
+# repair_times: valhalla_tiles.tar is what /status reports as tileset_last_modified (the identity of the map data), so
+# its modification time (whole seconds, read inside the helper container) must be the source's; when it differs it is set
+# to it. The other files' times are never compared (the engine rewrites valhalla.json on every start). A served or
+# rollback tileset is never touched: refused.
+repair_times() {
+  local tar=valhalla_tiles.tar times src copy
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  times=$(docker run --rm --network none -v "$SOURCE:/seed:ro" -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'set -e; echo "$(stat -c %Y "/seed/$2") $(stat -c %Y "/vol/tilesets/$1/$2")"' tileset-times "$TILESET" "$tar") ||
+    refuse "cannot read the file times of tilesets/$TILESET; nothing was changed"
+  read -r src copy <<EOF_TIMES
+$times
+EOF_TIMES
+  [ "$src" != "$copy" ] || return 0
+  if [ "$(env_value routing.env VALHALLA_TILESET)" = "$TILESET" ] || [ "$(env_value routing.env.prev VALHALLA_TILESET)" = "$TILESET" ]; then
+    refuse "tilesets/$TILESET is served or kept for rollback and its file times differ from the source ($tar); not touched"
+  fi
+  say "tiles-seed: setting the file time of $tar to that of the source"
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  docker run --rm --network none -v "$SOURCE:/seed:ro" -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c 'set -e; touch -r "/seed/$2" "/vol/tilesets/$1/$2"' repair-times "$TILESET" "$tar" >&2 ||
+    refuse "could not set the file time of tilesets/$TILESET/$tar"
+  REPAIRED=yes
 }
 
 # 1. Preflight.
@@ -182,12 +211,13 @@ if [ "$present" -eq 0 ]; then
     complete_tileset
     COPIED=yes
   fi
+  repair_times
 else
   say "tiles-seed: copying about 5 GB into tilesets/$TILESET (progress below)"
   # shellcheck disable=SC2016 # the script is expanded by the container's sh
   docker run --rm --network none -v "$SOURCE:/seed:ro" -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
     sh -c 'set -e; part="/vol/tilesets/.$1.partial"; shift; rm -rf "$part"; mkdir -p "$part"
-      for f in "$@"; do echo "tiles-seed: copying $f" >&2; cp "/seed/$f" "$part/$f"; done' copy-tileset "$TILESET" "${TILES_FILES[@]}" >&2 ||
+      for f in "$@"; do echo "tiles-seed: copying $f" >&2; cp -p "/seed/$f" "$part/$f"; done' copy-tileset "$TILESET" "${TILES_FILES[@]}" >&2 ||
     {
       drop_partial
       refuse "copy into tilesets/$TILESET failed"
@@ -231,6 +261,6 @@ fi
 
 discard_routing_backup
 GUARD=off
-if [ "$COPIED" = no ] && [ "$POINTER_CHANGED" = no ]; then result=unchanged; else result=ok; fi
+if [ "$COPIED" = no ] && [ "$REPAIRED" = no ] && [ "$POINTER_CHANGED" = no ]; then result=unchanged; else result=ok; fi
 record "$result"
 say "tiles-seed: $result: valhalla $VALHALLA_VERSION serves tileset $TILESET (tileset_last_modified $MODIFIED)"

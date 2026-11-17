@@ -41,6 +41,7 @@ from typing import Any
 HOME = Path(os.environ["SHIM_HOME"])
 HEALTHZ_OK = '{"status":"ok"}'
 VALHALLA_STATUS_OK = '{"version":"3.9.1","tileset_last_modified":1793560782,"available_actions":["status","route"]}'
+BUILD_TIME = 1700000000  # modification time the scripted tile build gives valhalla_tiles.tar
 HELPER_MOUNTS = ("/seed", "/vol", "/target")
 API_HEALTH_OK = '{"status":"ok","components":{"database":{"outcome":"ok","reason":null}},"banners":[]}'
 
@@ -230,6 +231,7 @@ def _compose_run(argv: list[str]) -> None:
             sys.exit(1)
         for name in ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json"):
             (build / name).write_text(f"built {name}\n")
+        os.utime(build / "valhalla_tiles.tar", (BUILD_TIME, BUILD_TIME))  # the tile build's own time
 
 
 def _helper_mounts(argv: list[str]) -> dict[str, str]:
