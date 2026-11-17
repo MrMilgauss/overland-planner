@@ -7,7 +7,6 @@ from pytest_bdd import scenarios
 for _feature in (
     "slice-04-consideration-list.feature",
     "slice-05-incremental-recalculation.feature",
-    "slice-06a-valhalla-on-the-pi.feature",
     "slice-06b-compromise-legs.feature",
     "slice-07-real-gpx-import.feature",
     "slice-08-input-data-hygiene.feature",

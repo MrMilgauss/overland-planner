@@ -5,7 +5,7 @@
 # slice 06a-ops (enabler, no scenarios of its own) provides. "Valhalla" is the name Marco sees in his results
 # header (policy note L-05), so it is domain language here.
 
-@slice-06a @pending
+@slice-06a
 Feature: Planning on the real road network
   As Marco, I want my plans computed on real roads by the routing engine on my own Pi, with clear messages when it
   is down, so that the km and hours are real and my data stays at home.

@@ -76,7 +76,7 @@ Feature: The planner and the routing engine understand each other
     When the routing-engine contract checks run against the offline road map
     Then every check gives the same result as for the recorded routing engine
 
-  @pending @slice-06a @US-10a @J-01 @requires_external @real_provider @pi
+  @slice-06a @US-10a @J-01 @requires_external @real_provider @pi
   Scenario: The routing engine on the Pi still answers like its recordings
     Given the planner can reach Valhalla on Marco's Pi through the maintenance tunnel
     When the routing-engine contract checks run against it

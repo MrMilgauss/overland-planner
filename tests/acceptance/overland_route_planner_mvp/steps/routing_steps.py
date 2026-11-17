@@ -9,8 +9,11 @@ stay cached when the place is added, and the Recalculate that follows asks only 
 from __future__ import annotations
 
 import json
+import os
+import re
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -20,8 +23,21 @@ from pytest_bdd import given, parsers, then, when
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, read_road_map
 from overland_planner.bootstrap.startup import StartupRefusedError
 from overland_planner.domain.catalog.coordinate import Coordinate
-from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import add_poi, require_success
+from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import (
+    add_poi,
+    create_project,
+    require_success,
+    set_anchors,
+)
 from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import plan_run_detail, runs_by_number
+from tests.acceptance.overland_route_planner_mvp.steps.performance_steps import (
+    PERF_REPORT_KEY,
+    PI_PLAN_DEADLINE_S,
+    PI_URL_KEY,
+    finish,
+    gpx_track,
+    press,
+)
 from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     FIRST_TRIP,
     PLAN_DEADLINE_S,
@@ -34,6 +50,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     press_calculate,
     wait_for_plan,
 )
+from tests.acceptance.overland_route_planner_mvp.steps.planner import RemotePlanner
 from tests.acceptance.overland_route_planner_mvp.steps.world import CATALOG_UNIVERSE, PLANNING_UNIVERSE, PlannerWorld
 from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
@@ -46,6 +63,12 @@ ROAD_MAP_FILE = "off-network-road-map.yaml"
 UNREACHABLE_REASON = "routing_engine_unreachable"
 NOT_READY_REASON = "routing_engine_not_ready"
 SYNTHETIC_KM_PER_H = 50.0
+DEMO_PREFIX = "__demo"  # the live scenarios' own projects: the household's projects are never read or written
+RECORDED_TORINO_SUSA = Path(__file__).parents[4] / "tests/contract/fixtures/valhalla-3.9.1/torino_susa_fossgis.json"
+TORINO = ("Torino", 45.0703, 7.6869)
+SUSA = ("Susa", 45.1370, 7.0500)
+TRAIL_ENTRY = (44.55188, 7.11662)  # on the Strada dei Cannoni (OSM way 38239300), legally snapped within 21 m
+E2E_LIMIT_S = 180
 OBJECTIVES = {"minimise road distance": "distance", "minimise road time": "time"}
 
 
@@ -406,3 +429,129 @@ def then_the_password_does_not_appear(world: PlannerWorld) -> None:
     assert world.scratch["run_4"]["id"] in seen or place == "the exported GPX file", f"{place}: nothing to look at"
     assert seen.strip(), f"{place} is empty"
     assert world.scratch["password"] not in seen, f"the password appears in {place}"
+
+
+# ============================ live scenarios: the engine on the Pi (make acceptance-pi)
+def demo_project(world: PlannerWorld, label: str) -> None:
+    """A project of the live scenarios' own, `__demo <label> <time>`, with Torino as Start and Susa as End."""
+    create_project(world, f"{DEMO_PREFIX} {label} {time.strftime('%Y%m%d-%H%M%S')}")
+    require_success(world, "create the demo project")
+    for name, lat, lon in (TORINO, SUSA):
+        add_poi(world, name, lat, lon)
+        require_success(world, f"add {name!r}")
+    set_anchors(world, TORINO[0], SUSA[0])
+    require_success(world, "set the Start and End")
+
+
+def ended_plan_run(world: PlannerWorld) -> dict[str, Any]:
+    job = world.scratch["job"]
+    assert job["state"] == "done" and job["plan_run_id"], f"the Recalculate gave no plan run: {job}"
+    answer = world.marco().plan_run(str(job["plan_run_id"]))
+    assert answer.status_code == 200, f"the plan run did not open: {answer.status_code} {answer.text[:300]}"
+    return dict(answer.json())
+
+
+@given("the planner routes on Valhalla on Marco's Pi")
+def given_the_planner_routes_on_valhalla_on_the_pi(world: PlannerWorld) -> None:
+    url = os.environ.get(PI_URL_KEY)
+    assert url, f"{PI_URL_KEY} is not set: this scenario runs only through make acceptance-pi (D96)"
+    world.planner = RemotePlanner(url)
+    world.planner.start()
+
+
+@when(parsers.re(r'Marco presses Recalculate on "(?P<project>[^"]+)"'))
+def when_marco_presses_recalculate_on_his_project(world: PlannerWorld, project: str) -> None:
+    demo_project(world, project)
+    press(world)
+    finish(world, PI_PLAN_DEADLINE_S)
+    world.scratch["run"] = ended_plan_run(world)
+
+
+@then(
+    parsers.re(
+        r'the results show "(?P<provider>[^"]+)" with the date of its map data '
+        r'and the routing profile "(?P<profile>[^"]+)"'
+    )
+)
+def then_the_results_show_the_provider_date_and_profile(world: PlannerWorld, provider: str, profile: str) -> None:
+    header = world.scratch["run"]["provider_header"]
+    assert re.fullmatch(rf"{re.escape(provider)} \(map data \d{{4}}-\d{{2}}-\d{{2}}\) / profile: {profile}", header), (
+        header
+    )
+
+
+@then(
+    "the Torino to Susa leg is within 15% of the value shown by the openstreetmap.org route planner "
+    "using its Valhalla engine"
+)
+def then_the_torino_to_susa_leg_is_close_to_openstreetmap_org(world: PlannerWorld) -> None:
+    recorded_km = json.loads(RECORDED_TORINO_SUSA.read_text())["trip"]["legs"][0]["summary"]["length"]
+    stops = {stop["name"]: stop for stop in world.scratch["run"]["stops"]}
+    leg_km = stops[SUSA[0]]["leg_km"]
+    assert leg_km is not None and abs(leg_km - recorded_km) <= 0.15 * recorded_km, (
+        f"Torino to Susa is {leg_km} km, openstreetmap.org shows {recorded_km} km"
+    )
+
+
+@given(parsers.re(r'the entry of track "(?P<track>[^"]+)" lies on a forest track open to vehicles'))
+def given_the_entry_of_a_track_lies_on_a_forest_track(world: PlannerWorld, track: str) -> None:
+    demo_project(world, "trail entry")
+    assert world.project_id is not None, "no project is open"
+    lat, lon = TRAIL_ENTRY
+    points = tuple((lat + step * 0.0003, lon, 1900.0 + step) for step in range(3))  # about 70 m from the entry
+    world.note(world.marco().import_track_files(world.project_id, [(f"{track}.gpx", gpx_track(track, points))]))
+    require_success(world, f"import the track {track!r}")
+
+
+@then(parsers.re(r'the leg to "(?P<track>[^"]+)" is Confirmed'))
+def then_the_leg_to_the_track_is_confirmed(world: PlannerWorld, track: str) -> None:
+    detail = world.marco().plan_run(world.scratch["plan_run_id"]).json()
+    stop = next((s for s in detail["stops"] if s["name"] == track and s["type"] == "track"), None)
+    assert stop is not None, f"the plan has no stop for {track!r}: {[s['name'] for s in detail['stops']]}"
+    assert stop["leg_confidence"] == "confirmed", f"the leg to {track!r} is {stop['leg_confidence']!r}: {stop}"
+
+
+def e2e_report(world: PlannerWorld) -> dict[str, Any]:
+    """The report of make perf-pi MODE=e2e that PERF_REPORT names: its 10 cold runs are the measurement."""
+    path = os.environ.get(PERF_REPORT_KEY)
+    assert path, (
+        f"{PERF_REPORT_KEY} is not set: run make perf-pi MODE=e2e and name its report file in {PERF_REPORT_KEY}"
+    )
+    report: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+    assert report.get("mode") == "e2e", f"{path} is not the report of make perf-pi MODE=e2e"
+    return report
+
+
+@given("the project of 60 items plus Start and End has no road legs known yet")
+def given_the_project_has_no_road_legs_known_yet(world: PlannerWorld) -> None:
+    report = e2e_report(world)
+    assert report["items"] == 60, f"the report measured {report['items']} items"
+    assert all(run.get("legs_cached") == 0 for run in report["runs"]), "a run started with road legs already known"
+
+
+@when("Marco presses Recalculate 10 times, the known legs being forgotten before each run")
+def when_marco_presses_recalculate_10_times_cold(world: PlannerWorld) -> None:
+    report = e2e_report(world)
+    assert (report["n"], len(report["runs"])) == (10, 10), f"the report holds {len(report['runs'])} of 10 runs"
+    world.scratch["e2e"] = report
+
+
+@then(
+    parsers.re(
+        r"the slowest of the 10 runs took at most (?P<seconds>\d+) seconds "
+        r"from pressing Recalculate to the route on screen"
+    ),
+    converters={"seconds": int},
+)
+def then_the_slowest_run_is_within(world: PlannerWorld, seconds: int) -> None:
+    runs = world.scratch["e2e"]["runs"]
+    assert [run["state"] for run in runs] == ["done"] * 10, f"not every run finished: {[r['state'] for r in runs]}"
+    slowest = max(run["e2e_s"] for run in runs)
+    assert slowest <= seconds, f"the slowest of the 10 runs took {slowest} s: {[r['e2e_s'] for r in runs]}"
+
+
+@then("every run counts, including retried ones, which are also shown separately")
+def then_every_run_counts_and_retried_ones_are_shown(world: PlannerWorld) -> None:
+    report = world.scratch["e2e"]
+    assert len(report["runs"]) == report["n"] == 10, "a run is missing from the report"
+    assert report["retried_runs"] == sum(1 for run in report["runs"] if run.get("retried")), "retried runs differ"

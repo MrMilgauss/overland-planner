@@ -3,7 +3,8 @@
 The same checks run against the recorded Valhalla 3.9.1 answers (respx, CI), the offline road map (MockRoutingProvider)
 and, with --run-external, the live Valhalla on the Pi (make contract-live). A scenario loses `@pending` in the step that
 turns it green and blocks in CI job 2 at once. Bound so far: the matrix scenarios (09-02), the 170 flow,
-the version stop and the failures (09-03), the hiccup and the offline road map's parity (09-05).
+the version stop and the failures (09-03), the hiccup and the offline road map's parity (09-05),
+the live engine (09-11).
 Fixtures: tests/contract/fixtures/valhalla-3.9.1/ with its sha256 manifest.
 """
 
@@ -57,6 +58,11 @@ def test_a_passing_server_hiccup_is_retried_and_the_plan_still_counts_toward_the
 )
 def test_the_offline_road_map_reports_connections_and_failures_like_the_routing_engine() -> None:
     """The scripted offline road map gives the recorded engine's typed results, check by check."""
+
+
+@scenario(FEATURE, "The routing engine on the Pi still answers like its recordings", **FEATURES)
+def test_the_routing_engine_on_the_pi_still_answers_like_its_recordings() -> None:
+    """Layer 2 of make contract-live (D235): the checks through the adapter at `--valhalla-url`; skipped without it."""
 
 
 scenarios(FEATURE, **FEATURES)  # the other scenarios stay @pending until their step

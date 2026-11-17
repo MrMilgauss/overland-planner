@@ -106,6 +106,7 @@ kpis:
     instruments:
       gate: "make perf-pi (planner-perf on the Pi, leg cache cleared, client-observed from the Mac; N=10 -> gate on max, N=30 -> p95). AUTHORITATIVE for K5: every run counts, none is dropped (D177). Solves the golden I1/I2 first and checks the order hash (D175)"
       e2e: "the e2e figure is measured by make perf-pi MODE=e2e (cold: planner-perf recreated before each run) and ends at the stored plan read back (GET /api/plan-runs/{id}) until slice 09 adds the road shapes; then it ends at the geometry answer (D236)"
+      live_scenario: "slice 06a's @pi @real_provider scenario 'A 60-item trip with no known roads is on screen within 3 minutes' (make acceptance-pi) reads the report of make perf-pi MODE=e2e named by PERF_REPORT and asserts the slowest e2e <= 180 s over 10 runs, every run counted, retried ones listed (D236, step 09-11)"
       proxy: "/api/diagnostics K5 fields are a server-side proxy over production jobs (leg cache usually warm, no client time); they inform, they never open or close the claim (D177, F-25)"
       runtime_event: plan.job.finished (stage_ms, elapsed_ms) + plan.run.geometry_served (e2e_server_ms)
       diagnostics_fields:
@@ -170,7 +171,7 @@ guardrails:
   - id: G4
     name: Routing engine availability while planning
     target: no refused jobs for engine not ready outside tile refresh windows
-    instruments: {runtime_event: plan.job.refused (reason engine_not_ready), diagnostics_field: g4.engine_refusals_30d, healthcheck: valhalla /status}
+    instruments: {runtime_event: plan.job.refused (reason engine_not_ready), diagnostics_field: g4.engine_refusals_30d, healthcheck: valhalla /status, acceptance: "slice 06a scenario 'The routing engine is still loading its map data' counts the refusal in g4.engine_refusals_30d (CI, synthetic engine)"}
     thresholds: {green: 0, amber: ">= 1"}
 
 diagnostics_endpoint:

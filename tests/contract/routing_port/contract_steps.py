@@ -8,6 +8,8 @@ once) and the engine version check (it has no version)."""
 from __future__ import annotations
 
 import json
+import math
+import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -37,7 +39,11 @@ from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
 from tests.common.catalog_fakes import InMemoryFileStore, RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.contract.routing_port.recordings import REPLAY_URL, BatchLimitedEngine, recording
-from tests.contract.routing_port.test_engine_recordings import require_recorded_engine
+from tests.contract.routing_port.test_engine_recordings import (
+    TOLERANCE,
+    require_expected_tileset,
+    require_recorded_engine,
+)
 from tests.unit.application.planning.planning_doubles import InMemoryPlanJobLog, InMemoryPlanning, job_when_ended
 from tests.unit.application.planning.scripted_tour_solver import ScriptedTourSolver
 from tests.unit.domain.planning.trips import PROJECT
@@ -76,6 +82,14 @@ class _Hiccup:
         return httpx.Response(200, json={"sources_to_targets": rows})
 
 
+@dataclass(frozen=True)
+class LiveEngine:
+    """The engine at `--valhalla-url` (make contract-live); `exact` when it serves the recorded map data."""
+
+    url: str
+    exact: bool
+
+
 @dataclass
 class ContractWorld:
     answer: Sequence[Sequence[RoadCell]] = ()  # type: ignore[assignment]
@@ -89,6 +103,8 @@ class ContractWorld:
     observer: _Observer = field(default_factory=_Observer)
     hiccup: _Hiccup | None = None
     offline: dict[str, Any] = field(default_factory=dict)
+    live: LiveEngine | None = None
+    live_differences: list[str] = field(default_factory=list)
 
 
 @pytest.fixture
@@ -311,6 +327,9 @@ def _engine_of_another_version(router: respx.MockRouter, found: str, recorded: s
 
 @when("the routing-engine contract checks run against it")
 def _run_the_contract_checks(world: ContractWorld) -> None:
+    if world.live is not None:
+        world.live_differences = _checks_of_the_live_engine(world.live)
+        return
     with httpx.Client(base_url=REPLAY_URL) as client:
         try:
             require_recorded_engine(client)
@@ -568,3 +587,71 @@ def _every_check_gives_the_same_result(world: ContractWorld) -> None:
         "ProviderUnavailable",
     ]
     assert world.offline == recorded
+
+
+# Scenario: The routing engine on the Pi still answers like its recordings (layer 2 of make contract-live, D235)
+
+
+@given("the planner can reach Valhalla on Marco's Pi through the maintenance tunnel")
+def _the_live_engine(request: pytest.FixtureRequest, world: ContractWorld) -> None:
+    url = request.config.getoption("--valhalla-url")
+    if not url:
+        pytest.skip("live checks need --valhalla-url; without it the recordings are replayed")
+    with httpx.Client(base_url=url, timeout=120) as client:
+        status = require_recorded_engine(client)
+    require_expected_tileset(status, request.config.getoption("--expect-tileset-modified"))
+    world.live = LiveEngine(url, exact=status["tileset_last_modified"] == recording("status")["tileset_last_modified"])
+
+
+def _live_provider(url: str) -> ValhallaRoutingProvider:
+    return ValhallaRoutingProvider(
+        url, expected_version="3.9.1", max_matrix_pairs=2500, concurrency=2, snap_m=SNAP_M, sleep=time.sleep
+    )
+
+
+def _near(recorded: int, live: int, *, exact: bool) -> bool:
+    return recorded == live if exact else math.isclose(recorded, live, rel_tol=TOLERANCE)
+
+
+def _measure_differences(name: str, recorded: RoadMeasure, live: object, *, exact: bool) -> list[str]:
+    if not isinstance(live, RoadMeasure):
+        return [f"{name}: {live!r} instead of {recorded}"]
+    if _near(recorded.distance_m, live.distance_m, exact=exact) and _near(
+        recorded.duration_s, live.duration_s, exact=exact
+    ):
+        return []
+    return [f"{name}: {live} instead of {recorded}"]
+
+
+def _checks_of_the_live_engine(engine: LiveEngine) -> list[str]:
+    """The checks of the recorded engine that need no scripted fault, through the adapter at the live engine. What each
+    does not cover: the failures and the hiccup need a scripted engine, and the 2,500-leg batching a counting one (the
+    recorded refusal itself is checked raw by layer 1)."""
+    provider, differences = _live_provider(engine.url), []
+    torino, susa = _places(TORINO_SUSA)
+    (answered,) = provider.matrix([torino], [susa])
+    differences += _measure_differences("Torino to Susa", RoadMeasure(56099, 3342), answered[0], exact=engine.exact)
+    island = recording("matrix_confirmed_with_island_null_row")
+    sources, targets = _places(island["request"]["sources"]), _places(island["request"]["targets"])
+    island_answer = provider.matrix(sources, targets)
+    if list(island_answer[1]) != [None] * len(targets):
+        differences.append(f"the island: {list(island_answer[1])!r} instead of no connection at any level")
+    for cell, recorded in zip(island_answer[0], island["response"]["sources_to_targets"][0], strict=True):
+        measure = RoadMeasure(distance_m=round(recorded["distance"] * 1000), duration_s=recorded["time"])
+        differences += _measure_differences("the other places", measure, cell, exact=engine.exact)
+    far = recording("matrix_170_unsnappable_location_kills_call")["request"]
+    sources, targets = _places(far["sources"]), _places(far["targets"])
+    far_answer = provider.matrix(sources, targets)
+    if list(far_answer[1]) != [OffNetwork(frozenset({sources[1]}))] * len(targets):
+        differences.append(f"the far place: {list(far_answer[1])!r} instead of off the network")
+    differences += [
+        f"the other places: {cell!r} is no leg" for cell in far_answer[0] if not isinstance(cell, RoadMeasure)
+    ]
+    return differences
+
+
+@then("every check passes on the live routing engine")
+def _every_live_check_passes(world: ContractWorld) -> None:
+    assert not world.live_differences, "the live engine departs from its recordings: " + "; ".join(
+        world.live_differences
+    )

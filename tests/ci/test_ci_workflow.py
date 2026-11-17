@@ -128,10 +128,10 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     pytest_step = _main_pytest(job)
 
     # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12),
-    # slice 03 (step 06-13), slice 03b (step 07-13).
+    # slice 03 (step 06-13), slice 03b (step 07-13), slice 06a (step 09-11).
     assert workflow["env"]["PENDING_FLAGS"] == (
         "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
-        " --run-pending=slice-03 --run-pending=slice-03b"
+        " --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a"
     )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
@@ -1033,6 +1033,49 @@ def test_slice_03b_scenarios_run_without_being_enabled() -> None:
     lines = (REPO_ROOT / FEATURE_03B).read_text().splitlines()
 
     assert [line for line in lines if line.startswith("@")] == ["@slice-03b"]
+
+
+FEATURE_06A = "tests/acceptance/overland_route_planner_mvp/slice-06a-valhalla-on-the-pi.feature"
+CONTRACT_FEATURE = "tests/contract/routing_port/routing-engine-contract.feature"
+MODULE_06A = "tests/acceptance/overland_route_planner_mvp/test_slice_06a.py"
+MODULE_CONTRACT = "tests/contract/routing_port/test_routing_engine_contract.py"
+LIVE_06A = (
+    "test_marco_plans_with_valhalla_on_his_pi",
+    "test_a_trail_entry_reached_by_a_forest_track_is_confirmed",
+    "test_a_60_item_trip_with_no_known_roads_is_on_screen_within_3_minutes",
+)
+LIVE_CONTRACT = "test_the_routing_engine_on_the_pi_still_answers_like_its_recordings"
+
+
+# bypass: tag lines and a flag list; no input space to generate over
+def test_slice_06a_is_enabled_in_ci_and_its_files_say_so() -> None:
+    """Step 09-11: the feature's tag line loses `@pending`, so do the contract scenarios of slice 06a (the slice 06b
+    ones keep it), the pending-slices module no longer binds the feature, and PENDING_FLAGS enables the slice."""
+    contract = (REPO_ROOT / CONTRACT_FEATURE).read_text().splitlines()
+    still_pending = [line for line in contract if line.strip().startswith("@pending")]
+    pending_slices = (REPO_ROOT / "tests/acceptance/overland_route_planner_mvp/test_pending_slices.py").read_text()
+
+    assert [line for line in (REPO_ROOT / FEATURE_06A).read_text().splitlines() if line.startswith("@")] == [
+        "@slice-06a"
+    ]
+    assert still_pending and all("@slice-06b" in line for line in still_pending)
+    assert "slice-06a" not in pending_slices
+    assert "--run-pending=slice-06a" in _workflow()["env"]["PENDING_FLAGS"].split()
+
+
+def test_job_2_runs_the_slice_06a_scenarios_that_need_no_live_engine_and_leaves_the_live_ones_out() -> None:
+    """Step 09-11: without any --run-pending flag, job 2's selection holds the 10 offline tests of the feature (the
+    password outline counts three) and the 8 offline contract scenarios, and none of the live scenarios."""
+    expression = re.search(r'-m "(?P<expression>[^"]+)"', _main_pytest(_job(_workflow(), "test-python"))["run"])
+    assert expression is not None
+
+    feature = _collect("-m", expression["expression"], module=MODULE_06A)
+    contract = _collect("-m", expression["expression"], module=MODULE_CONTRACT)
+    in_feature = {line.split("::", 1)[1] for line in feature.stdout.splitlines() if line.startswith(MODULE_06A)}
+    in_contract = {line.split("::", 1)[1] for line in contract.stdout.splitlines() if line.startswith(MODULE_CONTRACT)}
+
+    assert len(in_feature) == 10 and not in_feature & set(LIVE_06A)
+    assert LIVE_CONTRACT not in in_contract
 
 
 def _collected_slice_03(*selection: str) -> list[str]:

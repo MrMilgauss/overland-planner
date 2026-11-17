@@ -186,6 +186,8 @@ This makes D29 (partial legs kept), US-10 refusals, FR-5.8, FR-8.2 and A-7 testa
 
 Contract tests (handoff annotation): **Valhalla** (self-hosted, pinned image) via recorded fixtures plus a scheduled live smoke test; **Nominatim** (Phase 2) via pact-python or recorded fixtures; any later hosted routing adapter (e.g. OpenRouteService) gets the same port suite.
 
+**As built in slice 06a (2026-11-17; ADR-013 Amendment 4).** The port contract suite runs the same checks against the recorded answers, the offline road map and, with `--valhalla-url`, the live engine through `ValhallaRoutingProvider` (`make contract-live` runs both layers: the raw recorded questions and the adapter checks; D235). The live adapter checks are the Torino to Susa leg, the island row and the batch with a place far from any road; the failures, the hiccup and the 2,500-leg batching need a scripted engine and run on the recordings only. Three `@pi @real_provider` acceptance scenarios (the Valhalla header and the Torino to Susa leg, a trail entry on a forest track, the 3-minute 60-item trip) run through `make acceptance-pi` in `__demo` projects of their own; the last reads the report of `make perf-pi MODE=e2e` named by `PERF_REPORT`. Slice 06a blocks in CI job 2 with `--run-pending=slice-06a`; the live scenarios never run in GitHub CI.
+
 ### 7. Composition root, probes and Earned Trust
 
 The composition root is `bootstrap/app_factory.py::create_app()` (Uvicorn factory mode). Its invariant: **wire, then probe, then use** (ADR-011 + Amendment 1).
@@ -267,6 +269,8 @@ Run flags:
 - `unconfirmed_legs`, `retraces`.
 
 Stale = project revision != the revision stored on the latest run.
+
+**As built in slice 06a (2026-11-17; ADR-013 Amendment 4).** The pipeline above runs unchanged on the Valhalla adapter: `matrix` stage legs come from the engine one origin per call (D246), an engine failure ends the job with no run and keeps the answered legs, a place the engine cannot snap fails the reachability check and is named, and each run stores its road map's `provider_id` and `profile` for the results header. The 3-minute figure is measured cold by `make perf-pi MODE=e2e`; whether the one-origin call shape keeps the slowest of 10 under 150 s is the gate's answer, not this paragraph's.
 
 ### 9. Data and volume layout
 

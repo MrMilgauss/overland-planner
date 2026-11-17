@@ -1,5 +1,8 @@
-"""pytest-bdd binding: slice 06a scenarios, bound one step at a time (phase 09). The feature keeps `@slice-06a @pending`
-until the last step of the slice, so they run with `--run-pending=slice-06a`.
+"""pytest-bdd binding: slice 06a scenarios (phase 09); the slice blocks in CI since step 09-11.
+
+The three `@pi @real_provider @requires_external` scenarios drive the live engine on the Pi through a remote planner
+(PLANNER_PERF_URL, the credentials from the environment): they are skipped without --run-external and run only through
+make acceptance-pi (the 3-minute one reads the report of make perf-pi MODE=e2e named by PERF_REPORT).
 
 "A place far from any road" plans four times on the offline road map before it fails at the reachability check; its
 first plan is a real solve in the solver child, so pre-push leaves it to CI job 2.
@@ -83,3 +86,18 @@ def the_planner_log_is_listened_to(world: PlannerWorld, capsys: pytest.CaptureFi
 @scenario(FEATURE, "Marco's password is never shown")
 def test_marcos_password_is_never_shown(the_planner_log_is_listened_to: None) -> None:
     """Plan run #4 is computed and exported with the household password set: it is in no answer, log line or file."""
+
+
+@scenario(FEATURE, "Marco plans with Valhalla on his Pi")
+def test_marco_plans_with_valhalla_on_his_pi() -> None:
+    """Live: Torino to Susa on the Pi's engine, in a `__demo` project of its own."""
+
+
+@scenario(FEATURE, "A trail entry reached by a forest track is Confirmed")
+def test_a_trail_entry_reached_by_a_forest_track_is_confirmed() -> None:
+    """Live: a track entered on the Strada dei Cannoni, in a `__demo` project of its own."""
+
+
+@scenario(FEATURE, "A 60-item trip with no known roads is on screen within 3 minutes")
+def test_a_60_item_trip_with_no_known_roads_is_on_screen_within_3_minutes() -> None:
+    """Live: the report of make perf-pi MODE=e2e (10 cold runs)."""
