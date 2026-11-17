@@ -396,7 +396,9 @@ def given_plan_run_4_has_been_exported(world: PlannerWorld, project: str) -> Non
 
 
 def _everything_the_results_say(world: PlannerWorld) -> str:
-    """Every API answer about plan run #4 and the data the web page opens with, as text."""
+    """Every API answer about plan run #4 and the data the web page reads, as text. The home page itself is static
+    (the built web page carries no run data) and is not served where the planner runs without a web build (CI job 7),
+    so it is not one of the places."""
     marco, run = world.marco(), world.scratch["run_4"]
     assert world.project_id is not None, "no project is open"
     answers = [
@@ -405,7 +407,6 @@ def _everything_the_results_say(world: PlannerWorld) -> str:
         marco.project(world.project_id),
         marco.projects(),
         marco.items(world.project_id),
-        marco.home_page(),
         marco.health_detail(),
         marco.diagnostics(world.project_id),
     ]
