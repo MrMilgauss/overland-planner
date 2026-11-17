@@ -50,6 +50,10 @@ services:
       VALHALLA_MAX_MATRIX_PAIRS: ${VALHALLA_MAX_MATRIX_PAIRS:-}
       VALHALLA_CONCURRENCY: ${VALHALLA_CONCURRENCY:-}
       CONFIRMED_SNAP_M: ${CONFIRMED_SNAP_M:-}
+      # The map's tiles (ADR-004): empty when unset, which the planner reads as OpenTopoMap with its credit.
+      MAP_TILE_URL: ${MAP_TILE_URL:-}
+      MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
+      MAP_TILE_MAX_ZOOM: ${MAP_TILE_MAX_ZOOM:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
       # Solve limits in whole seconds from pressing Calculate (ADR-014 section 2); feasibility <= optimisation.

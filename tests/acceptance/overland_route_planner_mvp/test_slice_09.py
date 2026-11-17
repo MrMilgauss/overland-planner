@@ -45,3 +45,15 @@ def test_the_map_still_shows_the_plan_when_road_shapes_are_unavailable(
 @scenario(FEATURE, "Compromise legs stand out on the map")
 def test_compromise_legs_stand_out_on_the_map() -> None:
     """An Unconfirmed leg and a retrace on the scripted road map: `level unconfirmed` and its reason, `kind retrace`."""
+
+
+@pytest.mark.driving_port
+@scenario(FEATURE, "The map uses Marco's chosen map tiles and always credits them")
+def test_the_map_uses_marcos_chosen_map_tiles_and_always_credits_them() -> None:
+    """The settings name the OpenTopoMap address and its attribution (the web's credit control: 10-04's Playwright)."""
+
+
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "A map tile address carrying a private access key stops the planner at start-up")
+def test_a_map_tile_address_carrying_a_private_access_key_stops_the_planner_at_start_up() -> None:
+    """The real server process refuses to start: one `health.startup.refused` line names setting and parameter."""

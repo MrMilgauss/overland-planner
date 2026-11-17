@@ -548,6 +548,30 @@
         "title": "LineStringResource",
         "type": "object"
       },
+      "MapConfig": {
+        "description": "What the web needs to draw its base map (ADR-004): the raster tile address, its credit and the deepest zoom.",
+        "properties": {
+          "attribution": {
+            "title": "Attribution",
+            "type": "string"
+          },
+          "max_zoom": {
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "tile_url": {
+            "title": "Tile Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tile_url",
+          "attribution",
+          "max_zoom"
+        ],
+        "title": "MapConfig",
+        "type": "object"
+      },
       "MarkerFeatureResource": {
         "properties": {
           "geometry": {
@@ -1451,6 +1475,24 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/config/map": {
+      "get": {
+        "operationId": "api_config_map_api_config_map_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Config Map"
+      }
+    },
     "/api/diagnostics": {
       "get": {
         "description": "K2, K3, K5 and K7 over the last `days` days; `project_id` limits every figure to that project.",

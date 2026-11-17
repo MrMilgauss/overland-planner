@@ -298,3 +298,110 @@ def test_the_offline_road_map_script_with_the_valhalla_provider_is_refused(plan:
         Settings.from_environ({"ROUTING_PROVIDER": "valhalla", "MOCK_PLAN": plan})
     assert refused.value.setting_names == frozenset({"MOCK_PLAN"})
     assert Settings.from_environ({"ROUTING_PROVIDER": "mock", "MOCK_PLAN": plan}).mock_plan == Path(plan)
+
+
+# --------------------------------------------------------------------------- map tiles (ADR-004, step 10-03)
+TILE_DEFAULTS = {
+    "MAP_TILE_URL": "https://tile.opentopomap.org/{z}/{x}/{y}.png",
+    "MAP_TILE_ATTRIBUTION": "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)",
+    "MAP_TILE_MAX_ZOOM": 17,
+}
+TILE_UNIVERSE = frozenset(TILE_DEFAULTS)
+_host = st.from_regex(r"[a-z]{1,8}(\.[a-z]{1,8}){0,2}", fullmatch=True)
+_tile_path = st.sampled_from(["/{z}/{x}/{y}.png", "/t/{z}/{x}/{y}.jpg", "/{z}/{y}/{x}"])
+_secret_value = st.from_regex(r"[0-9a-f]{16,32}", fullmatch=True)  # never a substring of any fixed message text
+_key_words = st.sampled_from(["key", "token", "secret", "signature", "auth"])
+_case = st.sampled_from([str.lower, str.upper, str.title])
+
+
+def tile_view(settings: Settings) -> dict[str, Any]:
+    return {
+        "MAP_TILE_URL": settings.map_tile_url,
+        "MAP_TILE_ATTRIBUTION": settings.map_tile_attribution,
+        "MAP_TILE_MAX_ZOOM": settings.map_tile_max_zoom,
+    }
+
+
+@given(key=st.sampled_from(sorted(TILE_DEFAULTS)))
+def test_an_empty_or_absent_map_tile_setting_is_its_default(key: str) -> None:
+    # compose passes `${KEY:-}`: an unset key arrives empty and must read as the default (ADR-004).
+    before = tile_view(Settings.from_environ({}))
+    after = tile_view(Settings.from_environ({key: ""}))
+    assert before == TILE_DEFAULTS
+    assert_state_delta(before, after, universe=TILE_UNIVERSE, expected={k: unchanged() for k in TILE_UNIVERSE})
+
+
+@given(
+    scheme=st.sampled_from(["http", "https"]),
+    host=_host,
+    path=_tile_path,
+    param=st.sampled_from(["", "?style=a", "?v=2&lang=it"]),
+    attribution=st.text(min_size=1, max_size=40).filter(lambda text: text.strip() == text and text != ""),
+    zoom=st.integers(1, 22),
+)
+def test_a_usable_tile_address_attribution_and_zoom_are_taken_as_given(
+    scheme: str, host: str, path: str, param: str, attribution: str, zoom: int
+) -> None:
+    url = f"{scheme}://{host}{path}{param}"
+    before = tile_view(Settings.from_environ({}))
+    after = tile_view(
+        Settings.from_environ(
+            {"MAP_TILE_URL": url, "MAP_TILE_ATTRIBUTION": attribution, "MAP_TILE_MAX_ZOOM": str(zoom)}
+        )
+    )
+    expected = {
+        "MAP_TILE_URL": set_to(url),
+        "MAP_TILE_ATTRIBUTION": set_to(attribution),
+        "MAP_TILE_MAX_ZOOM": set_to(zoom),
+    }
+    assert_state_delta(before, after, universe=TILE_UNIVERSE, expected=expected, strict=True)
+
+
+@given(
+    url=st.sampled_from(
+        [
+            "ftp://tiles.test/{z}/{x}/{y}.png",
+            "tiles.test/{z}/{x}/{y}.png",
+            "https:///{z}/{x}/{y}.png",
+            "https://tiles.test/{x}/{y}.png",
+            "https://tiles.test/{z}/{y}.png",
+            "https://tiles.test/{z}/{x}.png",
+            "https://tiles.test/tiles.png",
+        ]
+    )
+)
+def test_a_tile_address_that_is_not_http_with_a_host_and_all_three_placeholders_is_refused(url: str) -> None:
+    # bypass: refusal path; a refusal leaves no settings to diff, the named keys are its whole observable surface.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_TILE_URL": url})
+    assert refused.value.setting_names == frozenset({"MAP_TILE_URL"})
+
+
+@given(zoom=st.sampled_from(["0", "-1", "23", "100", "high", "1.5"]))
+def test_a_maximum_zoom_outside_1_to_22_is_refused(zoom: str) -> None:
+    # bypass: refusal path, see above.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_TILE_MAX_ZOOM": zoom})
+    assert refused.value.setting_names == frozenset({"MAP_TILE_MAX_ZOOM"})
+
+
+@given(
+    host=_host,
+    word=_key_words,
+    case=_case,
+    before_word=st.from_regex(r"[a-z_]{0,6}", fullmatch=True),
+    after_word=st.from_regex(r"[a-z_]{0,6}", fullmatch=True),
+    value=_secret_value,
+    other=st.sampled_from(["", "style=a&", "v=2&"]),
+)
+def test_a_tile_address_carrying_a_private_parameter_is_refused_naming_the_parameter_but_never_its_value(
+    host: str, word: str, case: Any, before_word: str, after_word: str, value: str, other: str
+) -> None:
+    name = case(f"{before_word}{word}{after_word}")
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_TILE_URL": f"https://{host}/{{z}}/{{x}}/{{y}}.png?{other}{name}={value}"})
+    message = str(refused.value)
+    assert refused.value.setting_names == frozenset({"MAP_TILE_URL"})
+    assert "MAP_TILE_URL" in message and f"carries the private parameter {name}" in message
+    assert value not in message
+    assert value not in repr(refused.value) and value not in repr(refused.value.__cause__)

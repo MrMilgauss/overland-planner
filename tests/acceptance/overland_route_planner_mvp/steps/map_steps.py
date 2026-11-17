@@ -15,6 +15,7 @@ stops numbered 1 to 11 with a Start at 1 and an End at 11. The retrace row of a 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from pytest_bdd import given, parsers, then, when
 
@@ -254,3 +255,42 @@ def then_the_retrace_is_its_own_kind(world: PlannerWorld) -> None:
     assert place_of(coordinates[0]) == Coordinate(retrace["entry"]["lat"], retrace["entry"]["lon"]), "not from the exit"
     assert place_of(coordinates[-1]) == Coordinate(retrace["exit"]["lat"], retrace["exit"]["lon"]), "not to the entry"
     assert track["name"] in retrace["name"], f"{retrace['name']!r} is not the retrace of {track['name']!r}"
+
+
+# ------------------------------------------------------------------------------------- map tiles (step 10-03)
+OPENTOPOMAP_URL = "https://tile.opentopomap.org/{z}/{x}/{y}.png"
+OPENTOPOMAP_ATTRIBUTION = "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"
+# A made-up key on a made-up host: the repository is public, and the planner never fetches a tile.
+KEYED_TILE_URL = "https://tiles.example.test/{z}/{x}/{y}.png?api_key=not-a-real-key"
+
+
+@given("the planner settings choose the OpenTopoMap tiles with their attribution")
+def given_the_settings_choose_opentopomap(world: PlannerWorld) -> None:
+    world.environ.update({"MAP_TILE_URL": OPENTOPOMAP_URL, "MAP_TILE_ATTRIBUTION": OPENTOPOMAP_ATTRIBUTION})
+    world.ensure_planner()
+
+
+@given("the planner settings use a map tile address that carries a private access key")
+def given_the_settings_carry_a_keyed_tile_address(world: PlannerWorld) -> None:
+    world.environ["MAP_TILE_URL"] = KEYED_TILE_URL
+
+
+@when("Marco opens any map")
+def when_marco_opens_any_map(world: PlannerWorld) -> None:
+    answer = world.note(world.marco().map_config())
+    assert answer.status_code == 200, f"the map settings did not open: {answer.status_code} {answer.text[:300]}"
+    world.scratch["map_config"] = answer.json()
+
+
+@then("the map loads its tiles from OpenTopoMap")
+def then_the_map_loads_tiles_from_opentopomap(world: PlannerWorld) -> None:
+    config = world.scratch["map_config"]
+    assert config["tile_url"] == OPENTOPOMAP_URL, f"the tile address is {config['tile_url']!r}"
+    assert urlsplit(config["tile_url"]).hostname == "tile.opentopomap.org"
+    assert isinstance(config["max_zoom"], int) and 1 <= config["max_zoom"] <= 22, f"max zoom {config['max_zoom']!r}"
+
+
+@then(parsers.re(r'the attribution "(?P<credit>[^"]+)" is always shown'))
+def then_the_attribution_is_always_given(world: PlannerWorld, credit: str) -> None:
+    attribution = world.scratch["map_config"]["attribution"]
+    assert attribution == OPENTOPOMAP_ATTRIBUTION and credit in attribution, f"the attribution is {attribution!r}"

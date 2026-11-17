@@ -44,6 +44,7 @@ from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.export_routes import export_routes
 from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
 from overland_planner.adapters.http.platform_routes import platform_routes
+from overland_planner.adapters.http.schemas import MapConfig
 from overland_planner.adapters.http.upload_limits import UploadLimits
 from overland_planner.adapters.http.web_page import mount_web_page
 from overland_planner.adapters.logging.structlog_event_log import StructlogEventLog
@@ -273,7 +274,10 @@ def create_app(
     app = FastAPI(title="Overland Route Planner", version=settings.planner_git_sha)
     # The {code, message} envelope for every non-2xx answer under /api (brief §5, D197).
     install_error_handlers(app, event_log)
-    app.include_router(platform_routes(health))
+    map_config = MapConfig(
+        tile_url=settings.map_tile_url, attribution=settings.map_tile_attribution, max_zoom=settings.map_tile_max_zoom
+    )
+    app.include_router(platform_routes(health, map_config))
 
     app.include_router(wiring.catalog_router())
     app.include_router(wiring.planning_router(health))

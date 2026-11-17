@@ -29,6 +29,7 @@ INTERPOLATION = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?P<rest>[^}]*)\}")
 SECRET_SETTINGS = ("PLANNER_BASIC_AUTH_PASSWORD",)
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")  # ADR-011 Am. 1
 ENGINE_SETTINGS = ("VALHALLA_EXPECTED_VERSION", "VALHALLA_MAX_MATRIX_PAIRS", "VALHALLA_CONCURRENCY", "CONFIRMED_SNAP_M")
+MAP_TILE_SETTINGS = ("MAP_TILE_URL", "MAP_TILE_ATTRIBUTION", "MAP_TILE_MAX_ZOOM")  # ADR-004
 LIMITS = {"FEASIBILITY_LIMIT_S": "feasibility_limit_s", "OPTIMISATION_LIMIT_S": "optimisation_limit_s"}  # ADR-014
 HARDENING = (
     "image",
@@ -174,6 +175,8 @@ def test_settings_reach_the_container_by_interpolation_and_secrets_are_never_wri
     assert environment["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}"
     assert environment["VALHALLA_URL"] == "http://valhalla:8002"
     for key in ENGINE_SETTINGS:
+        assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
+    for key in MAP_TILE_SETTINGS:  # ADR-004: the map tiles come from .env, empty (the OpenTopoMap default) when unset
         assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     # The solve limits pass through with the planner's own defaults (ADR-014 section 2, brief section 12).
     for key, field in LIMITS.items():

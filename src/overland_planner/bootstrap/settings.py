@@ -14,6 +14,10 @@ FEASIBILITY_LIMIT_S.
 ROUTING_PROVIDER is `mock` (default) or `valhalla`; the engine's keys (ADR-013 Amendment 4, D247) are VALHALLA_URL (http
 or https with a host), VALHALLA_EXPECTED_VERSION, VALHALLA_MAX_MATRIX_PAIRS (1 or more), VALHALLA_CONCURRENCY (1 to 8)
 and CONFIRMED_SNAP_M (above 0); an empty value is the default. MOCK_PLAN with `valhalla` refuses the start.
+The map's tiles (ADR-004, ADR-003 Amendment 2) are MAP_TILE_URL (http or https with a host and the placeholders {z},
+{x} and {y}; a query parameter whose name contains key, token, secret, signature or auth refuses the start, naming the
+parameter and never its value, D256), MAP_TILE_ATTRIBUTION and MAP_TILE_MAX_ZOOM (1 to 22); an empty value is
+the default.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -37,6 +41,8 @@ _REPO_WEB_DIST = _REPO_ROOT / "web" / "dist"
 # The planner's Alembic migrations; the image sets MIGRATIONS_DIR=/app/migrations.
 _REPO_MIGRATIONS = _REPO_ROOT / "migrations"
 _WHOLE_SECONDS = re.compile(r"[0-9]+")
+_TILE_PLACEHOLDERS = ("{z}", "{x}", "{y}")
+_PRIVATE_PARAMETER_WORDS = ("key", "token", "secret", "signature", "auth")
 
 
 class InvalidSettingsError(ValueError):
@@ -77,6 +83,26 @@ class Settings(BaseSettings):
     valhalla_concurrency: Annotated[int, Field(validation_alias="VALHALLA_CONCURRENCY", ge=1, le=8)] = 2
     confirmed_snap_m: Annotated[int, Field(validation_alias="CONFIRMED_SNAP_M", gt=0)] = 250
 
+    map_tile_url: Annotated[str, Field(validation_alias="MAP_TILE_URL")] = (
+        "https://tile.opentopomap.org/{z}/{x}/{y}.png"
+    )
+    map_tile_attribution: Annotated[str, Field(validation_alias="MAP_TILE_ATTRIBUTION")] = (
+        "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"
+    )
+    map_tile_max_zoom: Annotated[int, Field(validation_alias="MAP_TILE_MAX_ZOOM", ge=1, le=22)] = 17
+
+    @field_validator("map_tile_url")
+    @classmethod
+    def _tile_url_without_private_parameter(cls, value: str) -> str:
+        cls._http_url_with_host(value)
+        if any(placeholder not in value for placeholder in _TILE_PLACEHOLDERS):
+            raise ValueError("must contain {z}, {x} and {y}")
+        for pair in urlsplit(value).query.split("&"):
+            name = unquote_plus(pair.partition("=")[0])
+            if any(word in name.lower() for word in _PRIVATE_PARAMETER_WORDS):
+                raise ValueError(f"carries the private parameter {name}")  # the name only, never the value (D256)
+        return value
+
     @field_validator("valhalla_url")
     @classmethod
     def _http_url_with_host(cls, value: str) -> str:
@@ -103,6 +129,9 @@ class Settings(BaseSettings):
         "valhalla_max_matrix_pairs",
         "valhalla_concurrency",
         "confirmed_snap_m",
+        "map_tile_url",
+        "map_tile_attribution",
+        "map_tile_max_zoom",
         mode="before",
     )
     @classmethod
