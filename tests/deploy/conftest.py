@@ -421,8 +421,8 @@ class MacCheckout:
 
     def green_run(self, sha: str, digest: str, run_id: int = 4242, release_json: bool = True) -> None:
         """Script gh: run `run_id` is a successful ci.yml push run on main for `sha`, with or without release.json."""
-        self.rule("gh", "run list", "--commit", sha, stdout=f"{run_id}\n")
-        self.rule("gh", "run list", stdout=f"{run_id} {sha}\n")
+        self.rule("gh", "run list", "--commit", sha, stdout=f"{run_id} success\n")
+        self.rule("gh", "run list", stdout=f"{run_id} {sha} success\n")
         if release_json:
             body = {"git_sha": sha, "commit_ts": NEW.commit_ts, "digest": digest, "alembic_head": "0003_auth"}
             self.rule("gh", "run download", str(run_id), release_json={**body, "provenance": "buildx"})

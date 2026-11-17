@@ -364,6 +364,33 @@ def test_make_deploy_hands_the_gh_token_to_the_pi_only_on_ssh_stdin(mac: MacChec
     assert all(GH_TOKEN not in f.read_text(errors="replace") for f in files)
 
 
+def test_make_deploy_picks_the_green_run_of_the_sha_among_others(mac: MacCheckout) -> None:
+    """GitHub's own `--status success` filter answers nothing once a commit has a second run (a tag push starts
+    one): the script lists the commit's runs and picks the green one itself."""
+    digest = mac.registry.publish(dict.fromkeys(("linux/amd64", "linux/arm64"), GOOD_VCS))
+    mac.rule("gh", "run list", "--commit", NEW.git_sha, stdout="4999 cancelled\n4242 success\n")  # first rule wins
+    mac.green_run(NEW.git_sha, digest)
+
+    result = mac.make_deploy(f"SHA={NEW.git_sha}")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    listed = [c["argv"] for c in mac.calls("gh") if c["argv"][:2] == ["run", "list"]]
+    assert listed and all("--status" not in argv for argv in listed)
+    assert any(c["argv"][:3] == ["run", "download", "4242"] for c in mac.calls("gh"))
+
+
+def test_make_deploy_refuses_a_sha_whose_runs_all_failed(mac: MacCheckout) -> None:
+    digest = mac.registry.publish(dict.fromkeys(("linux/amd64", "linux/arm64"), GOOD_VCS))
+    mac.rule("gh", "run list", "--commit", NEW.git_sha, stdout="4999 failure\n4998 cancelled\n")  # first rule wins
+    mac.green_run(NEW.git_sha, digest)
+
+    result = mac.make_deploy(f"SHA={NEW.git_sha}")
+
+    assert result.returncode != 0
+    assert "no successful ci.yml run" in result.stderr
+    assert deploy_calls(mac) == []
+
+
 GATES = {
     "no green ci.yml run for the SHA": ("SHA", lambda mac, digest: None, "no successful ci.yml run"),
     "green run without release.json": (

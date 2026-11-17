@@ -42,10 +42,12 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 run_id=
 if [ -z "$SHA" ]; then
-  candidates=$(gh run list --workflow ci.yml --branch main --event push --status success --limit 20 \
-    --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"') || die "gh run list failed"
-  while read -r id sha; do
-    [ -n "$id" ] || continue
+  # No `--status success`: GitHub's filter answers nothing for a commit with a second run (a tag push starts one).
+  candidates=$(gh run list --workflow ci.yml --branch main --event push --limit 40 \
+    --json databaseId,headSha,conclusion --jq '.[] | "\(.databaseId) \(.headSha) \(.conclusion)"') ||
+    die "gh run list failed"
+  while read -r id sha conclusion; do
+    [ -n "$id" ] && [ "$conclusion" = success ] || continue
     if gh run download "$id" --name release.json --dir "$work/$id" >/dev/null 2>&1; then
       run_id=$id
       SHA=$sha
@@ -56,8 +58,9 @@ $candidates
 EOF
   [ -n "$run_id" ] || die "no successful ci.yml run on main has a release.json artifact"
 else
-  run_id=$(gh run list --workflow ci.yml --branch main --event push --status success --commit "$SHA" --limit 1 \
-    --json databaseId --jq '.[0].databaseId // empty') || die "gh run list failed"
+  runs=$(gh run list --workflow ci.yml --branch main --event push --commit "$SHA" --limit 20 \
+    --json databaseId,conclusion --jq '.[] | "\(.databaseId) \(.conclusion)"') || die "gh run list failed"
+  run_id=$(printf '%s\n' "$runs" | awk '$2 == "success" { print $1; exit }')
   [ -n "$run_id" ] || die "no successful ci.yml run on main for $SHA"
   gh run download "$run_id" --name release.json --dir "$work/$run_id" >/dev/null ||
     die "successful run $run_id of $SHA has no release.json artifact"
