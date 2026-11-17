@@ -106,6 +106,7 @@ plan_runs = Table(
     Column("not_fully_optimised", Text, nullable=True),
     Column("run_time_ms", Integer, nullable=True),
     Column("memo_source_run_id", Text, nullable=True),
+    Column("profile", Text, nullable=True),
     UniqueConstraint("project_id", "number", name="uq_plan_runs_project_id_number"),
 )
 

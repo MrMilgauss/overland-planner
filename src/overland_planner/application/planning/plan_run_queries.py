@@ -16,6 +16,7 @@ from overland_planner.application.ports.plan_run_repository import PlanningUnitO
 from overland_planner.domain.planning.plan_run import PlanRun
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.run_messages import project_notices, run_messages
+from overland_planner.domain.routing.provider_label import provider_header
 
 
 class PlanRunNotFoundError(LookupError):
@@ -59,7 +60,8 @@ class PlanRunQueries:
             items=() if detail.report is None else detail.report.items,
         )
         memo_hit = detail.memo_hit if detail.run_time_ms is None else source_id is not None
-        return replace(detail, messages=messages, memo_hit=memo_hit)
+        header = "" if detail.provider_id is None else provider_header(detail.provider_id, detail.profile)
+        return replace(detail, messages=messages, memo_hit=memo_hit, provider_header=header)
 
     def notices(self, project_id: str) -> tuple[str, ...]:
         """What a Calculate of the project says first (D146). Raises `ProjectNotFoundError`."""

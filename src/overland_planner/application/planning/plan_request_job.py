@@ -355,6 +355,7 @@ class PlanRequestJob:
             created_at=self.clock.now(),
             revision=project.stamp.revision,
             provider_id=self.legs.provider_id,
+            profile=self.legs.profile,
             objective=project.stamp.objective,
             inputs=self._inputs(project.snapshot),
             stops=finding.stops,

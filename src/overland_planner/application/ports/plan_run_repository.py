@@ -21,7 +21,9 @@ class PlanRunDetail:
     the run queries derive from `memo_source_run_id` for a run with a `run_time_ms` (06-10); a run stored before has
     neither. `items_planned` counts the Included items other than the anchors it was planned with. `messages` are the
     lines the run shows, which the run queries fill (D223 b); the repository reads none. The `report` of an
-    `unreachable` run names its items (07-05); one stored before reads none."""
+    `unreachable` run names its items (07-05); one stored before reads none. `provider_id` and `profile` name the road
+    map the run was planned on; a run stored before 0010 has no profile. `provider_header` is the line the results
+    show for them, which the run queries fill."""
 
     id: str
     project_id: str
@@ -39,6 +41,9 @@ class PlanRunDetail:
     memo_source_run_id: str | None = None
     items_planned: int | None = None
     objective: Objective = Objective.DISTANCE
+    provider_id: str | None = None
+    profile: str | None = None
+    provider_header: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,7 @@ class NewPlanRun:
     not_fully_optimised: NotFullyOptimised | None = None
     run_time_ms: int | None = None
     memo_source_run_id: str | None = None
+    profile: str | None = None  # the road map's profile (0010): `4x4.v1`, `mock.v1`
 
 
 class PlanRunRepository(Protocol):

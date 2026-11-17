@@ -9,6 +9,7 @@ stay cached when the place is added, and the Recalculate that follows asks only 
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from typing import Any
 
@@ -352,3 +353,56 @@ def then_its_objective_is(world: PlannerWorld, label: str) -> None:
     assert world.project_id is not None, "no project was created"
     opened = world.marco().project(world.project_id)
     assert opened.status_code == 200 and opened.json().get("objective") == OBJECTIVES[label], opened.text[:300]
+
+
+# ------------------------------------------------------------------------------------------ secrets (NFR-4)
+@given("the shared household password is set in Marco's settings")
+def given_the_household_password_is_set(world: PlannerWorld) -> None:
+    password = "household-" + secrets.token_hex(8)
+    world.environ.update({"PLANNER_BASIC_AUTH_USER": "ferri", "PLANNER_BASIC_AUTH_PASSWORD": password})
+    world.marco_auth = ("ferri", password)
+    world.scratch["password"] = password
+
+
+@given(parsers.re(r'plan run #4 of "(?P<project>[^"]+)" has been exported as GPX'))
+def given_plan_run_4_has_been_exported(world: PlannerWorld, project: str) -> None:
+    given_plan_run_4_has_been_computed(world, project)
+    exported = world.marco().export_gpx(str(world.scratch["run_4"]["id"]))
+    assert exported.status_code == 200 and exported.text.lstrip().startswith("<?xml"), exported.text[:200]
+    world.scratch["gpx"] = exported.text
+
+
+def _everything_the_results_say(world: PlannerWorld) -> str:
+    """Every API answer about plan run #4 and the data the web page opens with, as text."""
+    marco, run = world.marco(), world.scratch["run_4"]
+    assert world.project_id is not None, "no project is open"
+    answers = [
+        marco.plan_run(str(run["id"])),
+        marco.plan_runs(world.project_id),
+        marco.project(world.project_id),
+        marco.projects(),
+        marco.items(world.project_id),
+        marco.home_page(),
+        marco.health_detail(),
+        marco.diagnostics(world.project_id),
+    ]
+    assert all(answer.status_code == 200 for answer in answers), [(a.url.path, a.status_code) for a in answers]
+    return "\n".join(answer.text for answer in answers)
+
+
+@when(parsers.re(r"Marco looks at (?P<place>the results of plan run #4|the planner log|the exported GPX file)"))
+def when_marco_looks_at(world: PlannerWorld, place: str) -> None:
+    seen = {
+        "the results of plan run #4": lambda: _everything_the_results_say(world),
+        "the planner log": lambda: world.scratch["capsys"].readouterr().out,
+        "the exported GPX file": lambda: world.scratch["gpx"],
+    }[place]()
+    world.scratch["looked_at"] = (place, seen)
+
+
+@then("the password does not appear there")
+def then_the_password_does_not_appear(world: PlannerWorld) -> None:
+    place, seen = world.scratch["looked_at"]
+    assert world.scratch["run_4"]["id"] in seen or place == "the exported GPX file", f"{place}: nothing to look at"
+    assert seen.strip(), f"{place} is empty"
+    assert world.scratch["password"] not in seen, f"the password appears in {place}"

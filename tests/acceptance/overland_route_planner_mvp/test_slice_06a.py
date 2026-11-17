@@ -71,3 +71,15 @@ def test_marco_switches_the_objective_to_road_time(a_reference_trip_with_an_arma
 @scenario(FEATURE, "New projects minimise road distance by default")
 def test_new_projects_minimise_road_distance_by_default() -> None:
     """A project made now has objective `distance`."""
+
+
+@pytest.fixture
+def the_planner_log_is_listened_to(world: PlannerWorld, capsys: pytest.CaptureFixture[str]) -> None:
+    """The planner writes its log lines to standard output: they are captured from before it starts."""
+    world.scratch["capsys"] = capsys
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "Marco's password is never shown")
+def test_marcos_password_is_never_shown(the_planner_log_is_listened_to: None) -> None:
+    """Plan run #4 is computed and exported with the household password set: it is in no answer, log line or file."""

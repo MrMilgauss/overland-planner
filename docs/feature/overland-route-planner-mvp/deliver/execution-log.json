@@ -3340,6 +3340,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-17T16:56:03Z"
+    },
+    {
+      "sid": "09-08",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T16:56:12Z"
+    },
+    {
+      "sid": "09-09",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T17:02:23Z"
+    },
+    {
+      "sid": "09-09",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: the three examples are green on arrival; their RED is a planted leak",
+      "t": "2026-11-17T17:03:16Z"
+    },
+    {
+      "sid": "09-09",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-17T17:03:35Z"
+    },
+    {
+      "sid": "09-09",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T17:10:45Z"
     }
   ]
 }

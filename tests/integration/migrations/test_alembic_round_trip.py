@@ -391,7 +391,7 @@ def test_a_0006_release_refuses_a_0007_database(data_dir: Path, tmp_path: Path) 
     shutil.copytree(
         REPO_ROOT / "migrations",
         release_0006,
-        ignore=shutil.ignore_patterns("__pycache__", "0007_*.py", "0008_*.py", "0009_*.py"),
+        ignore=shutil.ignore_patterns("__pycache__", "0007_*.py", "0008_*.py", "0009_*.py", "0010_*.py"),
     )
     database = SqliteDatabase(data_dir)
     try:
@@ -424,6 +424,7 @@ def test_0008_adds_the_run_flags_older_runs_read_reproducible_with_no_label_and_
         ).fetchall()
     connection.close()
     assert added == [(1, None, None, None)]
+    command.upgrade(config, "head")  # the repository reads the head schema: older runs still read as before
     database = SqliteDatabase(data_dir)
     try:
         with SqlAlchemyPlanningUnitOfWork(database, RecordingEventLog()) as uow:
@@ -487,6 +488,42 @@ def test_0009_adds_the_empty_plan_refusals_and_its_downgrade_drops_only_them(
 
     command.upgrade(config, "0009")
     assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0009"])
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_0010_adds_the_profile_runs_stored_before_read_none_and_its_downgrade_keeps_every_run(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0009")
+    _seed_trip_at_head(file)
+
+    command.upgrade(config, "0010")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0010"],
+    )
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("SELECT profile FROM plan_runs").fetchall() == [(None,)]
+    connection.close()
+
+    downgrade(config, data_dir, monkeypatch, "0009")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0009"],
+    )
+    assert "profile" not in _columns(file, "plan_runs")
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+    command.upgrade(config, "0010")
+    assert (_plan_runs(file), _revision(file)) == (SEEDED_RUNS, ["0010"])
 
 
 def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:

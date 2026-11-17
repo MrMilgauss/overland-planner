@@ -11,6 +11,7 @@ stored before reads reproducible and no label.
 A report names the items of an `unreachable` run (07-05); one stored before reads none.
 `run_time_ms` and `memo_source_run_id` (0008) are written since 06-10; a run stored before reads them null. The detail
 counts the Included items it was planned with from its stored inputs.
+`profile` (0010) is stored on every run; a run stored before reads none.
 """
 
 from __future__ import annotations
@@ -106,6 +107,7 @@ class SqlAlchemyPlanRunRepository:
                 created_at=run.created_at,
                 revision=run.revision,
                 provider_id=run.provider_id,
+                profile=run.profile,
                 objective=run.objective,
                 inputs=dict(run.inputs),
                 itinerary={"stops": [_stop_json(stop) for stop in run.stops]} if run.stops else null(),
@@ -139,6 +141,8 @@ def _detail(row: RowMapping | None) -> PlanRunDetail | None:
         run_time_ms=row["run_time_ms"],
         memo_source_run_id=row["memo_source_run_id"],
         items_planned=_items_planned(row["inputs"]),
+        provider_id=row["provider_id"],
+        profile=row["profile"],
         objective=Objective.TIME if row["objective"] == Objective.TIME else Objective.DISTANCE,
     )
 

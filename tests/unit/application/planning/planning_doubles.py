@@ -199,6 +199,8 @@ class _Runs:
                     run_time_ms=row.run_time_ms,
                     memo_source_run_id=row.memo_source_run_id,
                     items_planned=_items_planned(row.inputs),
+                    provider_id=row.provider_id,
+                    profile=row.profile,
                 )
         return None
 

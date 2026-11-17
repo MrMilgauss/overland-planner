@@ -278,7 +278,9 @@ class PlanRunDetailResource(BaseModel):
     in words, composed from the run's stored facts, such as "Planned 60 items in 2 min 41 s", "not fully optimised
     (time limit)", "Reused the identical plan of run #N" or, for a run failed on the feasibility limit, "No valid route
     found within the time limit - plan run #N failed" (D151); a run stored before 06-10 has no run time line.
-    `memo_hit` is true when the run reused an earlier run's plan: "Re-optimise (ignore previous result)" is offered."""
+    `memo_hit` is true when the run reused an earlier run's plan: "Re-optimise (ignore previous result)" is offered.
+    `provider_header` names the road map the run was planned on, from what it stored: "Provider: Valhalla (map data
+    2026-11-01) / profile: 4x4", or "Provider: offline estimate (straight line x 1.3) / profile: estimate"."""
 
     id: str
     project_id: str
@@ -294,6 +296,7 @@ class PlanRunDetailResource(BaseModel):
     memo_hit: bool
     objective: str
     objective_label: str
+    provider_header: str
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -312,6 +315,7 @@ class PlanRunDetailResource(BaseModel):
             memo_hit=run.memo_hit,
             objective=run.objective.value,
             objective_label=run.objective.label,
+            provider_header=run.provider_header,
         )
 
 

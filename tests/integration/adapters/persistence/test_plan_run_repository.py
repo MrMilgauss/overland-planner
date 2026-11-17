@@ -8,6 +8,7 @@ The assembly itself lives in tests/unit/domain/planning.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def _stops() -> tuple[PlanStop, ...]:
     return home, track, retrace, back
 
 
-def _run(stops: tuple[PlanStop, ...]) -> NewPlanRun:
+def _run(stops: tuple[PlanStop, ...], profile: str | None = "4x4.v1") -> NewPlanRun:
     return NewPlanRun(
         id="r1",
         project_id="p1",
@@ -109,6 +110,7 @@ def _run(stops: tuple[PlanStop, ...]) -> NewPlanRun:
         created_at=CREATED,
         revision=1,
         provider_id="mock",
+        profile=profile,
         objective="min_time",
         inputs={"included_item_ids": ["t1"]},
         stops=stops,
@@ -166,3 +168,20 @@ def test_a_run_stored_before_the_levels_and_the_retrace_reads_back_with_them_nul
     assert [getattr(stored.stops[0], name) for name in NEW_FIELDS] == [None] * len(NEW_FIELDS)
     assert stored.report is not None
     assert stored.report.items == ()
+
+
+def test_a_run_reads_back_the_road_map_and_profile_it_stored_and_one_stored_before_has_no_profile(
+    database: SqliteDatabase,
+) -> None:
+    with SqlAlchemyUnitOfWork(database) as work:
+        repository = SqlAlchemyPlanRunRepository(work.connection)
+        repository.add(_run(_stops()))
+        repository.add(replace(_run(_stops(), profile=None), id="r0", number=2))
+        work.commit()
+
+    with SqlAlchemyUnitOfWork(database) as work:
+        repository = SqlAlchemyPlanRunRepository(work.connection)
+        stored, before = repository.get("r1"), repository.get("r0")
+
+    assert stored is not None and before is not None
+    assert [(run.provider_id, run.profile) for run in (stored, before)] == [("mock", "4x4.v1"), ("mock", None)]

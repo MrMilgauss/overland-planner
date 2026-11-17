@@ -118,6 +118,7 @@ def _stored_run(number: int, stored: Stored, source_id: str | None) -> NewPlanRu
         created_at=datetime(2026, 11, 10, tzinfo=UTC),
         revision=1,
         provider_id="road-map-double",
+        profile="4x4.v1",
         objective="distance",
         inputs={"included_item_ids": [f"item-{index}" for index in range(stored.items)]},
         stops=(),
@@ -168,6 +169,7 @@ def test_a_run_shows_the_lines_of_its_stored_facts_and_a_memo_hit_names_its_sour
         line.startswith(text) for line, text in zip(shown, expected, strict=True)
     )
     assert detail.memo_hit is (stored.from_source if written_now else stored.memo_hit_column)
+    assert detail.provider_header == "Provider: road-map-double / profile: 4x4"
     assert_state_delta(before, _view(planning), UNIVERSE, {}, strict=True)
 
 
