@@ -672,7 +672,10 @@ def _checks_of_the_live_engine(engine: LiveEngine) -> list[str]:
     provider, differences = _live_provider(engine.url), []
     torino, susa = _places(TORINO_SUSA)
     (answered,) = provider.matrix([torino], [susa])
-    differences += _measure_differences("Torino to Susa", RoadMeasure(56099, 3342), answered[0], exact=engine.exact)
+    # The recorded Torino to Susa answer is a `/route` (56.099 km, 3341.837 s); the planner asks the matrix, whose
+    # answer for the same path differs by rounding (live, 2026-11-17: 56,100 m and 3,341 s). SPIKE-2R measured matrix
+    # and route distances within 0.01 %, so the check allows 0.1 % on the recorded tileset and 5 % after a refresh.
+    differences += _route_differences("Torino to Susa", RoadMeasure(56099, 3342), answered[0], exact=engine.exact)
     island = recording("matrix_confirmed_with_island_null_row")
     sources, targets = _places(island["request"]["sources"]), _places(island["request"]["targets"])
     island_answer = provider.matrix(sources, targets)
@@ -690,6 +693,19 @@ def _checks_of_the_live_engine(engine: LiveEngine) -> list[str]:
         f"the other places: {cell!r} is no leg" for cell in far_answer[0] if not isinstance(cell, RoadMeasure)
     ]
     return differences
+
+
+def _route_differences(where: str, recorded: RoadMeasure, live: object, *, exact: bool) -> list[str]:
+    """A matrix answer against a recorded `/route`: Confirmed, and distance and time within 0.1 % (5 % when the live
+    map data is not the recorded one)."""
+    tolerance = 0.001 if exact else 0.05
+    if not isinstance(live, RoadMeasure) or live.level != "confirmed":
+        return [f"{where}: {live!r} instead of a Confirmed leg"]
+    close = all(
+        abs(found - wanted) <= tolerance * wanted
+        for found, wanted in ((live.distance_m, recorded.distance_m), (live.duration_s, recorded.duration_s))
+    )
+    return [] if close else [f"{where}: {live!r} is not within {tolerance:.1%} of {recorded!r}"]
 
 
 @then("every check passes on the live routing engine")
