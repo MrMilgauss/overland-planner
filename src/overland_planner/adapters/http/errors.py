@@ -4,8 +4,9 @@ Codes are enumerated per status; FastAPI's request validation body becomes `vali
 (and methods) and unknown ids answer 404 `not_found`. Any other `HTTPException` answers `internal_error` (5xx) or
 `validation_error` (4xx). An exception no handler expected answers 500 `internal_error` with a fixed neutral message
 that never echoes the exception (D197) and records one `http.unhandled_error` event naming only its class.
-A refused Calculate answers the status and code of its pre-check: the table's 422 `missing_anchor`, 409 `job_active` or
-503 `optimizer_unavailable`. Paths outside /api (/healthz, the web page) keep their bodies.
+A refused Calculate answers the status and code of its pre-check: the table's 422 `missing_anchor`, 409 `job_active`,
+503 `routing_engine_unreachable`, 503 `routing_engine_not_ready` or 503 `optimizer_unavailable`.
+Paths outside /api (/healthz, the web page) keep their bodies.
 """
 
 from __future__ import annotations

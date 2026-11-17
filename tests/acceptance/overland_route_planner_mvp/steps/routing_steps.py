@@ -8,14 +8,17 @@ stay cached when the place is added, and the Recalculate that follows asks only 
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
+import httpx
 import yaml
 from pytest_bdd import given, parsers, then, when
 
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, read_road_map
 from overland_planner.bootstrap.startup import StartupRefusedError
+from overland_planner.domain.catalog.coordinate import Coordinate
 from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import add_poi, require_success
 from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import plan_run_detail, runs_by_number
 from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
@@ -33,12 +36,64 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
 from tests.acceptance.overland_route_planner_mvp.steps.world import CATALOG_UNIVERSE, PLANNING_UNIVERSE, PlannerWorld
 from tests.common.predicates import gained
 from tests.common.state_delta import assert_state_delta, unchanged
+from tests.contract.routing_port.recordings import recording
 
 FAR_PLACE = "Bivacco fuori strada"
 FAR_PLACE_AT = (44.6, 6.9)  # more than 250 m from any road open to vehicles: the script says so
 RUNS_BEFORE = 4
 ROAD_MAP_FILE = "off-network-road-map.yaml"
 UNREACHABLE_REASON = "routing_engine_unreachable"
+SYNTHETIC_KM_PER_H = 50.0
+
+
+class SyntheticValhalla:
+    """The routing engine's HTTP answers behind the planner's transport seam (synthetic: not recorded from a real
+    engine). `/status` is the recorded 3.9.1 status; every matrix cell is the straight line x 1.3 at 50 km/h, from the
+    places the question carries. `mode` is what the scenario does to the engine: healthy, down (connections are
+    refused) or newer (reports another version)."""
+
+    def __init__(self) -> None:
+        self.mode = "healthy"
+        self.reported_version = "3.9.1"
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if self.mode == "down":
+            raise httpx.ConnectError("connection refused", request=request)
+        if request.url.path == "/status":
+            status = dict(recording("status")["response"])
+            status["version"] = self.reported_version if self.mode == "newer" else status["version"]
+            return httpx.Response(200, json=status)
+        body = json.loads(request.content)
+        return httpx.Response(200, json={"sources_to_targets": self._rows(body["sources"], body["targets"])})
+
+    @staticmethod
+    def _rows(sources: list[dict[str, float]], targets: list[dict[str, float]]) -> list[list[dict[str, Any]]]:
+        rows = []
+        for a, source in enumerate(sources):
+            row = []
+            for b, target in enumerate(targets):
+                metres = max(
+                    1,
+                    round(
+                        1.3
+                        * Coordinate(source["lat"], source["lon"]).great_circle_distance_m(
+                            Coordinate(target["lat"], target["lon"])
+                        )
+                    ),
+                )
+                seconds = max(1, round(metres / (SYNTHETIC_KM_PER_H / 3.6)))
+                row.append({"from_index": a, "to_index": b, "time": seconds, "distance": metres / 1000})
+            rows.append(row)
+        return rows
+
+
+def route_on_synthetic_valhalla(world: PlannerWorld) -> SyntheticValhalla:
+    """The planner routes with the real Valhalla adapter, against the synthetic engine, from its next start."""
+    engine = SyntheticValhalla()
+    world.environ["ROUTING_PROVIDER"] = "valhalla"
+    world.routing_transport = httpx.MockTransport(engine)
+    world.scratch["engine"] = engine
+    return engine
 
 
 def script_off_network_places(world: PlannerWorld, *places: tuple[float, float]) -> None:
@@ -86,7 +141,8 @@ def other_included_items(world: PlannerWorld, *, besides: str) -> int:
 @given(parsers.re(r'plan run #4 of "(?P<project>[^"]+)" has been computed'))
 def given_plan_run_4_has_been_computed(world: PlannerWorld, project: str) -> None:
     assert project == FIRST_TRIP, f"only {FIRST_TRIP!r} has a day trip to plan here"
-    script_off_network_places(world, *([] if "reference_places" in world.scratch else [FAR_PLACE_AT]))
+    if "engine" not in world.scratch:  # on the real adapter there is no road map script to write
+        script_off_network_places(world, *([] if "reference_places" in world.scratch else [FAR_PLACE_AT]))
     if "reference_places" in world.scratch:  # a world whose road map the scenario arms (slice 06a, D248)
         world.routing_provider = MockRoutingProvider(script=read_road_map(world.tmp_path / ROAD_MAP_FILE))
     try:
@@ -128,10 +184,41 @@ def given_the_engine_fails_after_answering(world: PlannerWorld, legs: int) -> No
     world.scratch["legs_answered_before_failure"] = legs
 
 
+@given("the routing engine on the Pi cannot be reached")
+def given_the_engine_cannot_be_reached(world: PlannerWorld) -> None:
+    world.scratch["engine"].mode = "down"
+
+
+@given(
+    parsers.re(
+        r'the routing engine on the Pi reports version "(?P<found>[^"]+)" '
+        r'while the planner expects "(?P<expected>[^"]+)"'
+    )
+)
+def given_the_engine_reports_another_version(world: PlannerWorld, found: str, expected: str) -> None:
+    assert world.environ.get("VALHALLA_EXPECTED_VERSION", "3.9.1") == expected, "the planner expects another version"
+    engine = world.scratch["engine"]
+    engine.mode, engine.reported_version = "newer", found
+    world.scratch["engine_versions"] = (found, expected)
+
+
 @when("Marco presses Recalculate")
 def when_marco_presses_recalculate(world: PlannerWorld) -> None:
+    world.scratch.pop("job_id", None)
     press_calculate(world)
-    world.scratch["first_recalculation"] = wait_until_job_ends(world)
+    if "job_id" in world.scratch:  # a refused press starts no job
+        world.scratch["first_recalculation"] = wait_until_job_ends(world)
+
+
+@then("the health detail names the unexpected routing engine version")
+def then_the_health_detail_names_both_versions(world: PlannerWorld) -> None:
+    found, expected = world.scratch["engine_versions"]
+    detail = world.marco().health_detail().json()["components"]["routing_provider"]
+    assert (detail["outcome"], found in detail["reason"], expected in detail["reason"]) == (
+        "degraded-healthy",
+        True,
+        True,
+    ), detail
 
 
 @then(parsers.re(r'the new plan run fails and names "(?P<poi>[^"]+)" as unreachable'))
@@ -148,6 +235,11 @@ def then_the_new_run_fails_and_names_the_place(world: PlannerWorld, poi: str) ->
 
 @then("plan run #4 and all items are unchanged")
 def then_run_4_and_the_items_are_unchanged(world: PlannerWorld) -> None:
+    if world.response is not None and world.response.status_code == 503:  # refused: not even a new run
+        assert_state_delta(world.before, world.after, PLANNING_UNIVERSE, {}, strict=True)
+        assert plan_run_detail(world, RUNS_BEFORE) == world.scratch["run_4"], "plan run #4 changed"
+        assert sorted(runs_by_number(world)) == list(range(1, RUNS_BEFORE + 1)), "plan runs are not #1 to #4"
+        return
     assert_state_delta(
         world.before,
         world.after,

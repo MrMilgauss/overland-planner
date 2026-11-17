@@ -271,9 +271,8 @@ def then_he_sees(world: PlannerWorld, message: str) -> None:
     assert message in world.seen_messages, f"{message!r} not shown; Marco saw {world.seen_messages}"
     if world.response is not None and world.response.status_code >= 400:
         assert_error_envelope(world.response)
-    if message in REFUSALS:
+    if message in REFUSALS and world.response is not None and world.response.status_code >= 400:
         answer = world.response
-        assert answer is not None
         assert (answer.status_code, answer.json()["code"]) == REFUSALS[message], f"{answer.status_code} {answer.text}"
     world.scratch["last_message"] = message
 

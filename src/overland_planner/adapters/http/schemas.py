@@ -393,5 +393,8 @@ CALCULATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     **ERROR_RESPONSES,
     409: {"model": ErrorEnvelope, "description": "job_active"},
     422: {"model": ErrorEnvelope, "description": "missing_anchor, validation_error"},
-    503: {"model": ErrorEnvelope, "description": "optimizer_unavailable"},
+    503: {
+        "model": ErrorEnvelope,
+        "description": "routing_engine_unreachable, routing_engine_not_ready, optimizer_unavailable",
+    },
 }

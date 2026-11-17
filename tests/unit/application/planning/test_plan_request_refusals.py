@@ -3,6 +3,8 @@
 Driving ports: `PlanRequestService` and `PlanRunQueries` from the planning facade, with the real `HealthService` holding
 the start-up probe outcomes. Driven ports: `PlanningUnitOfWork` (in-memory double) and `EventLog` (recording double).
 Observable universe: `plan_runs` as the queries show them, `jobs` handed out by `request` and `refusals_logged`.
+The routing engine is probed (a scripted prober behind the real `HealthService`) once per press that passes the
+anchors and the active job, before the optimizer check.
 Test Budget: 3 behaviors (a refusal is the first failing pre-check and changes nothing, an unknown project is not found,
 the list shows the project's runs) x 2 = 6; 3 used.
 """
@@ -36,6 +38,16 @@ from tests.unit.application.planning.planning_doubles import InMemoryPlanning
 UNIVERSE = {"plan_runs", "jobs", "refusals_logged"}
 PROJECT = "project-1"
 OUTCOMES = st.sampled_from(get_args(ProbeOutcome))
+ENGINE_ANSWERS = st.sampled_from(
+    [
+        ProbeResult("ok"),
+        ProbeResult("degraded-healthy", "routing_engine_unreachable"),
+        ProbeResult("degraded-healthy", "routing_engine_not_ready"),
+        ProbeResult("degraded-healthy", "routing_engine_version_mismatch: found 3.10.0, expected 3.9.1"),
+    ]
+)
+UNREACHABLE = ("routing_engine_unreachable", 503, "Routing engine unreachable - nothing was changed. Try again later.")
+NOT_READY = ("routing_engine_not_ready", 503, "Routing engine not ready - nothing was changed. Try again shortly.")
 ANCHOR = st.none() | st.just("poi-1")
 RUN_NUMBERS = st.sets(st.integers(min_value=1, max_value=50), max_size=5)
 
@@ -57,10 +69,31 @@ class _NoWork:
         return StoredRun(plan_run_id="not-stored", reason=None)
 
 
-def _service(planning: InMemoryPlanning, solver: ProbeOutcome, other: ProbeOutcome = "ok") -> Any:
-    health = HealthService({"tour_solver": ProbeResult(solver), "data_dir": ProbeResult(other)})
+class _Engine:
+    """The routing provider as the health service probes it: it answers what the scenario scripts, and counts."""
+
+    def __init__(self, answer: ProbeResult) -> None:
+        self.answer = answer
+        self.probes = 0
+
+    def probe(self) -> ProbeResult:
+        self.probes += 1
+        return self.answer
+
+
+def _service(
+    planning: InMemoryPlanning, solver: ProbeOutcome, other: ProbeOutcome = "ok", engine: _Engine | None = None
+) -> Any:
+    clock = FakeClock()
+    outcomes = {"tour_solver": ProbeResult(solver), "data_dir": ProbeResult(other)}
+    if engine is None:
+        health = HealthService(outcomes)
+    else:
+        health = HealthService(
+            {**outcomes, "routing_provider": ProbeResult("ok")}, clock=clock, reprobed={"routing_provider": engine}
+        )
     log = RecordingEventLog()
-    jobs = PlanJobRegistry(FakeClock(), _NoWork(), RecordingEventLog())
+    jobs = PlanJobRegistry(clock, _NoWork(), RecordingEventLog())
     return PlanRequestService(planning.unit_of_work, health, log, jobs), log
 
 
@@ -81,27 +114,40 @@ def _press_calculate(service: PlanRequestService) -> tuple[tuple[Any, ...], Plan
         return (), refused
 
 
-def _first_failing_pre_check(start: str | None, end: str | None, solver: ProbeOutcome) -> tuple[str, int, str] | None:
+def _first_failing_pre_check(
+    start: str | None, end: str | None, solver: ProbeOutcome, engine: ProbeResult
+) -> tuple[str, int, str] | None:
     if start is None:
         return "missing_anchor", 422, "Set the Start before calculating"
     if end is None:
         return "missing_anchor", 422, "Set the End before calculating"
+    if engine.reason == "routing_engine_unreachable":
+        return UNREACHABLE
+    if engine.outcome != "ok":
+        return NOT_READY
     if solver != "ok":
         return "optimizer_unavailable", 503, "Optimizer unavailable - nothing was changed"
     return None
 
 
-@given(start=ANCHOR, end=ANCHOR, solver=OUTCOMES, other=OUTCOMES, numbers=RUN_NUMBERS)
+@given(start=ANCHOR, end=ANCHOR, solver=OUTCOMES, other=OUTCOMES, answer=ENGINE_ANSWERS, numbers=RUN_NUMBERS)
 def test_a_refusal_is_the_first_failing_pre_check_in_brief_order_and_changes_nothing(
-    start: str | None, end: str | None, solver: ProbeOutcome, other: ProbeOutcome, numbers: set[int]
+    start: str | None,
+    end: str | None,
+    solver: ProbeOutcome,
+    other: ProbeOutcome,
+    answer: ProbeResult,
+    numbers: set[int],
 ) -> None:
     planning = _planning(numbers, start, end)
-    service, log = _service(planning, solver, other)
+    engine = _Engine(answer)
+    service, log = _service(planning, solver, other, engine)
     before = _view(planning, log)
 
     jobs, refused = _press_calculate(service)
 
-    expected = _first_failing_pre_check(start, end, solver)
+    expected = _first_failing_pre_check(start, end, solver, answer)
+    assert engine.probes == (1 if start is not None and end is not None else 0), "one probe per press that gets there"
     seen = None if refused is None else (refused.reason, refused.http_status, str(refused))
     assert seen == expected
     if expected is None:

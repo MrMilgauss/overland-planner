@@ -40,11 +40,13 @@ ERROR_CODES = {  # brief §5 "HTTP contract" (D130)
     409: {"job_active"},
     413: {"upload_too_large"},
     422: {"validation_error", "missing_anchor"},
-    503: {"routing_engine_not_ready", "optimizer_unavailable"},
+    503: {"routing_engine_not_ready", "routing_engine_unreachable", "optimizer_unavailable"},
 }
 BADGE_TO_ANCHOR = {"S/E": "start_end", "Start": "start", "End": "end"}
 REFUSALS = {  # what Marco reads -> the status and code of that refusal (brief §5, §8; D183)
     "Optimizer unavailable - nothing was changed": (503, "optimizer_unavailable"),
+    "Routing engine unreachable - nothing was changed. Try again later.": (503, "routing_engine_unreachable"),
+    "Routing engine not ready - nothing was changed. Try again shortly.": (503, "routing_engine_not_ready"),
     "A plan is already being calculated for this project": (409, "job_active"),
     # slice 02 (D201 for the End)
     "Set the Start before calculating": (422, "missing_anchor"),
@@ -63,6 +65,7 @@ class PlannerWorld:
     mount_table: FakeMountTable
     tour_solver: TourSolver | None = None  # None = the real optimizer; doubles only under waivers W1/W2
     routing_provider: RoutingProvider | None = None  # a road map the scenario arms while it runs; None = MOCK_PLAN's
+    routing_transport: httpx.BaseTransport | None = None  # the scripted engine of ROUTING_PROVIDER=valhalla
     planner: InProcessPlanner | ServerPlanner | RemotePlanner | None = None
     marco_auth: Auth = None
     project_id: str | None = None
@@ -87,6 +90,7 @@ class PlannerWorld:
                     mount_table=self.mount_table,
                     tour_solver=self.tour_solver,
                     routing_provider=self.routing_provider,
+                    routing_transport=self.routing_transport,
                 ),
             )
             self.planner.start()

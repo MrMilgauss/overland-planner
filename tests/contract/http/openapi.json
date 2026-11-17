@@ -1954,7 +1954,7 @@
                 }
               }
             },
-            "description": "optimizer_unavailable"
+            "description": "routing_engine_unreachable, routing_engine_not_ready, optimizer_unavailable"
           }
         },
         "summary": "Calculate"

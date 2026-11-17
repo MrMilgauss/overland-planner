@@ -247,7 +247,7 @@ def create_app(
     except InvalidSettingsError as invalid:
         gate.refuse("settings", str(invalid))
     wiring = _Wiring(settings, clock, event_log, ports, _road_map(settings, gate))
-    health = gate.probe_in_order(wiring.probe_registry().components())
+    health = gate.probe_in_order(wiring.probe_registry().components(), clock=clock, reprobed=("routing_provider",))
     _log_degraded(health, event_log)
 
     logging.getLogger("uvicorn.access").disabled = True

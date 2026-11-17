@@ -8,6 +8,7 @@ first plan is a real solve in the solver child, so pre-push leaves it to CI job 
 import pytest
 from pytest_bdd import scenario
 
+from tests.acceptance.overland_route_planner_mvp.steps.routing_steps import route_on_synthetic_valhalla
 from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
 
 FEATURE = "slice-06a-valhalla-on-the-pi.feature"
@@ -33,3 +34,23 @@ def test_road_legs_found_before_the_routing_engine_failed_are_kept_for_next_time
     a_reference_trip_with_an_armable_road_map: None,
 ) -> None:
     """Five legs answered, the sixth call fails: the job ends failed, no run, and the five legs are served next time."""
+
+
+@pytest.fixture
+def the_planner_routes_on_a_synthetic_valhalla(world: PlannerWorld) -> None:
+    """The real Valhalla adapter, answered by a scripted engine that the scenario then makes fail (D247, D248)."""
+    route_on_synthetic_valhalla(world)
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "Routing engine unreachable leaves the project intact")
+def test_routing_engine_unreachable_leaves_the_project_intact(the_planner_routes_on_a_synthetic_valhalla: None) -> None:
+    """Run #4 is computed on the engine, which then refuses connections: the press is refused, nothing changes."""
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "Plans are refused while the routing engine is not the version the planner was checked with")
+def test_plans_are_refused_while_the_routing_engine_is_not_the_expected_version(
+    the_planner_routes_on_a_synthetic_valhalla: None,
+) -> None:
+    """The engine now reports 3.10.0: the press is refused as not ready and the health detail names both versions."""
