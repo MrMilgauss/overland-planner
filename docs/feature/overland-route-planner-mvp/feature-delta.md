@@ -4754,3 +4754,16 @@ Steps 06-06 to 06-13 (`8d621e8` .. `7a5b5f6`), refactor L1-L6 (10 commits), revi
 | `make perf-pi N=30 ITEMS=70` (D146, report only) | solve 65.09-72.97 s, p95 **69.53 s**, slowest 72.97 s; guard_persist 0.03 s; report `.data/perf/20261110T195026Z.json` |
 | Dogfood (D222) | project "Slice 03 dogfood 2026-11-10", the user's 15 Spanish tracks (assietta left out), round trip from Manresa: import 201 in 6.5 s; Calculate with Stop at 0.8 s -> run #1 ready "not fully optimised (stopped)", 17 stops, "Planned 15 items in 1.6 s"; unchanged Recalculate -> run #2 "Reused the identical plan of run #1", label kept; Re-optimise -> run #3 fully optimised in 5.3 s, same 3,572.9 km; diagnostics K2 0, K3 0, guard_persist p95 0.63 s. GPX copies on the Pi deleted afterwards |
 | After | planner 110 MiB of 1 GiB; planner-perf removed |
+
+### Slice 06a-ops gate on pi-host (2026-11-17, orchestrator-run under the owner's standing authority)
+
+| Check | Result |
+|---|---|
+| Deploy | `5c68135` (image `sha256:4b3e3aa9…`), after `a055e04` and `22a4767`; each `ok` |
+| `make tiles-seed` | **pass on the third run**: Valhalla 3.9.1 healthy on tileset `20261101`, `tileset_last_modified` 1793560782. Runs 1 and 2 failed their own checks and restored the pointer (D242) |
+| `make contract-live` | **pass**: 40 passed, the eight live checks exact on the recorded map data |
+| Memory | available 12,860 MB before, 12,595 MB after with the engine serving (gate 6 GiB); engine 213 MB idle |
+| Exposure | only the planner publishes a port; the engine is on the internal network |
+| Household projects | 7 projects, 37 items, 12 runs: identical before and after |
+| Not run | `make spike-cleanup`, `make tiles-refresh` (D237); `make acceptance-pi`, `make perf-pi MODE=e2e` (need slice 06a, D236) |
+| Design probes for slice 06a (read-only, through the tunnel) | Torino to the Assietta entry 93.3 km and 76 min on real roads; the five points of "Alpi Occidentali giugno 2027" all snap within 53 m; one demo track entry is 364 m from the nearest legal road (not Confirmed-reachable); a place outside the map data fails a whole matrix call with error 170; 22 one-origin matrix calls took 13.1 s against 2.0 s for one 22x22 call |
