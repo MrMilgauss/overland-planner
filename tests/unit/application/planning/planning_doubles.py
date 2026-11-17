@@ -29,6 +29,7 @@ from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
+from overland_planner.domain.routing.road_shape import RoadShape
 from tests.common.fakes import FakeClock
 
 MAX_WAIT_S = 30.0
@@ -296,6 +297,9 @@ class RecordingRoadMap:
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
+
+    def route_shape(self, origin: Coordinate, destination: Coordinate) -> RoadShape:
+        return RoadShape.straight_line(origin, destination)
 
     def matrix(
         self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None

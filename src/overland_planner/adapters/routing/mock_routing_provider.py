@@ -9,7 +9,8 @@ file's detour_factor; `pairs` may be empty. The optional `level` (03b) is `confi
 (neither distance nor time: no road at any level, answered `None`); any other combination is refused. The file is read
 once, at start-up, with `yaml.safe_load` only; a missing, unreadable or malformed file (including a pair listed twice
 with different values or levels) is `InvalidRoadMapError`, which names the path.
-Identical points are always 0 m and 0 s apart, and distinct points never are.
+Identical points are always 0 m and 0 s apart, and distinct points never are. `route_shape` (D252) answers the
+straight line, always available, without the latency or the faults.
 
 The optional `latency: {answered_at_once_pairs, then_each_call_s}` (06-09, brought forward from slice 06a) slows the
 look-up: the pairs answered are counted over the road map's life, and once those answered before a matrix call have
@@ -56,6 +57,7 @@ from overland_planner.application.ports.routing_provider import (
 )
 from overland_planner.domain.catalog.coordinate import Coordinate, CoordinateOutOfRangeError
 from overland_planner.domain.routing.road_leg import NOTHING_TO_DRIVE, OffNetwork, RoadMeasure, RoadPair
+from overland_planner.domain.routing.road_shape import RoadShape
 
 DETOUR_FACTOR = 1.3
 DEFAULT_ROAD_SPEED_KMH = 60
@@ -354,6 +356,10 @@ class MockRoutingProvider:
         self._pace.answered(len(sources) * len(targets))
         faults.answered(len(sources) * len(targets))
         return answer
+
+    def route_shape(self, origin: Coordinate, destination: Coordinate) -> RoadShape:
+        """The straight line, available; neither the latency nor the fault plan touch it (D252)."""
+        return RoadShape.straight_line(origin, destination)
 
     def probe(self) -> ProbeResult:
         """Fatal when it fails: nothing here can recover by itself, so a wrong answer is a defect (brief section 7).

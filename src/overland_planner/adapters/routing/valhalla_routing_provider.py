@@ -15,9 +15,12 @@ are injected) and each retry tells the observer; what outlives them is `Provider
 `ProviderUnreachable`.
 A 4xx is never retried: it is a `ProviderRejected` naming the engine's error code. Error 170 fails the whole call: the
 batch's places are located (verbose, same cutoff and costing), the call is asked again without those with no edge and
-their cells answer `OffNetwork`; nothing is remembered beyond that `matrix` call. The probe reads `/status` and the 2x2
-matrix of Torino and Susa once each and is never fatal. `transport` is the httpx transport seam of the tests and of the
-composition root.
+their cells answer `OffNetwork`; nothing is remembered beyond that `matrix` call.
+Road shape (D252): `route_shape` posts `/route` (two places with the same cutoff, the same costing, kilometres, no
+directions) through the same limit, retries and typed errors, and decodes the leg's polyline6; error 442 or 171 answers
+the straight line marked not available, and identical points answer one point without asking.
+The probe reads `/status` and the 2x2 matrix of Torino and Susa once each and is never fatal.
+`transport` is the httpx transport seam of the tests and of the composition root.
 """
 
 from __future__ import annotations
@@ -41,7 +44,9 @@ from overland_planner.application.ports.routing_provider import (
     RoutingProviderError,
 )
 from overland_planner.domain.catalog.coordinate import Coordinate
+from overland_planner.domain.routing.polyline import decode_polyline6
 from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
+from overland_planner.domain.routing.road_shape import RoadShape
 
 PROFILE = "4x4.v1"
 COSTING = "auto"
@@ -64,6 +69,7 @@ _OTHER_READ_TIMEOUT_S = 30
 PROBE_READ_TIMEOUT_S = 10
 PROBE_SLOT_WAIT_S = 10.0
 _UNCONNECTED_REGIONS = 170
+_NO_ROAD_ERRORS = frozenset({442, 171})  # no path found; no suitable edges near a place
 _BACKOFF_S = (0.5, 1.0, 2.0)
 _PROBE_PLACES = [Coordinate(45.0703, 7.6869), Coordinate(45.1370, 7.0500)]  # Torino, Susa
 _Cells = list[list[RoadCell]]
@@ -149,6 +155,31 @@ class ValhallaRoutingProvider:
                 for offset, answered in enumerate(cells):
                     answers[row + offset][column : column + len(answered)] = answered
         return answers
+
+    def route_shape(self, origin: Coordinate, destination: Coordinate) -> RoadShape:
+        if origin == destination:
+            return RoadShape.straight_line(origin, destination)
+        answer = self._call(
+            "POST",
+            "/route",
+            None,
+            json={
+                "locations": [self._place(origin), self._place(destination)],
+                "costing": COSTING,
+                "costing_options": COSTING_OPTIONS,
+                "units": "kilometers",
+                "directions_type": "none",
+            },
+        )
+        if answer.status_code != httpx.codes.OK:
+            refusal = _refusal(answer)
+            if _error_code(answer) in _NO_ROAD_ERRORS:
+                return RoadShape.straight_line(origin, destination, available=False)
+            raise refusal
+        try:
+            return RoadShape(decode_polyline6(answer.json()["trip"]["legs"][0]["shape"]), available=True)
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as unreadable:
+            raise ProviderRejected("the routing engine's route answer cannot be read") from unreadable
 
     def _read_identity(self) -> str:
         found, tileset = self._read_status(retry=True)
@@ -338,6 +369,13 @@ def _read_cell(cell: dict[str, Any], source: Coordinate, target: Coordinate) -> 
 
 class _Unsnappable(ProviderRejected):
     """Error 170: one place of the call is in no connected region; the whole call failed."""
+
+
+def _error_code(answer: httpx.Response) -> object:
+    try:
+        return answer.json()["error_code"]
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _refusal(answer: httpx.Response) -> ProviderRejected:
