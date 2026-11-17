@@ -104,6 +104,9 @@ class PlannerSession:
     def plan_run(self, plan_run_id: str) -> httpx.Response:
         return self._request("GET", f"/api/plan-runs/{plan_run_id}")
 
+    def plan_run_geometry(self, plan_run_id: str) -> httpx.Response:
+        return self._request("GET", f"/api/plan-runs/{plan_run_id}/geometry")
+
     def export_gpx(self, plan_run_id: str) -> httpx.Response:
         return self._request("GET", f"/api/plan-runs/{plan_run_id}/export.gpx")
 

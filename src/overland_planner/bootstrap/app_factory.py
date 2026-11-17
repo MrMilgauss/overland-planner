@@ -70,6 +70,7 @@ from overland_planner.application.planning.facade import (
     PlanRequestJob,
     PlanRequestService,
     PlanRunQueries,
+    RunGeometryService,
 )
 from overland_planner.application.platform.facade import (
     DataDirPersistence,
@@ -82,7 +83,7 @@ from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
 from overland_planner.application.ports.routing_provider import RoutingProvider, RoutingProviderError
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
-from overland_planner.application.routing.facade import LegResolver
+from overland_planner.application.routing.facade import LegResolver, ShapeStore
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
 from overland_planner.bootstrap.startup import StartupGate
@@ -200,13 +201,23 @@ class _Wiring:
             limits=SolveLimits(self._settings.feasibility_limit_s, self._settings.optimisation_limit_s),
         )
         jobs = PlanJobRegistry(self._clock, job, self._event_log, job_log=self._plan_job_log)
+        provider = self._routing_provider
+        runs = PlanRunQueries(self._planning_unit_of_work)
         return planning_routes(
             PlanningUseCases(
                 requests=PlanRequestService(
                     self._planning_unit_of_work, health, self._event_log, jobs, refusals=self._plan_refusal_log
                 ),
                 jobs=jobs,
-                runs=PlanRunQueries(self._planning_unit_of_work),
+                runs=runs,
+                geometry=RunGeometryService(
+                    runs,
+                    self._file_store,
+                    ShapeStore(provider),
+                    lambda: (provider.provider_id, provider.profile),
+                    self._event_log,
+                    self._clock,
+                ),
             )
         )
 

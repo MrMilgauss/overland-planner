@@ -431,6 +431,193 @@
         "title": "K7Resource",
         "type": "object"
       },
+      "LineFeatureResource": {
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/LineStringResource"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/LinePropertiesResource"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry",
+          "properties"
+        ],
+        "title": "LineFeatureResource",
+        "type": "object"
+      },
+      "LinePropertiesResource": {
+        "properties": {
+          "geometry": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Geometry",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "road",
+              "track",
+              "retrace"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "stop": {
+            "title": "Stop",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "stop",
+          "item_id",
+          "name",
+          "level",
+          "reason",
+          "geometry"
+        ],
+        "title": "LinePropertiesResource",
+        "type": "object"
+      },
+      "LineStringResource": {
+        "properties": {
+          "coordinates": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "LineString",
+            "default": "LineString",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "LineStringResource",
+        "type": "object"
+      },
+      "MarkerFeatureResource": {
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/PointGeometryResource"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/MarkerPropertiesResource"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry",
+          "properties"
+        ],
+        "title": "MarkerFeatureResource",
+        "type": "object"
+      },
+      "MarkerPropertiesResource": {
+        "properties": {
+          "end_stop": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Stop"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "marker": {
+            "enum": [
+              "stop",
+              "entry",
+              "exit",
+              "start_end",
+              "start",
+              "end"
+            ],
+            "title": "Marker",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stop": {
+            "title": "Stop",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "marker",
+          "stop",
+          "item_id",
+          "name",
+          "end_stop"
+        ],
+        "title": "MarkerPropertiesResource",
+        "type": "object"
+      },
       "PlanJobAccepted": {
         "description": "Calculate's answer: the job to poll and the notices of the project planned, such as \"Large project -\ncalculation may take longer than 3 minutes\" above 60 Included items (D146).",
         "properties": {
@@ -1040,6 +1227,28 @@
         "title": "PoiCreate",
         "type": "object"
       },
+      "PointGeometryResource": {
+        "properties": {
+          "coordinates": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "Point",
+            "default": "Point",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "PointGeometryResource",
+        "type": "object"
+      },
       "PointResource": {
         "properties": {
           "lat": {
@@ -1131,6 +1340,36 @@
           }
         },
         "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "RunGeometryResource": {
+        "description": "A run's map data (D251): a GeoJSON FeatureCollection, the lines in itinerary order and then the markers. A line's\n`stop` is the 1-based itinerary row it leads to or belongs to; `geometry` `unavailable` marks a road leg drawn as a\nstraight line because its shape could not be fetched (D253); a `start_end` marker carries the End's number in\n`end_stop`.",
+        "properties": {
+          "features": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LineFeatureResource"
+                },
+                {
+                  "$ref": "#/components/schemas/MarkerFeatureResource"
+                }
+              ]
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "title": "RunGeometryResource",
         "type": "object"
       },
       "RunsPerProjectDayResource": {
@@ -1495,6 +1734,56 @@
           }
         },
         "summary": "Export Gpx"
+      }
+    },
+    "/api/plan-runs/{plan_run_id}/geometry": {
+      "get": {
+        "description": "The run's lines and markers as one GeoJSON FeatureCollection in itinerary order (D251): road legs, tracks in\nthe direction they are driven and retraces, numbered stops, entry and exit markers and one `start_end` marker\nfor a round trip. A road leg whose shape cannot be fetched is a straight line with `geometry` `unavailable`\n(D253): the answer is still 200. 404 `not_found` for an unknown run, and for a Failed run (\"This plan run\nhas no route to draw\").",
+        "operationId": "plan_run_geometry_api_plan_runs__plan_run_id__geometry_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_run_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunGeometryResource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Plan Run Geometry"
       }
     },
     "/api/projects": {

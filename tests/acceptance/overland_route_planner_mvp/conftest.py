@@ -17,6 +17,7 @@ import pytest
 
 from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import *  # noqa: F403
+from tests.acceptance.overland_route_planner_mvp.steps.map_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.performance_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.platform_steps import *  # noqa: F403

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from overland_planner.application.planning.facade import PlanJobState, PlanJobView
+from overland_planner.application.planning.facade import (
+    LineFeature,
+    PlanJobState,
+    PlanJobView,
+    PointFeature,
+    RunGeometry,
+)
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -417,3 +423,87 @@ CALCULATE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "description": "routing_engine_unreachable, routing_engine_not_ready, optimizer_unavailable",
     },
 }
+
+
+class LineStringResource(BaseModel):
+    type: Literal["LineString"] = "LineString"
+    coordinates: list[list[float]]  # [longitude, latitude] pairs, as GeoJSON has them
+
+
+class PointGeometryResource(BaseModel):
+    type: Literal["Point"] = "Point"
+    coordinates: list[float]
+
+
+class LinePropertiesResource(BaseModel):
+    kind: Literal["road", "track", "retrace"]
+    stop: int
+    item_id: str
+    name: str
+    level: RoadLevel | None
+    reason: str | None
+    geometry: Literal["available", "unavailable"]
+
+
+class MarkerPropertiesResource(BaseModel):
+    marker: Literal["stop", "entry", "exit", "start_end", "start", "end"]
+    stop: int
+    item_id: str
+    name: str
+    end_stop: int | None
+
+
+class LineFeatureResource(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: LineStringResource
+    properties: LinePropertiesResource
+
+    @classmethod
+    def of(cls, line: LineFeature) -> LineFeatureResource:
+        return cls(
+            geometry=LineStringResource(coordinates=[[p.longitude, p.latitude] for p in line.points]),
+            properties=LinePropertiesResource(
+                kind=line.kind,
+                stop=line.stop,
+                item_id=line.item_id,
+                name=line.name,
+                level=line.level,
+                reason=line.reason,
+                geometry=line.geometry,
+            ),
+        )
+
+
+class MarkerFeatureResource(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: PointGeometryResource
+    properties: MarkerPropertiesResource
+
+    @classmethod
+    def of(cls, marker: PointFeature) -> MarkerFeatureResource:
+        return cls(
+            geometry=PointGeometryResource(coordinates=[marker.point.longitude, marker.point.latitude]),
+            properties=MarkerPropertiesResource(
+                marker=marker.marker,
+                stop=marker.stop,
+                item_id=marker.item_id,
+                name=marker.name,
+                end_stop=marker.end_stop,
+            ),
+        )
+
+
+class RunGeometryResource(BaseModel):
+    """A run's map data (D251): a GeoJSON FeatureCollection, the lines in itinerary order and then the markers. A line's
+    `stop` is the 1-based itinerary row it leads to or belongs to; `geometry` `unavailable` marks a road leg drawn as a
+    straight line because its shape could not be fetched (D253); a `start_end` marker carries the End's number in
+    `end_stop`."""
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[LineFeatureResource | MarkerFeatureResource]
+
+    @classmethod
+    def of(cls, answer: RunGeometry) -> RunGeometryResource:
+        lines = [LineFeatureResource.of(line) for line in answer.lines]
+        markers = [MarkerFeatureResource.of(marker) for marker in answer.markers]
+        return cls(features=[*lines, *markers])

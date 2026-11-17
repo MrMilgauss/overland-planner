@@ -13,12 +13,15 @@ from overland_planner.adapters.http.schemas import (
     PlanJobResource,
     PlanRunDetailResource,
     PlanRunResource,
+    RunGeometryResource,
 )
 from overland_planner.application.planning.facade import (
     PlanJobRegistry,
     PlanRequestService,
     PlanRunNotFoundError,
     PlanRunQueries,
+    RunGeometryService,
+    RunHasNoRouteError,
 )
 
 _NOT_FOUND = 404
@@ -31,10 +34,11 @@ class PlanningUseCases:
     requests: PlanRequestService
     jobs: PlanJobRegistry
     runs: PlanRunQueries
+    geometry: RunGeometryService
 
 
 def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
-    requests, jobs, runs = use_cases.requests, use_cases.jobs, use_cases.runs
+    requests, jobs, runs, geometry = use_cases.requests, use_cases.jobs, use_cases.runs, use_cases.geometry
     router = APIRouter(prefix="/api")
 
     @router.post("/projects/{project_id}/plan-runs", status_code=202, responses=CALCULATE_ERROR_RESPONSES)
@@ -77,5 +81,17 @@ def planning_routes(use_cases: PlanningUseCases) -> APIRouter:
         if run is None:
             raise PlanRunNotFoundError(plan_run_id)
         return PlanRunDetailResource.of(run)
+
+    @router.get("/plan-runs/{plan_run_id}/geometry", responses=ERROR_RESPONSES)
+    def plan_run_geometry(plan_run_id: str) -> RunGeometryResource:
+        """The run's lines and markers as one GeoJSON FeatureCollection in itinerary order (D251): road legs, tracks in
+        the direction they are driven and retraces, numbered stops, entry and exit markers and one `start_end` marker
+        for a round trip. A road leg whose shape cannot be fetched is a straight line with `geometry` `unavailable`
+        (D253): the answer is still 200. 404 `not_found` for an unknown run, and for a Failed run ("This plan run
+        has no route to draw")."""
+        try:
+            return RunGeometryResource.of(geometry.geometry(plan_run_id))
+        except RunHasNoRouteError as nothing:
+            raise HTTPException(_NOT_FOUND, str(nothing)) from nothing
 
     return router

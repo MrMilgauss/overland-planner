@@ -16,9 +16,17 @@ from overland_planner.application.planning.plan_request_service import (
     PlanRequestService,
 )
 from overland_planner.application.planning.plan_run_queries import PlanRunNotFoundError, PlanRunQueries
+from overland_planner.application.planning.run_geometry import (
+    LineFeature,
+    PointFeature,
+    RunGeometry,
+    RunGeometryService,
+    RunHasNoRouteError,
+)
 
 __all__ = [
     "FingerprintMemo",
+    "LineFeature",
     "MissingAnchorError",
     "OptimizerUnavailableError",
     "PlanJobProgress",
@@ -30,5 +38,9 @@ __all__ = [
     "PlanRequestService",
     "PlanRunNotFoundError",
     "PlanRunQueries",
+    "PointFeature",
+    "RunGeometry",
+    "RunGeometryService",
+    "RunHasNoRouteError",
     "StoredRun",
 ]
