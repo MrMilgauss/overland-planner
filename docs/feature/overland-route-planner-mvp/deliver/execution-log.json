@@ -3375,6 +3375,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-17T17:10:45Z"
+    },
+    {
+      "sid": "09-09",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T17:10:57Z"
+    },
+    {
+      "sid": "09-10",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T17:13:43Z"
+    },
+    {
+      "sid": "09-10",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: no scenario of its own; the scenarios are checked at the HTTP API, this step is their browser face and vitest is the RED",
+      "t": "2026-11-17T17:13:45Z"
+    },
+    {
+      "sid": "09-10",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-17T17:14:13Z"
+    },
+    {
+      "sid": "09-10",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-17T17:19:59Z"
     }
   ]
 }

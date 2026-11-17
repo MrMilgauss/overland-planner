@@ -202,3 +202,46 @@ describe('Workspace page', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('No project p1');
   });
 });
+
+describe('Workspace page: the objective', () => {
+  const OBJECTIVE_PROJECT = { ...PROJECT, objective: 'distance' };
+
+  it('shows the project objective and changes it with a PATCH', async () => {
+    const calls = stubPlanner([[]], {
+      'GET /api/projects/p1': { status: 200, body: OBJECTIVE_PROJECT },
+      'PATCH /api/projects/p1': {
+        status: 200,
+        body: { ...OBJECTIVE_PROJECT, objective: 'time', revision: 2 },
+      },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    const choice = (await screen.findByLabelText('Objective')) as HTMLSelectElement;
+    expect(choice.value).toBe('distance');
+    expect(screen.getByRole('option', { name: 'Minimise road distance' })).toBeInTheDocument();
+
+    await fireEvent.change(choice, { target: { value: 'time' } });
+    await screen.findByRole('option', { name: 'Minimise road time' });
+
+    expect(writes(calls).map((c) => [c.method, c.url, JSON.parse(String(c.body))])).toEqual([
+      ['PATCH', '/api/projects/p1', { objective: 'time' }],
+    ]);
+    expect((screen.getByLabelText('Objective') as HTMLSelectElement).value).toBe('time');
+  });
+
+  it('shows the planner message of a refused change and keeps the old value', async () => {
+    stubPlanner([[]], {
+      'GET /api/projects/p1': { status: 200, body: OBJECTIVE_PROJECT },
+      'PATCH /api/projects/p1': {
+        status: 422,
+        body: { code: 'validation_error', message: 'Unknown objective' },
+      },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    const choice = (await screen.findByLabelText('Objective')) as HTMLSelectElement;
+
+    await fireEvent.change(choice, { target: { value: 'time' } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unknown objective');
+    expect((screen.getByLabelText('Objective') as HTMLSelectElement).value).toBe('distance');
+  });
+});

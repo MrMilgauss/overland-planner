@@ -10,6 +10,8 @@
     listItems,
     openProject,
     setAnchors,
+    setObjective,
+    type Objective,
     type Item,
     type Project,
   } from './api';
@@ -25,6 +27,7 @@
   let longitude = $state('');
   let startId = $state('');
   let endId = $state('');
+  let objectiveChoice = $state<Objective>('distance');
 
   const places = $derived(items.filter((item) => item.type === 'poi'));
 
@@ -49,6 +52,7 @@
   async function open(): Promise<void> {
     try {
       project = await openProject(projectId);
+      objectiveChoice = project.objective ?? 'distance';
       await refresh();
     } catch (error) {
       problem = failureText(error);
@@ -74,6 +78,17 @@
   async function chooseStartAndEnd(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     await attempt(() => setAnchors(projectId, startId, endId));
+  }
+
+  /** The choice is the project's value once the planner has taken it; a refusal shows its message and puts the old back. */
+  async function chooseObjective(): Promise<void> {
+    problem = '';
+    try {
+      project = await setObjective(projectId, objectiveChoice);
+    } catch (error) {
+      problem = failureText(error);
+    }
+    objectiveChoice = project?.objective ?? 'distance';
   }
 
   open();
@@ -139,7 +154,14 @@
 
     <section aria-labelledby="plan-heading">
       <h2 id="plan-heading">Plan</h2>
-      <PlanPanel {projectId} />
+      <form onsubmit={(event) => event.preventDefault()}>
+        <label for="objective">Objective</label>
+        <select id="objective" bind:value={objectiveChoice} onchange={chooseObjective}>
+          <option value="distance">Minimise road distance</option>
+          <option value="time">Minimise road time</option>
+        </select>
+      </form>
+      <PlanPanel {projectId} objective={project.objective ?? 'distance'} />
     </section>
   {/if}
 </main>

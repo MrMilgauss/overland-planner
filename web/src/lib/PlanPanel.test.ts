@@ -795,3 +795,106 @@ describe('Plan panel: Re-optimise a reused plan', () => {
     expect(screen.queryByRole('button', { name: REOPTIMISE })).not.toBeInTheDocument();
   });
 });
+
+describe('Plan panel: provider header, objective and the engine messages', () => {
+  const HEADER = 'Provider: Valhalla (map data 2026-11-01) / profile: 4x4';
+  const UNREACHABLE = 'The road map service cannot be reached right now';
+  const NOT_READY = 'The road map service is still loading its map';
+  const OLD_RUN = readyRun('r1', 1, 'Briancon', TOTALS);
+
+  it('shows the provider header above the itinerary and the objective label with the totals', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS, {
+        provider_header: HEADER,
+        objective: 'time',
+        objective_label: 'Minimised road time',
+      }),
+    });
+
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    const header = screen.getByText(HEADER);
+    const itinerary = screen.getByRole('list', { name: 'Itinerary' });
+    expect(
+      header.compareDocumentPosition(itinerary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText('Totals')).getByText('Minimised road time'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a run stored before the header with neither line and no "undefined"', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': OLD_RUN,
+    });
+
+    const { container } = render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
+    expect(container).not.toHaveTextContent('undefined');
+    expect(container.querySelector('.provider, .objective')).toBeNull();
+  });
+
+  it.each([
+    ['routing_engine_unreachable', UNREACHABLE],
+    ['routing_engine_not_ready', NOT_READY],
+  ])('shows the %s refusal as it is and keeps the last run on screen', async (code, message) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': OLD_RUN,
+      [`POST ${RUNS}`]: { status: 503, body: { code, message } },
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await pressCalculate();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+  });
+
+  it.each([
+    ['routing_engine_unreachable', UNREACHABLE],
+    ['routing_engine_not_ready', NOT_READY],
+  ])(
+    'shows the message of a job that failed with %s and keeps the last run',
+    async (reason, message) => {
+      stubPlanner({
+        [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+        'GET /api/plan-runs/r1': OLD_RUN,
+        [`POST ${RUNS}`]: ACCEPTED,
+        [`GET ${JOB}`]: job('failed', { reason, message }),
+      });
+      render(PlanPanel, { props: { projectId: 'p1' } });
+      await pressCalculate();
+      await tick();
+
+      expect(screen.getByRole('alert')).toHaveTextContent(message);
+      expect(screen.getByText('Run 1')).toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    ['time', 'Best so far: 3h25', 12_300],
+    ['distance', 'Best so far: 412.3 km', 412_300],
+  ])('shows the best so far for %s as %s while solving', async (objective, line, value) => {
+    stubPlanner({
+      [`GET ${RUNS}`]: NO_RUNS,
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('solving', {
+        incumbent: { unconfirmed_legs: 0, retraces: 0, objective: value, found_at_s: 2 },
+      }),
+    });
+    render(PlanPanel, {
+      props: { projectId: 'p1', objective: objective as 'time' | 'distance' },
+    });
+
+    await pressCalculate();
+    await tick();
+
+    expect(screen.getByText(line)).toBeInTheDocument();
+  });
+});

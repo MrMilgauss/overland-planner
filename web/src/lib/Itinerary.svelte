@@ -8,7 +8,11 @@
   import { durationText } from './duration';
   import { legKmText } from './legKm';
 
-  let { stops, totals = null }: { stops: PlanStop[]; totals?: PlanTotals | null } = $props();
+  let {
+    stops,
+    totals = null,
+    objectiveLabel = null,
+  }: { stops: PlanStop[]; totals?: PlanTotals | null; objectiveLabel?: string | null } = $props();
 
   const TYPE_TEXTS: Record<PlanStop['type'], string> = {
     track: 'Track',
@@ -71,6 +75,12 @@
       <dt>Total</dt>
       <dd>{distanceAndTime(totals.total_km, totals.total_s)}</dd>
     </div>
+    {#if objectiveLabel}
+      <div>
+        <dt>Objective</dt>
+        <dd class="objective">{objectiveLabel}</dd>
+      </div>
+    {/if}
   </dl>
 {/if}
 

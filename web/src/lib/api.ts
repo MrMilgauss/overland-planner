@@ -1,9 +1,13 @@
 // The planner's HTTP API (same origin; the browser's own Basic-auth prompt covers the shared password). Every /api
 // error is an envelope {code, message} whose message is shown to Marco verbatim (PlannerError.message).
 
+export type Objective = 'distance' | 'time';
+
 export interface Project {
   id: string;
   name: string;
+  /** Absent in an answer older than the objective. */
+  objective?: Objective;
 }
 
 export interface Point {
@@ -92,6 +96,10 @@ export interface PlanRunDetail extends PlanRun {
   not_fully_optimised?: NotFullyOptimised | null;
   messages?: string[];
   memo_hit?: boolean;
+  /** Provider header and objective of the run; absent on a run stored before them. */
+  provider_header?: string | null;
+  objective?: Objective | null;
+  objective_label?: string | null;
 }
 
 export type PlanJobState =
@@ -105,6 +113,14 @@ export type PlanJobState =
   | 'cancelled'
   | 'timed_out';
 
+/** The last valid route of a solve: `objective` is road metres for `distance`, road seconds for `time`. */
+export interface Incumbent {
+  unconfirmed_legs: number;
+  retraces: number;
+  objective: number;
+  found_at_s: number;
+}
+
 /** `stoppable` until the job is finalising (ADR-015); an ended job's `message` says what it did, in words. */
 export interface PlanJob {
   state: PlanJobState;
@@ -116,6 +132,7 @@ export interface PlanJob {
   ignore_memo?: boolean;
   stoppable?: boolean;
   notices?: string[];
+  incumbent?: Incumbent | null;
 }
 
 export interface PlanJobAccepted {
@@ -216,6 +233,15 @@ export function createProject(name: string): Promise<Project> {
 
 export function openProject(projectId: string): Promise<Project> {
   return call(`/api/projects/${encodeURIComponent(projectId)}`, {}, 'Could not open the project.');
+}
+
+/** Changes the project's objective; the planner answers the project as it now is. */
+export function setObjective(projectId: string, objective: Objective): Promise<Project> {
+  return call(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    json('PATCH', { objective }),
+    GENERIC_WRITE_FAILURE,
+  );
 }
 
 export async function listItems(projectId: string): Promise<Item[]> {

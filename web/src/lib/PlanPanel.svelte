@@ -12,10 +12,14 @@
   // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
+  import { durationText } from './duration';
+  import { legKmText } from './legKm';
   import {
     failureText,
     listPlanRuns,
     PlannerError,
+    type Incumbent,
+    type Objective,
     planRunExportUrl,
     readPlanJob,
     readPlanRun,
@@ -36,7 +40,8 @@
     finalising: 'Finalising',
   };
 
-  let { projectId }: { projectId: string } = $props();
+  let { projectId, objective = 'distance' }: { projectId: string; objective?: Objective } =
+    $props();
 
   let pressing = $state(false);
   let watchedJobId = $state<string | undefined>();
@@ -48,6 +53,7 @@
   let stoppable = $state(false);
   let stopPressed = $state(false);
   let notices = $state<string[]>([]);
+  let incumbent = $state<Incumbent | undefined>();
   let endedWithoutRun = $state(''); // a job stopped before the solve: what it did, not a problem
 
   let nextPoll: ReturnType<typeof setTimeout> | undefined;
@@ -83,6 +89,11 @@
     return reason ? ` (${reason})` : '';
   }
 
+  /** The best route so far: road seconds as a duration for `time`, road metres as km for `distance`. */
+  function bestSoFar(found: Incumbent): string {
+    return objective === 'time' ? durationText(found.objective) : legKmText(found.objective / 1000);
+  }
+
   function stopWatching(): void {
     clearTimeout(nextPoll);
     watchedJobId = undefined;
@@ -107,6 +118,7 @@
     pollProblem = '';
     jobState = job.state;
     stoppable = job.stoppable === true;
+    incumbent = job.incumbent ?? undefined;
     if (job.notices && job.notices.length > 0) notices = job.notices;
     if (job.state === 'failed' || job.state === 'timed_out') {
       stopWatching();
@@ -147,6 +159,7 @@
     endedWithoutRun = '';
     notices = [];
     failedRun = undefined;
+    incumbent = undefined;
     try {
       const accepted = await startPlan(projectId, ignoreMemo);
       notices = accepted.notices ?? [];
@@ -186,6 +199,9 @@
 {#if watchedJobId && STATE_TEXTS[jobState]}
   <p role="status">{STATE_TEXTS[jobState]}</p>
 {/if}
+{#if watchedJobId && incumbent}
+  <p class="best">Best so far: {bestSoFar(incumbent)}</p>
+{/if}
 {#if watchedJobId && stoppable}
   <button type="button" disabled={stopPressed} onclick={stop}>Stop and use best so far</button>
 {/if}
@@ -213,6 +229,9 @@
 
 {#if readyRun}
   <p class="run">Run {readyRun.number}</p>
+  {#if readyRun.provider_header}
+    <p class="provider">{readyRun.provider_header}</p>
+  {/if}
   {#each readyRun.messages ?? [] as message, index (index)}
     <p class="message">{message}</p>
   {/each}
@@ -221,7 +240,11 @@
       Re-optimise (ignore previous result)
     </button>
   {/if}
-  <Itinerary stops={readyRun.stops} totals={readyRun.totals} />
+  <Itinerary
+    stops={readyRun.stops}
+    totals={readyRun.totals}
+    objectiveLabel={readyRun.objective_label}
+  />
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
@@ -236,6 +259,8 @@
     font-weight: 600;
   }
   .message,
+  .provider,
+  .best,
   .notice {
     margin: 0.25rem 0;
   }

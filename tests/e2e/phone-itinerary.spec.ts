@@ -37,6 +37,15 @@ test('Giulia opens the results on her phone', async ({ page }) => {
     Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
   );
 
+  const headerLine = page.locator('.provider');
+  const headerText = (await headerLine.count()) > 0 ? await headerLine.first().innerText() : null;
+  const objectiveControl = page.getByLabel('Objective');
+  await expect(objectiveControl).toBeVisible();
+  expect(pageWidth, 'no horizontal scroll with the header line and the objective control').toBeLessThanOrEqual(
+    screenWidth,
+  );
+  if (headerText !== null) await expect(headerLine.first()).toBeVisible();
+
   await writeFile(
     path.join(resultDir!, 'result.json'),
     JSON.stringify({
@@ -44,6 +53,7 @@ test('Giulia opens the results on her phone', async ({ page }) => {
       page_width: pageWidth,
       rows,
       totals_text: totalsText,
+      header_text: headerText,
     }),
   );
 });
