@@ -67,6 +67,10 @@ compose project `overland`. Every Pi target acts only on project `overland`, the
 | (routing engine) | Valhalla runs only after `make tiles-seed` has written `routing.env`; a deploy or rollback then starts it after the planner and never fails because of it. |
 | `make dora` | Deployment frequency, lead time, change failure rate and time to restore from `.data/ops/releases.log` (copied back by every deploy and rollback). |
 
+Real roads (D247): add the line `ROUTING_PROVIDER=valhalla` to `.env` on the Pi (the engine must be seeded, see above) and restart the planner:
+`docker compose -p overland --env-file .env --env-file release.env --env-file routing.env up -d planner`.
+Back to the offline road map: delete that line (or set `mock`) and run the same command. The planner starts even when the engine is down; `make status` shows it.
+
 Before the first deploy (D178): give the Pi a DHCP reservation for its home-network address on the router (the planner
 binds only that address).
 

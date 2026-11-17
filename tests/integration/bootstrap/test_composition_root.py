@@ -66,7 +66,7 @@ def test_create_app_given_a_mapping_reads_only_that_mapping(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path
 ) -> None:
     monkeypatch.setenv("PLANNER_GIT_SHA", "from-process-env")
-    monkeypatch.setenv("ROUTING_PROVIDER", "valhalla")  # would be refused if the process environment were read
+    monkeypatch.setenv("ROUTING_PROVIDER", "osrm")  # would be refused if the process environment were read
 
     create_app({"PLANNER_GIT_SHA": "from-mapping", "DATA_DIR": str(data_dir)})
 
@@ -77,7 +77,7 @@ def test_create_app_given_a_mapping_reads_only_that_mapping(
 
 def test_an_invalid_setting_refuses_start_up_naming_the_setting(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(StartupRefusedError) as refused:
-        create_app({"ROUTING_PROVIDER": "valhalla"})
+        create_app({"ROUTING_PROVIDER": "osrm"})
 
     assert (refused.value.code, refused.value.component) == (1, "settings")
     (line,) = _json_lines(capsys.readouterr().out)

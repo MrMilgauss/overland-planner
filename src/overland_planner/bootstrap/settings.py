@@ -11,6 +11,9 @@ composition root reads and validates the file once at start-up; a bad file refus
 FEASIBILITY_LIMIT_S and OPTIMISATION_LIMIT_S (ADR-014 section 2) are whole seconds above 0, written in ASCII digits;
 the feasibility limit may not exceed the optimisation limit (D116), else the start is refused naming
 FEASIBILITY_LIMIT_S.
+ROUTING_PROVIDER is `mock` (default) or `valhalla`; the engine's keys (ADR-013 Amendment 4, D247) are VALHALLA_URL (http
+or https with a host), VALHALLA_EXPECTED_VERSION, VALHALLA_MAX_MATRIX_PAIRS (1 or more), VALHALLA_CONCURRENCY (1 to 8)
+and CONFIRMED_SNAP_M (above 0); an empty value is the default. MOCK_PLAN with `valhalla` refuses the start.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -26,8 +30,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from overland_planner.application.ports.tour_solver import DEFAULT_FEASIBILITY_LIMIT_S, DEFAULT_OPTIMISATION_LIMIT_S
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
-# Only the mock provider exists until slice 06a wires Valhalla.
-RoutingProvider = Literal["mock"]
+RoutingProvider = Literal["mock", "valhalla"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REPO_WEB_DIST = _REPO_ROOT / "web" / "dist"
@@ -68,12 +71,40 @@ class Settings(BaseSettings):
         DEFAULT_OPTIMISATION_LIMIT_S
     )
 
+    valhalla_url: Annotated[str, Field(validation_alias="VALHALLA_URL")] = "http://valhalla:8002"
+    valhalla_expected_version: Annotated[str, Field(validation_alias="VALHALLA_EXPECTED_VERSION")] = "3.9.1"
+    valhalla_max_matrix_pairs: Annotated[int, Field(validation_alias="VALHALLA_MAX_MATRIX_PAIRS", ge=1)] = 2500
+    valhalla_concurrency: Annotated[int, Field(validation_alias="VALHALLA_CONCURRENCY", ge=1, le=8)] = 2
+    confirmed_snap_m: Annotated[int, Field(validation_alias="CONFIRMED_SNAP_M", gt=0)] = 250
+
+    @field_validator("valhalla_url")
+    @classmethod
+    def _http_url_with_host(cls, value: str) -> str:
+        try:
+            parts = urlsplit(value)
+            usable = parts.scheme in ("http", "https") and bool(parts.hostname)
+        except ValueError:
+            usable = False
+        if not usable:
+            raise ValueError("must be an http or https URL with a host")
+        return value
+
     @field_validator("basic_auth_user", "basic_auth_password", "mock_plan", mode="before")
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("max_upload_file_mb", "max_upload_request_mb", "max_upload_files", mode="before")
+    @field_validator(
+        "max_upload_file_mb",
+        "max_upload_request_mb",
+        "max_upload_files",
+        "valhalla_url",
+        "valhalla_expected_version",
+        "valhalla_max_matrix_pairs",
+        "valhalla_concurrency",
+        "confirmed_snap_m",
+        mode="before",
+    )
     @classmethod
     def _empty_cap_is_default(cls, value: object, info: ValidationInfo) -> object:
         return cls.model_fields[str(info.field_name)].default if value == "" else value
@@ -124,4 +155,6 @@ class Settings(BaseSettings):
             raise InvalidSettingsError({missing: "must be set together with the other shared password setting"})
         if settings.feasibility_limit_s > settings.optimisation_limit_s:
             raise InvalidSettingsError({"FEASIBILITY_LIMIT_S": "must not exceed OPTIMISATION_LIMIT_S (D116)"})
+        if settings.routing_provider == "valhalla" and settings.mock_plan is not None:
+            raise InvalidSettingsError({"MOCK_PLAN": "cannot be used with ROUTING_PROVIDER=valhalla (offline script)"})
         return settings

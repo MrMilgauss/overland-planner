@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+import httpx
 from fastapi import APIRouter, FastAPI
 
 from overland_planner.adapters.clock.system_clock import SystemClock
@@ -58,6 +59,7 @@ from overland_planner.adapters.routing.mock_routing_provider import (
     RoadMapScript,
     read_road_map,
 )
+from overland_planner.adapters.routing.valhalla_routing_provider import ValhallaRoutingProvider
 from overland_planner.adapters.solver.ortools_tour_solver import OrToolsTourSolver
 from overland_planner.application.catalog.facade import AnchorService, PoiService, ProjectService, TrackImportService
 from overland_planner.application.export.facade import GpxExportService
@@ -77,6 +79,7 @@ from overland_planner.application.platform.facade import (
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
+from overland_planner.application.ports.routing_provider import RoutingProviderError
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
 from overland_planner.application.routing.facade import LegResolver
 from overland_planner.bootstrap.registry import ProbeRegistry
@@ -94,6 +97,7 @@ class ExternalPorts:
     clock: Clock | None = None
     mount_table: MountTable | None = None
     tour_solver: TourSolver | None = None
+    routing_transport: httpx.BaseTransport | None = None  # the scripted engine of ROUTING_PROVIDER=valhalla
 
 
 class _Wiring:
@@ -119,14 +123,36 @@ class _Wiring:
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
         self._gpx_writer = GpxpyWriter()
-        # the only ROUTING_PROVIDER value until slice 06a
-        self._routing_provider = MockRoutingProvider(script=road_map)
+        self._routing_provider: MockRoutingProvider | ValhallaRoutingProvider = (
+            ValhallaRoutingProvider(
+                settings.valhalla_url,
+                expected_version=settings.valhalla_expected_version,
+                max_matrix_pairs=settings.valhalla_max_matrix_pairs,
+                concurrency=settings.valhalla_concurrency,
+                snap_m=settings.confirmed_snap_m,
+                transport=ports.routing_transport,
+            )
+            if settings.routing_provider == "valhalla"
+            else MockRoutingProvider(script=road_map)
+        )
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
             request_mb=settings.max_upload_request_mb,
             files=settings.max_upload_files,
         )
+
+    def routing_provider_id(self, health: HealthService) -> str | None:
+        """The engine's id as the start-up probe left it (no further call); None for the mock or a probe that failed."""
+        provider = self._routing_provider
+        if not isinstance(provider, ValhallaRoutingProvider):
+            return None
+        if health.detail().components["routing_provider"].outcome != "ok":
+            return None
+        try:
+            return provider.provider_id
+        except RoutingProviderError:
+            return None
 
     def probe_registry(self) -> ProbeRegistry:
         """Every component in wiring order: the database probe migrates it before anything else touches it."""
@@ -235,9 +261,13 @@ def create_app(
     app.include_router(wiring.diagnostics_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
+    engine = (
+        {"routing_provider_id": wiring.routing_provider_id(health)} if settings.routing_provider == "valhalla" else {}
+    )
     event_log.info(
         "app.started",
         routing_provider=settings.routing_provider,
+        **engine,
         solver_budget=settings.solver_budget,
         python_version=platform.python_version(),
         alembic_revision=wiring.migrator.head(),

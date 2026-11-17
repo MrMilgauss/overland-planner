@@ -35,7 +35,19 @@ KEYS = (
     "MAX_UPLOAD_FILES",
     "FEASIBILITY_LIMIT_S",
     "OPTIMISATION_LIMIT_S",
+    "VALHALLA_URL",
+    "VALHALLA_EXPECTED_VERSION",
+    "VALHALLA_MAX_MATRIX_PAIRS",
+    "VALHALLA_CONCURRENCY",
+    "CONFIRMED_SNAP_M",
 )
+ENGINE_DEFAULTS = {
+    "VALHALLA_URL": "http://valhalla:8002",
+    "VALHALLA_EXPECTED_VERSION": "3.9.1",
+    "VALHALLA_MAX_MATRIX_PAIRS": 2500,
+    "VALHALLA_CONCURRENCY": 2,
+    "CONFIRMED_SNAP_M": 250,
+}  # ADR-013 Amendment 4, D247
 LIMITS = ("FEASIBILITY_LIMIT_S", "OPTIMISATION_LIMIT_S")
 LIMIT_DEFAULTS = {"FEASIBILITY_LIMIT_S": 600, "OPTIMISATION_LIMIT_S": 1800}  # ADR-014 section 2
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")
@@ -51,7 +63,7 @@ _secret_char = st.characters(exclude_categories=("Cs",), exclude_characters="\x0
 VALID: dict[str, st.SearchStrategy[tuple[str, Any]]] = {
     "DATA_DIR": _path.map(lambda raw: (raw, Path(raw))),
     "LOG_LEVEL": st.sampled_from(["DEBUG", "INFO", "WARNING", "ERROR"]).map(lambda raw: (raw, raw)),
-    "ROUTING_PROVIDER": st.just(("mock", "mock")),
+    "ROUTING_PROVIDER": st.sampled_from(["mock", "valhalla"]).map(lambda raw: (raw, raw)),
     "SOLVER_BUDGET": st.integers(min_value=1, max_value=10**7).map(lambda n: (str(n), n)),
     "PLANNER_GIT_SHA": _printable.map(lambda raw: (raw, raw)),
     "WEB_DIST_DIR": _path.map(lambda raw: (raw, Path(raw))),
@@ -59,12 +71,19 @@ VALID: dict[str, st.SearchStrategy[tuple[str, Any]]] = {
     "PLANNER_BASIC_AUTH_USER": st.text(_secret_char.filter(lambda c: c != ":"), min_size=1).map(lambda raw: (raw, raw)),
     "PLANNER_BASIC_AUTH_PASSWORD": st.text(_secret_char, min_size=1).map(lambda raw: (raw, raw)),
     **{cap: st.integers(min_value=1, max_value=10**4).map(lambda n: (str(n), n)) for cap in UPLOAD_CAPS},
+    "VALHALLA_URL": st.tuples(st.sampled_from(["http", "https"]), _segment, st.integers(1, 65535)).map(
+        lambda p: (f"{p[0]}://{p[1]}:{p[2]}", f"{p[0]}://{p[1]}:{p[2]}")
+    ),
+    "VALHALLA_EXPECTED_VERSION": _printable.map(lambda raw: (raw, raw)),
+    "VALHALLA_MAX_MATRIX_PAIRS": st.integers(min_value=1, max_value=10**6).map(lambda n: (str(n), n)),
+    "VALHALLA_CONCURRENCY": st.integers(min_value=1, max_value=8).map(lambda n: (str(n), n)),
+    "CONFIRMED_SNAP_M": st.integers(min_value=1, max_value=10**5).map(lambda n: (str(n), n)),
 }
 
 INVALID: dict[str, st.SearchStrategy[str]] = {
     "DATA_DIR": st.just(""),
     "LOG_LEVEL": _printable.filter(lambda raw: raw not in {"DEBUG", "INFO", "WARNING", "ERROR"}),
-    "ROUTING_PROVIDER": _printable.filter(lambda raw: raw != "mock"),
+    "ROUTING_PROVIDER": _printable.filter(lambda raw: raw not in {"mock", "valhalla"}),
     "SOLVER_BUDGET": st.integers(max_value=0).map(str) | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True),
     "PLANNER_GIT_SHA": st.just(""),
     "WEB_DIST_DIR": st.just(""),
@@ -72,6 +91,13 @@ INVALID: dict[str, st.SearchStrategy[str]] = {
     # RFC 7617: the user part of Basic credentials ends at the first colon, so such a user could never log in.
     "PLANNER_BASIC_AUTH_USER": st.tuples(st.text(max_size=5), st.text(max_size=5)).map(lambda p: f"{p[0]}:{p[1]}"),
     **{cap: st.integers(max_value=0).map(str) | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True) for cap in UPLOAD_CAPS},
+    # http or https with a host: another scheme, no scheme, or no host is refused
+    "VALHALLA_URL": st.sampled_from(["ftp://valhalla:8002", "valhalla:8002", "http://", "https:///path", "//valhalla"]),
+    "VALHALLA_MAX_MATRIX_PAIRS": st.integers(max_value=0).map(str) | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True),
+    "VALHALLA_CONCURRENCY": st.integers(max_value=0).map(str)
+    | st.integers(min_value=9).map(str)
+    | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True),
+    "CONFIRMED_SNAP_M": st.integers(max_value=0).map(str) | st.from_regex(r"[A-Za-z]{1,8}", fullmatch=True),
 }
 
 # Keys the planner does not read: other variables, and lower-case spellings of its own keys (keys are case-sensitive).
@@ -96,6 +122,11 @@ def observable(settings: Settings) -> dict[str, Any]:
         "MAX_UPLOAD_FILES": settings.max_upload_files,
         "FEASIBILITY_LIMIT_S": settings.feasibility_limit_s,
         "OPTIMISATION_LIMIT_S": settings.optimisation_limit_s,
+        "VALHALLA_URL": settings.valhalla_url,
+        "VALHALLA_EXPECTED_VERSION": settings.valhalla_expected_version,
+        "VALHALLA_MAX_MATRIX_PAIRS": settings.valhalla_max_matrix_pairs,
+        "VALHALLA_CONCURRENCY": settings.valhalla_concurrency,
+        "CONFIRMED_SNAP_M": settings.confirmed_snap_m,
     }
 
 
@@ -142,9 +173,9 @@ def test_a_value_outside_its_domain_is_refused_naming_its_key(data: st.DataObjec
     assert key in str(refused.value)
 
 
-@given(provider=_printable.filter(lambda raw: raw != "mock"))
+@given(provider=_printable.filter(lambda raw: raw not in {"mock", "valhalla"}))
 def test_invalid_routing_provider_is_refused(provider: str) -> None:
-    # bypass: refusal path, see above. Only `mock` is accepted before slice 06a wires Valhalla.
+    # bypass: refusal path, see above. Only `mock` and `valhalla` are accepted.
     with pytest.raises(InvalidSettingsError) as refused:
         Settings.from_environ({"ROUTING_PROVIDER": provider, "PLANNER_GIT_SHA": "abc123def456"})
     assert refused.value.setting_names == frozenset({"ROUTING_PROVIDER"})
@@ -242,3 +273,28 @@ def test_the_start_up_accepts_the_limits_iff_both_are_whole_seconds_and_feasibil
     else:
         expected = {key: set_to(meant[key]) if key in environ else unchanged() for key in KEYS}
     assert_state_delta(before, after, universe=UNIVERSE | {"refused"}, expected=expected, strict=True)
+
+
+@given(key=st.sampled_from(sorted(ENGINE_DEFAULTS)))
+def test_an_empty_engine_setting_is_its_default(key: str) -> None:
+    # compose passes `${KEY:-}`: an unset key arrives as an empty value and must read as the default (D247).
+    before = observable(Settings.from_environ({}))
+    after = observable(Settings.from_environ({key: ""}))
+    assert_state_delta(before, after, universe=UNIVERSE, expected={k: unchanged() for k in KEYS}, strict=True)
+    assert after[key] == ENGINE_DEFAULTS[key]
+
+
+def test_the_engine_defaults_are_the_documented_ones() -> None:
+    # bypass: the defaults are the contract of D247; a single example is the rule.
+    settings = Settings.from_environ({})
+    assert settings.routing_provider == "mock"
+    assert {key: observable(settings)[key] for key in ENGINE_DEFAULTS} == ENGINE_DEFAULTS
+
+
+@given(plan=_path)
+def test_the_offline_road_map_script_with_the_valhalla_provider_is_refused(plan: str) -> None:
+    # bypass: refusal path; the error's named keys are its whole observable surface.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"ROUTING_PROVIDER": "valhalla", "MOCK_PLAN": plan})
+    assert refused.value.setting_names == frozenset({"MOCK_PLAN"})
+    assert Settings.from_environ({"ROUTING_PROVIDER": "mock", "MOCK_PLAN": plan}).mock_plan == Path(plan)

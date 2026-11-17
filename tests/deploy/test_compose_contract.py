@@ -28,6 +28,7 @@ FAIL_CLOSED_PORTS = "${PLANNER_BIND:?PLANNER_BIND must be set in .env}:${PLANNER
 INTERPOLATION = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?P<rest>[^}]*)\}")
 SECRET_SETTINGS = ("PLANNER_BASIC_AUTH_PASSWORD",)
 UPLOAD_CAPS = ("MAX_UPLOAD_FILE_MB", "MAX_UPLOAD_REQUEST_MB", "MAX_UPLOAD_FILES")  # ADR-011 Am. 1
+ENGINE_SETTINGS = ("VALHALLA_EXPECTED_VERSION", "VALHALLA_MAX_MATRIX_PAIRS", "VALHALLA_CONCURRENCY", "CONFIRMED_SNAP_M")
 LIMITS = {"FEASIBILITY_LIMIT_S": "feasibility_limit_s", "OPTIMISATION_LIMIT_S": "optimisation_limit_s"}  # ADR-014
 HARDENING = (
     "image",
@@ -167,7 +168,13 @@ def test_settings_reach_the_container_by_interpolation_and_secrets_are_never_wri
     # Empty when unset; the planner reads an empty value as its default (shared password off, caps 25/100/50).
     for key in ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD", *UPLOAD_CAPS):
         assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
-    assert environment["DATA_DIR"] == "/data" and environment["ROUTING_PROVIDER"] == "mock"
+    assert environment["DATA_DIR"] == "/data"
+    # D247: the road map is chosen by .env (mock when unset); the engine is the compose service, its tuning is empty
+    # (the planner's default) unless .env says otherwise.
+    assert environment["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}"
+    assert environment["VALHALLA_URL"] == "http://valhalla:8002"
+    for key in ENGINE_SETTINGS:
+        assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     # The solve limits pass through with the planner's own defaults (ADR-014 section 2, brief section 12).
     for key, field in LIMITS.items():
         default = Settings.model_fields[field].default
@@ -207,7 +214,7 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
     assert perf["networks"] == ["edge", "routing"]
     assert perf["volumes"] == ["planner-perf-data:/data", "./perf:/perf:ro"]
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
-    assert planner["environment"]["ROUTING_PROVIDER"] == "mock", "the household planner switches in slice 06a"
+    assert planner["environment"]["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}", "the household switch is .env"
     assert perf["environment"] == planner["environment"] | {
         "MOCK_PLAN": "${PERF_MOCK_PLAN:-}",
         "ROUTING_PROVIDER": "${PERF_ROUTING_PROVIDER:-mock}",  # D236: perf-pi MODE=e2e and acceptance-pi say valhalla

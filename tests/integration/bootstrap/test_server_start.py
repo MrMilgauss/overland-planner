@@ -162,7 +162,7 @@ def test_a_data_dir_symlinked_onto_tmpfs_is_reported_not_persistent(
 
 
 def test_a_refused_start_exits_non_zero_after_one_refusal_line_and_answers_nothing(data_dir: Path) -> None:
-    planner = ServerPlanner({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "valhalla"}, workdir=REPO_ROOT)
+    planner = ServerPlanner({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "osrm"}, workdir=REPO_ROOT)
 
     record = planner.launch()
     planner.stop()

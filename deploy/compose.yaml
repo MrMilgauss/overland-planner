@@ -42,7 +42,14 @@ services:
     # MIGRATIONS_DIR and PLANNER_GIT_SHA are set by the image itself.
     environment: &planner-environment
       DATA_DIR: /data
-      ROUTING_PROVIDER: mock
+      # The road map: `mock` (offline) unless .env says ROUTING_PROVIDER=valhalla (D247); the engine tuning is empty when
+      # unset, which the planner reads as its default.
+      ROUTING_PROVIDER: ${ROUTING_PROVIDER:-mock}
+      VALHALLA_URL: http://valhalla:8002
+      VALHALLA_EXPECTED_VERSION: ${VALHALLA_EXPECTED_VERSION:-}
+      VALHALLA_MAX_MATRIX_PAIRS: ${VALHALLA_MAX_MATRIX_PAIRS:-}
+      VALHALLA_CONCURRENCY: ${VALHALLA_CONCURRENCY:-}
+      CONFIRMED_SNAP_M: ${CONFIRMED_SNAP_M:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
       # Solve limits in whole seconds from pressing Calculate (ADR-014 section 2); feasibility <= optimisation.
@@ -97,7 +104,6 @@ services:
       MOCK_PLAN: ${PERF_MOCK_PLAN:-}
       # make perf-pi MODE=e2e and make acceptance-pi set PERF_ROUTING_PROVIDER=valhalla (D236); the planner stays on mock.
       ROUTING_PROVIDER: ${PERF_ROUTING_PROVIDER:-mock}
-      VALHALLA_URL: http://valhalla:8002
     volumes:
       - planner-perf-data:/data
       - ./perf:/perf:ro
