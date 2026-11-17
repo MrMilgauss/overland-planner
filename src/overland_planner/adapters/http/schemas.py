@@ -348,9 +348,15 @@ class K7Resource(BaseModel):
     runs_per_project_day: RunsPerProjectDayResource
 
 
+class G4Resource(BaseModel):
+    """Plan requests refused for a routing engine that was unreachable or not ready, over the window asked for."""
+
+    engine_refusals_30d: int
+
+
 class DiagnosticsResource(BaseModel):
     """`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,
-    `g1`, `g2`, `g4` and `cache_hit_rate_30d` stay null until the slices that own their sources."""
+    `g1`, `g2` and `cache_hit_rate_30d` stay null until the slices that own their sources."""
 
     version: str
     process_started_at: str
@@ -363,7 +369,7 @@ class DiagnosticsResource(BaseModel):
     k7: K7Resource
     g1: None = None
     g2: None = None
-    g4: None = None
+    g4: G4Resource
     cache_hit_rate_30d: None = None
     jobs_by_terminal_state_30d: dict[str, int]
     retried_jobs_30d: int
@@ -379,6 +385,7 @@ class DiagnosticsResource(BaseModel):
             k3=K3Resource.model_validate(report.k3, from_attributes=True),
             k5=K5Resource.model_validate(report.k5, from_attributes=True),
             k7=K7Resource.model_validate(report.k7, from_attributes=True),
+            g4=G4Resource(engine_refusals_30d=report.g4.engine_refusals),
             jobs_by_terminal_state_30d=dict(report.jobs_by_terminal_state),
             retried_jobs_30d=report.retried_jobs,
             second_pass_jobs_30d=report.second_pass_jobs,

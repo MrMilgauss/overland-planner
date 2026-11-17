@@ -15,8 +15,8 @@ from sqlalchemy import RowMapping, exists, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from overland_planner.adapters.persistence.database import SqliteDatabase
-from overland_planner.adapters.persistence.tables import plan_job_log, plan_runs, projects
-from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow
+from overland_planner.adapters.persistence.tables import plan_job_log, plan_refusals, plan_runs, projects
+from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow, RefusalRow
 from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
 
 _PROBE_SINCE = datetime(9999, 1, 1, tzinfo=UTC)
@@ -40,6 +40,7 @@ _RUN_QUERY = select(
     plan_runs.c.inputs,
     plan_runs.c.itinerary,
 ).order_by(plan_runs.c.created_at)
+_REFUSAL_QUERY = select(plan_refusals.c.project_id, plan_refusals.c.reason, plan_refusals.c.created_at)
 
 
 def _utc(moment: datetime) -> datetime:
@@ -65,6 +66,10 @@ def _run(row: RowMapping) -> PlanRunRow:
     )
 
 
+def _refusal(row: RowMapping) -> RefusalRow:
+    return RefusalRow(row["project_id"], row["reason"], _utc(row["created_at"]))
+
+
 class SqlAlchemyDiagnosticsReader:
     def __init__(self, database: SqliteDatabase) -> None:
         self._database = database
@@ -81,6 +86,11 @@ class SqlAlchemyDiagnosticsReader:
     def plan_runs(self) -> Sequence[PlanRunRow]:
         with self._database.engine.connect() as connection:
             return [_run(row) for row in connection.execute(_RUN_QUERY).mappings()]
+
+    def refusals_since(self, since: datetime) -> Sequence[RefusalRow]:
+        query = _REFUSAL_QUERY.where(plan_refusals.c.created_at >= _utc(since)).order_by(plan_refusals.c.created_at)
+        with self._database.engine.connect() as connection:
+            return [_refusal(row) for row in connection.execute(query).mappings()]
 
     def probe(self) -> ProbeResult:
         check = ProbeCheck("diagnostics_unreadable", lambda: self.jobs_since(_PROBE_SINCE) == [])

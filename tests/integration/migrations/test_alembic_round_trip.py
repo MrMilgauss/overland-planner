@@ -29,7 +29,8 @@ from tests.common.workspace import workspace_data_dir
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUB_REVISION = "f1f1f1f1f1f1"
 TABLES_OF_0006 = {"projects", "items", "tracks", "pois", "plan_runs"}
-HEAD_TABLES = TABLES_OF_0006 | {"plan_job_log"}
+TABLES_OF_0007 = TABLES_OF_0006 | {"plan_job_log"}
+HEAD_TABLES = TABLES_OF_0007 | {"plan_refusals"}
 
 
 @pytest.fixture
@@ -355,7 +356,7 @@ def test_0007_adds_the_plan_job_log_and_its_round_trip_keeps_every_project_item_
     assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
         SEEDED_TRIP,
         SEEDED_RUNS,
-        HEAD_TABLES,
+        TABLES_OF_0007,
         ["0007"],
     )
     with sqlite3.connect(file) as connection:
@@ -374,7 +375,7 @@ def test_0007_adds_the_plan_job_log_and_its_round_trip_keeps_every_project_item_
     assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
         SEEDED_TRIP,
         SEEDED_RUNS,
-        HEAD_TABLES,
+        TABLES_OF_0007,
         ["0007"],
     )
     with sqlite3.connect(file) as connection:
@@ -388,7 +389,9 @@ def test_a_0006_release_refuses_a_0007_database(data_dir: Path, tmp_path: Path) 
     command.upgrade(_config(f"sqlite:///{file}"), "0007")
     release_0006 = data_dir.parent / "migrations_0006"
     shutil.copytree(
-        REPO_ROOT / "migrations", release_0006, ignore=shutil.ignore_patterns("__pycache__", "0007_*.py", "0008_*.py")
+        REPO_ROOT / "migrations",
+        release_0006,
+        ignore=shutil.ignore_patterns("__pycache__", "0007_*.py", "0008_*.py", "0009_*.py"),
     )
     database = SqliteDatabase(data_dir)
     try:
@@ -436,7 +439,7 @@ def test_0008_adds_the_run_flags_older_runs_read_reproducible_with_no_label_and_
     assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
         SEEDED_TRIP,
         SEEDED_RUNS,
-        HEAD_TABLES,
+        TABLES_OF_0007,
         ["0007"],
     )
     assert RUN_COLUMNS_OF_0008 & _columns(file, "plan_runs") == set()
@@ -447,6 +450,43 @@ def test_0008_adds_the_run_flags_older_runs_read_reproducible_with_no_label_and_
     command.upgrade(config, "0008")
     assert (_plan_runs(file), _revision(file)) == (SEEDED_RUNS, ["0008"])
     assert _columns(file, "plan_runs") >= RUN_COLUMNS_OF_0008
+
+
+@BOTH_DOWNGRADE_PATHS
+def test_0009_adds_the_empty_plan_refusals_and_its_downgrade_drops_only_them(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, downgrade: Any
+) -> None:
+    file = database_file(data_dir)
+    config = _config(f"sqlite:///{file}")
+    command.upgrade(config, "0008")
+    _seed_trip_at_head(file)
+
+    command.upgrade(config, "0009")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        HEAD_TABLES,
+        ["0009"],
+    )
+    assert _columns(file, "plan_refusals") == {"id", "created_at", "project_id", "reason", "http_status"}
+    with sqlite3.connect(file) as connection:
+        assert connection.execute("SELECT count(*) FROM plan_refusals").fetchone() == (0,), "the table starts empty"
+        connection.execute(
+            "INSERT INTO plan_refusals (created_at, project_id, reason, http_status) "
+            "VALUES ('2026-11-09 07:00:00', 'p1', 'routing_engine_not_ready', 503)"
+        )
+    connection.close()
+
+    downgrade(config, data_dir, monkeypatch, "0008")
+    assert (_trip(file), _plan_runs(file), _tables(file), _revision(file)) == (
+        SEEDED_TRIP,
+        SEEDED_RUNS,
+        TABLES_OF_0007,
+        ["0008"],
+    )
+
+    command.upgrade(config, "0009")
+    assert (_tables(file), _revision(file)) == (HEAD_TABLES, ["0009"])
 
 
 def test_plan_runs_are_numbered_once_per_project_and_go_with_their_project(data_dir: Path) -> None:

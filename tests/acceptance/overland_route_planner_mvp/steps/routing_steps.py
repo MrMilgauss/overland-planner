@@ -43,6 +43,7 @@ FAR_PLACE_AT = (44.6, 6.9)  # more than 250 m from any road open to vehicles: th
 RUNS_BEFORE = 4
 ROAD_MAP_FILE = "off-network-road-map.yaml"
 UNREACHABLE_REASON = "routing_engine_unreachable"
+NOT_READY_REASON = "routing_engine_not_ready"
 SYNTHETIC_KM_PER_H = 50.0
 
 
@@ -50,7 +51,7 @@ class SyntheticValhalla:
     """The routing engine's HTTP answers behind the planner's transport seam (synthetic: not recorded from a real
     engine). `/status` is the recorded 3.9.1 status; every matrix cell is the straight line x 1.3 at 50 km/h, from the
     places the question carries. `mode` is what the scenario does to the engine: healthy, down (connections are
-    refused) or newer (reports another version)."""
+    refused), newer (reports another version) or loading (answers /status, and 503 on the matrix: no map data yet)."""
 
     def __init__(self) -> None:
         self.mode = "healthy"
@@ -63,6 +64,8 @@ class SyntheticValhalla:
             status = dict(recording("status")["response"])
             status["version"] = self.reported_version if self.mode == "newer" else status["version"]
             return httpx.Response(200, json=status)
+        if self.mode == "loading":
+            return httpx.Response(503, json={"error": "tiles are still loading"})
         body = json.loads(request.content)
         return httpx.Response(200, json={"sources_to_targets": self._rows(body["sources"], body["targets"])})
 
@@ -189,6 +192,11 @@ def given_the_engine_cannot_be_reached(world: PlannerWorld) -> None:
     world.scratch["engine"].mode = "down"
 
 
+@given("Valhalla has started but is not ready")
+def given_valhalla_has_started_but_is_not_ready(world: PlannerWorld) -> None:
+    world.scratch["engine"].mode = "loading"
+
+
 @given(
     parsers.re(
         r'the routing engine on the Pi reports version "(?P<found>[^"]+)" '
@@ -231,6 +239,15 @@ def then_the_new_run_fails_and_names_the_place(world: PlannerWorld, poi: str) ->
     report = detail.get("report") or {}
     texts = [*world.seen_messages, str(report.get("reason") or ""), *(detail.get("messages") or ())]
     assert any(poi in text for text in texts), f"nothing Marco read names {poi!r}: {texts}"
+
+
+@then("the refusal is counted in the diagnostics as a refusal for an engine that was not ready")
+def then_the_refusal_is_counted_as_an_engine_not_ready(world: PlannerWorld) -> None:
+    assert world.response is not None, "Marco pressed nothing"
+    refused_as = (world.response.status_code, world.response.json().get("code"))
+    assert refused_as == (503, NOT_READY_REASON), f"the press was refused as {refused_as}"
+    g4 = world.marco().diagnostics().json()["g4"]
+    assert g4 == {"engine_refusals_30d": 1}, f"the diagnostics count the refusals for the engine as {g4}"
 
 
 @then("plan run #4 and all items are unchanged")

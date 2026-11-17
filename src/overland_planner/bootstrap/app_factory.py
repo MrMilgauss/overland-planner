@@ -5,9 +5,9 @@ Acceptance tests: `create_app(environ, external=ExternalPorts(...))` with the sa
 and fakes only for external / non-deterministic ports (docs/architecture/atdd-infrastructure-policy.md).
 Order: settings -> the `MOCK_PLAN` road map, read once (a bad file refuses the start for `routing_provider`) -> wire
 -> probe every registered component in wiring order (the database probe migrates it to head
-first; then the `plan_job_log` write-and-read round trip, the diagnostics read, the file store round trip, the mount
-table, the `DATA_DIR` persistence verdict (D121), the GPX parser's embedded-sample and billion-laughs check, the GPX
-writer's write and re-parse and the road map's known pair) -> mount routes
+first; then the `plan_job_log` and `plan_refusals` write-and-read round trips, the diagnostics read, the file store
+round trip, the mount table, the `DATA_DIR` persistence verdict (D121), the GPX parser's embedded-sample and
+billion-laughs check, the GPX writer's write and re-parse and the road map's known pair) -> mount routes
 (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
@@ -52,6 +52,7 @@ from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.diagnostics_reader import SqlAlchemyDiagnosticsReader
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
+from overland_planner.adapters.persistence.plan_refusal_repository import SqlAlchemyPlanRefusalLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
 from overland_planner.adapters.routing.mock_routing_provider import (
     InvalidRoadMapError,
@@ -118,6 +119,7 @@ class _Wiring:
         self._database = SqliteDatabase(settings.data_dir)
         self.migrator = AlembicMigrator(self._database, settings.migrations_dir)
         self._plan_job_log = SqlAlchemyPlanJobLog(self._database, app_version=settings.planner_git_sha)
+        self._plan_refusal_log = SqlAlchemyPlanRefusalLog(self._database, clock)
         self._diagnostics_reader = SqlAlchemyDiagnosticsReader(self._database)  # read-only, never the writer lock
         self._started_at = clock.now()
         self._file_store = LocalFileStore(settings.data_dir)
@@ -162,6 +164,7 @@ class _Wiring:
         registry.register("event_log", self._event_log)
         registry.register("database", DatabaseStartup(self._database, self.migrator, self._clock))
         registry.register("plan_job_log", self._plan_job_log)  # a write-and-read round trip; fatal like the database
+        registry.register("plan_refusal_log", self._plan_refusal_log)  # a write-and-read round trip; fatal too
         registry.register("diagnostics_reader", self._diagnostics_reader)  # one read on an empty window
         registry.register("file_store", self._file_store)
         registry.register("mount_table", self._mount_table)
@@ -210,7 +213,9 @@ class _Wiring:
         jobs = PlanJobRegistry(self._clock, job, self._event_log, job_log=self._plan_job_log)
         return planning_routes(
             PlanningUseCases(
-                requests=PlanRequestService(self._planning_unit_of_work, health, self._event_log, jobs),
+                requests=PlanRequestService(
+                    self._planning_unit_of_work, health, self._event_log, jobs, refusals=self._plan_refusal_log
+                ),
                 jobs=jobs,
                 runs=PlanRunQueries(self._planning_unit_of_work),
             )

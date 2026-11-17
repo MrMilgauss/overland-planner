@@ -1,5 +1,5 @@
 // The Diagnostics page (slice 03, kpi-contracts `diagnostics_endpoint`): GET /api/diagnostics shown as it comes, K2 and
-// K3 above 0 in red. The fetch stub stands in for the planner's HTTP API (the port of the page).
+// K3 above 0 in red, G4 green at 0 and amber from 1. The fetch stub stands in for the planner's HTTP API (the port of the page).
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, as steps 04-10 and 05-11); the figures themselves are
 // property-tested on the server (DiagnosticsService), so these examples pin only their rendering.
 import '@testing-library/jest-dom/vitest';
@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import DiagnosticsPage from './DiagnosticsPage.svelte';
 
 const RED = 'rgb(176, 0, 32)';
+const AMBER = 'rgb(178, 106, 0)';
+const GREEN = 'rgb(27, 110, 45)';
 
 function diagnostics(fields: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -33,7 +35,7 @@ function diagnostics(fields: Record<string, unknown> = {}): Record<string, unkno
     k7: { runs_per_project_day: { median: 2.5, max: 4 } },
     g1: null,
     g2: null,
-    g4: null,
+    g4: { engine_refusals_30d: 0 },
     cache_hit_rate_30d: null,
     jobs_by_terminal_state_30d: { done: 12, failed: 1, cancelled: 2, timed_out: 0 },
     retried_jobs_30d: 2,
@@ -94,6 +96,18 @@ describe('Diagnostics page', () => {
     const k3 = await section('K3 report omissions');
     expect(within(k3).getByText('all time: 0')).not.toHaveStyle({ color: RED });
     expect(within(k3).getByText('last 30 days: 0')).not.toHaveStyle({ color: RED });
+  });
+
+  it.each([
+    [0, GREEN],
+    [1, AMBER],
+    [7, AMBER],
+  ])('shows %i engine refusals in the window as the colour %s', async (count, colour) => {
+    stubDiagnostics(200, diagnostics({ g4: { engine_refusals_30d: count } }));
+    render(DiagnosticsPage);
+
+    const g4 = await section('G4 routing engine refusals');
+    expect(within(g4).getByText(`last 30 days: ${count}`)).toHaveStyle({ color: colour });
   });
 
   it('shows none for variants per project and day without a job', async () => {

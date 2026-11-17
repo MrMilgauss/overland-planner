@@ -8,6 +8,8 @@ Reads through the read-only `DiagnosticsReader` port and does the arithmetic her
   p95. Bands by `items_included`: le_30, 31_59, 60, 61_70. Until `plan.run.geometry_served` exists (slice 06a) e2e is
   `elapsed_ms` for every job, and `e2e_source` says so.
 - K7: done jobs per (project, local day in Europe/Rome), median and max, projects named '__...' left out.
+- G4: the refusals made in the window for a routing engine that was unreachable or not ready (other refusals, such as
+  a missing anchor, are stored but not counted).
 - K2: Failed runs with `internal_invariant_violation`; K3: runs whose stops miss an item of `inputs.included_item_ids`
   (until the consideration report exists, slice 04); a Failed run omits none. Both all time and over the window.
 """
@@ -22,7 +24,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from overland_planner.application.ports.clock import Clock
-from overland_planner.application.ports.diagnostics_reader import DiagnosticsReader, JobLogRow, PlanRunRow
+from overland_planner.application.ports.diagnostics_reader import DiagnosticsReader, JobLogRow, PlanRunRow, RefusalRow
+from overland_planner.domain.planning.run_messages import ENGINE_NOT_READY_REASON, ENGINE_UNREACHABLE_REASON
 
 DEFAULT_DAYS = 30
 DAY_ZONE = ZoneInfo("Europe/Rome")  # kpi-contracts timezone_for_day_buckets
@@ -30,6 +33,7 @@ EXCLUDED_PREFIX = "__"  # kpi-contracts exclusions: fixtures loaded by hand
 HEADLINE_BAND = "60"
 SECOND_PASS_HEAVY = 700
 INVARIANT_VIOLATION = "internal_invariant_violation"
+ENGINE_REFUSAL_REASONS = frozenset({ENGINE_UNREACHABLE_REASON, ENGINE_NOT_READY_REASON})
 _MILLISECONDS_PER_SECOND = 1000
 BANDS: Mapping[str, range] = {"le_30": range(31), "31_59": range(31, 60), "60": range(60, 61), "61_70": range(61, 71)}
 
@@ -74,6 +78,11 @@ class K7:
 
 
 @dataclass(frozen=True)
+class G4:
+    engine_refusals: int
+
+
+@dataclass(frozen=True)
 class DiagnosticsReport:
     version: str
     process_started_at: datetime
@@ -82,6 +91,7 @@ class DiagnosticsReport:
     k3: K3
     k5: K5
     k7: K7
+    g4: G4
     jobs_by_terminal_state: Mapping[str, int]
     retried_jobs: int
     second_pass_jobs: int
@@ -156,6 +166,10 @@ def _variants(jobs: Iterable[JobLogRow]) -> K7:
     return K7(RunsPerProjectDay(median=statistics.median(counts), max=max(counts)))
 
 
+def _for_the_engine(refusals: Iterable[RefusalRow]) -> G4:
+    return G4(engine_refusals=sum(1 for refusal in refusals if refusal.reason in ENGINE_REFUSAL_REASONS))
+
+
 def _broke_a_hard_rule(run: PlanRunRow) -> bool:
     return run.status == "failed" and run.failure_reason == INVARIANT_VIOLATION
 
@@ -178,6 +192,7 @@ class DiagnosticsService:
         since = self._clock.now() - timedelta(days=days)
         jobs = [job for job in self._reader.jobs_since(since) if project_id in (None, job.project_id)]
         runs = [run for run in self._reader.plan_runs() if project_id in (None, run.project_id)]
+        refusals = [r for r in self._reader.refusals_since(since) if project_id in (None, r.project_id)]
         figures = _JobFigures(jobs)
         return DiagnosticsReport(
             version=self._version,
@@ -187,6 +202,7 @@ class DiagnosticsService:
             k3=K3(self._run_check(runs, since, _left_an_item_out)),
             k5=figures.k5(),
             k7=_variants(jobs),
+            g4=_for_the_engine(refusals),
             jobs_by_terminal_state=figures.by_terminal_state(),
             retried_jobs=figures.count(lambda job: job.retried is True),
             second_pass_jobs=figures.count(lambda job: (job.second_pass_pairs or 0) > 0),

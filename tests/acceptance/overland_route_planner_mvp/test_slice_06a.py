@@ -54,3 +54,9 @@ def test_plans_are_refused_while_the_routing_engine_is_not_the_expected_version(
     the_planner_routes_on_a_synthetic_valhalla: None,
 ) -> None:
     """The engine now reports 3.10.0: the press is refused as not ready and the health detail names both versions."""
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "The routing engine is still loading its map data")
+def test_the_routing_engine_is_still_loading_its_map_data(the_planner_routes_on_a_synthetic_valhalla: None) -> None:
+    """The engine answers /status and 503 on the matrix: refused as not ready, and the diagnostics count it."""

@@ -1,11 +1,14 @@
 <script lang="ts">
   // GET /api/diagnostics as it comes (kpi-contracts `diagnostics_endpoint`): the stage p95s, the retried jobs, the jobs
-  // by terminal state, the variants per project and day, and the K2 and K3 counts, any above 0 in red. Keys are the
+  // by terminal state, the variants per project and day, the K2 and K3 counts, any above 0 in red, and the G4 count of
+  // refusals for the routing engine, green at 0 and amber from 1. Keys are the
   // planner's own (stages, bands, states); seconds to one decimal; a figure without a job shows 'none'.
   import { failureText, readDiagnostics, type Diagnostics, type WindowCount } from './api';
 
   const NONE = 'none';
   const ALARM = '#b00020'; // K2 or K3 above 0: a hard rule broken, or a report that left out an item
+  const AMBER = '#b26a00'; // G4 from 1: plans were refused while the routing engine was down or loading
+  const GREEN = '#1b6e2d'; // G4 at 0
   const report = readDiagnostics();
 
   function seconds(value: number | null): string {
@@ -56,6 +59,18 @@
         </ul>
       </section>
     {/each}
+
+    <section aria-label="G4 routing engine refusals">
+      <h2>G4 routing engine refusals</h2>
+      <ul>
+        <li
+          class:alarm={diagnostics.g4.engine_refusals_30d > 0}
+          style:color={diagnostics.g4.engine_refusals_30d > 0 ? AMBER : GREEN}
+        >
+          last {diagnostics.days} days: {diagnostics.g4.engine_refusals_30d}
+        </li>
+      </ul>
+    </section>
 
     <section aria-label="Stage p95">
       <h2>Stage p95</h2>

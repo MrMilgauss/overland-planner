@@ -149,6 +149,8 @@ export interface Diagnostics {
     memo_hit_jobs: Record<string, number>;
   };
   k7: { runs_per_project_day: { median: number | null; max: number | null } };
+  /** Plan requests refused for a routing engine that was unreachable or not ready, over the window asked for. */
+  g4: { engine_refusals_30d: number };
   jobs_by_terminal_state_30d: Record<string, number>;
   retried_jobs_30d: number;
   second_pass_jobs_30d: number;

@@ -4,8 +4,8 @@ Driving port: `DiagnosticsService(reader, clock, version=..., process_started_at
 the driven port `DiagnosticsReader` is an in-memory double holding the `plan_job_log`, `plan_runs` and `projects` rows,
 which reading must leave unchanged. Oracles follow the definitions, not the production arithmetic: the nearest-rank p95
 is the smallest value with at least 95 % of the values at or below it.
-Test Budget: 6 behaviors (K5 figures, job totals, K7 variants, K2/K3 counts, unknown project, read-only) x 2 = 12;
-7 property tests used.
+Test Budget: 7 behaviors (K5 figures, job totals, K7 variants, K2/K3 counts, G4 engine refusals, unknown project,
+read-only) x 2 = 14; 8 property tests used.
 Mutants judged equivalent (07-12, slice 01b precedent): `(job.second_pass_pairs or 0) -> or 1` in K5 (1 > 700 is as
 false as 0 > 700); `(job.project_name or "") -> or "XXXX"` in K7 (neither starts with "__").
 """
@@ -27,7 +27,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.platform.facade import DiagnosticsService, UnknownProjectError
-from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow
+from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow, RefusalRow
 from overland_planner.application.ports.probe import ProbeResult
 from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
@@ -39,15 +39,18 @@ ROME = ZoneInfo("Europe/Rome")
 STAGES = ("snapshot", "matrix", "reach_model", "solve", "guard_persist")
 BANDS = {"le_30": range(0, 31), "31_59": range(31, 60), "60": range(60, 61), "61_70": range(61, 71)}
 PROJECTS = {"p1": "Alpi Occidentali", "p2": "Dolomiti 2028", "fx": "__perf fixture"}
-STORED = {"plan_job_log", "plan_runs", "projects"}
+STORED = {"plan_job_log", "plan_runs", "plan_refusals", "projects"}
 
 
 class InMemoryDiagnosticsReader:
     """`DiagnosticsReader` double: the rows as stored; a window bound must be timezone-aware like the adapter's."""
 
-    def __init__(self, jobs: Sequence[JobLogRow], runs: Sequence[PlanRunRow] = ()) -> None:
+    def __init__(
+        self, jobs: Sequence[JobLogRow], runs: Sequence[PlanRunRow] = (), refusals: Sequence[RefusalRow] = ()
+    ) -> None:
         self.jobs = list(jobs)
         self.runs = list(runs)
+        self.refusals = list(refusals)
         self.projects = dict(PROJECTS)
 
     def project_exists(self, project_id: str) -> bool:
@@ -61,11 +64,20 @@ class InMemoryDiagnosticsReader:
     def plan_runs(self) -> Sequence[PlanRunRow]:
         return list(self.runs)
 
+    def refusals_since(self, since: datetime) -> Sequence[RefusalRow]:
+        assert since.tzinfo is not None, "the window bound must be timezone-aware"
+        return [refusal for refusal in self.refusals if refusal.created_at >= since]
+
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
 
     def stored(self) -> dict[str, Any]:
-        return {"plan_job_log": list(self.jobs), "plan_runs": list(self.runs), "projects": dict(self.projects)}
+        return {
+            "plan_job_log": list(self.jobs),
+            "plan_runs": list(self.runs),
+            "plan_refusals": list(self.refusals),
+            "projects": dict(self.projects),
+        }
 
 
 def service(reader: InMemoryDiagnosticsReader) -> DiagnosticsService:
@@ -328,6 +340,38 @@ def test_broken_rules_and_report_omissions_are_counted_per_plan_run(runs: list[P
     }
     expected = {"k2": set_to(counts(broke)), "k3": set_to(counts(omitted))}
     assert_state_delta(before, after, {*STORED, "k2", "k3"}, expected, strict=True)
+
+
+ENGINE_REASONS = {"routing_engine_unreachable", "routing_engine_not_ready"}
+refusal_rows = st.builds(
+    RefusalRow,
+    project_id=st.sampled_from(list(PROJECTS)),
+    reason=st.sampled_from(
+        [*sorted(ENGINE_REASONS), "missing_anchor", "job_active", "optimizer_unavailable"],
+    ),
+    created_at=ages.map(lambda minutes: NOW - timedelta(minutes=minutes)),
+)
+
+
+@given(refusals=st.lists(refusal_rows, max_size=30), days=windows, chosen=st.sampled_from([None, "p1", "p2"]))
+@settings(max_examples=100, deadline=None)
+def test_g4_counts_the_refusals_for_the_engine_in_the_window_whatever_else_was_refused(
+    refusals: list[RefusalRow], days: int, chosen: str | None
+) -> None:
+    reader = InMemoryDiagnosticsReader([], refusals=refusals)
+    before = {**reader.stored(), "g4": None}
+
+    report = service(reader).report(days=days, project_id=chosen)
+
+    expected = sum(
+        1
+        for refusal in refusals
+        if refusal.reason in ENGINE_REASONS
+        and refusal.created_at >= NOW - timedelta(days=days)
+        and chosen in (None, refusal.project_id)
+    )
+    after = {**reader.stored(), "g4": report.g4.engine_refusals}
+    assert_state_delta(before, after, {*STORED, "g4"}, {"g4": set_to(expected)}, strict=True)
 
 
 @given(project_id=st.text(min_size=1, max_size=12).filter(lambda name: name not in PROJECTS))

@@ -127,6 +127,7 @@ def test_api_health_lists_component_outcomes(data_dir: Path) -> None:
                 "gpx_writer": {"outcome": "ok", "reason": None},
                 "mount_table": {"outcome": "ok", "reason": None},
                 "plan_job_log": {"outcome": "ok", "reason": None},
+                "plan_refusal_log": {"outcome": "ok", "reason": None},
                 "routing_provider": {"outcome": "ok", "reason": None},
                 "tour_solver": {"outcome": "ok", "reason": None},
             },

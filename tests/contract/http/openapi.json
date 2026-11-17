@@ -35,7 +35,7 @@
         "type": "object"
       },
       "DiagnosticsResource": {
-        "description": "`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,\n`g1`, `g2`, `g4` and `cache_hit_rate_30d` stay null until the slices that own their sources.",
+        "description": "`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,\n`g1`, `g2` and `cache_hit_rate_30d` stay null until the slices that own their sources.",
         "properties": {
           "cache_hit_rate_30d": {
             "title": "Cache Hit Rate 30D",
@@ -54,8 +54,7 @@
             "type": "null"
           },
           "g4": {
-            "title": "G4",
-            "type": "null"
+            "$ref": "#/components/schemas/G4Resource"
           },
           "jobs_by_terminal_state_30d": {
             "additionalProperties": {
@@ -109,6 +108,7 @@
           "k3",
           "k5",
           "k7",
+          "g4",
           "jobs_by_terminal_state_30d",
           "retried_jobs_30d",
           "second_pass_jobs_30d"
@@ -133,6 +133,20 @@
           "message"
         ],
         "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "G4Resource": {
+        "description": "Plan requests refused for a routing engine that was unreachable or not ready, over the window asked for.",
+        "properties": {
+          "engine_refusals_30d": {
+            "title": "Engine Refusals 30D",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "engine_refusals_30d"
+        ],
+        "title": "G4Resource",
         "type": "object"
       },
       "IncumbentResource": {

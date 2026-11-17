@@ -144,3 +144,14 @@ plan_job_log = Table(
     Column("error_class", Text, nullable=True),
     Column("reason", Text, nullable=True),
 )
+
+# One append-only row per refused plan request (ADR-013 Amendment 4, D248; 0009). No foreign key: it outlives a project.
+plan_refusals = Table(
+    "plan_refusals",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("project_id", Text, nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("http_status", Integer, nullable=False),
+)

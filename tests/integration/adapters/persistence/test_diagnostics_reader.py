@@ -21,8 +21,9 @@ from overland_planner.adapters.persistence.database import SqliteDatabase
 from overland_planner.adapters.persistence.diagnostics_reader import SqlAlchemyDiagnosticsReader
 from overland_planner.adapters.persistence.migrator import AlembicMigrator, DatabaseStartup
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
+from overland_planner.adapters.persistence.plan_refusal_repository import SqlAlchemyPlanRefusalLog
 from overland_planner.adapters.persistence.tables import plan_runs, projects
-from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow
+from overland_planner.application.ports.diagnostics_reader import JobLogRow, PlanRunRow, RefusalRow
 from overland_planner.application.ports.plan_job_log import PlanJobLogEntry
 from overland_planner.application.ports.probe import ProbeResult
 from tests.common.fakes import FakeClock
@@ -77,13 +78,18 @@ def _seed(database: SqliteDatabase) -> None:
     log.append(_job("j1", "p1", NOW - timedelta(hours=2), **done, second_pass_pairs=720))
     log.append(_job("j2", "gone", NOW - timedelta(days=2), terminal_state="failed", elapsed_ms=900))
     log.append(_job("j3", "p1", NOW - timedelta(days=40), terminal_state="done", elapsed_ms=5))
+    clock = FakeClock(NOW - timedelta(days=40))
+    refusals = SqlAlchemyPlanRefusalLog(database, clock)
+    refusals.append("p1", "routing_engine_unreachable", 503)  # outside the 30 days
+    clock.advance(38 * 24 * 3600)
+    refusals.append("gone", "routing_engine_not_ready", 503)
 
 
 def _tables(database: SqliteDatabase) -> dict[str, list[tuple[Any, ...]]]:
     with sqlite3.connect(database.file) as connection:
         tables = {
             name: connection.execute(f"SELECT * FROM {name} ORDER BY 1").fetchall()  # noqa: S608 - fixed names
-            for name in ("plan_job_log", "plan_runs", "projects")
+            for name in ("plan_job_log", "plan_refusals", "plan_runs", "projects")
         }
     connection.close()
     return tables
@@ -100,6 +106,7 @@ def test_the_window_rows_are_read_with_the_project_name_while_a_writer_holds_the
     def read() -> None:
         answers["jobs"] = reader.jobs_since(NOW - timedelta(days=30))
         answers["runs"] = reader.plan_runs()
+        answers["refusals"] = reader.refusals_since(NOW - timedelta(days=30))
         answers["exists"] = (reader.project_exists("p1"), reader.project_exists("gone"))
 
     with database.writer_lock:
@@ -126,6 +133,7 @@ def test_the_window_rows_are_read_with_the_project_name_while_a_writer_holds_the
     assert answers["runs"] == [
         PlanRunRow("p1", NOW - timedelta(hours=1), "ready", None, ("a", "b"), ("a", "b", "a")),
     ]
+    assert answers["refusals"] == [RefusalRow("gone", "routing_engine_not_ready", NOW - timedelta(days=2))]
     assert answers["exists"] == (True, False)
     assert _tables(database) == stored
 

@@ -145,6 +145,23 @@ class InMemoryPlanJobLog:
         return ProbeResult(outcome="ok")
 
 
+@dataclass
+class InMemoryPlanRefusalLog:
+    """`PlanRefusalLog` double: the rows appended, in order; `failing` makes every append raise."""
+
+    rows: list[tuple[str, str, int]] = field(default_factory=list)
+    failing: Exception | None = None
+
+    def append(self, project_id: str, reason: str, http_status: int) -> None:
+        assert project_id and reason, "a refusal row names its project and reason"
+        if self.failing is not None:
+            raise self.failing
+        self.rows.append((project_id, reason, http_status))
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
+
+
 class _Runs:
     def __init__(self, rows: list[NewPlanRun], gate: Gate) -> None:
         self._rows = rows

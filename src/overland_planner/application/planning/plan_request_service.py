@@ -1,7 +1,9 @@
 """Plan request use case (US-02b, brief §8): Calculate's pre-checks, in brief order: anchors, active job, routing
 engine, optimizer.
 
-A refused request creates no job and no plan run and logs one `plan.job.refused` line. The routing engine is probed
+A refused request creates no job and no plan run, is stored as one `plan_refusals` row (D248; a row that cannot be
+written changes nothing of the refusal and logs `plan.refusal.store_failed` at warning) and logs one `plan.job.refused`
+line. The routing engine is probed
 before each request that gets that far, and the health service keeps the result (ADR-013 Amendment 4, D247); the
 optimizer's readiness is the start-up probe outcome of the component `tour_solver`; nothing probes it again.
 A request that passes every pre-check
@@ -19,6 +21,7 @@ from overland_planner.application.planning.plan_job_registry import PlanJobRegis
 from overland_planner.application.planning.plan_run_queries import existing_snapshot
 from overland_planner.application.platform.facade import HealthService
 from overland_planner.application.ports.event_log import EventLog
+from overland_planner.application.ports.plan_refusal_log import PlanRefusalLog
 from overland_planner.application.ports.plan_run_repository import PlanningUnitOfWork
 from overland_planner.domain.planning.project_snapshot import Anchor, ProjectSnapshot
 from overland_planner.domain.planning.run_messages import (
@@ -89,11 +92,14 @@ class PlanRequestService:
         health: HealthService,
         event_log: EventLog,
         jobs: PlanJobRegistry,
+        *,
+        refusals: PlanRefusalLog | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._health = health
         self._event_log = event_log
         self._jobs = jobs
+        self._refusals = refusals
 
     def request(self, project_id: str, *, ignore_memo: bool = False) -> str:
         """The started job's id. Raises `ProjectNotFoundError` or the `PlanRefusedError` of the failed pre-check."""
@@ -105,10 +111,21 @@ class PlanRequestService:
             if job_id is not None:
                 return job_id
             refusal = JobActiveError()
+        self._store(project_id, refusal)
         self._event_log.info(
             "plan.job.refused", project_id=project_id, http_status=refusal.http_status, reason=refusal.reason
         )
         raise refusal
+
+    def _store(self, project_id: str, refusal: PlanRefusedError) -> None:
+        if self._refusals is None:
+            return
+        try:
+            self._refusals.append(project_id, refusal.reason, refusal.http_status)
+        except Exception as error:  # a full disk must not change the refusal the user gets
+            self._event_log.warning(
+                "plan.refusal.store_failed", project_id=project_id, error_class=type(error).__name__
+            )
 
     def _first_refusal(self, project_id: str, snapshot: ProjectSnapshot) -> PlanRefusedError | None:
         anchor = snapshot.missing_anchor()

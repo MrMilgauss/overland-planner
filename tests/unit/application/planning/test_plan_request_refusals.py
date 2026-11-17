@@ -2,11 +2,13 @@
 
 Driving ports: `PlanRequestService` and `PlanRunQueries` from the planning facade, with the real `HealthService` holding
 the start-up probe outcomes. Driven ports: `PlanningUnitOfWork` (in-memory double) and `EventLog` (recording double).
-Observable universe: `plan_runs` as the queries show them, `jobs` handed out by `request` and `refusals_logged`.
+Observable universe: `plan_runs` as the queries show them, `jobs` handed out by `request`, `refusals_logged` and
+`refusals_stored` (the `PlanRefusalLog` rows, an in-memory double).
 The routing engine is probed (a scripted prober behind the real `HealthService`) once per press that passes the
 anchors and the active job, before the optimizer check.
-Test Budget: 3 behaviors (a refusal is the first failing pre-check and changes nothing, an unknown project is not found,
-the list shows the project's runs) x 2 = 6; 3 used.
+Test Budget: 4 behaviors (a refusal is the first failing pre-check, changes nothing and is stored, a refusal that
+cannot be stored is still the refusal, an unknown project is not found, the list shows the project's runs) x 2 = 8;
+4 used.
 """
 
 from __future__ import annotations
@@ -33,9 +35,9 @@ from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from tests.common.catalog_fakes import RecordingEventLog
 from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
-from tests.unit.application.planning.planning_doubles import InMemoryPlanning
+from tests.unit.application.planning.planning_doubles import InMemoryPlanning, InMemoryPlanRefusalLog
 
-UNIVERSE = {"plan_runs", "jobs", "refusals_logged"}
+UNIVERSE = {"plan_runs", "jobs", "refusals_logged", "refusals_stored"}
 PROJECT = "project-1"
 OUTCOMES = st.sampled_from(get_args(ProbeOutcome))
 ENGINE_ANSWERS = st.sampled_from(
@@ -82,7 +84,11 @@ class _Engine:
 
 
 def _service(
-    planning: InMemoryPlanning, solver: ProbeOutcome, other: ProbeOutcome = "ok", engine: _Engine | None = None
+    planning: InMemoryPlanning,
+    solver: ProbeOutcome,
+    other: ProbeOutcome = "ok",
+    engine: _Engine | None = None,
+    stored: InMemoryPlanRefusalLog | None = None,
 ) -> Any:
     clock = FakeClock()
     outcomes = {"tour_solver": ProbeResult(solver), "data_dir": ProbeResult(other)}
@@ -94,15 +100,22 @@ def _service(
         )
     log = RecordingEventLog()
     jobs = PlanJobRegistry(clock, _NoWork(), RecordingEventLog())
-    return PlanRequestService(planning.unit_of_work, health, log, jobs), log
+    service = PlanRequestService(planning.unit_of_work, health, log, jobs, refusals=stored)
+    return service, log
 
 
-def _view(planning: InMemoryPlanning, log: RecordingEventLog, jobs: tuple[Any, ...] = ()) -> dict[str, Any]:
+def _view(
+    planning: InMemoryPlanning,
+    log: RecordingEventLog,
+    jobs: tuple[Any, ...] = (),
+    stored: InMemoryPlanRefusalLog | None = None,
+) -> dict[str, Any]:
     runs = PlanRunQueries(planning.unit_of_work).list(PROJECT)
     return {
         "plan_runs": tuple((run.id, run.number, run.status) for run in runs),
         "jobs": jobs,
         "refusals_logged": tuple(log.events),
+        "refusals_stored": () if stored is None else tuple(stored.rows),
     }
 
 
@@ -141,8 +154,9 @@ def test_a_refusal_is_the_first_failing_pre_check_in_brief_order_and_changes_not
 ) -> None:
     planning = _planning(numbers, start, end)
     engine = _Engine(answer)
-    service, log = _service(planning, solver, other, engine)
-    before = _view(planning, log)
+    stored = InMemoryPlanRefusalLog()
+    service, log = _service(planning, solver, other, engine, stored)
+    before = _view(planning, log, stored=stored)
 
     jobs, refused = _press_calculate(service)
 
@@ -151,11 +165,12 @@ def test_a_refusal_is_the_first_failing_pre_check_in_brief_order_and_changes_not
     seen = None if refused is None else (refused.reason, refused.http_status, str(refused))
     assert seen == expected
     if expected is None:
-        assert_state_delta(before, _view(planning, log, jobs), UNIVERSE, {"jobs": _one_job_handed_out}, strict=True)
+        after = _view(planning, log, jobs, stored)
+        assert_state_delta(before, after, UNIVERSE, {"jobs": _one_job_handed_out}, strict=True)
     else:
         logged = (("plan.job.refused", _refusal_fields(expected)),)
-        delta = {"refusals_logged": set_to(logged)}
-        assert_state_delta(before, _view(planning, log, jobs), UNIVERSE, delta, strict=True)
+        delta = {"refusals_logged": set_to(logged), "refusals_stored": set_to(((PROJECT, expected[0], expected[1]),))}
+        assert_state_delta(before, _view(planning, log, jobs, stored), UNIVERSE, delta, strict=True)
 
 
 def _one_job_handed_out(_old: tuple[Any, ...], new: tuple[Any, ...]) -> bool:
@@ -166,6 +181,28 @@ def _one_job_handed_out(_old: tuple[Any, ...], new: tuple[Any, ...]) -> bool:
 def _refusal_fields(refusal: tuple[str, int, str]) -> dict[str, object]:
     reason, http_status, _ = refusal
     return {"project_id": PROJECT, "http_status": http_status, "reason": reason}
+
+
+@given(failure=st.sampled_from([OSError("disk full"), RuntimeError("locked")]), answer=ENGINE_ANSWERS)
+def test_a_refusal_that_cannot_be_stored_is_still_the_refusal_the_user_gets_and_is_logged(
+    failure: Exception, answer: ProbeResult
+) -> None:
+    planning = _planning(set(), "poi-1", "poi-1")
+    stored = InMemoryPlanRefusalLog(failing=failure)
+    service, log = _service(planning, "ok", engine=_Engine(answer), stored=stored)
+    expected = _first_failing_pre_check("poi-1", "poi-1", "ok", answer)
+    before = _view(planning, log, stored=stored)
+
+    jobs, refused = _press_calculate(service)
+
+    if expected is None:
+        assert refused is None and len(jobs) == 1
+        return
+    assert refused is not None and (refused.reason, refused.http_status, str(refused)) == expected
+    after = _view(planning, log, jobs, stored)
+    failed = (("plan.refusal.store_failed", {"project_id": PROJECT, "error_class": type(failure).__name__}),)
+    logged = (("plan.job.refused", _refusal_fields(expected)),)
+    assert_state_delta(before, after, UNIVERSE, {"refusals_logged": set_to(failed + logged)}, strict=True)
 
 
 @given(unknown=st.uuids().map(lambda u: u.hex), solver=OUTCOMES, numbers=RUN_NUMBERS)
