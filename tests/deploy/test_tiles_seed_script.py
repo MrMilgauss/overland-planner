@@ -136,6 +136,108 @@ def test_an_existing_tileset_with_other_content_is_refused_not_overwritten(
     assert pi.tiles_log()[-1]["result"] == "failed"
 
 
+def seed_partial_tileset(pi: FakePi, source: dict[str, bytes], present: tuple[str, ...], sums_lines: int) -> None:
+    """tilesets/TILESET holding only `present` (matching the source) and a SHA256SUMS of the first `sums_lines`."""
+    target = tileset_dir(pi)
+    target.mkdir(parents=True)
+    for name in present:
+        (target / name).write_bytes(source[name])
+    (target / "SHA256SUMS").write_text("\n".join(checksums(source).splitlines()[:sums_lines]) + "\n")
+
+
+FOUR = TILES_FILES[:4]
+
+
+def test_an_incomplete_tileset_that_matches_the_source_is_completed_with_the_missing_file_only(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    seed_partial_tileset(pi, source, FOUR, 4)  # what the first run left on the Pi
+    before = {name: (tileset_dir(pi) / name).stat().st_ino for name in FOUR}
+    (pi.dir / "routing.env").write_text(OLD_ROUTING)
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert {f.name: f.read_bytes() for f in tileset_dir(pi).iterdir() if f.name != "SHA256SUMS"} == source
+    assert (tileset_dir(pi) / "SHA256SUMS").read_text() == checksums(source) + "\n"
+    assert {name: (tileset_dir(pi) / name).stat().st_ino for name in FOUR} == before  # nothing rewritten
+    assert not list(tileset_dir(pi).glob("*.partial"))
+    assert labels(pi) == ["source-sums", "tileset-exists", "tileset-sums", "complete-tileset", "verify-missing",
+                          "finalize-missing"]  # fmt: skip
+    (copy,) = pi.helper_runs("complete-tileset")
+    assert copy[-1] == "default_speeds.json" and not set(FOUR) & set(copy[copy.index("-c") + 3 :])
+    assert (pi.dir / "routing.env").read_text() == f"VALHALLA_TILESET={TILESET}\n"
+    assert pi.tiles_log()[-1]["result"] == "ok"
+
+
+def test_an_incomplete_tileset_without_a_sha256sums_is_completed_too(pi: FakePi, source: dict[str, bytes]) -> None:
+    seed_partial_tileset(pi, source, TILES_FILES[1:3], 0)
+    (tileset_dir(pi) / "SHA256SUMS").unlink()
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert {f.name: f.read_bytes() for f in tileset_dir(pi).iterdir() if f.name != "SHA256SUMS"} == source
+    assert (tileset_dir(pi) / "SHA256SUMS").read_text() == checksums(source) + "\n"
+
+
+def test_a_present_file_that_differs_from_the_source_is_refused_and_nothing_is_overwritten(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    seed_partial_tileset(pi, source, FOUR, 4)
+    (tileset_dir(pi) / "admins.sqlite").write_bytes(b"something else\n")
+    (pi.dir / "routing.env").write_text(OLD_ROUTING)
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "already holds different content" in result.stderr
+    assert (tileset_dir(pi) / "admins.sqlite").read_bytes() == b"something else\n"
+    assert not (tileset_dir(pi) / "default_speeds.json").exists()
+    assert "complete-tileset" not in labels(pi) and not mutating_compose(pi)
+    assert (pi.dir / "routing.env").read_text() == OLD_ROUTING and pi.tiles_log()[-1]["result"] == "failed"
+
+
+@pytest.mark.parametrize("pointer", ["routing.env", "routing.env.prev"])
+def test_an_incomplete_tileset_that_is_served_or_kept_for_rollback_is_never_written_into(
+    pi: FakePi, source: dict[str, bytes], pointer: str
+) -> None:
+    seed_partial_tileset(pi, source, FOUR, 4)
+    (pi.dir / pointer).write_text(f"VALHALLA_TILESET={TILESET}\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "served or kept for rollback" in result.stderr
+    assert not (tileset_dir(pi) / "default_speeds.json").exists()
+    assert "complete-tileset" not in labels(pi) and not mutating_compose(pi)
+    assert pi.tiles_log()[-1]["result"] == "failed"
+
+
+def test_a_completion_copy_that_does_not_match_the_source_is_dropped_and_the_tileset_stays_as_it_was(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    seed_partial_tileset(pi, source, FOUR, 4)
+    wrong = checksums(source).splitlines()[-1].replace("a", "b", 1).replace("0", "1", 1)
+    pi.rule("docker", "verify-missing", stdout=wrong + "\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 1 and "checksum of the copy differs from the source" in result.stderr
+    assert sorted(f.name for f in tileset_dir(pi).iterdir()) == sorted((*FOUR, "SHA256SUMS"))
+    assert len((tileset_dir(pi) / "SHA256SUMS").read_text().splitlines()) == 4
+    assert "finalize-missing" not in labels(pi) and not mutating_compose(pi)
+
+
+def test_a_complete_matching_tileset_copies_nothing(pi: FakePi, source: dict[str, bytes]) -> None:
+    seed_partial_tileset(pi, source, TILES_FILES, 5)
+    (pi.dir / "routing.env").write_text(f"VALHALLA_TILESET={TILESET}\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert not {"complete-tileset", "copy-tileset"} & set(labels(pi))
+    assert pi.tiles_log()[-1]["result"] == "unchanged"
+
+
 def test_a_copy_that_does_not_match_the_source_is_dropped_and_routing_env_stays(
     pi: FakePi, source: dict[str, bytes]
 ) -> None:

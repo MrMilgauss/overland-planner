@@ -22,6 +22,8 @@ SERVED_ROUTING = f"VALHALLA_TILESET={SERVED}\n"
 KEPT_ROUTING = f"VALHALLA_TILESET={KEPT}\n"
 STATUS_MODIFIED = "1793560782"  # what the docker shim's valhalla /status answers on the new tileset
 OLD_MODIFIED = "1790000000"  # what it answers while the served tileset is the old one
+BUILT = {name: f"built {name}\n" for name in TILES_FILES} | {"default_speeds.json": "downloaded default_speeds.json\n"}
+SPEEDS_URL = "https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json"
 MUTATING_VERBS = {"up", "stop", "down", "restart", "rm", "kill", "pull", "create", "run"}
 LOW_DISK = (
     "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/nvme0n1p2 245000000 225000000 20000000 92% /\n"
@@ -100,9 +102,9 @@ def test_refresh_builds_while_serving_stops_for_the_build_switches_and_prunes_on
     ]
     new = serving.volume / "tilesets" / REFRESH_DATE
     assert {f.name: f.read_text() for f in new.iterdir() if f.name != "SHA256SUMS"} == {
-        name: f"built {name}\n" for name in TILES_FILES
+        name: BUILT[name] for name in TILES_FILES
     }
-    sums = "\n".join(f"{hashlib.sha256(f'built {n}\n'.encode()).hexdigest()}  {n}" for n in TILES_FILES) + "\n"
+    sums = "\n".join(f"{hashlib.sha256(BUILT[n].encode()).hexdigest()}  {n}" for n in TILES_FILES) + "\n"
     assert (new / "SHA256SUMS").read_text() == sums
     assert not (serving.volume / "build").exists()
     assert tilesets(serving) == [SERVED, REFRESH_DATE]  # the new and the previous one stay, the older one goes
@@ -130,6 +132,7 @@ def test_the_services_run_with_the_overrides_mounted_and_the_extracts_of_the_fiv
     for region in ("italy", "switzerland", "austria", "france/rhone-alpes", "france/provence-alpes-cote-d-azur"):
         assert f"https://download.geofabrik.de/europe/{region}-latest.osm.pbf" in download
     overrides = " ".join(runs[-1])
+    assert SPEEDS_URL in download and "/work/default_speeds.json" in download
     assert "--entrypoint sh valhalla-build" in overrides and "jq -s" in overrides
     assert "valhalla/valhalla.overrides.json:/overrides.json:ro" in overrides
     assert not list((serving.volume / "tilesets").glob(".*partial"))
@@ -205,6 +208,7 @@ def test_every_preflight_refusal_changes_nothing_and_says_why(
     ("stage", "needle", "stopped"),
     [
         ("download", "curl -fL", False),
+        ("download", "default_speeds.json", False),
         ("merge", "osmium merge", False),
         ("build", "-T valhalla-build", True),
         ("overrides", "--entrypoint", True),

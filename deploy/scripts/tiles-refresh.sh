@@ -7,11 +7,12 @@
 #  1 preflight, read-only: routing.env exists (make tiles-seed came first); the new tileset is named by the UTC date and
 #    is neither served (routing.env), kept for rollback (routing.env.prev) nor already in the volume; disk free >= 25 GB;
 #    MemAvailable >= build cap + 1 GiB; the planner's /api/diagnostics is asked (a note when it does not answer)
-#  2 while valhalla serves: valhalla-fetch downloads the five Geofabrik extracts into build/src and merges them into
-#    build/alps.osm.pbf (MemAvailable >= 7 GiB checked again just before the merge); the extracts are deleted
+#  2 while valhalla serves: valhalla-fetch (the only service with egress) downloads the five Geofabrik extracts into
+#    build/src and default_speeds.json into build/ (the build has no network and would fail without it), and merges the
+#    extracts into build/alps.osm.pbf (MemAvailable >= 7 GiB checked again just before the merge); the extracts are deleted
 #  3 valhalla stopped, valhalla-build makes the tiles under its cap, the deltas of valhalla/valhalla.overrides.json are
 #    applied to the built valhalla.json with jq inside the Valhalla image
-#  4 promote to tilesets/<YYYYMMDD>/ (with SHA256SUMS), build/ deleted; routing.env -> routing.env.prev, new pointer,
+#  4 promote the five tileset files to tilesets/<YYYYMMDD>/ (with SHA256SUMS), build/ deleted; routing.env -> routing.env.prev, new pointer,
 #    valhalla started and waited for, /status read (version 3.9.1)
 #  5 only then: every tileset but the new and the previous one is deleted; tiles.log gets `ok`
 # Any failure before 4 starts valhalla again on the old tileset (routing.env untouched); a failed switch restores
@@ -28,6 +29,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 NEW=${TILES_DATE:-$(date -u +%Y%m%d)}
 GEOFABRIK=https://download.geofabrik.de
+SPEEDS_URL=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
 EXTRACTS=(europe/italy-latest europe/switzerland-latest europe/austria-latest europe/france/rhone-alpes-latest
   europe/france/provence-alpes-cote-d-azur-latest)
 MIN_FREE_KB=$((25 * 1024 * 1024))
@@ -151,9 +153,11 @@ for extract in "${EXTRACTS[@]}"; do urls+=("$GEOFABRIK/$extract.osm.pbf"); done
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 planner_compose --profile valhalla-build run --rm -T valhalla-fetch sh -c 'set -e
   apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+  speeds=$1; shift
+  echo "tiles-refresh: downloading $speeds" >&2; curl -fL --retry 3 -o /work/default_speeds.json "$speeds"
   cd /work/src
   for url in "$@"; do echo "tiles-refresh: downloading $url" >&2; curl -fL --retry 3 -O "$url"; done' download \
-  "${urls[@]}" >&2 || fail_stage download "the download failed"
+  "$SPEEDS_URL" "${urls[@]}" >&2 || fail_stage download "the download failed"
 available_kb=$(mem_available_kb)
 if [ "${available_kb:-0}" -lt "$MERGE_MIN_KB" ]; then
   fail_stage merge "MemAvailable $((${available_kb:-0} / 1024 / 1024)) GB, need 7 GB before the merge"

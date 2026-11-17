@@ -58,7 +58,7 @@ PREVIOUS = _release("1", "2026-11-01T09:00:00Z", "0001_initial")
 CURRENT = _release("a", "2026-11-02T09:00:00Z", "0002_projects")
 NEW = _release("b", "2026-11-03T07:30:00Z", "0003_auth")
 
-TILES_FILES = ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json")
+TILES_FILES = ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json", "default_speeds.json")
 TILESET = "20261101"
 REFRESH_DATE = "20270201"  # the UTC date the offline refresh tests pin through TILES_DATE
 SEED_DIR = "valhalla-spike/custom_files"
@@ -186,7 +186,7 @@ class FakePi:
         return self.shim_home / "volumes" / "overland_valhalla-data"
 
     def seed_files(self) -> dict[str, bytes]:
-        """The four SPIKE-2R files, root-owned on the real Pi; small distinct contents here."""
+        """The five SPIKE-2R files, root-owned on the real Pi; small distinct contents here."""
         source = self.spike / "custom_files"
         source.mkdir(parents=True)
         contents = {name: f"content of {name}\n".encode() for name in TILES_FILES}

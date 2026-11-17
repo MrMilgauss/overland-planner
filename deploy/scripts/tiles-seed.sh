@@ -5,10 +5,12 @@
 #   cd ~/apps/overland-planner && bash scripts/tiles-seed.sh TILESET [SEED_DIR [EXPECT_TILESET_MODIFIED]]
 #
 #  TILESET  8 digits (YYYYMMDD); SEED_DIR under $HOME (default valhalla-spike/custom_files)
-#  1 preflight: the four files exist, >= 10 GB free, TILESET valid, no other deploy or tiles run (.deploy.lock)
+#  1 preflight: the five files exist (default_speeds.json too: the engine has no network to download it), >= 10 GB free, TILESET valid, no other deploy or tiles run (.deploy.lock)
 #  2 tilesets/<TILESET>/ absent: copy (plain cp, helper container, --network none) into a .partial directory, verify
 #    the copy against the source, write SHA256SUMS, rename. Present with the same checksums: nothing is copied
-#    (`unchanged`); present with other content: refused, never overwritten
+#    (`unchanged`); present with other content: refused, never overwritten. Present and incomplete (files missing, the
+#    ones there equal to the source) and neither served nor kept for rollback: only the missing files are copied
+#    (.partial names, verified against the source), SHA256SUMS is rewritten for all five
 #  3 routing.env <- VALHALLA_TILESET=<TILESET> (the previous one kept as routing.env.prev), valhalla started and
 #    waited for, /status read inside the compose network: version 3.9.1 and, when given, tileset_last_modified equal
 #    to EXPECT_TILESET_MODIFIED. Otherwise routing.env (and .prev) come back as they were, valhalla is stopped when it
@@ -76,6 +78,48 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# complete_tileset: copy the files in $missing into the existing tilesets/$TILESET under .partial names, verify them against
+# the source, give them their final names and rewrite SHA256SUMS for all five. Files already there are never written.
+complete_tileset() {
+  local expected want
+  say "tiles-seed: tilesets/$TILESET misses ${missing[*]}; copying only those"
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  docker run --rm --network none -v "$SOURCE:/seed:ro" -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c 'set -e; dir="/vol/tilesets/$1"; shift
+      for f in "$@"; do echo "tiles-seed: copying $f" >&2; cp "/seed/$f" "$dir/$f.partial"; done' complete-tileset "$TILESET" "${missing[@]}" >&2 ||
+    {
+      drop_missing_partials
+      refuse "copy into tilesets/$TILESET failed"
+    }
+  expected=
+  for want in "${missing[@]}"; do expected="$expected$(printf '%s\n' "$SOURCE_SUMS" | grep -F "  $want")
+"; done
+  # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
+  copy_sums=$(docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'cd "/vol/tilesets/$1" && shift && for f in "$@"; do sha256sum "$f.partial" | sed "s/[.]partial\$//"; done' verify-missing "$TILESET" "${missing[@]}") ||
+    copy_sums=
+  if [ "$copy_sums" != "$(printf '%s' "$expected")" ]; then
+    drop_missing_partials
+    refuse "checksum of the copy differs from the source: $(sums_diff "$expected" "$copy_sums"); nothing kept"
+  fi
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c 'set -e; dir="/vol/tilesets/$1"; sums=$2; shift 2
+      for f in "$@"; do [ ! -e "$dir/$f" ] || exit 1; done
+      for f in "$@"; do mv "$dir/$f.partial" "$dir/$f"; done
+      printf "%s\n" "$sums" >"$dir/SHA256SUMS.partial"; mv "$dir/SHA256SUMS.partial" "$dir/SHA256SUMS"' finalize-missing "$TILESET" "$SOURCE_SUMS" "${missing[@]}" >&2 ||
+    {
+      drop_missing_partials
+      refuse "could not finish tilesets/$TILESET"
+    }
+}
+
+drop_missing_partials() {
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c 'cd "/vol/tilesets/$1" && rm -f ./*.partial' drop-partial "$TILESET" >&2 || true
+}
+
 # 1. Preflight.
 case $TILESET in
   [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
@@ -111,13 +155,33 @@ present=0
 volume_has_dir "tilesets/$TILESET" || present=$?
 case $present in 0 | 1) ;; *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" ;; esac
 if [ "$present" -eq 0 ]; then
-  copy_sums=$(volume_sums tileset-sums "tilesets/$TILESET") || copy_sums=
-  stored_sums=$(volume_stored_sums "tilesets/$TILESET") || stored_sums=
-  if [ "$copy_sums" != "$SOURCE_SUMS" ] || [ "$stored_sums" != "$SOURCE_SUMS" ]; then
-    differs="$(sums_diff "$SOURCE_SUMS" "$copy_sums")$(sums_diff "$SOURCE_SUMS" "$stored_sums" | sed 's/^/SHA256SUMS: /')"
-    refuse "tilesets/$TILESET already holds different content (differs: ${differs}); not overwritten"
+  present_sums=$(volume_present_sums tileset-sums "tilesets/$TILESET") || present_sums=
+  missing=()
+  foreign=
+  for file in "${TILES_FILES[@]}"; do
+    line=$(printf '%s\n' "$present_sums" | grep -F "  $file" || true)
+    if [ -z "$line" ]; then
+      missing+=("$file")
+    elif ! printf '%s\n' "$SOURCE_SUMS" | grep -qxF "$line"; then
+      foreign="$foreign$file "
+    fi
+  done
+  if [ -n "$foreign" ]; then
+    refuse "tilesets/$TILESET already holds different content (differs: ${foreign}); not overwritten"
   fi
-  say "tiles-seed: tilesets/$TILESET already holds these files; nothing to copy"
+  if [ "${#missing[@]}" -eq 0 ]; then
+    stored_sums=$(volume_stored_sums "tilesets/$TILESET") || stored_sums=
+    if [ "$stored_sums" != "$SOURCE_SUMS" ]; then
+      refuse "tilesets/$TILESET already holds different content (differs: SHA256SUMS: $(sums_diff "$SOURCE_SUMS" "$stored_sums")); not overwritten"
+    fi
+    say "tiles-seed: tilesets/$TILESET already holds these files; nothing to copy"
+  else
+    if [ "$(env_value routing.env VALHALLA_TILESET)" = "$TILESET" ] || [ "$(env_value routing.env.prev VALHALLA_TILESET)" = "$TILESET" ]; then
+      refuse "tilesets/$TILESET is incomplete (missing: ${missing[*]}) but served or kept for rollback; not written into"
+    fi
+    complete_tileset
+    COPIED=yes
+  fi
 else
   say "tiles-seed: copying about 5 GB into tilesets/$TILESET (progress below)"
   # shellcheck disable=SC2016 # the script is expanded by the container's sh

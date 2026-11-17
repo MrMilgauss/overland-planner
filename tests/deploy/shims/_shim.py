@@ -200,10 +200,13 @@ def _docker(argv: list[str], record: dict[str, Any]) -> None:
 def _compose_run(argv: list[str]) -> None:
     """`compose run` of the one-shot map-data services: their effect on the `build` subpath of the fake volume.
 
-    valhalla-fetch: a download run leaves one extract per URL in build/src, a merge run leaves build/alps.osm.pbf.
+    valhalla-fetch: a download run leaves one extract per URL in build/src and default_speeds.json in build/ (the file
+    the build service sees as /custom_files/default_speeds.json), a merge run leaves build/alps.osm.pbf.
     valhalla-build (the image's own entrypoint, not an `--entrypoint sh` run): needs build/alps.osm.pbf as the only
-    *.pbf below build/ and leaves the four tileset files in build/ (/custom_files). A scripted rule makes any of them
-    fail first; a subpath that does not exist fails the mount, as it does in compose."""
+    *.pbf below build/ and leaves the four tileset files it makes in build/ (/custom_files). It has no network:
+    without the default_speeds.json that valhalla-fetch put there it fails, as the image does when it must download
+    the file. A scripted rule makes any of them fail first; a subpath that does not exist fails the mount, as it does
+    in compose."""
     build = HOME / "volumes" / "overland_valhalla-data" / "build"
     if not build.is_dir():
         sys.stderr.write("error mounting volume subpath build: no such directory\n")
@@ -213,12 +216,17 @@ def _compose_run(argv: list[str]) -> None:
         (build / "src").mkdir(exist_ok=True)
         for url in (arg for arg in argv if arg.endswith(".osm.pbf")):
             (build / "src" / url.rsplit("/", 1)[-1]).write_text("extract\n")
+        if "default_speeds.json" in joined:
+            (build / "default_speeds.json").write_text("downloaded default_speeds.json\n")
     elif "valhalla-fetch" in argv and "osmium merge" in joined:
         (build / "alps.osm.pbf").write_text("merged\n")
     elif "valhalla-build" in argv and "--entrypoint" not in argv:
         others = [p for p in build.rglob("*.pbf") if p != build / "alps.osm.pbf"]
         if not (build / "alps.osm.pbf").is_file() or others:
             sys.stderr.write("valhalla-scripted: need exactly one pbf in /custom_files\n")
+            sys.exit(1)
+        if not (build / "default_speeds.json").is_file():
+            sys.stderr.write("curl: (6) Could not resolve host: raw.githubusercontent.com\n")
             sys.exit(1)
         for name in ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json"):
             (build / name).write_text(f"built {name}\n")

@@ -7,7 +7,7 @@
 #
 # The target is the literal $HOME/valhalla-spike: no argument or glob can change it. Refused (exit 1, nothing
 # removed) unless: it is a real directory and no symlink; valhalla answers /status on the tileset of routing.env;
-# the sha256 of the four originals, recomputed now, equal SHA256SUMS of the seed and the recomputed seeded copies.
+# the sha256 of the five originals, recomputed now, equal SHA256SUMS of the seed and the recomputed seeded copies.
 # The files are root-owned: the removal runs in the pinned helper container (--network none), never with sudo.
 set -uo pipefail
 

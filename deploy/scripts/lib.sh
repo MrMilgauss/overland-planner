@@ -225,14 +225,16 @@ publish() {
 
 VALHALLA_VOLUME=overland_valhalla-data
 VALHALLA_VERSION_WANTED=3.9.1
-TILES_FILES=(valhalla_tiles.tar admins.sqlite timezones.sqlite valhalla.json)
+# default_speeds.json belongs to a tileset: the engine's start script downloads it when it is missing (and the engine has
+# no network).
+TILES_FILES=(valhalla_tiles.tar admins.sqlite timezones.sqlite valhalla.json default_speeds.json)
 # Set by valhalla_status.
 VALHALLA_VERSION=
 VALHALLA_MODIFIED=
 
 # The tileset files and the spike directory are owned by root: every read of them that needs it, every copy and every
 # removal goes through a pinned helper container without network (never sudo).
-# dir_sums LABEL DIR: "<sha256>  <name>" of the four tileset files of the host directory DIR (mounted read-only).
+# dir_sums LABEL DIR: "<sha256>  <name>" of the five tileset files of the host directory DIR (mounted read-only).
 dir_sums() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
   docker run --rm --network none -v "$2:/seed:ro" "$SNAPSHOT_IMAGE" \
@@ -244,6 +246,13 @@ volume_sums() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
   docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
     sh -c 'cd "/vol/$1" && shift && sha256sum "$@"' "$1" "$2" "${TILES_FILES[@]}"
+}
+
+# volume_present_sums LABEL SUBDIR: the listing of the tileset files that SUBDIR holds (a missing file is left out).
+volume_present_sums() {
+  # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
+    sh -c 'cd "/vol/$1" && shift && for f in "$@"; do if [ -f "$f" ]; then sha256sum "$f"; fi; done' "$1" "$2" "${TILES_FILES[@]}"
 }
 
 # volume_stored_sums SUBDIR: the SHA256SUMS file written at seed time.
