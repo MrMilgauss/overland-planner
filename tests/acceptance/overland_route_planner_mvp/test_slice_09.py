@@ -53,6 +53,13 @@ def test_the_map_uses_marcos_chosen_map_tiles_and_always_credits_them() -> None:
     """The settings name the OpenTopoMap address and its attribution (the web's credit control: 10-04's Playwright)."""
 
 
+@pytest.mark.solver_child
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "Giulia uses the map on her phone")
+def test_giulia_uses_the_map_on_her_phone() -> None:
+    """Plan run #4 on a real server, the map in a 390 px wide Chromium with touch (`tests/e2e/run-map.spec.ts`)."""
+
+
 @pytest.mark.wiring_e2e
 @scenario(FEATURE, "A map tile address carrying a private access key stops the planner at start-up")
 def test_a_map_tile_address_carrying_a_private_access_key_stops_the_planner_at_start_up() -> None:

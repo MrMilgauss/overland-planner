@@ -12,6 +12,7 @@
   // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
+  import RunMap from './RunMap.svelte';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -248,6 +249,7 @@
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
+  <RunMap planRunId={readyRun.id} />
 {/if}
 
 <style>

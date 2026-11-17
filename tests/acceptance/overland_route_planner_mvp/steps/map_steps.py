@@ -14,12 +14,14 @@ stops numbered 1 to 11 with a Start at 1 and an End at 11. The retrace row of a 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
 from pytest_bdd import given, parsers, then, when
 
 from overland_planner.domain.catalog.coordinate import Coordinate
+from tests.acceptance.overland_route_planner_mvp.steps.browser import REPO_ROOT, MapView, PhoneMapJourney
 from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import plan_run_detail
 from tests.acceptance.overland_route_planner_mvp.steps.places import ENTRY_EXIT_TOLERANCE_M, PLACES, distance_m
 from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
@@ -30,6 +32,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     ensure_item,
     stops,
 )
+from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
 from tests.acceptance.overland_route_planner_mvp.steps.retrace_steps import (
     EXIT_REASON,
     LEG_FROM_ENTRY_KM,
@@ -51,6 +54,9 @@ EXTRA_PLACE = "Misurina"  # the ninth item of the reference run (see the module 
 REFERENCE_STOPS = 11
 RUN_4 = 4
 COLLECTION = "FeatureCollection"
+# The map's tiles are never fetched from the internet: the browser spec answers any host but the planner's with a blank
+# tile. A made-up host on a made-up address (the repository is public).
+BLANK_TILE_URL = "https://tiles.example.test/{z}/{x}/{y}.png"
 
 
 def geometry_of(world: PlannerWorld, plan_run_id: str) -> dict[str, Any]:
@@ -294,3 +300,49 @@ def then_the_map_loads_tiles_from_opentopomap(world: PlannerWorld) -> None:
 def then_the_attribution_is_always_given(world: PlannerWorld, credit: str) -> None:
     attribution = world.scratch["map_config"]["attribution"]
     assert attribution == OPENTOPOMAP_ATTRIBUTION and credit in attribution, f"the attribution is {attribution!r}"
+
+
+# ------------------------------------------------------------------------------- Giulia's phone (step 10-04)
+@when(
+    parsers.re(r"Giulia opens the map of plan run #(?P<number>\d+) on her (?P<width>\d+) px wide iPhone"),
+    converters={"number": int, "width": int},
+)
+def when_giulia_opens_the_map_on_her_phone(world: PlannerWorld, number: int, width: int) -> None:
+    """The browser needs a real server: the planner that computed the run is replaced by one on the same data folder."""
+    assert width == PhoneMapJourney.SCREEN_WIDTH, f"the phone journey runs at {PhoneMapJourney.SCREEN_WIDTH} px"
+    run_id = str(plan_run_detail(world, number)["id"])
+    assert world.project_id is not None, "no project is open"
+    if not isinstance(world.planner, ServerPlanner):
+        assert world.planner is not None, "the planner is not running"
+        world.planner.stop()
+        world.environ["MAP_TILE_URL"] = BLANK_TILE_URL
+        server = ServerPlanner(world.environ, REPO_ROOT)
+        world.planner = server
+        server.start()
+    world.scratch["map_run_id"] = run_id
+    journey = PhoneMapJourney(world.project_id, world.data_dir.parent / "phone-map")
+    world.scratch["map_view"] = journey.run(world.planner.base_url)
+
+
+@then("she can pan and zoom")
+def then_she_can_pan_and_zoom(world: PlannerWorld) -> None:
+    view: MapView = world.scratch["map_view"]
+    assert view.canvas_visible, "the phone shows no map"
+    assert view.page_width <= view.screen_width, (
+        f"the page is {view.page_width} px wide on a {view.screen_width} px screen"
+    )
+    assert view.panned and view.zoomed, f"the map panned: {view.panned}, zoomed: {view.zoomed}"
+    assert view.credit_text.strip(), "the map shows no credit"
+
+
+@then("she can read the stop numbers")
+def then_she_can_read_the_stop_numbers(world: PlannerWorld) -> None:
+    view: MapView = world.scratch["map_view"]
+    shown = {int(digits) for text in view.numbers for digits in re.findall(r"\d+", text)}
+    drawn = {
+        number
+        for f in markers(geometry_of(world, world.scratch["map_run_id"]))
+        for number in (props(f)["stop"], props(f).get("end_stop"))
+        if number is not None and props(f)["marker"] in {"stop", "start", "end", "start_end"}
+    }
+    assert drawn and drawn <= shown, f"the map draws stops {sorted(drawn)} but the phone showed {sorted(shown)}"

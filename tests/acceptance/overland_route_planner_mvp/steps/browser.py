@@ -128,3 +128,59 @@ class PhoneItineraryJourney:
         assert result.returncode == 0, f"Giulia could not open the results:\n{(result.stdout + result.stderr)[-1500:]}"
         seen: dict[str, Any] = json.loads((self._workdir / "result.json").read_text())
         return PhoneView(seen["screen_width"], seen["page_width"], seen["rows"], seen["totals_text"])
+
+
+@dataclass(frozen=True)
+class MapView:
+    """What a phone showed of the run map (slice 09, `tests/e2e/run-map.spec.ts`): the page's width against the
+    screen's, the drawn canvas, the credit, the text of each numbered marker, and whether the map panned and zoomed."""
+
+    screen_width: int
+    page_width: int
+    canvas_visible: bool
+    credit_text: str
+    numbers: list[str]
+    panned: bool
+    zoomed: bool
+
+
+class PhoneMapJourney:
+    """Giulia opens the map of a project's plan run on a 390 px wide phone screen (a Chromium viewport with touch, not
+    a real device: WebKit headless is the weekly check)."""
+
+    SCREEN_WIDTH = 390
+
+    def __init__(self, project_id: str, workdir: Path) -> None:
+        self._project_id = project_id
+        self._workdir = workdir
+
+    def run(self, planner_url: str) -> MapView:
+        _require_playwright()
+        _require_current_web_page()
+        self._workdir.mkdir(parents=True, exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k != "E2E_START_LOCAL"}
+        env.update(
+            {
+                "PLANNER_URL": planner_url,
+                "MAP_PROJECT_ID": self._project_id,
+                "MAP_SCREEN_WIDTH": str(self.SCREEN_WIDTH),
+                "MAP_RESULT_DIR": str(self._workdir),
+                "NODE_PATH": str(WEB_DIR / "node_modules"),
+                "NO_COLOR": "1",
+            }
+        )
+        command = ["npx", "--no-install", "playwright", "test", "run-map", "--project=chromium", "--reporter=line"]
+        result = subprocess.run(
+            command, cwd=WEB_DIR, env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S, check=False
+        )
+        assert result.returncode == 0, f"Giulia could not use the map:\n{(result.stdout + result.stderr)[-1500:]}"
+        seen: dict[str, Any] = json.loads((self._workdir / "result.json").read_text())
+        return MapView(
+            seen["screen_width"],
+            seen["page_width"],
+            seen["canvas_visible"],
+            seen["credit_text"],
+            seen["numbers"],
+            seen["panned"],
+            seen["zoomed"],
+        )

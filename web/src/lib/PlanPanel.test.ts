@@ -10,6 +10,9 @@ import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlanPanel from './PlanPanel.svelte';
 
+// The map under the itinerary has its own tests (RunMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing.
+vi.mock('./RunMap.svelte', () => ({ default: () => {} }));
+
 type Reply = { status: number; body: unknown } | 'network down';
 type Routes = Record<string, Reply | Reply[]>;
 type PlannerStub = (url: string, init?: RequestInit) => Promise<Response>;

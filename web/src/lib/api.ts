@@ -1,6 +1,8 @@
 // The planner's HTTP API (same origin; the browser's own Basic-auth prompt covers the shared password). Every /api
 // error is an envelope {code, message} whose message is shown to Marco verbatim (PlannerError.message).
 
+import type { MapConfig, RunGeometry } from './runMap';
+
 export type Objective = 'distance' | 'time';
 
 export interface Project {
@@ -318,6 +320,20 @@ export function listPlanRuns(projectId: string): Promise<PlanRun[]> {
 
 export function readPlanRun(planRunId: string): Promise<PlanRunDetail> {
   return call(`/api/plan-runs/${encodeURIComponent(planRunId)}`, {}, PLAN_READ_FAILURE);
+}
+
+/** The map's tiles, credit and top zoom, as the planner's settings choose them. */
+export function readMapConfig(): Promise<MapConfig> {
+  return call('/api/config/map', {}, 'Could not load the map settings.');
+}
+
+/** The lines and markers of a ready run, in the planner's own words when it refuses (a Failed run has no route). */
+export function readRunGeometry(planRunId: string): Promise<RunGeometry> {
+  return call(
+    `/api/plan-runs/${encodeURIComponent(planRunId)}/geometry`,
+    {},
+    'Could not load the map of the run.',
+  );
 }
 
 /** The file of a ready plan run; the planner's answer names it. */
