@@ -83,3 +83,32 @@ class BatchLimitedEngine:
                 row.append({"from_index": a, "to_index": b, "time": seconds, "distance": metres / 1000})
             rows.append(row)
         return rows
+
+
+class ScriptedEngine:
+    """A scripted engine behind the httpx transport seam: each path answers its scripted steps in order (an
+    `httpx.Response` is returned, an exception is raised); the last step repeats when the script runs out.
+    `calls` lists the (path, body) of every request. `/status` answers the recorded 3.9.1 status unless scripted."""
+
+    def __init__(self, **scripts: Sequence[httpx.Response | Exception]) -> None:
+        self._scripts = {f"/{path.replace('__', '/')}": list(steps) for path, steps in scripts.items()}
+        self._scripts.setdefault("/status", [httpx.Response(200, json=recording("status")["response"])])
+        self._next: dict[str, int] = {}
+        self._lock = threading.Lock()
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        body = json.loads(request.content) if request.content else {}
+        with self._lock:
+            self.calls.append((path, body))
+            script = self._scripts[path]
+            position = self._next.get(path, 0)
+            self._next[path] = position + 1
+        step = script[min(position, len(script) - 1)]
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+    def asked(self, path: str) -> list[dict[str, Any]]:
+        return [body for asked_path, body in self.calls if asked_path == f"/{path}"]

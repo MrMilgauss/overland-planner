@@ -2,7 +2,8 @@
 
 The same checks run against the recorded Valhalla 3.9.1 answers (respx, CI), the offline road map (MockRoutingProvider)
 and, with --run-external, the live Valhalla on the Pi (make contract-live). A scenario loses `@pending` in the step that
-turns it green and blocks in CI job 2 at once. Bound so far: the matrix scenarios of the Valhalla adapter (09-02).
+turns it green and blocks in CI job 2 at once. Bound so far: the matrix scenarios (09-02), the 170 flow,
+the version stop and the failures (09-03).
 Fixtures: tests/contract/fixtures/valhalla-3.9.1/ with its sha256 manifest.
 """
 
@@ -27,6 +28,21 @@ def test_a_missing_matrix_answer_confirmed_by_a_route_check_means_no_connection(
 @scenario(FEATURE, "A large trip is asked in batches the routing engine accepts", **FEATURES)
 def test_a_large_trip_is_asked_in_batches_the_routing_engine_accepts() -> None:
     """3,660 legs are asked in questions of at most 2,500."""
+
+
+@scenario(FEATURE, "One place the routing engine cannot snap never removes the other places' legs", **FEATURES)
+def test_one_place_the_routing_engine_cannot_snap_never_removes_the_other_places_legs() -> None:
+    """Error 170 for a batch: the far place is off the network, the others are answered."""
+
+
+@scenario(FEATURE, "The contract checks stop when the engine is not the version they were recorded against", **FEATURES)
+def test_the_contract_checks_stop_when_the_engine_is_not_the_recorded_version() -> None:
+    """The recordings checks stop on another Valhalla version."""
+
+
+@scenario(FEATURE, "Routing engine failures are reported as failures, never as missing roads", **FEATURES)
+def test_routing_engine_failures_are_reported_as_failures_never_as_missing_roads() -> None:
+    """Unreachable and unavailable are typed errors, never an answer."""
 
 
 scenarios(FEATURE, **FEATURES)  # the other scenarios stay @pending until their step

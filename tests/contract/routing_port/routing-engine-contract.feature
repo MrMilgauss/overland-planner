@@ -26,7 +26,7 @@ Feature: The planner and the routing engine understand each other
     Then every leg from the island has no connection at the Confirmed level
     And no leg of the other places is affected
 
-  @pending @slice-06a @US-10a @J-01 @error
+  @slice-06a @US-10a @J-01 @error
   Scenario: One place the routing engine cannot snap never removes the other places' legs
     # matrix_170_unsnappable_location_kills_call.json
     Given the routing engine answers with its recorded refusal for a batch that contains one place far from any road
@@ -43,14 +43,14 @@ Feature: The planner and the routing engine understand each other
     Then every leg is answered
     And no single question to the routing engine held more than 2,500 legs
 
-  @pending @slice-06a @US-10a @J-01 @error
+  @slice-06a @US-10a @J-01 @error
   Scenario: The contract checks stop when the engine is not the version they were recorded against
     # status.json (3.9.1)
     Given the routing engine reports version "3.10.0" instead of the recorded "3.9.1"
     When the routing-engine contract checks run against it
     Then they stop with "recorded for Valhalla 3.9.1, found 3.10.0 - re-record the answers"
 
-  @pending @slice-06a @US-10a @J-01 @error @infrastructure-failure
+  @slice-06a @US-10a @J-01 @error @infrastructure-failure
   Scenario Outline: Routing engine failures are reported as failures, never as missing roads
     Given the routing engine <failure>
     When the planner asks for the leg from Torino to Susa
