@@ -42,7 +42,9 @@ def provider(
     max_matrix_pairs: int = 2500,
     concurrency: int = 2,
     waits: list[float] | None = None,
+    probe_slot_wait_s: float | None = None,
 ) -> ValhallaRoutingProvider:
+    extra = {} if probe_slot_wait_s is None else {"probe_slot_wait_s": probe_slot_wait_s}
     return ValhallaRoutingProvider(
         REPLAY_URL,
         sleep=waits.append if waits is not None else (lambda seconds: None),
@@ -52,6 +54,7 @@ def provider(
         concurrency=concurrency,
         snap_m=SNAP_M,
         transport=transport,
+        **extra,
     )
 
 
@@ -380,6 +383,93 @@ def test_a_probe_that_reads_a_status_updates_the_identity_even_when_the_version_
 
     with pytest.raises(ProviderUnavailable, match=r"3\.10\.0"):
         _ = adapter.provider_id
+
+
+def test_a_probe_answers_not_ready_when_the_engine_answers_something_undecodable() -> None:
+    engine = ScriptedEngine(sources_to_targets=[httpx.DecodingError("bad gzip")])
+
+    result = provider(httpx.MockTransport(engine)).probe()
+
+    assert result == ProbeResult("degraded-healthy", "routing_engine_not_ready")
+
+
+def test_a_plan_request_meets_an_undecodable_answer_as_an_unavailable_engine() -> None:
+    engine = ScriptedEngine(sources_to_targets=[httpx.DecodingError("bad gzip")])
+
+    with pytest.raises(ProviderUnavailable):
+        provider(httpx.MockTransport(engine)).matrix([TORINO], [SUSA])
+
+
+@pytest.mark.parametrize("tileset", [{"version": "3.9.1"}, {"version": "3.9.1", "tileset_last_modified": "x"}])
+def test_a_status_without_an_integer_tileset_date_is_not_ready_and_gives_no_identity(tileset: dict[str, Any]) -> None:
+    engine = ScriptedEngine(status=[httpx.Response(200, json=tileset)])
+    adapter = provider(httpx.MockTransport(engine))
+
+    with pytest.raises(ProviderUnavailable):
+        _ = adapter.provider_id
+
+    assert provider(httpx.MockTransport(engine)).probe() == ProbeResult("degraded-healthy", "routing_engine_not_ready")
+
+
+def _read_timeouts(engine_calls: list[tuple[str, float]]) -> Any:
+    def handler(request: httpx.Request) -> httpx.Response:
+        engine_calls.append((request.url.path, request.extensions["timeout"]["read"]))
+        if request.url.path == "/status":
+            return httpx.Response(200, json=recording("status")["response"])
+        return httpx.Response(200, json=GOOD_GRID)
+
+    return httpx.MockTransport(handler)
+
+
+def test_a_probe_reads_with_a_short_timeout_and_a_job_call_keeps_its_own() -> None:
+    probe_calls: list[tuple[str, float]] = []
+    job_calls: list[tuple[str, float]] = []
+
+    provider(_read_timeouts(probe_calls)).probe()
+    provider(_read_timeouts(job_calls)).matrix([TORINO, SUSA], [TORINO, SUSA])
+
+    assert (probe_calls, job_calls) == (
+        [("/status", 10), ("/sources_to_targets", 10)],
+        [("/sources_to_targets", 120)],
+    )
+
+
+def test_a_probe_gives_up_after_its_wait_for_a_free_engine_slot() -> None:
+    engine = ScriptedEngine()
+    adapter = provider(httpx.MockTransport(engine), concurrency=1, probe_slot_wait_s=0.05)
+    adapter._in_flight.acquire()  # a job call holds the only slot
+
+    result = adapter.probe()
+
+    assert (result, engine.calls) == (ProbeResult("degraded-healthy", "routing_engine_not_ready"), [])
+
+
+def test_reading_the_identity_does_not_hold_the_lock_a_probe_needs() -> None:
+    first_call_started, release = threading.Event(), threading.Event()
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            first_call_started.set()
+            release.wait(10)
+        if request.url.path == "/status":
+            return httpx.Response(200, json=recording("status")["response"])
+        return httpx.Response(200, json=GOOD_GRID)
+
+    adapter = provider(httpx.MockTransport(handler))
+    reader = threading.Thread(target=lambda: adapter.provider_id)
+    reader.start()
+    assert first_call_started.wait(5)
+    probed: list[ProbeResult] = []
+    prober = threading.Thread(target=lambda: probed.append(adapter.probe()))
+    prober.start()
+    prober.join(3)
+    finished = not prober.is_alive()
+    release.set()
+    reader.join(5)
+
+    assert (finished, probed) == (True, [ProbeResult("ok")])
 
 
 # the 170 flow ----------------------------------------------------------------------------------------------------

@@ -61,6 +61,8 @@ _METRES_PER_KM = 1000
 _CONNECT_TIMEOUT_S = 2
 _MATRIX_READ_TIMEOUT_S = 120
 _OTHER_READ_TIMEOUT_S = 30
+PROBE_READ_TIMEOUT_S = 10
+PROBE_SLOT_WAIT_S = 10.0
 _UNCONNECTED_REGIONS = 170
 _BACKOFF_S = (0.5, 1.0, 2.0)
 _PROBE_PLACES = [Coordinate(45.0703, 7.6869), Coordinate(45.1370, 7.0500)]  # Torino, Susa
@@ -76,6 +78,7 @@ class ValhallaRoutingProvider:
         max_matrix_pairs: int,
         concurrency: int,
         snap_m: int,
+        probe_slot_wait_s: float = PROBE_SLOT_WAIT_S,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = lambda: random.uniform(0.0, 0.25),  # noqa: S311 - jitter, not a secret,
@@ -83,6 +86,7 @@ class ValhallaRoutingProvider:
         self._expected_version = expected_version
         self._max_pairs = max_matrix_pairs
         self._snap_m = snap_m
+        self._probe_slot_wait_s = probe_slot_wait_s
         self._sleep = sleep
         self._jitter = jitter
         self._in_flight = threading.BoundedSemaphore(concurrency)
@@ -98,9 +102,14 @@ class ValhallaRoutingProvider:
     @property
     def provider_id(self) -> str:
         with self._identity_lock:
+            known = self._identity
+        if known is not None:
+            return known
+        read = self._read_identity()  # network I/O with retries: never under the lock
+        with self._identity_lock:
             if self._identity is None:
-                self._identity = self._read_identity()
-            return self._identity
+                self._identity = read
+            return self._identity or read
 
     @property
     def profile(self) -> str:
@@ -109,12 +118,12 @@ class ValhallaRoutingProvider:
     def probe(self) -> ProbeResult:
         """`/status`, then the 2x2 matrix of Torino and Susa: one attempt each, never fatal, never tells an observer."""
         try:
-            found, tileset = self._read_status(retry=False)
+            found, tileset = self._read_status(retry=False, probing=True)
             with self._identity_lock:
                 self._identity = f"valhalla:{found}:{tileset}" if found == self._expected_version else None
             if found != self._expected_version:
                 return _degraded(f"routing_engine_version_mismatch: found {found}, expected {self._expected_version}")
-            grid = self._post_matrix(_PROBE_PLACES, _PROBE_PLACES, None, retry=False)
+            grid = self._post_matrix(_PROBE_PLACES, _PROBE_PLACES, None, retry=False, probing=True)
         except ProviderUnreachable:
             return _degraded("routing_engine_unreachable")
         except RoutingProviderError:
@@ -147,39 +156,58 @@ class ValhallaRoutingProvider:
             raise ProviderUnavailable(f"the routing engine is Valhalla {found}, not {self._expected_version}")
         return f"valhalla:{found}:{tileset}"
 
-    def _read_status(self, *, retry: bool) -> tuple[str, Any]:
-        answer = self._call("GET", "/status", None, retry=retry)
+    def _read_status(self, *, retry: bool, probing: bool = False) -> tuple[str, int]:
+        options = {"timeout": _probe_timeout()} if probing else {}
+        answer = self._call("GET", "/status", None, retry=retry, probing=probing, **options)
         if answer.status_code != httpx.codes.OK:
             raise ProviderUnavailable(f"the routing engine's status answered HTTP {answer.status_code}")
         try:
             status = answer.json()
-            return str(status["version"]), status.get("tileset_last_modified")
+            tileset = status["tileset_last_modified"]
+            if isinstance(tileset, bool) or not isinstance(tileset, int):
+                raise ValueError("the tileset date is not an epoch")
+            return str(status["version"]), tileset
         except (ValueError, KeyError, TypeError, AttributeError) as unreadable:
             raise ProviderUnavailable("the routing engine's status cannot be read") from unreadable
 
     def _call(
-        self, method: str, path: str, observer: RoutingObserver | None, *, retry: bool = True, **options: Any
+        self,
+        method: str,
+        path: str,
+        observer: RoutingObserver | None,
+        *,
+        retry: bool = True,
+        probing: bool = False,
+        **options: Any,
     ) -> httpx.Response:
         """One call, made again on a 5xx, a connect error or a timeout (never on a 4xx) after each wait of the
         backoff; a failure that outlives the retries is the typed error of its kind."""
-        outcome = self._attempt(method, path, options)
+        outcome = self._attempt(method, path, options, probing)
         for wait in _BACKOFF_S if retry else ():
             if isinstance(outcome, httpx.Response):
                 return outcome
             self._sleep(wait + self._jitter())
             if observer is not None:
                 observer.retried()
-            outcome = self._attempt(method, path, options)
+            outcome = self._attempt(method, path, options, probing)
         if isinstance(outcome, httpx.Response):
             return outcome
         raise outcome
 
-    def _attempt(self, method: str, path: str, options: dict[str, Any]) -> httpx.Response | RoutingProviderError:
+    def _attempt(
+        self, method: str, path: str, options: dict[str, Any], probing: bool = False
+    ) -> httpx.Response | RoutingProviderError:
+        """A probe waits for a free engine slot at most `probe_slot_wait_s`; a job call waits as long as it takes."""
+        if not self._in_flight.acquire(timeout=self._probe_slot_wait_s if probing else None):
+            return ProviderUnavailable("the routing engine is busy: no free slot for the probe")
         try:
-            with self._in_flight:
-                answer = self._client.request(method, path, **options)
+            answer = self._client.request(method, path, **options)
         except httpx.TransportError as failure:
             return ProviderUnreachable(f"the routing engine cannot be reached: {failure!r}")
+        except httpx.HTTPError as failure:
+            return ProviderUnavailable(f"the routing engine's answer is unusable: {failure!r}")
+        finally:
+            self._in_flight.release()
         if answer.status_code >= httpx.codes.INTERNAL_SERVER_ERROR:
             return ProviderUnavailable(f"the routing engine failed: HTTP {answer.status_code}")
         return answer
@@ -199,10 +227,17 @@ class ValhallaRoutingProvider:
         observer: RoutingObserver | None,
         *,
         retry: bool = True,
+        probing: bool = False,
     ) -> list[list[dict[str, Any]]]:
-        timeout = httpx.Timeout(_MATRIX_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
+        timeout = _probe_timeout() if probing else httpx.Timeout(_MATRIX_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
         answer = self._call(
-            "POST", "/sources_to_targets", observer, retry=retry, json=self._question(sources, targets), timeout=timeout
+            "POST",
+            "/sources_to_targets",
+            observer,
+            retry=retry,
+            probing=probing,
+            json=self._question(sources, targets),
+            timeout=timeout,
         )
         if answer.status_code != httpx.codes.OK:
             raise _refusal(answer)
@@ -313,6 +348,10 @@ def _refusal(answer: httpx.Response) -> ProviderRejected:
         return ProviderRejected(f"the routing engine refused the question: HTTP {answer.status_code}")
     message = f"the routing engine refused the question: error {code}: {reason}"
     return _Unsnappable(message) if code == _UNCONNECTED_REGIONS else ProviderRejected(message)
+
+
+def _probe_timeout() -> httpx.Timeout:
+    return httpx.Timeout(PROBE_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
 
 
 def _degraded(reason: str) -> ProbeResult:

@@ -6,7 +6,8 @@ order, so the result does not depend on the order in which they were registered.
 
 A component given in `reprobed` (the routing engine, D247) is probed again on demand (`probe(name)`, before each plan
 request) and by `detail()` when its stored result is older than 60 s by the Clock port; every other component keeps its
-start-up result. No background thread: a result is only ever refreshed by a call.
+start-up result. No background thread: a result is only ever refreshed by a call. A probe never runs under the lock,
+so `liveness()` and `detail()` answer from the stored snapshot while a slow engine is being probed.
 
 - `liveness()` (behind `/healthz`): unhealthy when any component is degraded-unhealthy or fatal; the reason is the
   first such component's reason.
@@ -57,31 +58,36 @@ class HealthService:
         self._reprobed = dict(reprobed or {})
         self._current = {name: outcomes[name] for name in sorted(outcomes)}
         self._checked_at = {name: clock.monotonic() for name in self._reprobed} if clock else {}
+        self._probe_started = {name: clock.monotonic() for name in self._reprobed} if clock else {}
         self._lock = threading.Lock()
         self._outcomes: Mapping[str, ProbeResult] = MappingProxyType(self._current)
 
     def probe(self, name: str) -> ProbeResult | None:
         """Probe the component now and keep its result; a component that is not probed again answers its start-up
-        result (None when unknown)."""
-        with self._lock:
-            return self._probe_locked(name)
-
-    def _probe_locked(self, name: str) -> ProbeResult | None:
+        result (None when unknown). The probe runs outside the lock (it may wait on the network): only the result is
+        stored under it, and never over one whose probe started later."""
         component = self._reprobed.get(name)
         if component is None or self._clock is None:
-            return self._current.get(name)
+            with self._lock:
+                return self._current.get(name)
+        started = self._clock.monotonic()
         result = component.probe()
-        self._current[name] = result
-        self._checked_at[name] = self._clock.monotonic()
+        with self._lock:
+            if started >= self._probe_started[name]:
+                self._current[name] = result
+                self._probe_started[name] = started
+                self._checked_at[name] = self._clock.monotonic()
         return result
 
     def _refresh_stale(self) -> None:
         if self._clock is None:
             return
         with self._lock:
-            for name in self._reprobed:
-                if self._clock.monotonic() - self._checked_at[name] > _STALE_AFTER_S:
-                    self._probe_locked(name)
+            stale = [
+                name for name in self._reprobed if self._clock.monotonic() - self._checked_at[name] > _STALE_AFTER_S
+            ]
+        for name in stale:
+            self.probe(name)
 
     def liveness(self) -> Liveness:
         with self._lock:

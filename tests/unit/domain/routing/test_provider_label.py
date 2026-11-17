@@ -61,3 +61,22 @@ def test_a_road_map_the_planner_does_not_know_is_shown_as_stored(provider_id: st
     header = provider_header(provider_id, profile)
 
     assert header.startswith(f"Provider: {provider_id}")
+
+
+_MAX_EPOCH = 253_402_300_799  # 9999-12-31T23:59:59Z, the last second a date can show
+
+
+@given(version=VERSIONS, epoch=st.one_of(st.integers(0, _MAX_EPOCH), st.sampled_from([0, _MAX_EPOCH])))
+def test_an_epoch_a_date_can_show_names_its_utc_date_even_at_the_edges(version: str, epoch: int) -> None:
+    date = datetime.fromtimestamp(epoch, UTC).date().isoformat()
+
+    assert provider_header(f"valhalla:{version}:{epoch}", "4x4.v1") == (
+        f"Provider: Valhalla (map data {date}) / profile: 4x4"
+    )
+
+
+@given(version=VERSIONS, epoch=st.one_of(st.integers(_MAX_EPOCH + 1, 10**18), st.just(_MAX_EPOCH + 1)))
+def test_an_epoch_beyond_year_9999_shows_the_provider_id_as_stored(version: str, epoch: int) -> None:
+    provider_id = f"valhalla:{version}:{epoch}"
+
+    assert provider_header(provider_id, "4x4.v1") == f"Provider: {provider_id} / profile: 4x4"

@@ -60,14 +60,22 @@ class LegResolver:
     def profile(self) -> str:
         return self._provider.profile
 
+    def identity(self) -> RoadMapKey:
+        """The road map's identity as read now: one read of each, to be kept for a whole job."""
+        return self.provider_id, self.profile
+
     def resolve(
         self,
         pairs: Iterable[RoadPair],
         progress: Callable[[LegsFound], None] = _unheard,
         observer: RoutingObserver | None = None,
+        *,
+        road_map: RoadMapKey | None = None,
     ) -> LegTable:
-        """A table that covers every pair; a road map failure, or one raised by `progress`, propagates."""
-        road_map = (self.provider_id, self.profile)
+        """A table that covers every pair; a road map failure, or one raised by `progress`, propagates. A job hands
+        the `road_map` identity it read once at its start, so that its legs are kept under the identity of its run;
+        without one the identity is read now."""
+        road_map = road_map or self.identity()
         distinct = list(dict.fromkeys(pairs))
         roads = [pair for pair in distinct if pair[0] != pair[1]]
         held = self._held(road_map, roads)

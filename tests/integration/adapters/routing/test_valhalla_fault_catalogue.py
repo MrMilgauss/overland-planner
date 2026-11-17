@@ -22,9 +22,12 @@ TORINO = Coordinate(45.0703, 7.6869)
 SUSA = Coordinate(45.1370, 7.0500)
 
 
-def ask(*steps: httpx.Response | Exception, status: httpx.Response | None = None) -> ScriptedEngine:
+def ask(
+    *steps: httpx.Response | Exception, status: httpx.Response | None = None
+) -> tuple[ScriptedEngine, list[list[Any]]]:
+    """The engine asked and what the adapter answered."""
     engine = ScriptedEngine(sources_to_targets=list(steps), **({"status": [status]} if status else {}))
-    ValhallaRoutingProvider(
+    answer = ValhallaRoutingProvider(
         REPLAY_URL,
         expected_version="3.9.1",
         max_matrix_pairs=2500,
@@ -34,7 +37,7 @@ def ask(*steps: httpx.Response | Exception, status: httpx.Response | None = None
         sleep=lambda seconds: None,
         jitter=lambda: 0.0,
     ).matrix([TORINO], [SUSA])
-    return engine
+    return engine, [list(row) for row in answer]
 
 
 def cell(**measure: Any) -> httpx.Response:
@@ -52,9 +55,9 @@ def test_a_timeout_is_unreachable() -> None:
 
 
 def test_a_server_error_then_success_is_the_answer() -> None:
-    engine_calls = ask(httpx.Response(503, text="busy"), cell(time=3342, distance=56.099))
+    engine, answer = ask(httpx.Response(503, text="busy"), cell(time=3342, distance=56.099))
 
-    assert len(engine_calls.asked("sources_to_targets")) == 2
+    assert (len(engine.asked("sources_to_targets")), answer) == (2, [[RoadMeasure(56099, 3342)]])
 
 
 def test_a_persistent_server_error_is_unavailable_after_the_retries() -> None:

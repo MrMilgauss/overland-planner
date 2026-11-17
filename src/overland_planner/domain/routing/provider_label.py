@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 _VALHALLA = re.compile(r"valhalla:[^:]+:(?P<epoch>\d+)")
 _OFFLINE = re.compile(r"mock:straight_line_x(?P<factor>[^:]+)(?::script:.*)?")
+_LAST_DATED_EPOCH = 253_402_300_799  # 9999-12-31T23:59:59Z; beyond it (milliseconds?) the id is shown as stored
 _PROFILE_VERSION = re.compile(r"\.v\d+$")
 _PROFILE_WORDS = {"mock": "estimate"}
 
@@ -25,7 +26,7 @@ def provider_header(provider_id: str, profile: str | None) -> str:
 
 def _provider_words(provider_id: str) -> str:
     valhalla = _VALHALLA.fullmatch(provider_id)
-    if valhalla is not None:
+    if valhalla is not None and int(valhalla["epoch"]) <= _LAST_DATED_EPOCH:
         return f"Valhalla (map data {_utc_date(int(valhalla['epoch']))})"
     offline = _OFFLINE.fullmatch(provider_id)
     if offline is not None and _is_number(offline["factor"]):

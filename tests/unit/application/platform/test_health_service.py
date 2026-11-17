@@ -9,12 +9,13 @@ Test Budget: 4 behaviors (liveness verdict, banners, component listing, registra
 from __future__ import annotations
 
 import itertools
+import threading
 from typing import Any
 
 from hypothesis import given
 from hypothesis import strategies as st
 
-from overland_planner.application.platform.facade import HealthService
+from overland_planner.application.platform.facade import HealthService, Liveness
 from overland_planner.application.ports.probe import ProbeOutcome, ProbeResult
 from tests.common.fakes import FakeClock
 from tests.common.state_delta import assert_state_delta, set_to
@@ -146,3 +147,58 @@ def test_a_probe_on_demand_stores_its_result_with_its_time(gap: float) -> None:
     shown = health.detail().components["routing_provider"]
 
     assert (answered, shown, len(engine.asked_at)) == (ProbeResult("degraded-healthy", "answer 1"),) * 2 + (1,)
+
+
+class _BlockingEngine:
+    """A component whose probe waits on its event, like an engine that answers slowly; each probe has a number."""
+
+    def __init__(self, blocked: set[int]) -> None:
+        self.blocked = blocked
+        self.entered = {number: threading.Event() for number in (1, 2)}
+        self.released = {number: threading.Event() for number in (1, 2)}
+        self._calls = 0
+        self._lock = threading.Lock()
+
+    def probe(self) -> ProbeResult:
+        with self._lock:
+            self._calls += 1
+            number = self._calls
+        self.entered[number].set()
+        if number in self.blocked:
+            assert self.released[number].wait(10)
+        return ProbeResult("degraded-healthy", f"answer {number}")
+
+
+def _slow_engine_service() -> tuple[HealthService, _BlockingEngine, FakeClock]:
+    clock, engine = FakeClock(), _BlockingEngine({1})
+    return HealthService({"routing": ProbeResult("ok")}, clock=clock, reprobed={"routing": engine}), engine, clock
+
+
+def test_a_slow_probe_never_keeps_liveness_or_detail_waiting() -> None:
+    health, engine, _ = _slow_engine_service()
+    probing = threading.Thread(target=lambda: health.probe("routing"))
+    probing.start()
+    assert engine.entered[1].wait(5)
+    answers: list[object] = []
+    reader = threading.Thread(target=lambda: answers.extend([health.liveness(), health.detail().components]))
+    reader.start()
+    reader.join(3)
+    answered_while_probing = not reader.is_alive()
+    engine.released[1].set()
+    probing.join(5)
+
+    assert (answered_while_probing, answers[:1]) == (True, [Liveness("ok")])
+
+
+def test_a_fresh_result_is_never_overwritten_by_an_older_probe_that_ends_later() -> None:
+    health, engine, clock = _slow_engine_service()
+    older = threading.Thread(target=lambda: health.probe("routing"))
+    older.start()
+    assert engine.entered[1].wait(5)
+    clock.advance(1.0)
+
+    health.probe("routing")  # starts later and ends first
+    engine.released[1].set()
+    older.join(5)
+
+    assert health.detail().components["routing"] == ProbeResult("degraded-healthy", "answer 2")

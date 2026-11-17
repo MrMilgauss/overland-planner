@@ -14,6 +14,7 @@ per road map for the resolver's life and reported, the held ones before any call
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Callable, Collection, Sequence
 from typing import Any
@@ -23,7 +24,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, RoadMapScript
-from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob
+from overland_planner.application.planning.facade import FingerprintMemo, PlanJobRegistry, PlanRequestJob
 from overland_planner.application.ports.routing_provider import RoutingObserver
 from overland_planner.application.routing.facade import LegResolver, LegsFound
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -39,7 +40,7 @@ from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip,
 UNIVERSE = {"road_map.asked", "plan.legs"}
 Row = list[RoadMeasure]
 BUDGET = 500
-DETOUR_FACTOR = 1.3
+DETOUR_FACTORS = (1.0, 1.7, 2.5)  # what a script may declare; the resolver and the road map must apply the declared one
 METRES_PER_SECOND_AT_60_KMH = 60 / 3.6
 
 
@@ -100,7 +101,7 @@ alpine_points = st.builds(
 
 
 @st.composite
-def scripted_trips(draw: st.DrawFn) -> tuple[list[RoadPair], dict[RoadPair, RoadMeasure]]:
+def scripted_trips(draw: st.DrawFn) -> tuple[list[RoadPair], dict[RoadPair, RoadMeasure], float]:
     """Required pairs over Alpine points, with a script over some of them: every example has a listed pair, an
     unlisted pair between distinct points and a pair of identical points (D212)."""
     points = draw(st.lists(alpine_points, min_size=3, max_size=6, unique=True))
@@ -110,30 +111,48 @@ def scripted_trips(draw: st.DrawFn) -> tuple[list[RoadPair], dict[RoadPair, Road
     listed = [roads, *draw(st.lists(st.sampled_from([p for p in pairs[3:] if p[0] != p[1]] or [roads])))]
     measure = st.builds(RoadMeasure, st.integers(1, 900_000), st.integers(1, 60_000))
     script = {pair: draw(measure) for pair in listed if pair != (roads[1], roads[0])}
-    return draw(st.permutations(pairs)), script
+    return draw(st.permutations(pairs)), script, draw(st.sampled_from(DETOUR_FACTORS))
 
 
-def _straight_line_default(origin: Coordinate, destination: Coordinate) -> tuple[int, int]:
-    """Brief section 6 and D220 f: straight line x 1.3, driven at 60 km/h; nothing to drive between identical points."""
+EARTH_RADIUS_M = 6_371_008.8  # the IUGG mean radius, written here and not imported from the code under test
+
+
+def _chord_m(origin: Coordinate, destination: Coordinate) -> float:
+    """The straight line by another route than the haversine: the chord between the two points on the unit sphere,
+    as an arc (2 R asin(chord / 2))."""
+
+    def unit_vector(place: Coordinate) -> tuple[float, float, float]:
+        lat, lon = math.radians(place.latitude), math.radians(place.longitude)
+        return math.cos(lat) * math.cos(lon), math.cos(lat) * math.sin(lon), math.sin(lat)
+
+    chord = math.dist(unit_vector(origin), unit_vector(destination))
+    return 2 * EARTH_RADIUS_M * math.asin(chord / 2)
+
+
+def _straight_line_default(origin: Coordinate, destination: Coordinate, detour_factor: float) -> tuple[int, int]:
+    """Brief section 6 and D220 f: straight line x the script's detour factor, driven at 60 km/h; nothing to drive
+    between identical points."""
     if origin == destination:
         return 0, 0
-    metres = max(1, round(origin.great_circle_distance_m(destination) * DETOUR_FACTOR))
+    metres = max(1, round(_chord_m(origin, destination) * detour_factor))
     return metres, max(1, round(metres / METRES_PER_SECOND_AT_60_KMH))
 
 
 @pytest.mark.heavy_property  # >= 3 s at profile ci (D221 pattern, 2026-11-10): slow-properties job
 @given(case=scripted_trips())
 def test_a_scripted_road_map_answers_its_script_on_listed_pairs_and_the_default_elsewhere(
-    case: tuple[list[RoadPair], dict[RoadPair, RoadMeasure]],
+    case: tuple[list[RoadPair], dict[RoadPair, RoadMeasure], float],
 ) -> None:
-    pairs, script = case
-    road_map = _CountingRoadMap(MockRoutingProvider(script=RoadMapScript(DETOUR_FACTOR, script, "sha256-of-script")))
+    pairs, script, detour_factor = case
+    road_map = _CountingRoadMap(MockRoutingProvider(script=RoadMapScript(detour_factor, script, "sha256-of-script")))
     before = _view(road_map.asked, None, pairs)
 
     table = LegResolver(road_map).resolve(pairs)
 
     expected_legs = {
-        pair: (script[pair].distance_m, script[pair].duration_s) if pair in script else _straight_line_default(*pair)
+        pair: (script[pair].distance_m, script[pair].duration_s)
+        if pair in script
+        else _straight_line_default(*pair, detour_factor)
         for pair in pairs
     }
     after = _view(road_map.asked, table, pairs)
@@ -403,3 +422,60 @@ def test_a_place_off_the_network_is_asked_once_per_request_has_no_road_counts_as
             strict=True,
         )
         assert bool(far_pairs) == any(view["road_map.calls_about_a_far_place"].values()), "a far place is asked again"
+
+
+# ------------------------------------------------------------------- one identity per job (review M1)
+class _DriftingRoadMap(RecordingRoadMap):
+    """A road map whose identity changes with every read, as when a probe finds a newer tileset between two reads;
+    `freeze_at(n)` makes it answer identity `n` for good."""
+
+    profile = "drifting-profile"
+
+    def __init__(self, trip: Trip) -> None:
+        super().__init__(trip.leg_m)
+        self.reads = 0
+        self._frozen: int | None = None
+
+    def freeze_at(self, number: int) -> None:
+        self._frozen = number
+
+    @property  # type: ignore[override]
+    def provider_id(self) -> str:  # type: ignore[override]
+        if self._frozen is None:
+            self.reads += 1
+            return f"road-map-{self.reads}"
+        return f"road-map-{self._frozen}"
+
+
+def _plan_with(planning: InMemoryPlanning, trip: Trip, resolver: LegResolver, memo_identity: str) -> None:
+    clock, log, files = FakeClock(), RecordingEventLog(), InMemoryFileStore()
+    trip.seed_canonical_files(files)
+    job = PlanRequestJob(
+        planning.unit_of_work, resolver, ScriptedTourSolver(), BUDGET, clock, log, files, FingerprintMemo(memo_identity)
+    )
+    registry = PlanJobRegistry(clock, job, log)
+    job_id = registry.start(PROJECT)
+    assert job_id is not None
+    job_when_ended(registry, job_id)
+
+
+@settings(deadline=None, max_examples=10)
+@given(trip=trips())
+def test_a_job_keys_its_legs_fingerprint_and_run_by_the_one_identity_it_read_at_its_start(trip: Trip) -> None:
+    assume(_road_to_drive(trip))
+    drifting, steady = _DriftingRoadMap(trip), RecordingRoadMap(trip.leg_m)
+    steady.provider_id, steady.profile = "road-map-1", drifting.profile
+    planning, reference = InMemoryPlanning(), InMemoryPlanning()
+    planning.add_project(PROJECT, trip.snapshot)
+    reference.add_project(PROJECT, trip.snapshot)
+    resolver = LegResolver(drifting)
+
+    _plan_with(planning, trip, resolver, "solver")
+    _plan_with(reference, trip, LegResolver(steady), "solver")
+
+    (run,), (expected,) = planning.runs, reference.runs
+    assert (run.provider_id, run.profile, run.fingerprint) == ("road-map-1", drifting.profile, expected.fingerprint)
+    drifting.freeze_at(1)
+    asked_before = sum(drifting.asked.values())
+    _plan_with(planning, trip, resolver, "solver")
+    assert sum(drifting.asked.values()) == asked_before, "the legs were kept under another identity than the run's"

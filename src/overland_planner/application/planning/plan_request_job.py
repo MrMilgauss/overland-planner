@@ -82,7 +82,7 @@ from overland_planner.application.ports.tour_solver import (
     TourOutcome,
     TourSolver,
 )
-from overland_planner.application.routing.facade import LegResolver, LegsFound
+from overland_planner.application.routing.facade import LegResolver, LegsFound, RoadMapKey
 from overland_planner.domain.catalog.item import TrackItem
 from overland_planner.domain.catalog.project import Objective
 from overland_planner.domain.planning.invariant_guard import (
@@ -116,6 +116,21 @@ class _PlannedProject:
     work_started_s: float
     fingerprint: str | None = None
     memo_source: MemoSource | None = None
+    road_map: RoadMapKey | None = None  # (provider_id, profile), read once when the job's legs start
+
+    @property
+    def provider_id(self) -> str:
+        return self._road_map[0]
+
+    @property
+    def profile(self) -> str:
+        return self._road_map[1]
+
+    @property
+    def _road_map(self) -> RoadMapKey:
+        if self.road_map is None:
+            raise RuntimeError("the road map's identity is read before the legs")
+        return self.road_map
 
     @property
     def memo_hit(self) -> bool:
@@ -158,7 +173,8 @@ class PlanRequestJob:
         progress.note(notices=project_notices(len(project.snapshot.visited_items())))
         progress.enter("computing_legs")
         with stages.timing("matrix"):
-            legs, second_pass_pairs = self._resolve_legs(project.snapshot, progress)
+            project = replace(project, road_map=self.legs.identity())  # read once: a probe may change it mid-job
+            legs, second_pass_pairs = self._resolve_legs(project, progress)
         with stages.timing("reach_model"):
             model = SolverModelBuilder(project.snapshot, Objective.parse(project.stamp.objective)).build(legs)
             progress.note(items_included=len(set(model.node_item_ids)))
@@ -270,12 +286,12 @@ class PlanRequestJob:
             stamp = uow.project_snapshots.stamp(project_id)
             return _PlannedProject(project_id, snapshot, stamp, ignore_memo, work_started_s)
 
-    def _resolve_legs(self, snapshot: ProjectSnapshot, progress: PlanJobProgress) -> tuple[LegTable, int]:
+    def _resolve_legs(self, project: _PlannedProject, progress: PlanJobProgress) -> tuple[LegTable, int]:
         """The legs found so far are noted as they arrive, the cached ones before any road-map call (06-09). The second
         pass asks the retrace pairs once the first has come back (ADR-017 section 2); its pairs join the job's total
         and its counts the first pass's, so that `new + cached = total` at the end. Answers the legs and the second
         pass's pairs."""
-        builder = SolverModelBuilder(snapshot)
+        builder = SolverModelBuilder(project.snapshot)
         pairs = builder.required_pairs()
         first_found = LegsFound(0, 0, 0)
 
@@ -285,14 +301,19 @@ class PlanRequestJob:
             _note_legs(progress, found)
 
         retries = _Retries(progress)
-        legs = self.legs.resolve(pairs, first_pass_heard, retries)
+        legs = self.legs.resolve(pairs, first_pass_heard, retries, road_map=project.road_map)
         known = set(pairs)
         second = tuple(pair for pair in builder.retrace_pairs(legs) if pair not in known)
         if second:
             legs = legs.merged_with(
-                self.legs.resolve(second, lambda found: _note_legs(progress, _added(first_found, found)), retries)
+                self.legs.resolve(
+                    second,
+                    lambda found: _note_legs(progress, _added(first_found, found)),
+                    retries,
+                    road_map=project.road_map,
+                )
             )
-        progress.note(legs_total=len(known) + len(second), provider_id=self.legs.provider_id, retried=retries.heard)
+        progress.note(legs_total=len(known) + len(second), provider_id=project.provider_id, retried=retries.heard)
         return legs, len(second)
 
     def _recall(self, project: _PlannedProject, model: TourModel) -> tuple[_PlannedProject, TourFound | None]:
@@ -304,7 +325,7 @@ class PlanRequestJob:
             project.snapshot,
             model,
             objective=project.stamp.objective,
-            provider_id=self.legs.provider_id,
+            provider_id=project.provider_id,
             budget=self.budget,
         )
         source = None
@@ -354,8 +375,8 @@ class PlanRequestJob:
             failure_reason=finding.failure_reason,
             created_at=self.clock.now(),
             revision=project.stamp.revision,
-            provider_id=self.legs.provider_id,
-            profile=self.legs.profile,
+            provider_id=project.provider_id,
+            profile=project.profile,
             objective=project.stamp.objective,
             inputs=self._inputs(project.snapshot),
             stops=finding.stops,

@@ -25,6 +25,9 @@ from pytest_bdd import given, parsers, then, when
 from overland_planner.adapters.routing.mock_routing_provider import MockRoutingProvider, read_road_map
 from overland_planner.adapters.routing.valhalla_routing_provider import ValhallaRoutingProvider
 from overland_planner.application.planning.facade import PlanJobRegistry, PlanRequestJob
+from overland_planner.application.platform.diagnostics_service import DiagnosticsService
+from overland_planner.application.ports.diagnostics_reader import JobLogRow
+from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.routing_provider import (
     ProviderUnavailable,
     ProviderUnreachable,
@@ -408,7 +411,46 @@ def _the_plan_is_marked_as_retried(world: ContractWorld) -> None:
     (entry,) = job_log.rows
     row = entry.columns()
     assert (ended.state, ended.retried, ended.legs_new) == ("done", True, 2)
-    assert (row["terminal_state"], row["retried"], row["elapsed_ms"]) == ("done", True, 0)
+    assert (row["terminal_state"], row["retried"]) == ("done", True)
+    report = _diagnostics_over(
+        JobLogRow(
+            project_id=PROJECT,
+            project_name="Torino to Susa",
+            started_at=entry.started_at,
+            terminal_state=str(row["terminal_state"]),
+            elapsed_ms=int(str(row["elapsed_ms"])),
+            memo_hit=bool(row["memo_hit"]),
+            items_included=int(str(row["items_included"])),
+            retried=bool(row["retried"]),
+        ),
+        clock,
+    )
+    band = "le_30"  # two items included
+    assert report.k5.retried_jobs[band] == 1, "the retried job is counted apart"
+    assert report.k5.e2e_p95_by_band_s[band] is not None, "the retried job is left out of the 3-minute figure"
+    assert report.jobs_by_terminal_state == {"done": 1}
+
+
+def _diagnostics_over(job: JobLogRow, clock: FakeClock) -> Any:
+    """The K5 population the diagnostics count from one job row: the real `DiagnosticsService` over a reader of it."""
+
+    class _OneJob:
+        def project_exists(self, project_id: str) -> bool:
+            return True
+
+        def jobs_since(self, since: Any) -> list[JobLogRow]:
+            return [job]
+
+        def plan_runs(self) -> list[Any]:
+            return []
+
+        def refusals_since(self, since: Any) -> list[Any]:
+            return []
+
+        def probe(self) -> Any:
+            return ProbeResult(outcome="ok")
+
+    return DiagnosticsService(_OneJob(), clock, version="test", process_started_at=clock.now()).report()
 
 
 # Scenario: The offline road map reports connections and failures the same way as the routing engine
