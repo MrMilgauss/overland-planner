@@ -4,7 +4,7 @@
 // tests/e2e/run-map.spec.ts; the planner's API is a fetch stub.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11).
 import '@testing-library/jest-dom/vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const maps = vi.hoisted(() => ({
@@ -12,6 +12,7 @@ const maps = vi.hoisted(() => ({
   controls: [] as unknown[],
   markers: [] as { element: HTMLElement; lngLat: unknown }[],
   fitted: [] as unknown[],
+  handlers: {} as Record<string, (event: unknown) => void>,
   images: [] as string[],
   removed: 0,
 }));
@@ -21,9 +22,19 @@ vi.mock('maplibre-gl', () => {
     constructor(options: { style: unknown; container: HTMLElement }) {
       maps.created.push(options);
     }
-    on(event: string, handler: () => void) {
+    on(event: string, handler: (event?: unknown) => void) {
       if (event === 'load') queueMicrotask(handler);
+      else maps.handlers[event] = handler;
       return this;
+    }
+    getCenter() {
+      return { lng: 7, lat: 45 };
+    }
+    getZoom() {
+      return 9;
+    }
+    project([lng, lat]: [number, number]) {
+      return { x: lng * 100, y: lat * 100 };
     }
     addControl(control: unknown) {
       maps.controls.push(control);
@@ -117,6 +128,7 @@ beforeEach(() => {
     maps.images.length =
       0;
   maps.removed = 0;
+  maps.handlers = {};
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -167,5 +179,65 @@ describe('RunMap', () => {
       'This plan run has no route to draw',
     );
     expect(maps.created).toHaveLength(0);
+  });
+
+  describe('the "Click on map" mode (step 10-05)', () => {
+    const click = (x: number, y: number, lng: number, lat: number) =>
+      maps.handlers.click({ point: { x, y }, lngLat: { lng, lat } });
+
+    async function drawn() {
+      const added = vi.fn();
+      const view = render(RunMap, { planRunId: 'r1', projectId: 'p1', onplaceadded: added });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+      return { added, view };
+    }
+
+    function acceptingPlaces() {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
+        '/api/projects/p1/pois': { status: 201, body: { id: 'n' } },
+      });
+    }
+
+    it('opens a name form at a click and adds the place at the clicked coordinates', async () => {
+      acceptingPlaces();
+      const { added } = await drawn();
+      click(50, 60, 7.0486001, 45.1376004); // not in the mode: no form
+      expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map' }));
+      expect(screen.getByRole('button', { name: 'Click on map' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      click(50, 60, 7.0486001, 45.1376004);
+      await fireEvent.input(await screen.findByLabelText('Name'), {
+        target: { value: 'Susa trailhead' },
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+      await waitFor(() => expect(added).toHaveBeenCalledTimes(1));
+      const post = vi.mocked(fetch).mock.calls.find(([url]) => url === '/api/projects/p1/pois')!;
+      expect(JSON.parse(String((post[1] as RequestInit).body))).toEqual({
+        name: 'Susa trailhead',
+        lat: 45.1376,
+        lon: 7.0486,
+      });
+      expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument();
+    });
+
+    it('closes the form on a click elsewhere and adds nothing', async () => {
+      acceptingPlaces();
+      await drawn();
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map' }));
+      click(703, 4505, 7.03, 45.05);
+      expect(await screen.findByRole('form', { name: 'Add a place here' })).toBeInTheDocument();
+      click(10, 10, 6.5, 44.5);
+      await waitFor(() =>
+        expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument(),
+      );
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/projects/p1/pois')).toBe(
+        false,
+      );
+    });
   });
 });

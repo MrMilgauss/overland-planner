@@ -161,7 +161,7 @@
           <option value="time">Minimise road time</option>
         </select>
       </form>
-      <PlanPanel {projectId} objective={project.objective ?? 'distance'} />
+      <PlanPanel {projectId} objective={project.objective ?? 'distance'} onplaceadded={refresh} />
     </section>
   {/if}
 </main>

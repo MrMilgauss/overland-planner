@@ -64,3 +64,31 @@ def test_giulia_uses_the_map_on_her_phone() -> None:
 @scenario(FEATURE, "A map tile address carrying a private access key stops the planner at start-up")
 def test_a_map_tile_address_carrying_a_private_access_key_stops_the_planner_at_start_up() -> None:
     """The real server process refuses to start: one `health.startup.refused` line names setting and parameter."""
+
+
+@pytest.mark.solver_child
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "Marco adds a trailhead POI by clicking the map")
+def test_marco_adds_a_trailhead_poi_by_clicking_the_map() -> None:
+    """The run map in Chromium: "Click on map", a click at Susa, the name form, Add: the POI is where he clicked."""
+
+
+@pytest.mark.solver_child
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "A POI at a trail entry can become the Start")
+def test_a_poi_at_a_trail_entry_can_become_the_start() -> None:
+    """A click next to an entry marker takes the marker's own coordinates; the planner takes that POI as the Start."""
+
+
+@pytest.mark.solver_child
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "Cancelling the name prompt adds nothing")
+def test_cancelling_the_name_prompt_adds_nothing() -> None:
+    """Cancel closes the name form and the planner holds no new place."""
+
+
+@pytest.mark.solver_child
+@pytest.mark.wiring_e2e
+@scenario(FEATURE, "A POI added on the map marks the plan stale")
+def test_a_poi_added_on_the_map_marks_the_plan_stale() -> None:
+    """The plan run computed before the click is Stale after it (the existing revision rule)."""

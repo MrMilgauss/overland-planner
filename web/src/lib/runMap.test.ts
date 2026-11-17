@@ -15,6 +15,8 @@ import {
   type MarkerProperties,
   type RunGeometry,
   type RunMapPlan,
+  placeClicked,
+  SNAP_PIXELS,
 } from './runMap';
 
 const CONFIG: MapConfig = {
@@ -235,5 +237,35 @@ describe('the direction arrow image', () => {
     expect([alpha(0, 0), alpha(23, 0), alpha(0, 23), alpha(23, 23), alpha(1, 12)]).toEqual([
       0, 0, 0, 0, 0,
     ]);
+  });
+});
+
+describe('placeClicked: the place a click on the map stands for', () => {
+  const ENTRY = { x: 200, y: 100, lngLat: [7.041234567, 45.056] as [number, number] };
+  const click = (away: number) => ({ x: ENTRY.x + away, y: ENTRY.y });
+
+  it.each([
+    [0, true],
+    [11, true],
+    [SNAP_PIXELS, true],
+    [13, false],
+    [60, false],
+  ])('a click %i px from an entry or exit marker takes its exact place: %s', (away, snapped) => {
+    const place = placeClicked(click(away), [7.0123456789, 45.2], [ENTRY]);
+    expect(place).toEqual(
+      snapped ? { lat: 45.056, lon: 7.041234567 } : { lat: 45.2, lon: 7.012346 },
+    );
+  });
+
+  it('takes the nearer of two markers within reach, and rounds a click to 6 decimals', () => {
+    const near = { x: 205, y: 100, lngLat: [7.5, 45.5] as [number, number] };
+    expect(placeClicked({ x: 204, y: 100 }, [1, 2], [ENTRY, near])).toEqual({
+      lat: 45.5,
+      lon: 7.5,
+    });
+    expect(placeClicked({ x: 0, y: 0 }, [7.12345649, 45.1234565], [])).toEqual({
+      lat: 45.123457,
+      lon: 7.123456,
+    });
   });
 });

@@ -73,6 +73,8 @@ const UNAVAILABLE_GREY = '#6b7280';
 const LINE_WIDTH = 4;
 const ARROW_SPACING = 80;
 const DISPLAY_DECIMALS = 1e6;
+/** A click this close to an entry or exit marker (inclusive) means that marker's place. */
+export const SNAP_PIXELS = 12;
 
 const is = (property: string, value: string): ExpressionSpecification => [
   '==',
@@ -285,4 +287,30 @@ export function buildRunMap(geometry: RunGeometry, config: MapConfig): RunMapPla
     overlays,
     bounds: boundsOf(points),
   };
+}
+
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+/** An entry or exit marker as the screen has it now: where it is drawn and where it stands. */
+export interface MarkerSpot extends ScreenPoint {
+  lngLat: LngLat;
+}
+
+export interface Place {
+  lat: number;
+  lon: number;
+}
+
+/** The place a click on the map stands for: the exact place of the nearest entry or exit marker within SNAP_PIXELS of
+ * the click, else the clicked place to 6 decimals (about 0.1 m). */
+export function placeClicked(click: ScreenPoint, clickedAt: LngLat, markers: MarkerSpot[]): Place {
+  const gap = (marker: MarkerSpot): number => Math.hypot(marker.x - click.x, marker.y - click.y);
+  const near = markers
+    .filter((marker) => gap(marker) <= SNAP_PIXELS)
+    .sort((a, b) => gap(a) - gap(b))[0];
+  if (near) return { lat: near.lngLat[1], lon: near.lngLat[0] };
+  return { lat: rounded(clickedAt[1]), lon: rounded(clickedAt[0]) };
 }

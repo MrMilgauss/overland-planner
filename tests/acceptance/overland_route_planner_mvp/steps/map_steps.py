@@ -21,8 +21,15 @@ from urllib.parse import urlsplit
 from pytest_bdd import given, parsers, then, when
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from tests.acceptance.overland_route_planner_mvp.steps.browser import REPO_ROOT, MapView, PhoneMapJourney
-from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import plan_run_detail
+from tests.acceptance.overland_route_planner_mvp.steps.browser import (
+    REPO_ROOT,
+    MapView,
+    PhoneMapJourney,
+    PoiClickJourney,
+    PoiClickView,
+)
+from tests.acceptance.overland_route_planner_mvp.steps.catalog_steps import require_success, set_anchors
+from tests.acceptance.overland_route_planner_mvp.steps.direction_steps import plan_run_detail, runs_by_number
 from tests.acceptance.overland_route_planner_mvp.steps.places import ENTRY_EXIT_TOLERANCE_M, PLACES, distance_m
 from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     ASSIETTA,
@@ -30,6 +37,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import (
     HOME,
     calculate_a_plan,
     ensure_item,
+    prepare_day_trip,
     stops,
 )
 from tests.acceptance.overland_route_planner_mvp.steps.planner import ServerPlanner
@@ -303,6 +311,19 @@ def then_the_attribution_is_always_given(world: PlannerWorld, credit: str) -> No
 
 
 # ------------------------------------------------------------------------------- Giulia's phone (step 10-04)
+def serve_to_the_browser(world: PlannerWorld) -> ServerPlanner:
+    """The browser needs a real server: the planner that computed the run is replaced by one on the same data folder."""
+    if isinstance(world.planner, ServerPlanner):
+        return world.planner
+    assert world.planner is not None, "the planner is not running"
+    world.planner.stop()
+    world.environ["MAP_TILE_URL"] = BLANK_TILE_URL
+    server = ServerPlanner(world.environ, REPO_ROOT)
+    world.planner = server
+    server.start()
+    return server
+
+
 @when(
     parsers.re(r"Giulia opens the map of plan run #(?P<number>\d+) on her (?P<width>\d+) px wide iPhone"),
     converters={"number": int, "width": int},
@@ -312,13 +333,7 @@ def when_giulia_opens_the_map_on_her_phone(world: PlannerWorld, number: int, wid
     assert width == PhoneMapJourney.SCREEN_WIDTH, f"the phone journey runs at {PhoneMapJourney.SCREEN_WIDTH} px"
     run_id = str(plan_run_detail(world, number)["id"])
     assert world.project_id is not None, "no project is open"
-    if not isinstance(world.planner, ServerPlanner):
-        assert world.planner is not None, "the planner is not running"
-        world.planner.stop()
-        world.environ["MAP_TILE_URL"] = BLANK_TILE_URL
-        server = ServerPlanner(world.environ, REPO_ROOT)
-        world.planner = server
-        server.start()
+    serve_to_the_browser(world)
     world.scratch["map_run_id"] = run_id
     journey = PhoneMapJourney(world.project_id, world.data_dir.parent / "phone-map")
     world.scratch["map_view"] = journey.run(world.planner.base_url)
@@ -346,3 +361,121 @@ def then_she_can_read_the_stop_numbers(world: PlannerWorld) -> None:
         if number is not None and props(f)["marker"] in {"stop", "start", "end", "start_end"}
     }
     assert drawn and drawn <= shown, f"the map draws stops {sorted(drawn)} but the phone showed {sorted(shown)}"
+
+
+# ------------------------------------------------------------------------- POI by map click (step 10-05, US-16)
+CLICK_MODE = "Click on map"
+SUSA = (45.1376, 7.0486)  # the place of Marco's click; the browser clicks the pixel nearest to it, zoomed in
+CLICK_PIXELS = (
+    2.0  # the browser clicks the pixel nearest to the place: the POI is within these pixels of it, on the ground
+)
+SAME_PLACE_M = 1.0  # a click on an entry marker takes the marker's own coordinates
+
+
+def open_the_day_trip_map(world: PlannerWorld) -> None:
+    """The first trip with a plan run, so that its map has trails to click on."""
+    prepare_day_trip(world)
+    calculate_a_plan(world)
+
+
+def click_on_the_map(world: PlannerWorld, action: str, name: str = "", at: tuple[float, float] = SUSA) -> None:
+    """The browser run of one action on the run map; what it showed is kept for the Then steps."""
+    assert world.project_id is not None, "no project is open"
+    server = serve_to_the_browser(world)
+    journey = PoiClickJourney(world.project_id, world.data_dir.parent / f"poi-map-{action}")
+    world.scratch["poi_view"] = journey.run(server.base_url, action, name, at)
+
+
+def poi_named(world: PlannerWorld, name: str) -> dict[str, Any]:
+    return world.item_named(name)
+
+
+@given(parsers.re(r'the map of "(?P<project>[^"]+)" is open in "Click on map" mode'))
+def given_the_map_is_open_in_click_mode(world: PlannerWorld, project: str) -> None:
+    assert project == FIRST_TRIP, f"only {FIRST_TRIP!r} has a day trip to plan here"
+    open_the_day_trip_map(world)
+
+
+@given(
+    parsers.re(r"Marco has clicked the map at (?P<lat>[\d.]+), (?P<lon>[\d.]+)"),
+    converters={"lat": float, "lon": float},
+)
+def given_marco_has_clicked_the_map_at(world: PlannerWorld, lat: float, lon: float) -> None:
+    world.scratch["clicked_at"] = (lat, lon)
+
+
+@given(parsers.re(r"Marco has clicked the map$"))
+def given_marco_has_clicked_the_map(world: PlannerWorld) -> None:
+    world.scratch["clicked_at"] = SUSA
+
+
+@given(parsers.re(r'track "(?P<track>[^"]+)" has its entry at (?P<place>.+)'))
+def given_the_track_has_its_entry_at(world: PlannerWorld, track: str, place: str) -> None:
+    open_the_day_trip_map(world)
+    entry = world.item_named(track)["entry"]
+    assert_near([entry["lon"], entry["lat"]], place, f"the entry of {track!r}")
+
+
+@given(parsers.re(r'Marco has added POI "(?P<poi>[^"]+)" by clicking the entry marker'))
+def given_marco_has_added_a_poi_on_the_entry_marker(world: PlannerWorld, poi: str) -> None:
+    click_on_the_map(world, "entry", poi)
+
+
+@given(parsers.re(r"plan run #4 is up to date"))
+def given_plan_run_4_is_up_to_date(world: PlannerWorld) -> None:
+    given_plan_run_4_has_been_computed(world, FIRST_TRIP)
+    run = runs_by_number(world)[RUN_4]
+    assert run.get("stale") is False, f"plan run #4 is not up to date: {run}"
+
+
+@when(parsers.re(r'he names the POI "(?P<name>[^"]+)"'))
+def when_he_names_the_poi(world: PlannerWorld, name: str) -> None:
+    click_on_the_map(world, "click", name, world.scratch["clicked_at"])
+
+
+@when("he cancels the name prompt")
+def when_he_cancels_the_name_prompt(world: PlannerWorld) -> None:
+    """Cancel in the browser; the catalog before and after it is what `no POI is added` (slice 01a) compares."""
+    serve_to_the_browser(world)
+    world.before = world.catalog_view()
+    click_on_the_map(world, "cancel", at=world.scratch["clicked_at"])
+    world.after = world.catalog_view()
+    view: PoiClickView = world.scratch["poi_view"]
+    assert view.form_shown, "the click opened no name form to cancel"
+    assert view.form_gone, "the name form is still open after Cancel"
+
+
+@when(parsers.re(r'Marco adds "(?P<name>[^"]+)" by clicking the map'))
+def when_marco_adds_a_poi_by_clicking_the_map(world: PlannerWorld, name: str) -> None:
+    click_on_the_map(world, "click", name)
+
+
+@when(parsers.re(r'he sets "(?P<name>[^"]+)" as Start'))
+def when_he_sets_the_poi_as_start(world: PlannerWorld, name: str) -> None:
+    set_anchors(world, name, HOME)
+    require_success(world, f"set {name!r} as Start")
+
+
+@then(
+    parsers.re(r'POI "(?P<name>[^"]+)" is added at (?P<lat>[\d.]+), (?P<lon>[\d.]+)'),
+    converters={"lat": float, "lon": float},
+)
+def then_the_poi_is_added_at(world: PlannerWorld, name: str, lat: float, lon: float) -> None:
+    view: PoiClickView = world.scratch["poi_view"]
+    assert view.form_shown, f"the click opened no name form (the {CLICK_MODE!r} button: {view.mode_seen})"
+    where = poi_named(world, name)["location"]
+    gap = distance_m(where["lat"], where["lon"], lat, lon)
+    reach = CLICK_PIXELS * view.metres_per_pixel
+    assert gap <= reach, (
+        f"{name!r} was added {gap:.0f} m from the click, a pixel there is {view.metres_per_pixel:.1f} m"
+    )
+    assert view.listed, f"{name!r} is not shown in the list of trails and places"
+
+
+@then(parsers.re(r'"(?P<poi>[^"]+)" is the Start at the entry coordinates of "(?P<track>[^"]+)"'))
+def then_the_poi_is_the_start_at_the_entry(world: PlannerWorld, poi: str, track: str) -> None:
+    start = poi_named(world, poi)
+    entry = world.item_named(track)["entry"]
+    assert start["anchor"] in {"start", "start_end"}, f"{poi!r} is {start['anchor']!r}, not the Start"
+    gap = distance_m(start["location"]["lat"], start["location"]["lon"], entry["lat"], entry["lon"])
+    assert gap <= SAME_PLACE_M, f"{poi!r} is {gap:.1f} m from the entry of {track!r}"

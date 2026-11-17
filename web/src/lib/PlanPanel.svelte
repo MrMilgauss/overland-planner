@@ -41,8 +41,11 @@
     finalising: 'Finalising',
   };
 
-  let { projectId, objective = 'distance' }: { projectId: string; objective?: Objective } =
-    $props();
+  let {
+    projectId,
+    objective = 'distance',
+    onplaceadded,
+  }: { projectId: string; objective?: Objective; onplaceadded?: () => void } = $props();
 
   let pressing = $state(false);
   let watchedJobId = $state<string | undefined>();
@@ -249,7 +252,7 @@
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
-  <RunMap planRunId={readyRun.id} />
+  <RunMap planRunId={readyRun.id} {projectId} {onplaceadded} />
 {/if}
 
 <style>

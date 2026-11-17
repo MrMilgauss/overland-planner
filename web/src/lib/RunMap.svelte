@@ -3,13 +3,29 @@
   // a screen is runMap.ts's; this draws it with MapLibre, loaded only when a run is shown, and tells a refusal in the
   // planner's words. The map settings are read once; the geometry again whenever the run shown changes.
   import 'maplibre-gl/dist/maplibre-gl.css';
-  import { failureText, readMapConfig, readRunGeometry } from './api';
-  import { arrowImage, ARROW_IMAGE, buildRunMap, type MapConfig, type MapOverlay } from './runMap';
+  import { addPlace, failureText, readMapConfig, readRunGeometry } from './api';
+  import PoiClickForm from './PoiClickForm.svelte';
+  import {
+    arrowImage,
+    ARROW_IMAGE,
+    buildRunMap,
+    placeClicked,
+    type MapConfig,
+    type MapOverlay,
+    type Place,
+  } from './runMap';
 
-  let { planRunId }: { planRunId: string } = $props();
+  // `projectId` turns on the "Click on map" mode; `onplaceadded` tells the workspace to list the new place.
+  let {
+    planRunId,
+    projectId,
+    onplaceadded,
+  }: { planRunId: string; projectId?: string; onplaceadded?: () => void } = $props();
 
   let container = $state<HTMLDivElement | undefined>();
   let problem = $state('');
+  let clickMode = $state(false);
+  let clicked = $state<(Place & { x: number; y: number }) | undefined>();
   let settings: Promise<MapConfig> | undefined;
 
   const NUMBERED = ['stop', 'start', 'end', 'start_end'];
@@ -51,7 +67,34 @@
     map.addControl(new maplibre.AttributionControl({ compact: false })); // always open: nothing to close
     map.addControl(new maplibre.NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => map.addImage(ARROW_IMAGE, arrowImage()));
+    // The view is read-only on the frame, so that a test can turn a place into the pixel to click.
+    const publish = (): void => {
+      const centre = map.getCenter();
+      frame.dataset.center = `${centre.lng},${centre.lat}`;
+      frame.dataset.zoom = String(map.getZoom());
+    };
+    map.on('move', publish);
+    map.on(
+      'click',
+      (event: { point: { x: number; y: number }; lngLat: { lng: number; lat: number } }) => {
+        if (!clickMode) return;
+        if (clicked) {
+          clicked = undefined; // a click elsewhere closes the form
+          return;
+        }
+        const entriesAndExits = plan.overlays
+          .filter((overlay) => overlay.kind === 'entry' || overlay.kind === 'exit')
+          .map((overlay) => ({ ...map.project(overlay.lngLat), lngLat: overlay.lngLat }));
+        const place = placeClicked(
+          event.point,
+          [event.lngLat.lng, event.lngLat.lat],
+          entriesAndExits,
+        );
+        clicked = { ...place, x: event.point.x, y: event.point.y };
+      },
+    );
     if (plan.bounds) map.fitBounds(plan.bounds, { padding: FIT_PADDING, animate: false });
+    publish();
     for (const overlay of plan.overlays) {
       const anchor = NUMBERED.includes(overlay.kind) ? 'bottom' : 'center';
       new maplibre.Marker({ element: overlayElement(overlay), anchor })
@@ -61,12 +104,24 @@
     return () => map.remove();
   }
 
+  async function addClicked(name: string): Promise<void> {
+    if (!clicked || !projectId) return;
+    await addPlace(projectId, { name, lat: clicked.lat, lon: clicked.lon });
+    onplaceadded?.();
+  }
+
+  function toggleClickMode(): void {
+    clickMode = !clickMode;
+    clicked = undefined;
+  }
+
   $effect(() => {
     const id = planRunId;
     const frame = container;
     if (!frame) return;
     let active = true;
     problem = '';
+    clicked = undefined;
     const drawn = draw(id, frame, () => active).catch((error: unknown) => {
       if (active) problem = failureText(error);
       return () => {};
@@ -82,12 +137,42 @@
   {#if problem}
     <p role="alert">{problem}</p>
   {/if}
-  <div class="map" class:empty={problem !== ''} bind:this={container}></div>
+  {#if projectId && !problem}
+    <button type="button" aria-pressed={clickMode} onclick={toggleClickMode}>Click on map</button>
+  {/if}
+  <div class="frame" class:empty={problem !== ''}>
+    <div class="map" bind:this={container}></div>
+    {#if clicked}
+      <div
+        class="name-form"
+        style:left="max(0px, min({clicked.x}px, 100% - 15rem))"
+        style:top="min({clicked.y + 8}px, 100% - 9rem)"
+      >
+        <PoiClickForm add={addClicked} close={() => (clicked = undefined)} />
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
   section {
     margin: 1rem 0;
+  }
+  .frame {
+    position: relative;
+  }
+  .name-form {
+    position: absolute;
+    z-index: 2;
+  }
+  button {
+    margin-bottom: 0.4rem;
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+  button[aria-pressed='true'] {
+    background: #1f2937;
+    color: #fff;
   }
   .map {
     width: 100%;

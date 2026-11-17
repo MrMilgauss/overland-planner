@@ -184,3 +184,63 @@ class PhoneMapJourney:
             seen["panned"],
             seen["zoomed"],
         )
+
+
+@dataclass(frozen=True)
+class PoiClickView:
+    """What the run map showed of a click (slice 09, step 10-05, `tests/e2e/run-map.spec.ts`): whether the click opened
+    the name form, whether the form was gone afterwards, whether the new place shows in the list of items, and what the
+    "Click on map" control looked like."""
+
+    form_shown: bool
+    form_gone: bool
+    listed: bool
+    mode_seen: str
+    metres_per_pixel: float
+
+
+class PoiClickJourney:
+    """Marco clicks the map of a project's plan run: `click` (at a place, then names it), `entry` (on an entry marker,
+    then names it) or `cancel` (at a place, then Cancel). The browser is a 1280 px wide Chromium."""
+
+    def __init__(self, project_id: str, workdir: Path) -> None:
+        self._project_id = project_id
+        self._workdir = workdir
+
+    def run(self, planner_url: str, action: str, name: str, at: tuple[float, float]) -> PoiClickView:
+        _require_playwright()
+        _require_current_web_page()
+        self._workdir.mkdir(parents=True, exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k != "E2E_START_LOCAL"}
+        env.update(
+            {
+                "PLANNER_URL": planner_url,
+                "MAP_PROJECT_ID": self._project_id,
+                "MAP_RESULT_DIR": str(self._workdir),
+                "MAP_POI_ACTION": action,
+                "MAP_POI_NAME": name,
+                "MAP_POI_LAT": str(at[0]),
+                "MAP_POI_LON": str(at[1]),
+                "NODE_PATH": str(WEB_DIR / "node_modules"),
+                "NO_COLOR": "1",
+            }
+        )
+        command = [
+            "npx",
+            "--no-install",
+            "playwright",
+            "test",
+            "run-map",
+            "--project=chromium",
+            "--reporter=line",
+            "-g",
+            "POI",
+        ]
+        result = subprocess.run(
+            command, cwd=WEB_DIR, env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S, check=False
+        )
+        assert result.returncode == 0, f"Marco could not click the map:\n{(result.stdout + result.stderr)[-1500:]}"
+        seen: dict[str, Any] = json.loads((self._workdir / "result.json").read_text())
+        return PoiClickView(
+            seen["form_shown"], seen["form_gone"], seen["listed"], seen["mode_seen"], seen["metres_per_pixel"]
+        )
