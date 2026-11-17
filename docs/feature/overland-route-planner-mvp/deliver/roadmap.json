@@ -2,7 +2,7 @@
   "roadmap": {
     "project_id": "overland-route-planner-mvp",
     "created_at": "2026-11-02T19:53:04Z",
-    "total_steps": 93
+    "total_steps": 99
   },
   "phases": [
     {
@@ -3057,6 +3057,208 @@
           "implementation_notes": "Slice 06a; D100, D113, D235, D236, D250; tests/acceptance/overland_route_planner_mvp/test_slice_03.py and steps/performance_steps.py (the @pi pattern: RemotePlanner, PERF_REPORT), deploy/scripts/acceptance-pi.sh and perf-pi.sh (what they run: `--run-external --run-pending=slice-06a -m \"pi and real_provider\"`; once the tag is removed the flag is harmless). The live steps create their own project named with the `__demo` prefix and never read or write any other project (the owner's household projects must stay untouched); they leave the demo project in place (planner-perf has its own data volume). The feature file's only change is its tag line (`git diff` shows that one line); the contract feature's only change is the pending state of its @slice-06a scenarios, if that is a tag. The crafter cannot run the live scenarios: prove their step definitions against a local planner started with ROUTING_PROVIDER=valhalla and a scripted transport where that is cheap, and say what was not proven. Commit: 'test(acceptance): slice 06a blocking in CI; live scenarios for the Pi'. LAST STEP OF SLICE 06a unless the gate adds 09-12: D246's contingency is the orchestrator's (if the slowest of 10 cold 60-item plans on the Pi exceeds 150 s, a step 09-12 gives the resolver rectangular batches, with its own RED, before the slice closes; it would change slice 03's per-origin progress to per-batch progress and keep Stop between batches).\n\nPHASE RULES (every step of phase 09): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_06a.py (pytest-bdd, as test_slice_03b.py does; the feature keeps its `@slice-06a @pending` tag line until 09-10, so run them with `--run-pending=slice-06a`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (09-01, 09-05, 09-06, 09-07, 09-08, 09-09); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
         }
       ]
+    },
+    {
+      "id": "10",
+      "name": "Slice 09: direction on the map, and POIs by map click",
+      "status": "APPROVED 2026-11-17 (orchestrator as architect under the owner's delegation, D233; D251-D256)",
+      "description": "US-15 (J-02), US-16 (J-01); HC-1 (visual), FR-6.5, FR-3.1; the last slice of release R2a (D233). The run map: tracks with arrows in the driving direction, entry and exit markers, road legs in their own style, Unconfirmed legs and retraces (since slice 03b) in theirs, numbered stops, one S/E marker, credited tiles, usable on a 390 px phone; POI by map click. Road shapes via GET /api/plan-runs/{id}/geometry (D28, D251-D254). Deferred with `@pending` to slice 08: the reversed track, the Warnings on the map, the duplicate-POI warning (D256). OUT: offline tiles, geocoding. The golden order is untouched (no planning change). ESTIMATE: 21 h against the brief's 1 day; reference class: phases 05-09. Roadmap review: done by the orchestrator against the feature (15 scenarios: 12 in, 3 deferred with reason, none orphaned) because the reviewer budget is spent on the gates; recorded as a deviation.",
+      "steps": [
+        {
+          "id": "10-01",
+          "name": "Road shapes from the road map: route_shape on the port, Valhalla /route, kept in memory",
+          "description": "The routing port answers the shape of the road between two points (D252): the offline road map the straight line, Valhalla its /route shape decoded from polyline6, through the same limit of two calls, retries and error mapping; an answer without a route is a straight line marked unavailable. Shapes are kept per road map, profile and pair for the process's life.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "09-11"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "The port (application/ports/routing_provider.py) gains `route_shape(origin, destination) -> RoadShape` (domain/routing: `points: tuple[Coordinate, ...]`, `available: bool`); identical points answer a one-point shape. The offline road map answers the straight line `(origin, destination)`, available, and never fails on its fault plan's probe path.",
+            "ValhallaRoutingProvider.route_shape posts `/route` with the recorded request shape of `route_torino_susa_4x4v1.json` (two locations with `search_cutoff`, the 4x4 costing, `units: kilometers`, `directions_type: none`), decodes the leg's `shape` (polyline with precision 6) to coordinates (checked against the recorded answer: first and last points, point count), through the process-wide limit of 2 calls, the same retries and typed errors as the matrix; a 400 with error 442 or 171 answers the straight line with `available` false (`route_442_island_source.json`, `route_171_near_point_cutoff250.json`), never an error.",
+            "A shape store in application/routing keeps shapes per `(provider_id, profile, pair)` (the identity read once by the caller, as the legs, D244/M1 of the slice 06a review), thread-safe, never kept when `available` is false; a property test shows a second request for the same pair asks the road map nothing.",
+            "The polyline6 decoder is a small pure function with a property test (encode-decode round trip over coordinates at 6 decimals) and one recorded example."
+          ],
+          "test_file": "tests/integration/adapters/routing/test_valhalla_route_shape.py",
+          "scenario_name": "tests/integration/adapters/routing/test_valhalla_route_shape.py | tests/unit/application/routing/test_shape_store.py | tests/unit/domain/routing/test_polyline.py",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/routing_provider.py",
+            "src/overland_planner/domain/routing/road_shape.py",
+            "src/overland_planner/domain/routing/polyline.py",
+            "src/overland_planner/application/routing/shape_store.py",
+            "src/overland_planner/application/routing/facade.py",
+            "src/overland_planner/adapters/routing/valhalla_routing_provider.py",
+            "src/overland_planner/adapters/routing/mock_routing_provider.py",
+            "tests/integration/adapters/routing/test_valhalla_route_shape.py",
+            "tests/unit/application/routing/test_shape_store.py",
+            "tests/unit/domain/routing/test_polyline.py",
+            "tests/unit/application/planning/planning_doubles.py"
+          ],
+          "implementation_notes": "Slice 09; ADR-007 Amendment 2 (D252); ADR-013 sections 3 and 6. RED_ACCEPTANCE: NOT_APPLICABLE (no scenario turns green here; the map scenarios need the endpoint of 10-02). Read first: the port, the Valhalla adapter (`_call`, `_attempt`, `_place`, the probe's timeouts), the recordings route_torino_susa_4x4v1.json, route_geometry_leg.json, route_442_island_source.json, route_171_near_point_cutoff250.json (tests/contract/fixtures/valhalla-3.9.1/), and tests/contract/routing_port/recordings.py (`ScriptedEngine`). Valhalla's shape encoding is Google polyline with 6-digit precision. Every test double of the port gains the method (mypy strict). Commit: 'feat(routing): road shapes from the road map, kept in memory'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "10-02",
+          "name": "GET /api/plan-runs/{id}/geometry: the run's lines and markers in driving order",
+          "description": "One GeoJSON answer per run (D251): road legs, tracks in the direction they are driven, retraces, numbered stops, entry and exit markers and one S/E marker for a round trip; road legs drawn as straight lines marked unavailable when the shapes cannot be fetched (D253); each answer logs plan.run.geometry_served (D254).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "10-01"
+          ],
+          "estimated_hours": 5,
+          "criteria": [
+            "A run-geometry service in application/planning builds the FeatureCollection from the stored run (stops, snapshot track versions, stored provider_id and profile): line features `kind` road | track | retrace with `stop`, `item_id`, `name`, `level`, `reason`, `geometry` (available | unavailable); point features `marker` stop | entry | exit | start_end | start | end with `stop` numbers 1..n in itinerary order; tracks and retraces from the canonical points of the snapshot's direction version, thinned to at most 1,500 points (first and last kept), track lines from entry to exit, retrace lines from exit to entry.",
+            "Road legs: when the road map's identity (read once) equals the run's stored provider_id and profile, each leg's shape comes from the shape store (fetched at most 2 at a time); when it differs, every road leg is the straight line marked unavailable and no road-map call is made; when the engine fails (typed error) the legs not yet fetched are straight lines marked unavailable and the answer is still 200. A Failed run answers 404 `not_found` 'This plan run has no route to draw'; an unknown run 404 as today.",
+            "`GET /api/plan-runs/{plan_run_id}/geometry` answers the collection; each answer logs one `plan.run.geometry_served` line with plan_run_id, legs, legs_fetched, unavailable and served_ms; OpenAPI snapshot regenerated on purpose.",
+            "Scenarios pass with `--run-pending=slice-09` at the HTTP API (the feature's header comment: map facts are checked through the run's map data): 'The map shows which way each trail is driven' (Strada dell'Assietta's line runs from its entry towards Sestriere, it has entry and exit markers, road legs are kind road and tracks kind track, stops numbered 1 to 11 in itinerary order), 'A round trip shows one combined Start and End marker', 'The map still shows the plan when road shapes are unavailable' (road legs straight and unavailable with the label data the web shows as 'geometry unavailable'; the tracks still there in their direction), 'Compromise legs stand out on the map' (the Unconfirmed leg is level unconfirmed with its reason, the retrace is kind retrace; the '!' badge and the 'retrace' label are the web's in 10-04).",
+            "`uv run pytest -q -m golden_order` passes; the plan job and its stored runs are unchanged."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+          "scenario_name": "The map shows which way each trail is driven | A round trip shows one combined Start and End marker | The map still shows the plan when road shapes are unavailable | Compromise legs stand out on the map",
+          "files_to_modify": [
+            "src/overland_planner/application/planning/run_geometry.py",
+            "src/overland_planner/application/planning/facade.py",
+            "src/overland_planner/adapters/http/planning_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/conftest.py",
+            "tests/unit/application/planning/test_run_geometry.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 09; ADR-007 Amendment 2 (D251, D253, D254); ADR-017 Amendment 2 (retrace row); ADR-018 (track versions, canonical points). Read first: application/planning/plan_run_queries.py (how a run and its stops are read), domain/planning/plan_run.py (PlanStop: kind, item_id, entry/exit, leg_confidence, leg_reason), application/catalog facade (`parse_canonical_points_file`, how the plan job reads canonical points by version), the slice 03b and 06a acceptance steps (how plan run #4 of the reference project and a run with an Unconfirmed leg and a retrace are built: reuse them, do not duplicate). 'Stops numbered 1 to 11': count what the reference run #4 has and say in the step's docstring how the scenario's 11 maps to it; if the reference project of the steps does not give 11 stops, report it to the orchestrator before changing anything (the feature text is the SSOT). Commit: 'feat(planning): the run's road shapes, tracks and markers for the map'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "10-03",
+          "name": "Map tiles from the settings, always credited; a keyed tile address stops the planner",
+          "description": "GET /api/config/map gives the web the tile address, attribution and maximum zoom from the settings (ADR-004); a tile address that carries a key, token or similar refuses the start naming the setting and the parameter, never its value.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "10-02"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Settings `MAP_TILE_URL` (default `https://tile.opentopomap.org/{z}/{x}/{y}.png`), `MAP_TILE_ATTRIBUTION` (default 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)'), `MAP_TILE_MAX_ZOOM` (default 17, 1 to 22); an empty value is the default; a URL that is not http(s) with a host or lacks `{z}`, `{x}`, `{y}` is refused; a query parameter whose name contains key, token, secret, signature or auth (any case) refuses the start naming MAP_TILE_URL and the parameter name, never its value (a property test over parameter names and values proves the value never appears in the message or the log).",
+            "`GET /api/config/map` answers `{tile_url, attribution, max_zoom}`; behind the household password like every other path; OpenAPI snapshot regenerated.",
+            "Scenarios pass with `--run-pending=slice-09`: 'The map uses Marco's chosen map tiles and always credits them' (at the API: the config names the OpenTopoMap address and the attribution text; the web's attribution control is checked in 10-04's Playwright run) and 'A map tile address carrying a private access key stops the planner at start-up' (the start is refused, one `health.startup.refused` line names the part that failed and the reason).",
+            "deploy/compose.yaml passes the three keys as `${KEY:-}`; .env.example documents them; the compose contract tests pin it."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+          "scenario_name": "The map uses Marco's chosen map tiles and always credits them | A map tile address carrying a private access key stops the planner at start-up",
+          "files_to_modify": [
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "src/overland_planner/adapters/http/platform_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "deploy/compose.yaml",
+            ".env.example",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/map_steps.py",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/contract/http/openapi.json"
+          ],
+          "implementation_notes": "Slice 09; ADR-004; ADR-003 Amendment 2 (D255); D20, D52; brief section 7 (fatal settings: keyed MAP_TILE_URL). Read first: bootstrap/settings.py (validators and InvalidSettingsError naming keys), the start-up refusal tests of earlier slices. The refusal message names the parameter, e.g. 'MAP_TILE_URL: carries the private parameter api_key'. Commit: 'feat(platform): map tiles from the settings; a keyed tile address refuses the start'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "10-04",
+          "name": "The run map in the browser: styles, arrows, markers, numbers, credit; usable on a phone",
+          "description": "MapLibre GL JS draws the run's geometry under the itinerary: tracks with arrows in the driving direction, entry and exit markers, numbered stops, one S/E marker, road legs in their own style, Unconfirmed legs with a '!' badge, the retrace labelled without arrows, unavailable legs dashed grey 'geometry unavailable'; the attribution always shown; pan and zoom on a 390 px phone.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "10-03"
+          ],
+          "estimated_hours": 5,
+          "criteria": [
+            "`maplibre-gl` 5.x is a pinned dependency in web/package.json and package-lock.json (bundled by Vite, no CDN); `npm audit --omit=dev --audit-level=high` passes; the built bundle size is reported.",
+            "A pure module web/src/lib/runMap.ts turns the geometry answer and the map config into MapLibre sources and layers (ADR-003 Amendment 2 styles); vitest covers it case by case: track layer with a line-placed arrow symbol, retrace layer without arrows and with the 'retrace' label, Unconfirmed style and a '!' badge point, unavailable style with 'geometry unavailable', markers (numbered stops, entry, exit, S/E), bounds that fit every feature.",
+            "RunMap.svelte shows the map of the run on screen below the itinerary (fetching /api/config/map once and the run's geometry when the run changes), with the attribution control that cannot be closed; a failed geometry answer shows its message and keeps the itinerary.",
+            "Playwright (tests/e2e/run-map.spec.ts, Chromium desktop and the iPhone 14 profile) against `make run-local` with MAP_TILE_URL pointing at a local blank tile: the canvas renders, the attribution text is visible, the numbered stop markers are readable, the map pans and zooms (drag and pinch or wheel), no horizontal scroll at 390 px. Scenario 'Giulia uses the map on her phone' passes with `--run-pending=slice-09` through the browser step pattern of steps/browser.py.",
+            "`make test-web` and `make e2e-local` pass; the fast suite stays green."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+          "scenario_name": "Giulia uses the map on her phone",
+          "files_to_modify": [
+            "web/package.json",
+            "web/package-lock.json",
+            "web/src/lib/runMap.ts",
+            "web/src/lib/runMap.test.ts",
+            "web/src/lib/RunMap.svelte",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/api.ts",
+            "tests/e2e/run-map.spec.ts",
+            "web/playwright.config.ts",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/browser.py"
+          ],
+          "implementation_notes": "Slice 09; ADR-003 Amendments 1 and 2 (D255); ADR-004; US-15 S4. The 'Giulia' persona stands for a phone check (the owner has no tablet and often no phone to hand: the Playwright iPhone 14 profile is the check). MapLibre needs WebGL: Chromium headless has it (SwiftShader); if WebKit headless cannot render, run the phone check in Chromium with the iPhone 14 viewport and touch and say so. Never fetch tiles from the internet in tests: serve a 256x256 blank PNG from the test server or a data route. The arrow image is drawn on a canvas at map load (`map.addImage`). Keep RunMap free of logic that vitest cannot reach: logic goes in runMap.ts. Commit: 'feat(web): the run map with direction, markers and stop numbers'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "10-05",
+          "name": "Add a POI by clicking the map",
+          "description": "'Click on map' mode on the run map: a click opens a name form at the click; a name adds the POI, Cancel or Escape adds nothing; a click near a track's entry or exit takes its exact coordinates, so a trailhead POI can become the Start; the plan is then Stale.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "10-04"
+          ],
+          "estimated_hours": 3.5,
+          "criteria": [
+            "A 'Click on map' toggle on the map; in that mode a click opens a small form (name field, Add, Cancel) anchored at the click and usable at 390 px; Add with a name calls `POST /api/projects/{id}/pois` with the clicked coordinates rounded to 6 decimals and shows the POI in the item list; an empty name keeps the form open with the API's message; Cancel, Escape or a click elsewhere closes it and adds nothing.",
+            "A click within 12 px of an entry or exit marker uses that marker's exact coordinates (pure function in runMap.ts with vitest cases at 11, 12 and 13 px).",
+            "Scenarios pass with `--run-pending=slice-09`: 'Marco adds a trailhead POI by clicking the map' (POI 'Susa trailhead' at 45.1376, 7.0486), 'A POI at a trail entry can become the Start' (POI 'Assietta trailhead' at the entry coordinates of 'Strada dell'Assietta', then set as Start through the existing anchors control or API), 'Cancelling the name prompt adds nothing', 'A POI added on the map marks the plan stale' (the latest run is Stale by the existing rule). The @ui ones run through Playwright as in 10-04; 'marks the plan stale' may be checked at the API after the browser action.",
+            "`make test-web`, `make e2e-local` and the fast suite pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+          "scenario_name": "Marco adds a trailhead POI by clicking the map | A POI at a trail entry can become the Start | Cancelling the name prompt adds nothing | A POI added on the map marks the plan stale",
+          "files_to_modify": [
+            "web/src/lib/RunMap.svelte",
+            "web/src/lib/runMap.ts",
+            "web/src/lib/runMap.test.ts",
+            "web/src/lib/PoiClickForm.svelte",
+            "web/src/lib/PoiClickForm.test.ts",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/api.ts",
+            "tests/e2e/run-map.spec.ts",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/browser.py"
+          ],
+          "implementation_notes": "Slice 09; US-16; ADR-003 Amendment 2 (D256); D6 (a POI at a trail entry serves as the Start). The duplicate-POI warning scenario stays with slice 08 (D256). In Playwright, a click at given coordinates: use the map's `project` of the coordinates to a pixel, exposed for tests through a data attribute or a small test hook on window only when the page is served by the e2e test server; do not ship a test hook that changes behaviour. Commit: 'feat(web): add a POI by clicking the map'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "10-06",
+          "name": "Slice 09 blocking in CI; deferred scenarios stay pending",
+          "description": "The feature loses its feature-level `@pending`; the three scenarios that need slice 08 carry their own `@pending`; PENDING_FLAGS gains slice-09; the e2e and perf tooling end at the road shapes; docs as built.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "10-05"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "In the slice-09 feature, `@pending` moves from the Feature tag line to the three deferred scenarios only ('The map follows a reversed track', 'Marco reviews the route with its warnings on the map and exports it', 'A POI clicked next to an existing POI is flagged as a possible duplicate'); no scenario's words change (`git diff` shows tag lines only); test_pending_slices.py no longer lists the slice-09 feature except through those pending scenarios; PENDING_FLAGS gains `--run-pending=slice-09`; pins in tests/ci prove the tag lines and the flag.",
+            "The 12 non-deferred scenarios pass without `--run-pending` and block in CI (job 2 for the API ones; the @ui ones where the existing @ui scenarios run); `solver_child` markers where a real solve runs; their added time in the fast suite reported in seconds.",
+            "tests/perf/perf_pi.py's e2e mode ends a run at the geometry answer when the planner offers it (already built in 08-07: prove it with a unit test against a planner fake that answers the endpoint), and the report says `end: geometry`.",
+            "Docs as built: brief section 5 (the geometry and map-config endpoints), ADR-007 Amendment 2 and ADR-003 Amendment 2 a closing 'as built' line naming any deviation; README one line on the map. The full local suite green (pass count reported); `make mutate` NOT run by the crafter."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+          "scenario_name": "NOT_APPLICABLE: no scenario of its own (it enables the twelve of 10-02 to 10-05 in CI)",
+          "files_to_modify": [
+            "tests/acceptance/overland_route_planner_mvp/slice-09-directional-map.feature",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_09.py",
+            "tests/acceptance/overland_route_planner_mvp/test_pending_slices.py",
+            ".github/workflows/ci.yml",
+            "tests/ci/test_ci_workflow.py",
+            "tests/perf/perf_pi.py",
+            "tests/perf/test_perf_pi_report.py",
+            "docs/product/architecture/brief.md",
+            "docs/product/architecture/adr-007-lazy-leg-geometry-and-leg-level-request-counting.md",
+            "docs/product/architecture/adr-003-frontend-svelte-maplibre.md",
+            "README.md"
+          ],
+          "implementation_notes": "Slice 09; D232, D256; CI D170 (pending-scenario gate). LAST STEP OF SLICE 09. Read the pins of slice 06a's enabling step in tests/ci/test_ci_workflow.py and follow them. Commit: 'test(acceptance): slice 09 blocking in CI; three scenarios wait for slice 08'.\n\nPHASE RULES (every step of phase 10): outside-in TDD. RED_ACCEPTANCE: bind the step's scenario(s) in tests/acceptance/overland_route_planner_mvp/test_slice_09.py (pytest-bdd, as test_slice_06a.py does; the feature keeps its `@slice-09 @pending` tag line until 10-06, so run them with `--run-pending=slice-09`) or, for contract scenarios, in tests/contract/routing_port/ (`--run-pending=slice-06a` as well), write their step definitions against the driving port (HTTP API through create_app; atdd-infrastructure-policy.md: fakes only for external ports), and see them fail for a business reason; log `--data FAIL`. The feature text is the SSOT (D140): never edit a scenario to fit the code; a wrong scenario is reported to the orchestrator. A step without a scenario of its own logs RED_ACCEPTANCE SKIPPED with `NOT_APPLICABLE: <reason>`. RED_UNIT: unit tests before production code, property-based with Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; adapters are tested against real infrastructure or recorded answers (respx), never with a mocked client; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait. GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` stays green in every step and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) in the steps that touch planning (10-02); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): httpx only in adapters; domain has no I/O; other application modules import `application.routing` only through its facade. API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log; the recorded Valhalla answers under tests/contract/fixtures/valhalla-3.9.1/ are read-only data. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the step's own solver_child or slow tests if it has any, `make lint`, `make test-web` when web/ changed, markdownlint when a .md changed. The crafter stops at the commit and never pushes."
+        }
+      ]
     }
   ],
   "implementation_scope": {
@@ -3088,34 +3290,40 @@
   },
   "validation": {
     "status": "approved",
-    "scope": "phase 09 (slice 06a)",
-    "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 2 BLOCKER, 5 HIGH, 5 MEDIUM, 4 LOW; scenario coverage complete, no orphan; every finding checked by the orchestrator and applied; integrity re-run by the orchestrator)",
+    "scope": "phase 10 (slice 09)",
+    "reviewer": "orchestrator self-check (scenario coverage 12 of 15, 3 deferred to slice 08 by D256; schema and integrity verified); no separate reviewer pass, recorded as a deviation",
     "approved_at": "2026-11-17",
     "previous_approval": {
       "status": "approved",
-      "scope": "phase 08 (slice 06a-ops)",
-      "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 1 BLOCKER, 8 HIGH, 7 MEDIUM, 8 LOW; every blocking finding checked by the orchestrator against the files and applied; D239; integrity re-run by the orchestrator)",
-      "approved_at": "2026-11-16",
+      "scope": "phase 09 (slice 06a)",
+      "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 2 BLOCKER, 5 HIGH, 5 MEDIUM, 4 LOW; scenario coverage complete, no orphan; every finding checked by the orchestrator and applied; integrity re-run by the orchestrator)",
+      "approved_at": "2026-11-17",
       "previous_approval": {
         "status": "approved",
-        "scope": "phase 06 (slices 03-ops, 03)",
-        "reviewer": "nw-acceptance-designer-reviewer (2nd pass APPROVED; 1st pass NEEDS_REVISION with 5 HIGH, 8 MEDIUM, 7 LOW; fixes and user rulings D223 applied; M4 rejected by the orchestrator; gate and integrity re-run by the orchestrator)",
-        "approved_at": "2026-11-09",
+        "scope": "phase 08 (slice 06a-ops)",
+        "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 1 BLOCKER, 8 HIGH, 7 MEDIUM, 8 LOW; every blocking finding checked by the orchestrator against the files and applied; D239; integrity re-run by the orchestrator)",
+        "approved_at": "2026-11-16",
         "previous_approval": {
           "status": "approved",
-          "scope": "phase 05 (slice 02)",
-          "reviewer": "nw-acceptance-designer-reviewer (1st pass APPROVED with 1 HIGH, 2 MEDIUM, 9 LOW; all applied with user decisions D217-D220; gate and integrity re-run by the orchestrator)",
-          "approved_at": "2026-11-08",
+          "scope": "phase 06 (slices 03-ops, 03)",
+          "reviewer": "nw-acceptance-designer-reviewer (2nd pass APPROVED; 1st pass NEEDS_REVISION with 5 HIGH, 8 MEDIUM, 7 LOW; fixes and user rulings D223 applied; M4 rejected by the orchestrator; gate and integrity re-run by the orchestrator)",
+          "approved_at": "2026-11-09",
           "previous_approval": {
             "status": "approved",
-            "scope": "phase 04 (slice 01b)",
-            "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
-            "approved_at": "2026-11-04",
+            "scope": "phase 05 (slice 02)",
+            "reviewer": "nw-acceptance-designer-reviewer (1st pass APPROVED with 1 HIGH, 2 MEDIUM, 9 LOW; all applied with user decisions D217-D220; gate and integrity re-run by the orchestrator)",
+            "approved_at": "2026-11-08",
             "previous_approval": {
               "status": "approved",
-              "scope": "phases 01-03",
-              "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
-              "approved_at": "2026-11-02"
+              "scope": "phase 04 (slice 01b)",
+              "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
+              "approved_at": "2026-11-04",
+              "previous_approval": {
+                "status": "approved",
+                "scope": "phases 01-03",
+                "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
+                "approved_at": "2026-11-02"
+              }
             }
           }
         }
