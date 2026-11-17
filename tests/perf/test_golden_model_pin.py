@@ -51,9 +51,18 @@ def production_model(kind: str) -> TourModel:
     return builder.build(LegTable(legs))
 
 
+def weights_of(model: TourModel) -> dict[str, int]:
+    assert model.weights is not None
+    return {"w1": model.weights.w1, "w2": model.weights.w2}
+
+
 def record() -> dict[str, str]:
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    pins = {"commit": commit, **{kind: model_sha256(production_model(kind)) for kind in ROAD_MAPS}}
+    pins = {
+        "commit": commit,
+        **{kind: model_sha256(production_model(kind)) for kind in ROAD_MAPS},
+        "weights": {kind: weights_of(production_model(kind)) for kind in ROAD_MAPS},
+    }
     PINS.write_text(json.dumps(pins, indent=2) + "\n", encoding="utf-8")
     return pins
 
@@ -79,6 +88,15 @@ def test_the_production_models_of_i1_and_i2_match_their_recorded_pins() -> None:
     assert actual == {kind: pins[kind] for kind in ROAD_MAPS}, (
         f"the solver model moved since {pins['commit']}: report to the orchestrator, never re-record or bless"
     )
+
+
+def test_the_production_models_of_i1_and_i2_keep_their_recorded_weights() -> None:
+    # bypass: W1 and W2 of the two committed instances, recorded on the unchanged code before the objective existed.
+    pins = json.loads(PINS.read_text(encoding="utf-8"))
+
+    actual = {kind: weights_of(production_model(kind)) for kind in ROAD_MAPS}
+
+    assert actual == pins["weights"], "the weights moved: report to the orchestrator, never re-record or bless"
 
 
 def test_a_perturbed_production_model_does_not_match_its_pin() -> None:

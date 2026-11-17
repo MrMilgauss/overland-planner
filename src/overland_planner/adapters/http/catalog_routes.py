@@ -72,8 +72,9 @@ def catalog_routes(use_cases: CatalogUseCases, limits: UploadLimits) -> APIRoute
 
     @router.patch("/{project_id}")
     def update_project(project_id: str, body: ProjectUpdate) -> ProjectResource:
-        """Sets the off-road speed (one more revision); 0 or less, or not finite, answers 422 and nothing changes."""
-        return ProjectResource.of(catalog.set_offroad_speed(project_id, body.offroad_speed_kmh))
+        """Sets the objective and/or the off-road speed (one more revision when one differs); an unknown objective, a
+        speed of 0 or less or not finite, or a body naming neither answers 422 and nothing changes."""
+        return ProjectResource.of(catalog.update_settings(project_id, body.objective, body.offroad_speed_kmh))
 
     @router.post("/{project_id}/tracks", status_code=201, openapi_extra=_TRACK_UPLOAD_BODY)
     async def import_tracks(project_id: str, request: Request) -> list[ItemResource]:

@@ -7,9 +7,10 @@ With k items the arcs are the k squared + k required pairs, or the single Start 
 Each arc is what the retrace rule says (`arc_kind`, ADR-017): a road from the exit side at its level, a retrace of a
 track t back to its entry then the road entry(t) -> entry(j), or no arc. The solver minimises one integer cost per arc
 that orders plans lexicographically (FR-5.8, ruled 2026-11-10): fewest Unconfirmed legs, a retrace counting one, then
-fewest retraces, then road metres only: W1 * Unconfirmed + W2 * retraces + c, c the arc's road metres (for a retrace,
-entry(t) -> entry(j) only, no track length and no penalty). A Confirmed arc costs its plain metres. The real tables
-travel with the model, so an order is described with no weight in it.
+fewest retraces, then the road measure only: W1 * Unconfirmed + W2 * retraces + c, c the arc's road metres for the
+objective `distance` and its road seconds for `time` (for a retrace, entry(t) -> entry(j) only, no track length and
+no penalty). A Confirmed arc costs its plain measure (metres for `distance`, so that model is today's, cell for
+cell). The real tables travel with the model, so an order is described with no weight in it.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from itertools import pairwise
 from typing import Any
 
 from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.catalog.project import Objective
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot, reached_at, road_between
 from overland_planner.domain.planning.retrace_rule import arc_kind, second_pass_pair
 from overland_planner.domain.routing.road_leg import LegTable, RoadPair
@@ -29,22 +31,25 @@ SINGLE_PHASE = "single_phase"  # W1 > W2 > road metres in one search (decision 1
 
 @dataclass(frozen=True)
 class TourCounts:
-    """An order as the planner reports it (FR-5.8): road metres, Unconfirmed legs (a retrace counting one), retraces.
-    No weight is in it, and no retraced track's metres: those are off-road (07-06)."""
+    """An order as the planner reports it (FR-5.8): the road measure of the model's objective (metres for `distance`,
+    seconds for `time`), Unconfirmed legs (a retrace counting one), retraces. No weight is in it, and no retraced
+    track's metres: those are off-road (07-06)."""
 
-    road_m: int
+    road: int
     unconfirmed_legs: int
     retraces: int
 
 
 @dataclass(frozen=True)
 class ArcTables:
-    """The real tables per arc, `None` / 0 where no arc runs: road metres (for a retrace arc entry(t) -> entry(j)
-    only), Unconfirmed legs and retraces."""
+    """The real tables per arc, `None` / 0 where no arc runs: road metres and road seconds of the same legs (for a
+    retrace arc entry(t) -> entry(j) only), Unconfirmed legs and retraces. `road_s` is not in the fingerprint: it only
+    picks the cells of `arc_m` of a `time` model, which are."""
 
     road_m: tuple[tuple[int | None, ...], ...]
     unconfirmed_legs: tuple[tuple[int, ...], ...]
     retraces: tuple[tuple[int, ...], ...]
+    road_s: tuple[tuple[int | None, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,8 +64,9 @@ class LexicographicWeights:
 @dataclass(frozen=True)
 class TourModel:
     """Plain data for the solver's child process. `arc_m[a][b]` is `None` where no arc runs from node a to node b;
-    the child reads only the nodes and `arc_m`. A built model also carries the real tables and the weights; a model
-    without them (written by hand) is a plain matrix of metres."""
+    the child reads only the nodes and `arc_m` (its name stays: the cells are metres for the objective `distance` and
+    seconds for `time`). A built model also carries the real tables, the weights and its objective; a model without
+    them (written by hand) is a plain matrix of metres."""
 
     node_item_ids: tuple[str, ...]
     start_node: int
@@ -68,16 +74,18 @@ class TourModel:
     arc_m: tuple[tuple[int | None, ...], ...]
     real: ArcTables | None = None
     weights: LexicographicWeights | None = None
+    objective: Objective = Objective.DISTANCE
 
     def counts_of(self, nodes: Sequence[int]) -> TourCounts | None:
         """The tour through `nodes` read from the real tables; `None` for a plain model or an arc that does not run."""
         if self.real is None:
             return None
-        road = [self.real.road_m[a][b] for a, b in pairwise(nodes)]
+        table = self.real.road_s if self.objective is Objective.TIME else self.real.road_m
+        road = [table[a][b] for a, b in pairwise(nodes)]
         if None in road:
             return None
         return TourCounts(
-            road_m=sum(metres for metres in road if metres is not None),
+            road=sum(measure for measure in road if measure is not None),
             unconfirmed_legs=sum(self.real.unconfirmed_legs[a][b] for a, b in pairwise(nodes)),
             retraces=sum(self.real.retraces[a][b] for a, b in pairwise(nodes)),
         )
@@ -95,12 +103,17 @@ class TourModel:
 @dataclass(frozen=True)
 class _Arc:
     road_m: int
+    road_s: int
     unconfirmed_legs: int
     retraces: int
 
+    def road(self, objective: Objective) -> int:
+        return self.road_s if objective is Objective.TIME else self.road_m
+
 
 class SolverModelBuilder:
-    def __init__(self, snapshot: ProjectSnapshot) -> None:
+    def __init__(self, snapshot: ProjectSnapshot, objective: Objective = Objective.DISTANCE) -> None:
+        self._objective = objective
         self._nodes = (snapshot.start(), *snapshot.visited_items(), snapshot.end())
 
     def required_pairs(self) -> tuple[RoadPair, ...]:
@@ -123,7 +136,9 @@ class SolverModelBuilder:
             for origin, destination in self._arcs()
             if (arc := self._arc(origin, destination, legs)) is not None
         }
-        weights = _weights(len(self._nodes) - 1, max((arc.road_m for arc in arcs.values()), default=0))
+        weights = _weights(
+            len(self._nodes) - 1, max((arc.road(self._objective) for arc in arcs.values()), default=0), self._objective
+        )
         size = len(self._nodes)
 
         def table(cell: Callable[[_Arc], int | None], missing: int | None) -> tuple[tuple[Any, ...], ...]:
@@ -138,10 +153,12 @@ class SolverModelBuilder:
             arc_m=table(weights.cost, None),
             real=ArcTables(
                 road_m=table(lambda arc: arc.road_m, None),
+                road_s=table(lambda arc: arc.road_s, None),
                 unconfirmed_legs=table(lambda arc: arc.unconfirmed_legs, 0),
                 retraces=table(lambda arc: arc.retraces, 0),
             ),
             weights=weights.published,
+            objective=self._objective,
         )
 
     def _arc(self, origin: int, destination: int, legs: LegTable) -> _Arc | None:
@@ -149,10 +166,10 @@ class SolverModelBuilder:
         kind = arc_kind(previous, successor, legs)
         if kind == "road":
             pair = road_between(previous, successor)
-            return _Arc(legs.distance_m(*pair), _unconfirmed(legs, pair), 0)
+            return _Arc(legs.distance_m(*pair), legs.duration_s(*pair), _unconfirmed(legs, pair), 0)
         if kind == "retrace" and isinstance(previous, TrackItem):  # the rule retraces only a track
             onward = (previous.entry, reached_at(successor))
-            return _Arc(legs.distance_m(*onward), 1 + _unconfirmed(legs, onward), 1)
+            return _Arc(legs.distance_m(*onward), legs.duration_s(*onward), 1 + _unconfirmed(legs, onward), 1)
         return None
 
     def _pair(self, origin: int, destination: int) -> RoadPair:
@@ -176,13 +193,15 @@ def _unconfirmed(legs: LegTable, pair: RoadPair) -> int:
 @dataclass(frozen=True)
 class _Weighting:
     published: LexicographicWeights
+    objective: Objective
 
     def cost(self, arc: _Arc) -> int:
-        """A Confirmed road arc costs its plain metres, so a Confirmed-only matrix is today's, cell for cell."""
-        return self.published.w1 * arc.unconfirmed_legs + self.published.w2 * arc.retraces + arc.road_m
+        """A Confirmed road arc costs its plain measure, so a Confirmed-only `distance` matrix is today's, cell for
+        cell."""
+        return self.published.w1 * arc.unconfirmed_legs + self.published.w2 * arc.retraces + arc.road(self.objective)
 
 
-def _weights(arcs_in_a_tour: int, c_max: int) -> _Weighting:
+def _weights(arcs_in_a_tour: int, c_max: int, objective: Objective) -> _Weighting:
     w2 = (arcs_in_a_tour + 1) * c_max + 1
     w1 = (arcs_in_a_tour + 1) * (w2 + c_max) + 1
-    return _Weighting(LexicographicWeights(mode=SINGLE_PHASE, w1=w1, w2=w2))
+    return _Weighting(LexicographicWeights(mode=SINGLE_PHASE, w1=w1, w2=w2), objective)

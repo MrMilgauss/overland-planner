@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.repositories import CatalogUnitOfWork
 from overland_planner.domain.catalog.item import CatalogItem, ItemType
-from overland_planner.domain.catalog.project import OffroadSpeed, Project, ProjectName
+from overland_planner.domain.catalog.project import NothingToChangeError, Objective, OffroadSpeed, Project, ProjectName
 
 
 class ProjectNotFoundError(LookupError):
@@ -78,6 +78,19 @@ class ProjectService:
         changes then. Otherwise one more catalog change (revision + 1)."""
         with self._unit_of_work() as uow:
             project = existing_project(uow, project_id).with_offroad_speed(OffroadSpeed(kmh))
+            uow.projects.update(project)
+            uow.commit()
+        return project
+
+    def update_settings(self, project_id: str, objective: str | None, offroad_speed_kmh: float | None) -> Project:
+        """Raises `ProjectNotFoundError`, `NothingToChangeError` for neither setting, `ObjectiveUnknownError` or
+        `OffroadSpeedNotDrivableError`; nothing changes then. Otherwise one more revision, none when nothing differs."""
+        if objective is None and offroad_speed_kmh is None:
+            raise NothingToChangeError()
+        chosen = None if objective is None else Objective.parse(objective)
+        speed = None if offroad_speed_kmh is None else OffroadSpeed(offroad_speed_kmh)
+        with self._unit_of_work() as uow:
+            project = existing_project(uow, project_id).with_settings(chosen, speed)
             uow.projects.update(project)
             uow.commit()
         return project

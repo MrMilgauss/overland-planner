@@ -251,8 +251,8 @@ def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
     """The incumbent a message carries, or `None` when it is no `(INCUMBENT, complete tour, objective)`.
 
     The child's objective is the weighted cost it minimises; the incumbent reports the tour as the model's real tables
-    describe it (road metres, Unconfirmed legs, retraces: FR-5.8), the same number for a Confirmed-only model. A plain
-    model (no real tables) reports the child's objective as it came."""
+    describe it (road metres, or seconds for `time`; Unconfirmed legs, retraces: FR-5.8), the same number for a
+    Confirmed-only model. A plain model (no real tables) reports the child's objective as it came."""
     if not (isinstance(message, tuple) and len(message) == 3 and message[0] == INCUMBENT):
         return None
     _, nodes, objective = message
@@ -263,7 +263,7 @@ def incumbent_of(message: Any, model: TourModel) -> Incumbent | None:
         return Incumbent(order=_item_ids(nodes, model), objective=objective)
     return Incumbent(
         order=_item_ids(nodes, model),
-        objective=counts.road_m,
+        objective=counts.road,
         unconfirmed_legs=counts.unconfirmed_legs,
         retraces=counts.retraces,
     )

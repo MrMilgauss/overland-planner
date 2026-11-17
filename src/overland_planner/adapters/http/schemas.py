@@ -30,9 +30,11 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    """The project's settings. The speed rule (above 0, finite) is the domain's, so it is not checked here."""
+    """The project's settings, at least one: `objective` (`distance` or `time`) and/or the off-road speed. Their rules
+    (a known objective, a speed above 0 and finite, one at least given) are the domain's, not checked here."""
 
-    offroad_speed_kmh: float
+    offroad_speed_kmh: float | None = None
+    objective: str | None = None
 
 
 class PoiCreate(BaseModel):
@@ -55,6 +57,7 @@ class ProjectResource(BaseModel):
     name: str
     revision: int
     offroad_speed_kmh: float
+    objective: str
 
     @classmethod
     def of(cls, project: Project) -> ProjectResource:
@@ -63,6 +66,7 @@ class ProjectResource(BaseModel):
             name=project.name.value,
             revision=project.revision,
             offroad_speed_kmh=project.offroad_speed.kmh,
+            objective=project.objective.value,
         )
 
 
@@ -288,6 +292,8 @@ class PlanRunDetailResource(BaseModel):
     not_fully_optimised: NotFullyOptimised | None
     messages: list[str]
     memo_hit: bool
+    objective: str
+    objective_label: str
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -304,6 +310,8 @@ class PlanRunDetailResource(BaseModel):
             not_fully_optimised=run.not_fully_optimised,
             messages=list(run.messages),
             memo_hit=run.memo_hit,
+            objective=run.objective.value,
+            objective_label=run.objective.label,
         )
 
 

@@ -28,7 +28,12 @@ from overland_planner.application.catalog.facade import (
 )
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import TrackItem
-from overland_planner.domain.catalog.project import OffroadSpeedNotDrivableError, ProjectNameRequiredError
+from overland_planner.domain.catalog.project import (
+    NothingToChangeError,
+    ObjectiveUnknownError,
+    OffroadSpeedNotDrivableError,
+    ProjectNameRequiredError,
+)
 from tests.common.catalog_fakes import InMemoryCatalog
 from tests.common.fakes import FakeClock
 from tests.common.predicates import gained
@@ -253,3 +258,50 @@ def test_a_drivable_speed_is_taken_with_one_revision_and_any_other_is_refused_ch
     }
     assert_state_delta(before, _speed_view(service, project_id), SPEED_UNIVERSE, expected, strict=True)
     assert (changed.offroad_speed.kmh, changed.revision) == (taken, before["project.revision"] + 1)
+
+
+# --- objective (slice 06a, D249) ----------------------------------------------------------------------------------
+SETTINGS_UNIVERSE = SPEED_UNIVERSE | {"project.objective"}
+
+
+def _settings_view(service: ProjectService, project_id: str) -> dict[str, Any]:
+    return {**_speed_view(service, project_id), "project.objective": service.open(project_id).objective.value}
+
+
+@given(objective=st.sampled_from([None, "distance", "time"]), speed=st.sampled_from([None, 15.0, 22.5]))
+def test_settings_are_taken_in_one_revision_and_the_same_values_change_nothing(
+    objective: str | None, speed: float | None
+) -> None:
+    service = _service()
+    project_id = service.create("Alpi").id
+    before = _settings_view(service, project_id)
+    assert (before["project.objective"], before["project.offroad_speed_kmh"]) == ("distance", 15)  # the defaults
+
+    if objective is None and speed is None:
+        with pytest.raises(NothingToChangeError):
+            service.update_settings(project_id, objective, speed)
+        assert_state_delta(before, _settings_view(service, project_id), SETTINGS_UNIVERSE, {}, strict=True)
+        return
+    service.update_settings(project_id, objective, speed)
+
+    differs = objective not in (None, "distance") or speed not in (None, 15.0)
+    expected = {
+        "project.objective": set_to(objective or "distance"),
+        "project.offroad_speed_kmh": set_to(speed or 15.0),
+        "project.revision": set_to(before["project.revision"] + differs),
+    }
+    assert_state_delta(before, _settings_view(service, project_id), SETTINGS_UNIVERSE, expected, strict=True)
+
+
+@given(unknown=st.text(max_size=12).filter(lambda text: text not in ("distance", "time")), speed=DRIVABLE)
+def test_an_unknown_objective_is_refused_and_even_a_drivable_speed_beside_it_changes_nothing(
+    unknown: str, speed: float
+) -> None:
+    service = _service()
+    project_id = service.create("Alpi").id
+    before = _settings_view(service, project_id)
+
+    with pytest.raises(ObjectiveUnknownError):
+        service.update_settings(project_id, unknown, speed)
+
+    assert_state_delta(before, _settings_view(service, project_id), SETTINGS_UNIVERSE, {}, strict=True)

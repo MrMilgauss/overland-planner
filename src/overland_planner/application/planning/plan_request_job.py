@@ -84,6 +84,7 @@ from overland_planner.application.ports.tour_solver import (
 )
 from overland_planner.application.routing.facade import LegResolver, LegsFound
 from overland_planner.domain.catalog.item import TrackItem
+from overland_planner.domain.catalog.project import Objective
 from overland_planner.domain.planning.invariant_guard import (
     INVARIANT_VIOLATION_REASON,
     CanonicalFileEvidence,
@@ -159,7 +160,7 @@ class PlanRequestJob:
         with stages.timing("matrix"):
             legs, second_pass_pairs = self._resolve_legs(project.snapshot, progress)
         with stages.timing("reach_model"):
-            model = SolverModelBuilder(project.snapshot).build(legs)
+            model = SolverModelBuilder(project.snapshot, Objective.parse(project.stamp.objective)).build(legs)
             progress.note(items_included=len(set(model.node_item_ids)))
             cut_off = unreachable_item_ids(model)
             reused = None
@@ -378,8 +379,8 @@ class PlanRequestJob:
 
 class _Incumbents:
     """The incumbents a solve streamed, on the solving thread: the poll shows the last, the job's line counts them.
-    Each is shown as the model's real tables describe it: road metres only, with its Unconfirmed legs and retraces,
-    never the solver's cost (07-08, D148)."""
+    Each is shown as the model's real tables describe it: road metres (seconds for `time`) only, with its
+    Unconfirmed legs and retraces, never the solver's cost (07-08, D148)."""
 
     def __init__(self, clock: Clock, progress: PlanJobProgress, work_started_s: float, model: TourModel) -> None:
         self._model = model
@@ -394,7 +395,7 @@ class _Incumbents:
         shown = {
             "unconfirmed_legs": incumbent.unconfirmed_legs if counts is None else counts.unconfirmed_legs,
             "retraces": incumbent.retraces if counts is None else counts.retraces,
-            "objective": incumbent.objective if counts is None else counts.road_m,
+            "objective": incumbent.objective if counts is None else counts.road,
             "found_at_s": self._clock.monotonic() - self._work_started_s,
         }
         self._progress.note(incumbents=self.count, incumbent=shown)

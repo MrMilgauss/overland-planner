@@ -1,4 +1,6 @@
-"""`ProjectRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`."""
+"""`ProjectRepository` on SQLAlchemy Core, bound to the connection of one `SqlAlchemyUnitOfWork`. The objective is the
+`objective` column: `time` reads as time, any other stored value (every row before slice 06a says `distance`) as
+distance."""
 
 from __future__ import annotations
 
@@ -9,10 +11,8 @@ from sqlalchemy import Connection, select
 from overland_planner.adapters.persistence.tables import projects
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.domain.catalog.anchors import Anchors
-from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, OffroadSpeed, Project, ProjectName
+from overland_planner.domain.catalog.project import DEFAULT_OFFROAD_SPEED, Objective, OffroadSpeed, Project, ProjectName
 
-# Column value until the objective becomes editable (distance is the default objective).
-_DEFAULT_OBJECTIVE = "distance"
 # `projects.settings` (brief §9, JSON since 0001): a project written before slice 02 has `{}` and drives 15 km/h.
 _OFFROAD_SPEED_KEY = "offroad_speed_kmh"
 
@@ -30,7 +30,7 @@ class SqlAlchemyProjectRepository:
             projects.insert().values(
                 id=project.id,
                 name=project.name.value,
-                objective=_DEFAULT_OBJECTIVE,
+                objective=project.objective.value,
                 settings=_settings(project),
                 revision=project.revision,
                 created_at=project.created_at,
@@ -51,6 +51,7 @@ class SqlAlchemyProjectRepository:
             .where(projects.c.id == project.id)
             .values(
                 revision=project.revision,
+                objective=project.objective.value,
                 settings=_settings(project),
                 start_item_id=project.anchors.start_item_id,
                 end_item_id=project.anchors.end_item_id,
@@ -65,6 +66,7 @@ class SqlAlchemyProjectRepository:
             created_at=row["created_at"],
             anchors=Anchors(start_item_id=row["start_item_id"], end_item_id=row["end_item_id"]),
             offroad_speed=self._offroad_speed(row["id"], row["settings"]),
+            objective=Objective.TIME if row["objective"] == Objective.TIME else Objective.DISTANCE,
         )
 
     def _offroad_speed(self, project_id: str, settings: dict[str, Any]) -> OffroadSpeed:

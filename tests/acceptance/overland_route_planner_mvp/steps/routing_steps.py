@@ -45,6 +45,7 @@ ROAD_MAP_FILE = "off-network-road-map.yaml"
 UNREACHABLE_REASON = "routing_engine_unreachable"
 NOT_READY_REASON = "routing_engine_not_ready"
 SYNTHETIC_KM_PER_H = 50.0
+OBJECTIVES = {"minimise road distance": "distance", "minimise road time": "time"}
 
 
 class SyntheticValhalla:
@@ -210,7 +211,7 @@ def given_the_engine_reports_another_version(world: PlannerWorld, found: str, ex
     world.scratch["engine_versions"] = (found, expected)
 
 
-@when("Marco presses Recalculate")
+@when(parsers.re(r"(?:Marco|he) presses Recalculate"))
 def when_marco_presses_recalculate(world: PlannerWorld) -> None:
     world.scratch.pop("job_id", None)
     press_calculate(world)
@@ -305,3 +306,49 @@ def then_the_next_recalculate_requests_only_the_unanswered_legs(world: PlannerWo
     assert next_job["legs_cached"] >= answered + failed["legs_cached"], f"the legs answered were not kept: {next_job}"
     assert next_job["legs_new"] + next_job["legs_cached"] == next_job["legs_total"], f"legs do not add up: {next_job}"
     assert failed["legs_new"] + next_job["legs_new"] == new_legs, f"{failed['legs_new']} + {next_job['legs_new']}"
+
+
+@given(parsers.re(r'project "(?P<project>[^"]+)" uses the objective "(?P<label>[^"]+)"'))
+def given_project_uses_the_objective(world: PlannerWorld, project: str, label: str) -> None:
+    """The reference project with plan run #4, minimised on the project's objective (distance until Marco says so)."""
+    given_plan_run_4_has_been_computed(world, project)
+    assert world.project_id is not None, "no project is open"
+    shown = world.marco().project(world.project_id).json().get("objective")
+    assert shown == OBJECTIVES[label], f"the project minimises {shown!r}, not {OBJECTIVES[label]!r}"
+    world.scratch["objective_before"] = shown
+
+
+@given(parsers.re(r'Marco has selected "(?P<label>[^"]+)"'))
+def given_marco_has_selected_the_objective(world: PlannerWorld, label: str) -> None:
+    assert world.project_id is not None, "no project is open"
+    world.note(world.marco().update_project(world.project_id, objective=OBJECTIVES[label]))
+    require_success(world, f"select {label!r}")
+
+
+@given("the planner is running with its default settings")
+def given_the_planner_runs_with_its_default_settings(world: PlannerWorld) -> None:
+    world.ensure_planner()
+
+
+@then(parsers.re(r'the results state the objective "(?P<label>[^"]+)"'))
+def then_the_results_state_the_objective(world: PlannerWorld, label: str) -> None:
+    job = world.scratch["first_recalculation"]
+    assert job["state"] == "done" and job["plan_run_id"], f"the Recalculate gave no new run: {job}"
+    detail = plan_run_detail(world, RUNS_BEFORE + 1)
+    stated = (detail.get("objective"), detail.get("objective_label"))
+    assert stated == (OBJECTIVES[label], label), f"the new plan run states {stated}"
+    assert plan_run_detail(world, RUNS_BEFORE).get("objective_label") == "minimise road distance", "run #4 changed"
+
+
+@then("no new road legs were requested")
+def then_no_new_road_legs_were_requested(world: PlannerWorld) -> None:
+    job = world.scratch["first_recalculation"]
+    assert job["legs_new"] == 0, f"the switch asked the routing engine for {job['legs_new']} legs: {job}"
+    assert job["legs_cached"] == job["legs_total"] > 0, f"the legs were not all kept: {job}"
+
+
+@then(parsers.re(r'its objective is "(?P<label>[^"]+)"'))
+def then_its_objective_is(world: PlannerWorld, label: str) -> None:
+    assert world.project_id is not None, "no project was created"
+    opened = world.marco().project(world.project_id)
+    assert opened.status_code == 200 and opened.json().get("objective") == OBJECTIVES[label], opened.text[:300]

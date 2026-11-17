@@ -60,3 +60,14 @@ def test_plans_are_refused_while_the_routing_engine_is_not_the_expected_version(
 @scenario(FEATURE, "The routing engine is still loading its map data")
 def test_the_routing_engine_is_still_loading_its_map_data(the_planner_routes_on_a_synthetic_valhalla: None) -> None:
     """The engine answers /status and 503 on the matrix: refused as not ready, and the diagnostics count it."""
+
+
+@pytest.mark.solver_child
+@scenario(FEATURE, "Marco switches the objective to road time")
+def test_marco_switches_the_objective_to_road_time(a_reference_trip_with_an_armable_road_map: None) -> None:
+    """Run #4 was minimised on road distance; the switch asks no new leg and the next run says road time."""
+
+
+@scenario(FEATURE, "New projects minimise road distance by default")
+def test_new_projects_minimise_road_distance_by_default() -> None:
+    """A project made now has objective `distance`."""

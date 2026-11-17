@@ -47,7 +47,9 @@ class Fingerprint:
             "start_node": model.start_node,
             "end_node": model.end_node,
             "arc_m": model.arc_m,
-            "real": None if model.real is None else asdict(model.real),
+            "real": None
+            if model.real is None
+            else {name: table for name, table in asdict(model.real).items() if name != "road_s"},
             "weights": None if model.weights is None else asdict(model.weights),
             "objective": settings.objective,
             "provider_id": settings.provider_id,

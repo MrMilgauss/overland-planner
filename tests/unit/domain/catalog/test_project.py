@@ -15,6 +15,7 @@ from hypothesis import example, given
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.project import (
+    Objective,
     OffroadSpeed,
     OffroadSpeedNotDrivableError,
     Project,
@@ -86,3 +87,11 @@ def test_a_new_project_drives_off_road_at_15_kmh(name: str) -> None:
     # FR-4.6: the default is fixed in the domain (D220 i).
     project = Project.create("p", ProjectName(name), datetime(2027, 6, 1, tzinfo=UTC))
     assert project.offroad_speed == OffroadSpeed(15)
+
+
+def test_the_objectives_are_labelled_in_the_words_marco_reads() -> None:
+    # bypass: the two labels are a fixed vocabulary of the product (feature text), not a rule over inputs.
+    assert {objective.value: objective.label for objective in Objective} == {
+        "distance": "minimise road distance",
+        "time": "minimise road time",
+    }

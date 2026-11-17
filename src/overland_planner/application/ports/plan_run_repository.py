@@ -9,6 +9,7 @@ from typing import Protocol
 
 from overland_planner.application.ports.project_snapshot_reader import ProjectSnapshotReader
 from overland_planner.application.ports.unit_of_work import UnitOfWork
+from overland_planner.domain.catalog.project import Objective
 from overland_planner.domain.planning.plan_run import PlanReport, PlanRun, PlanRunStatus, PlanStop, Totals
 from overland_planner.domain.planning.run_messages import NotFullyOptimised
 
@@ -37,6 +38,7 @@ class PlanRunDetail:
     run_time_ms: int | None = None
     memo_source_run_id: str | None = None
     items_planned: int | None = None
+    objective: Objective = Objective.DISTANCE
 
 
 @dataclass(frozen=True)
@@ -57,7 +59,7 @@ class NewPlanRun:
     created_at: datetime
     revision: int
     provider_id: str
-    objective: str
+    objective: str  # `distance` or `time`
     inputs: Mapping[str, object]
     stops: tuple[PlanStop, ...]
     totals: Totals | None = None

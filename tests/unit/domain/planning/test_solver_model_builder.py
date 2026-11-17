@@ -3,7 +3,8 @@
 Driving port: `SolverModelBuilder` (`required_pairs()` and `build(legs)` are its public interface).
 Observable universe = the model's nodes and arcs as the solver reads them, the road pairs asked for, the snapshot read,
 and how the model describes an order (road metres, Unconfirmed legs, retraces: `counts_of`).
-Test Budget: 6 behaviors (nodes, arc costs, required pairs, the lexicographic order over levels and retraces, weights
+Test Budget (slice 06a: both properties draw the objective too): 6 behaviors (nodes, arc costs, required pairs,
+the lexicographic order over levels and retraces, weights
 that keep it strict within an int64, criterion 2 alone) x 2 = 12; 7 used. The oracle of the order (`order_counts`)
 reads the road map's answers and ranks orders by the tuple itself, never by the model's weights.
 
@@ -28,6 +29,7 @@ from hypothesis import strategies as st
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
+from overland_planner.domain.catalog.project import Objective
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
 from overland_planner.domain.planning.solver_model_builder import ArcTables, SolverModelBuilder, TourCounts, TourModel
 from overland_planner.domain.routing.road_leg import LegTable, RoadLeg, RoadPair
@@ -168,10 +170,17 @@ class RoadAnswers:
 
     metres: dict[RoadPair, int]
     levels: dict[RoadPair, Level]
+    seconds: dict[RoadPair, int] | None = None  # drawn apart from the metres where an order of seconds must differ
+
+    def road(self, pair: RoadPair, objective: Objective = Objective.DISTANCE) -> int:
+        """The metres of the pair for `distance`, its seconds for `time`."""
+        if objective is Objective.DISTANCE:
+            return self.metres[pair]
+        return road_time_s(self.metres[pair]) if self.seconds is None else self.seconds[pair]
 
     def table(self) -> LegTable:
         legs = (
-            RoadLeg(a, b, self.metres[a, b], road_time_s(self.metres[a, b]), level, _reason(level))
+            RoadLeg(a, b, self.metres[a, b], self.road((a, b), Objective.TIME), level, _reason(level))
             for (a, b), level in self.levels.items()
             if level is not None
         )
@@ -182,15 +191,18 @@ def _reason(level: Level) -> str | None:
     return "no way to tell" if level == "unconfirmed" else None
 
 
-def leg_counts(answers: RoadAnswers, previous: CatalogItem, successor: CatalogItem) -> tuple[int, int, int] | None:
-    """The oracle's leg (Unconfirmed legs, retraces, road metres), or None where no leg may run: FR-5.8 and the
+def leg_counts(
+    answers: RoadAnswers, previous: CatalogItem, successor: CatalogItem, objective: Objective = Objective.DISTANCE
+) -> tuple[int, int, int] | None:
+    """The oracle's leg (Unconfirmed legs, retraces, road metres or seconds), or None where no leg may run: FR-5.8 and
+    the
     retrace rule written out again from the road map's answers, independent of the model and of any weight."""
     left, reached = left_at(previous), reached_at(successor)
     if left == reached:
         return 0, 0, 0
     level = answers.levels[left, reached]
     if level is not None:
-        return int(level == "unconfirmed"), 0, answers.metres[left, reached]
+        return int(level == "unconfirmed"), 0, answers.road((left, reached), objective)
     if not isinstance(previous, TrackItem) or previous.entry == previous.exit:
         return None
     if previous.entry == reached:
@@ -198,14 +210,16 @@ def leg_counts(answers: RoadAnswers, previous: CatalogItem, successor: CatalogIt
     onward = answers.levels[previous.entry, reached]
     if onward is None:
         return None
-    return 1 + int(onward == "unconfirmed"), 1, answers.metres[previous.entry, reached]
+    return 1 + int(onward == "unconfirmed"), 1, answers.road((previous.entry, reached), objective)
 
 
-def order_counts(answers: RoadAnswers, stops: Sequence[CatalogItem]) -> tuple[int, int, int] | None:
+def order_counts(
+    answers: RoadAnswers, stops: Sequence[CatalogItem], objective: Objective = Objective.DISTANCE
+) -> tuple[int, int, int] | None:
     """The oracle's (Unconfirmed legs, retraces, road metres) of driving `stops` in turn, or None if it cannot."""
     total = (0, 0, 0)
     for previous, successor in pairwise(stops):
-        leg = leg_counts(answers, previous, successor)
+        leg = leg_counts(answers, previous, successor, objective)
         if leg is None:
             return None
         total = (total[0] + leg[0], total[1] + leg[1], total[2] + leg[2])
@@ -216,9 +230,10 @@ def order_counts(answers: RoadAnswers, stops: Sequence[CatalogItem]) -> tuple[in
 class LevelledTrip:
     trip: Trip
     answers: RoadAnswers
+    objective: Objective = Objective.DISTANCE
 
     def model(self) -> TourModel:
-        builder = SolverModelBuilder(self.trip.snapshot)
+        builder = SolverModelBuilder(self.trip.snapshot, self.objective)
         return builder.build(self.answers.table())
 
     def orders(self) -> list[tuple[CatalogItem, ...]]:
@@ -231,7 +246,9 @@ def levelled_trips(draw: st.DrawFn) -> LevelledTrip:
     """A generated trip whose road map answers each pair at a drawn level, or with no road."""
     trip = draw(trips())
     levels = {pair: draw(st.sampled_from(LEVELS)) for pair in POINT_PAIRS}
-    return LevelledTrip(trip, RoadAnswers(dict(trip.leg_m), levels))
+    seconds = {pair: draw(st.integers(min_value=1, max_value=50_000)) for pair in POINT_PAIRS}
+    objective = draw(st.sampled_from(list(Objective)))
+    return LevelledTrip(trip, RoadAnswers(dict(trip.leg_m), levels, seconds), objective)
 
 
 def nodes_of(model: TourModel, stops: Sequence[CatalogItem]) -> tuple[int, ...]:
@@ -247,13 +264,13 @@ def model_cost(model: TourModel, nodes: Sequence[int]) -> int | None:
 
 
 @given(levelled=levelled_trips())
-def test_the_order_the_model_ranks_first_is_the_lexicographic_minimum(levelled: LevelledTrip) -> None:
+def test_the_order_ranked_first_is_the_lexicographic_minimum_for_either_objective(levelled: LevelledTrip) -> None:
     universe = {"model.drivable_orders", "model.described_orders", "model.first_ranked"}
     before = dict.fromkeys(universe)
     model = levelled.model()
     trip, answers = levelled.trip, levelled.answers
     stops = (trip.start, *trip.items, trip.end)
-    legs = {(a.id, b.id): leg_counts(answers, a, b) for a in stops for b in stops}
+    legs = {(a.id, b.id): leg_counts(answers, a, b, levelled.objective) for a in stops for b in stops}
     orders = [(trip.start.id, *(item.id for item in order), trip.end.id) for order in permutations(trip.items)]
     oracle = {order: _summed([legs[pair] for pair in pairwise(order)]) for order in orders}
     drivable = {order: counts for order, counts in oracle.items() if counts is not None}
@@ -287,12 +304,13 @@ def _described(model: TourModel, order: Sequence[CatalogItem]) -> TourCounts | N
 
 
 @given(levelled=levelled_trips())
-def test_weights_keep_the_order_strict_and_confirmed_arcs_keep_their_plain_metres(levelled: LevelledTrip) -> None:
+def test_weights_keep_the_order_strict_and_confirmed_arcs_keep_their_plain_measure(levelled: LevelledTrip) -> None:
     model = levelled.model()
     assert model.weights is not None and model.real is not None
     arcs = len(model.node_item_ids) - 1  # the arcs of one tour
     present = [(a, b) for a, row in enumerate(model.arc_m) for b, cost in enumerate(row) if cost is not None]
-    c_max = max((model.real.road_m[a][b] or 0 for a, b in present), default=0)
+    measure = model.real.road_m if levelled.objective is Objective.DISTANCE else model.real.road_s
+    c_max = max((measure[a][b] or 0 for a, b in present), default=0)
     weights = model.weights
 
     assert weights.mode == "single_phase"
@@ -303,14 +321,11 @@ def test_weights_keep_the_order_strict_and_confirmed_arcs_keep_their_plain_metre
     for a, row in enumerate(model.arc_m):
         for b, cost in enumerate(row):
             if cost is None:  # no arc runs: no metres, no Unconfirmed leg, no retrace (ArcTables)
-                assert (model.real.road_m[a][b], model.real.unconfirmed_legs[a][b], model.real.retraces[a][b]) == (
-                    None,
-                    0,
-                    0,
-                )
+                assert (model.real.road_m[a][b], model.real.road_s[a][b]) == (None, None)
+                assert (model.real.unconfirmed_legs[a][b], model.real.retraces[a][b]) == (0, 0)
     for a, b in present:
         unconfirmed, retraces = model.real.unconfirmed_legs[a][b], model.real.retraces[a][b]
-        road = model.real.road_m[a][b]
+        road = measure[a][b]
         assert road is not None
         cost = model.arc_m[a][b]
         assert cost == weights.w1 * unconfirmed + weights.w2 * retraces + road, (a, b)
@@ -394,8 +409,8 @@ def test_with_equal_unconfirmed_legs_the_order_without_a_retrace_wins_over_a_sho
     costs = {order: model_cost(model, nodes_of(model, order)) for order in described}
 
     assert described == {
-        with_retrace: TourCounts(road_m=30 * km, unconfirmed_legs=1, retraces=1),
-        with_longer_road: TourCounts(road_m=60 * km, unconfirmed_legs=1, retraces=0),
+        with_retrace: TourCounts(road=30 * km, unconfirmed_legs=1, retraces=1),
+        with_longer_road: TourCounts(road=60 * km, unconfirmed_legs=1, retraces=0),
     }, "same Unconfirmed legs; the order without a retrace is 30 km longer"
     winner = min(costs, key=lambda order: costs[order] or INT64_MAX)
     assert winner == with_longer_road
@@ -405,7 +420,7 @@ def test_an_order_that_names_no_tour_of_the_model_is_not_described() -> None:
     # bypass: a hand-made model whose tables hold an arc between every pair of nodes, so that only the order decides.
     cells = tuple((1, 1, 1) for _ in range(3))
     zeros = tuple((0, 0, 0) for _ in range(3))
-    model = TourModel(("s", "a", "e"), 0, 2, cells, ArcTables(cells, zeros, zeros))
+    model = TourModel(("s", "a", "e"), 0, 2, cells, ArcTables(cells, zeros, zeros, cells))
 
     described = {
         order: model.counts_of_order(order) for order in ((), ("s",), ("s", "no-such-item", "e"), ("s", "a", "e"))
@@ -415,5 +430,5 @@ def test_an_order_that_names_no_tour_of_the_model_is_not_described() -> None:
         (): None,
         ("s",): None,
         ("s", "no-such-item", "e"): None,
-        ("s", "a", "e"): TourCounts(road_m=2, unconfirmed_legs=0, retraces=0),
+        ("s", "a", "e"): TourCounts(road=2, unconfirmed_legs=0, retraces=0),
     }

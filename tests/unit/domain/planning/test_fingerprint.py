@@ -22,7 +22,7 @@ from hypothesis import strategies as st
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, TrackItem
 from overland_planner.domain.catalog.poi import PoiItem
-from overland_planner.domain.catalog.project import OffroadSpeed
+from overland_planner.domain.catalog.project import Objective, OffroadSpeed
 from overland_planner.domain.planning import fingerprint as fingerprint_module
 from overland_planner.domain.planning.fingerprint import FINGERPRINT_SCHEME, Fingerprint, SolveSettings
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
@@ -32,6 +32,7 @@ from overland_planner.domain.planning.solver_model_builder import (
     SolverModelBuilder,
     TourModel,
 )
+from overland_planner.domain.routing.road_leg import LegTable, RoadLeg
 from tests.common.state_delta import assert_state_delta, unchanged
 from tests.unit.domain.planning.trips import PROJECT, Trip, trips
 
@@ -253,3 +254,22 @@ def test_the_fingerprint_of_fixed_inputs_is_pinned_so_stored_fingerprints_never_
     assert "fp2:" + hashlib.sha256(GOLDEN_TEXT.encode()).hexdigest() == GOLDEN_FINGERPRINT, "the text is the pinned one"
     assert Fingerprint.of(GOLDEN_SNAPSHOT, GOLDEN_MODEL, SETTINGS).value == GOLDEN_FINGERPRINT
     assert GOLDEN_FINGERPRINT != FP1_GOLDEN_FINGERPRINT, "fp2 leads and hashes the weights: one recalculation (D124)"
+
+
+@given(trip=trips())
+def test_the_two_objectives_never_share_a_fingerprint_for_a_model_whose_metres_and_seconds_order_differently(
+    trip: Trip,
+) -> None:
+    # The arcs of the time model are seconds, so metres and seconds that order differently give different matrices;
+    # the objective is in the fingerprint besides, so even equal matrices never share a memo entry.
+    builder_distance = SolverModelBuilder(trip.snapshot, Objective.DISTANCE)
+    builder_time = SolverModelBuilder(trip.snapshot, Objective.TIME)
+    reversed_seconds = LegTable(
+        RoadLeg(a, b, m, 1_000_000 - m) for (a, b), m in trip.leg_m.items()
+    )  # the longer the road, the shorter the time
+    distance = Fingerprint.of(trip.snapshot, builder_distance.build(reversed_seconds), SETTINGS)
+    time = Fingerprint.of(
+        trip.snapshot, builder_time.build(reversed_seconds), replace(SETTINGS, objective=Objective.TIME.value)
+    )
+
+    assert distance != time
