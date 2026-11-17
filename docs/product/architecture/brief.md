@@ -126,7 +126,7 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
        |---|---|
        | 422 | `validation_error`, `missing_anchor` |
        | 409 | `job_active` |
-       | 503 | `routing_engine_not_ready`, `optimizer_unavailable` |
+       | 503 | `routing_engine_not_ready`, `routing_engine_unreachable` (slice 06a, D248), `optimizer_unavailable` |
        | 413 | `upload_too_large` (file size, request size or file count cap) |
        | 401 | `unauthorized` (+ `WWW-Authenticate: Basic`) |
        | 404 | `not_found` (unknown project, item, run or job id; added for completeness) |
@@ -150,6 +150,7 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
        `retrace_sha256` (on a retrace row: SHA-256 of the canonical serialisation of the track's reversed points of the same direction version) is a stored field of the stop (guard and GPX export check it) but is **not** exposed over HTTP (`PlanStopResource`).
 
        The report adds `items`: the names of the items a Failed run with reason `unreachable` is about (empty otherwise; a report stored before step 07-05 has none).
+     - **Added by slice 06a (ADR-013 Amendment 4):** the project resource has `objective` (`distance` \| `time`) and `PATCH /api/projects/{id}` takes `objective` and/or `offroad_speed_kmh`; the plan-run detail has `provider_header` ("Provider: Valhalla (map data 2026-11-01) / profile: 4x4"), `objective` and `objective_label`; the poll payload has `retried` and `second_pass_pairs`; `/api/diagnostics` fills `g4.engine_refusals_30d`.
      - `POST /api/plan-jobs/{job_id}/stop` is idempotent: always 200 with the current payload (D136).
      - `/healthz` keeps its own body (`{"status":"ok"}` / 503 `{"status":"unhealthy","reason":...}`), not the envelope.
      - **OpenAPI snapshot in CI**: the generated `openapi.json` is committed; a CI test fails when the generated schema differs from the snapshot, so contract changes are deliberate.
@@ -161,7 +162,7 @@ Every driven port extends `Probeable`.
 
 | Port | Contract (behavioural) | Adapters | Probe and fault catalogue |
 |---|---|---|---|
-| `RoutingProvider` | `provider_id`, `profile`, `display_name`; `locate(points) -> snap results`; `matrix(sources, targets, mode=legal\|permissive)` with `None` cells; `route_many(pairs, mode)`; typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderQuotaExceeded` (for future hosted adapters), `ProviderRejected` | `ValhallaRoutingProvider` (MVP real), `MockRoutingProvider` (tests/dev), `CountingRoutingProvider` (wrapper) | `/status` + 2x2 Torino <-> Susa matrix. Catalogue: connect refused, timeout, 5xx then success (retry), 5xx persistent, error 171 for one location, error 442, null cells, wrong shape, zero distance for distinct points, `/status` version not `VALHALLA_EXPECTED_VERSION` (`routing_engine_version_mismatch`, D128). Degraded-healthy; re-probed every 60 s and before each job. `provider_id` = `valhalla:<version>:<tileset_last_modified>`; all Valhalla calls share one process-wide semaphore of 2 (D133) |
+| `RoutingProvider` | **As built in slice 06a (ADR-013 Amendment 4, D243): `provider_id`, `profile`, `matrix(sources, targets, observer)` with a measure, `None` or `OFF_NETWORK` per cell, typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderRejected`; the rest of this cell arrives with slices 06b and 09.** `provider_id`, `profile`, `display_name`; `locate(points) -> snap results`; `matrix(sources, targets, mode=legal\|permissive)` with `None` cells; `route_many(pairs, mode)`; typed errors `ProviderUnreachable`, `ProviderUnavailable`, `ProviderQuotaExceeded` (for future hosted adapters), `ProviderRejected` | `ValhallaRoutingProvider` (MVP real), `MockRoutingProvider` (tests/dev), `CountingRoutingProvider` (wrapper) | `/status` + 2x2 Torino <-> Susa matrix. Catalogue: connect refused, timeout, 5xx then success (retry), 5xx persistent, error 171 for one location, error 442, null cells, wrong shape, zero distance for distinct points, `/status` version not `VALHALLA_EXPECTED_VERSION` (`routing_engine_version_mismatch`, D128). Degraded-healthy; re-probed every 60 s and before each job. `provider_id` = `valhalla:<version>:<tileset_last_modified>`; all Valhalla calls share one process-wide semaphore of 2 (D133) |
 | `TourSolver` | `solve(model, budget, on_incumbent, *, deadlines, stop) -> typed outcome`, the incumbents streamed to `on_incumbent` | `OrToolsTourSolver` (child process); `HeuristicTourSolver` (fallback, only if built); `ScriptedTourSolver` (tests) | Fixed 6-node asymmetric instance with one track node and one forbidden arc, solved twice: known optimum, identical orders. Failure -> degraded, unhealthy (`optimizer_unavailable`) |
 | Repositories + `UnitOfWork` + `ProjectSnapshotReader` | One transaction per use case; run + number + snapshot (incl. leg snapshot, track versions) atomic; single writer lock | SQLAlchemy 2 / SQLite | Round-trip row, WAL active, busy_timeout set, quick_check, Alembic head. Fatal |
 | `FileStore` | Originals by sha256; versioned canonical/display points; atomic writes; sweep-only deletion (ADR-018 Rev 2, D65); orphan sweep | `LocalFileStore` | Write-fsync-rename-read round trip (fatal); filesystem type holding `DATA_DIR` (longest-prefix mount entry, via `MountTable`) is overlay/tmpfs/ramfs -> degraded, unhealthy; other -> ok; non-Linux -> not_applicable (ADR-011 amendment D121) |
@@ -198,7 +199,7 @@ The composition root is `bootstrap/app_factory.py::create_app()` (Uvicorn factor
    - fatal (DB, files, parser, writer) -> `health.startup.refused`, exit non-zero;
    - non-persistent `DATA_DIR` -> degraded, `/healthz` 503 + banner. Rule (D121): the filesystem type of the longest-prefix `MountTable` entry for the resolved `DATA_DIR` is overlay/tmpfs/ramfs -> degraded; any other type -> ok; no mount table (macOS) -> `not_applicable`. The root filesystem is never checked on its own and "not a mount point" is not a criterion. Tests and the walking skeleton never use the OS temp directory as `DATA_DIR`;
    - solver probe failure -> degraded, `/healthz` 503 `optimizer_unavailable`; plan requests refused;
-   - Valhalla not ready, or its `/status` version is not `VALHALLA_EXPECTED_VERSION` (D128) -> degraded, `/healthz` ok; re-probe every 60 s; plan requests refused (503 `routing_engine_not_ready`) until it passes.
+   - Valhalla not ready, or its `/status` version is not `VALHALLA_EXPECTED_VERSION` (D128) -> degraded, `/healthz` ok; re-probe every 60 s; plan requests refused (503 `routing_engine_not_ready`) until it passes. **[Slice 06a, D247: probed before each plan request and when `/api/health` is read with a result older than 60 s; no background thread. Unreachable is refused with 503 `routing_engine_unreachable`.]**
 5. Log `app.started` as one structured line.
 
 Probe enforcement: two layers, **mypy strict** (every port Protocol extends `Probeable`; typed registry) and **CI gold tests** (a fault catalogue per adapter, including the environment lies: `DATA_DIR` on overlay/tmpfs/ramfs (also via symlink or bind mount), WAL silently off, Valhalla 171/442/null cells, solver child crash). The earlier AST hook and meta-test were dropped after review.
@@ -400,7 +401,7 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 | ADR-010 | Consideration report in GPX 1.1 | Accepted + Amendment 1 |
 | ADR-011 | Composition root, probes, degraded mode | Accepted + Amendment 1, DEVOPS amendment, final gate D121 |
 | ADR-012 | Solver port in a child process | **Superseded by ADR-015** |
-| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133; Amendment 3 slice 06a-ops (D234-D238) |
+| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133; Amendment 3 slice 06a-ops (D234-D242); Amendment 4 slice 06a (D243-D250) |
 | ADR-014 | End-to-end budget, limits, determinism | Accepted; stage budget measured by the spikes (D77); final gate D124/D126/D127/D131/D132/D135 |
 | ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; measured by SPIKE-1R; final gate D122/D130/D133/D136 |
 | ADR-016 | Confidence levels + lexicographic optimisation | Accepted; amended after the spikes (D78, D79); final gate D125 |

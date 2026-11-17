@@ -74,6 +74,16 @@ Feature: Planning on the real road network
     Then he sees "Routing engine unreachable - nothing was changed. Try again later."
     And the next Recalculate requests only the legs that were not answered
 
+  @US-10a @J-01 @FR-8.2 @error
+  Scenario: A place far from any road fails the plan and names it
+    # Added at slice 06a DESIGN (D245): only Confirmed legs exist until slice 06b.
+    Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
+    And Marco has added POI "Bivacco fuori strada" more than 250 m from any road open to vehicles
+    When Marco presses Recalculate
+    Then the new plan run fails and names "Bivacco fuori strada" as unreachable
+    And plan run #4 and all items are unchanged
+    And the next Recalculate asks the routing engine about "Bivacco fuori strada" again
+
   @US-10a @J-01 @NFR-4 @security
   Scenario Outline: Marco's password is never shown
     Given the shared household password is set in Marco's settings
