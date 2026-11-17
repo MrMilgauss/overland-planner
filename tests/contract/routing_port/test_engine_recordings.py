@@ -31,16 +31,14 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
 
-REPO = Path(__file__).resolve().parents[3]
-FIXTURES = REPO / "tests" / "contract" / "fixtures" / "valhalla-3.9.1"
-REPLAY_URL = "http://valhalla.replay"
+from tests.contract.routing_port.recordings import REPLAY_URL, REPO, recording
+
 MEASURES = frozenset({"time", "distance", "length"})
 TOLERANCE = 0.05
 RECORDED_QUESTIONS = (
@@ -53,11 +51,6 @@ RECORDED_QUESTIONS = (
     "route_171_near_point_cutoff250",  # error 171 on /route
     "locate_far_point_empty_edges_cutoff250",  # /locate answers 200 with empty edges
 )
-
-
-def recording(name: str) -> dict[str, Any]:
-    recorded: dict[str, Any] = json.loads((FIXTURES / f"{name}.json").read_text())
-    return recorded
 
 
 # The engine's own notes about how it answered (D242); never part of the answer.

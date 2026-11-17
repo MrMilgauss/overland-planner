@@ -4,7 +4,7 @@
 # is the contract (review H-06 exception, D186). Stories: US-10a (slice 06a), US-10b (slice 06b).
 # Recorded answers = Valhalla 3.9.1 responses captured by SPIKE-2R (spike/fixtures/index.json names in comments).
 
-@pending @technical @contract @real-io @adapter-integration
+@technical @contract @real-io @adapter-integration
 Feature: The planner and the routing engine understand each other
   As the planner's maintainer, I want every answer of the routing engine read the same way, whether it comes
   from recorded answers, the offline road map or the live engine on the Pi, so that Marco's legs are never
@@ -26,7 +26,7 @@ Feature: The planner and the routing engine understand each other
     Then every leg from the island has no connection at the Confirmed level
     And no leg of the other places is affected
 
-  @slice-06a @US-10a @J-01 @error
+  @pending @slice-06a @US-10a @J-01 @error
   Scenario: One place the routing engine cannot snap never removes the other places' legs
     # matrix_170_unsnappable_location_kills_call.json
     Given the routing engine answers with its recorded refusal for a batch that contains one place far from any road
@@ -43,14 +43,14 @@ Feature: The planner and the routing engine understand each other
     Then every leg is answered
     And no single question to the routing engine held more than 2,500 legs
 
-  @slice-06a @US-10a @J-01 @error
+  @pending @slice-06a @US-10a @J-01 @error
   Scenario: The contract checks stop when the engine is not the version they were recorded against
     # status.json (3.9.1)
     Given the routing engine reports version "3.10.0" instead of the recorded "3.9.1"
     When the routing-engine contract checks run against it
     Then they stop with "recorded for Valhalla 3.9.1, found 3.10.0 - re-record the answers"
 
-  @slice-06a @US-10a @J-01 @error @infrastructure-failure
+  @pending @slice-06a @US-10a @J-01 @error @infrastructure-failure
   Scenario Outline: Routing engine failures are reported as failures, never as missing roads
     Given the routing engine <failure>
     When the planner asks for the leg from Torino to Susa
@@ -63,26 +63,26 @@ Feature: The planner and the routing engine understand each other
       | does not answer within the time limit    | unreachable |
       | keeps answering with a server error      | unavailable |
 
-  @slice-06a @US-10a @J-01 @K5 @edge
+  @pending @slice-06a @US-10a @J-01 @K5 @edge
   Scenario: A passing server hiccup is retried and the plan still counts toward the 3-minute promise
     Given the routing engine answers with a server error once and then with its recorded Torino to Susa route
     When the planner asks for the leg from Torino to Susa
     Then it gets one Confirmed leg with the recorded distance and duration
     And the plan is marked as retried, and still counts toward the 3-minute promise
 
-  @slice-06a @US-10a @J-01
+  @pending @slice-06a @US-10a @J-01
   Scenario: The offline road map reports connections and failures the same way as the routing engine
     Given the offline road map scripted with the same connections and failures as the recorded answers
     When the routing-engine contract checks run against the offline road map
     Then every check gives the same result as for the recorded routing engine
 
-  @slice-06a @US-10a @J-01 @requires_external @real_provider @pi
+  @pending @slice-06a @US-10a @J-01 @requires_external @real_provider @pi
   Scenario: The routing engine on the Pi still answers like its recordings
     Given the planner can reach Valhalla on Marco's Pi through the maintenance tunnel
     When the routing-engine contract checks run against it
     Then every check passes on the live routing engine
 
-  @slice-06b @US-10b @J-01 @FR-5.8 @edge
+  @pending @slice-06b @US-10b @J-01 @FR-5.8 @edge
   Scenario: A place next to a restricted road is classified from both the legal and the permissive look-up
     # locate_permissive_access_restricted_point.json + locate_far_point_empty_edges_cutoff250.json
     Given the routing engine answers with its recorded look-ups for a place 120 m from an access-restricted road and far from any legal road
@@ -90,7 +90,7 @@ Feature: The planner and the routing engine understand each other
     Then the place counts as on the road network for an Unconfirmed leg that ignores access restrictions
     And legal questions to the routing engine never include it
 
-  @slice-06b @US-10b @J-01 @FR-5.8 @error
+  @pending @slice-06b @US-10b @J-01 @FR-5.8 @error
   Scenario: A permissive retry never snaps a place onto a footpath
     # route_442_permissive_footway_snap_destination.json + route_442_permissive_regression_torino_briancon.json
     Given the routing engine answers with its recorded no-path result when Briancon is sent unsnapped on a permissive question
