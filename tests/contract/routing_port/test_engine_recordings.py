@@ -16,6 +16,9 @@ Strings, bools, integers and nulls are always compared exactly (HTTP status, err
 lengths, null cells, the route polyline). Time, distance and length are exact when the live tileset is the recorded
 one (same `tileset_last_modified`), else within 5 %. Every other float (cost, heading, snapped coordinates) is exact
 on the recorded tileset and only has to be a float otherwise.
+The answer's top-level `warnings` are the engine's notes on how it answered (for example "CostMatrix turned off
+destination-only on a second pass"): they depend on its configuration, not on the roads, so they are not compared, on
+either side (D242, found by the first live run).
 """
 
 from __future__ import annotations
@@ -57,14 +60,20 @@ def recording(name: str) -> dict[str, Any]:
     return recorded
 
 
+# The engine's own notes about how it answered (D242); never part of the answer.
+ADVISORY = frozenset({"warnings"})
+
+
 def differences(recorded: Any, live: Any, *, exact: bool, path: str = "$") -> list[str]:
     """Where `live` departs from `recorded`; empty when the answers agree under the rules of the module docstring."""
     if isinstance(recorded, dict) and isinstance(live, dict):
-        if recorded.keys() != live.keys():
+        compared = recorded.keys() - ADVISORY if path == "$" else recorded.keys()
+        if compared != (live.keys() - ADVISORY if path == "$" else live.keys()):
             return [f"{path}: keys {sorted(live)} instead of {sorted(recorded)}"]
         return [
             found
             for key in recorded
+            if key in compared
             for found in differences(recorded[key], live[key], exact=exact, path=f"{path}.{key}")
         ]
     if isinstance(recorded, list) and isinstance(live, list):
@@ -285,6 +294,10 @@ def test_the_engine_answers_a_recorded_question_as_recorded(engine: Engine, name
         ({"error_code": 170}, {"error_code": 171}, False, 1),
         ({"cells": [1, 2]}, {"cells": [1]}, False, 1),
         ({"a": 1}, {"b": 1}, False, 1),
+        ({"a": 1}, {"a": 1, "warnings": [{"code": 400}]}, True, 0),
+        ({"a": 1, "warnings": [{"code": 400}]}, {"a": 1}, True, 0),
+        ({"a": 1, "warnings": [{"code": 400}]}, {"a": 2, "warnings": []}, True, 1),
+        ({"cell": {"a": 1}}, {"cell": {"a": 1, "warnings": []}}, True, 1),
     ],
 )
 def test_the_comparison_tells_agreement_from_drift(recorded: Any, live: Any, exact: bool, expected: int) -> None:
