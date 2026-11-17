@@ -31,8 +31,9 @@ from overland_planner.adapters.routing.mock_routing_provider import (
     RoadMapScript,
     read_road_map,
 )
+from overland_planner.application.ports.routing_provider import RoutingObserver
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.routing.road_leg import RoadMeasure
+from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
 from tests.common.state_delta import assert_state_delta, set_to
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -101,6 +102,17 @@ BAD_ROAD_MAPS = {
         folder, "bad.yaml", ONE_PAIR + ONE_PAIR.removeprefix("pairs:\n").replace("5100", "5200")
     ),
     **{
+        f"off-network-{name}": lambda folder, listed=listed: _write(
+            folder, "bad.yaml", f"pairs: []\noff_network: {listed}\n"
+        )
+        for name, listed in {
+            "not-a-list": "{lat: 45.0, lon: 7.0}",
+            "point-not-a-pair": "[[45.0]]",
+            "point-not-numbers": "[[north, east]]",
+            "point-out-of-range": "[[95.0, 7.0]]",
+        }.items()
+    },
+    **{
         f"latency-{name}": lambda folder, latency=latency: _write(
             folder, "bad.yaml", f"pairs: []\nlatency: {latency}\n"
         )
@@ -166,7 +178,9 @@ def test_a_road_map_with_the_wrong_detour_factor_refuses_the_start() -> None:
 
 
 class _NoZeroForIdenticalPoints(MockRoutingProvider):
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
+    ) -> Sequence[Sequence[RoadMeasure]]:
         return [
             [RoadMeasure(max(c.distance_m, 1), c.duration_s) for c in row] for row in super().matrix(sources, targets)
         ]
@@ -179,7 +193,9 @@ def test_a_road_map_that_drives_between_identical_points_refuses_the_start() -> 
 
 
 class _ScriptIgnored(MockRoutingProvider):
-    def matrix(self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]) -> Sequence[Sequence[RoadMeasure]]:
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
+    ) -> Sequence[Sequence[RoadMeasure]]:
         return MockRoutingProvider().matrix(sources, targets)
 
 
@@ -384,14 +400,14 @@ def test_the_probe_of_a_road_map_with_all_three_levels_passes_and_each_level_ans
 
 class _NoneAnsweredWithADistance(MockRoutingProvider):
     def matrix(
-        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
     ) -> Sequence[Sequence[RoadMeasure | None]]:
         return [[RoadMeasure(1_000, 100) if c is None else c for c in row] for row in super().matrix(sources, targets)]
 
 
 class _UnconfirmedAnsweredAsConfirmed(MockRoutingProvider):
     def matrix(
-        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
     ) -> Sequence[Sequence[RoadMeasure | None]]:
         return [
             [None if c is None else RoadMeasure(c.distance_m, c.duration_s) for c in row]
@@ -406,3 +422,77 @@ def test_a_road_map_that_does_not_answer_a_level_as_scripted_refuses_the_start(t
     result = liar(script=script).probe()
 
     assert (result.outcome, result.reason) == ("fatal", "routing_scripted_level_wrong")
+
+
+# ------------------------------------------------------- places off the network (slice 06a, D245, ADR-013 Amend. 4)
+OFF_NETWORK_MAP = "pairs: []\noff_network: [[44.6, 6.9], [44.7, 6.95]]\n"
+FAR = Coordinate(44.6, 6.9)
+
+
+def test_the_profile_is_mock_v1_and_a_script_without_off_network_keeps_its_provider_id() -> None:
+    sha256 = hashlib.sha256(PLAN_RUN_4.read_bytes()).hexdigest()
+
+    ids = (MockRoutingProvider().provider_id, MockRoutingProvider(script=read_road_map(PLAN_RUN_4)).provider_id)
+
+    assert MockRoutingProvider().profile == "mock.v1"
+    assert ids == ("mock:straight_line_x1.3", f"mock:straight_line_x1.3:script:{sha256}")
+
+
+@given(points=distinct_points, data=st.data())
+def test_every_pair_from_or_to_a_listed_off_network_point_names_the_listed_end_or_ends_and_no_other_pair_does(
+    points: list[Coordinate], data: st.DataObject
+) -> None:
+    listed = data.draw(st.lists(st.sampled_from(points), min_size=1, max_size=3, unique=True))
+    text = yaml.safe_dump({"pairs": [], "off_network": [[p.latitude, p.longitude] for p in listed]})
+    with tempfile.TemporaryDirectory() as folder:
+        provider = MockRoutingProvider(script=read_road_map(_write(Path(folder), "off.yaml", text)))
+    default = MockRoutingProvider()
+    ordered = list(itertools.permutations(points, 2))
+    before = {"road_map.answers": None}
+
+    answers = {pair: provider.matrix([pair[0]], [pair[1]])[0][0] for pair in ordered}
+
+    far = frozenset(listed)
+    assert_state_delta(
+        before,
+        {"road_map.answers": answers},
+        set(before),
+        {
+            "road_map.answers": set_to(
+                {
+                    pair: OffNetwork(far & set(pair)) if far & set(pair) else default.matrix([pair[0]], [pair[1]])[0][0]
+                    for pair in ordered
+                }
+            )
+        },
+        strict=True,
+    )
+
+
+def test_a_listed_off_network_point_matches_at_six_decimals_and_a_place_is_never_off_the_network_from_itself(
+    tmp_path: Path,
+) -> None:  # bypass: one fixed example of the 6-decimal matching rule, which has no input space to explore
+    provider = MockRoutingProvider(script=read_road_map(_write(tmp_path, "off.yaml", OFF_NETWORK_MAP)))
+    nearly_far = Coordinate(44.6000004, 6.9000004)
+
+    ((to_far,),) = provider.matrix([SUSA], [nearly_far])
+    ((from_far,),) = provider.matrix([nearly_far], [SUSA])
+    ((itself,),) = provider.matrix([FAR], [FAR])
+
+    assert (to_far, from_far) == (OffNetwork(frozenset({nearly_far})),) * 2
+    assert itself == RoadMeasure(0, 0)
+
+
+def test_the_probe_of_a_road_map_with_off_network_points_passes_and_proves_one_answers_so(tmp_path: Path) -> None:
+    script = read_road_map(_write(tmp_path, "off.yaml", OFF_NETWORK_MAP))
+
+    assert MockRoutingProvider(script=script).probe().outcome == "ok"
+    result = _OffNetworkIgnored(script=script).probe()
+    assert (result.outcome, result.reason) == ("fatal", "routing_off_network_wrong")
+
+
+class _OffNetworkIgnored(MockRoutingProvider):
+    def matrix(
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
+    ) -> Sequence[Sequence[RoadMeasure | OffNetwork | None]]:
+        return MockRoutingProvider().matrix(sources, targets)

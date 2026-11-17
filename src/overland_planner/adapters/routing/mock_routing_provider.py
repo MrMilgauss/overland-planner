@@ -16,10 +16,14 @@ look-up: the pairs answered are counted over the road map's life, and once those
 reached `answered_at_once_pairs`, that call and every later one waits `then_each_call_s` before it answers. The probe's
 calls are never delayed nor counted. The wait holds no lock, so calls may wait side by side.
 
-`provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted.
-The start-up probe proves Torino -> Susa (when the script does not list it), identical points, that one scripted
-pair answers as scripted and that one pair of each level the script lists does. Snap classes, unreachable points and the
-fault plan arrive with slice 06a.
+The optional `off_network: [[lat, lon], ...]` (06a, D245) lists places no road open to vehicles reaches (points matched
+at 6 decimals): every pair from or to one answers an `OffNetwork` naming that end or those ends, except a place to
+itself; a malformed list is `InvalidRoadMapError`.
+
+`provider_id` names the road map: `mock:straight_line_x1.3`, plus `:script:<sha256 of the file>` when scripted; its
+`profile` is `mock.v1`. The start-up probe proves Torino -> Susa (when the script does not list it), identical points,
+that one scripted pair answers as scripted, that one pair of each level the script lists does and that one listed
+off-network point answers so. The fault plan arrives with slice 06a's later steps.
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ from typing import cast
 import yaml
 
 from overland_planner.application.ports.probe import ProbeCheck, ProbeResult, first_failure
+from overland_planner.application.ports.routing_provider import RoadCell, RoutingObserver
 from overland_planner.domain.catalog.coordinate import Coordinate, CoordinateOutOfRangeError
-from overland_planner.domain.routing.road_leg import NOTHING_TO_DRIVE, RoadMeasure, RoadPair
+from overland_planner.domain.routing.road_leg import NOTHING_TO_DRIVE, OffNetwork, RoadMeasure, RoadPair
 
 DETOUR_FACTOR = 1.3
 DEFAULT_ROAD_SPEED_KMH = 60
@@ -51,7 +56,8 @@ _KNOWN_PAIR_TOLERANCE_S = 1
 _PAIR_KEYS = frozenset({"from", "to", "distance_m", "duration_s", "level"})
 _PAIR_MANDATORY_KEYS = frozenset({"from", "to"})
 _UNCONFIRMED_PREFIX = "unconfirmed:"
-_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency"})
+_TOP_LEVEL_KEYS = frozenset({"detour_factor", "pairs", "latency", "off_network"})
+PROFILE = "mock.v1"
 _LATENCY_KEYS = frozenset({"answered_at_once_pairs", "then_each_call_s"})
 
 
@@ -72,12 +78,14 @@ class RoadLookUpLatency:
 
 @dataclass(frozen=True)
 class RoadMapScript:
-    """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file, its latency."""
+    """A parsed road map: the detour factor of unlisted pairs, the listed pairs, the sha256 of the file, its latency and
+    the places off the network."""
 
     detour_factor: float
     pairs: Mapping[RoadPair, RoadMeasure | None]
     sha256: str
     latency: RoadLookUpLatency | None = None
+    off_network: frozenset[Coordinate] = frozenset()
 
 
 def read_road_map(path: Path) -> RoadMapScript:
@@ -87,13 +95,15 @@ def read_road_map(path: Path) -> RoadMapScript:
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         raise InvalidRoadMapError(path, f"cannot be read ({type(error).__name__}: {error})") from None
     try:
-        detour_factor, pairs, latency = _parse(document)
+        detour_factor, pairs, latency, off_network = _parse(document)
     except (ValueError, TypeError) as error:
         raise InvalidRoadMapError(path, str(error)) from None
-    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency)
+    return RoadMapScript(detour_factor, pairs, hashlib.sha256(content).hexdigest(), latency, off_network)
 
 
-def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure | None], RoadLookUpLatency | None]:
+def _parse(
+    document: object,
+) -> tuple[float, dict[RoadPair, RoadMeasure | None], RoadLookUpLatency | None, frozenset[Coordinate]]:
     if not isinstance(document, dict) or not set(document) <= _TOP_LEVEL_KEYS or "pairs" not in document:
         raise ValueError("must be a mapping with `pairs` and an optional `detour_factor` and `latency`")
     detour_factor = document.get("detour_factor", DETOUR_FACTOR)
@@ -107,7 +117,13 @@ def _parse(document: object) -> tuple[float, dict[RoadPair, RoadMeasure | None],
         pair, measure = _pair(index, entry)
         if pairs.setdefault(pair, measure) != measure:
             raise ValueError(f"pairs[{index}] lists a pair again with different values or levels")
-    return float(detour_factor), pairs, _latency(document.get("latency"))
+    return float(detour_factor), pairs, _latency(document.get("latency")), _off_network(document.get("off_network", []))
+
+
+def _off_network(listed: object) -> frozenset[Coordinate]:
+    if not isinstance(listed, list):
+        raise ValueError("off_network must be a list of [lat, lon] points")
+    return frozenset(_point(f"off_network[{index}]", value) for index, value in enumerate(listed))
 
 
 def _latency(value: object) -> RoadLookUpLatency | None:
@@ -152,13 +168,14 @@ def _measure_of(index: int, entry: dict[str, object]) -> RoadMeasure | None:
     return RoadMeasure(distance_m, duration_s, level="unconfirmed", reason=reason)
 
 
-def _point(index: int, value: object) -> Coordinate:
+def _point(where: int | str, value: object) -> Coordinate:
+    place = f"pairs[{where}]" if isinstance(where, int) else where
     if not isinstance(value, list) or len(value) != 2 or not all(_is_number(v) for v in value):
-        raise ValueError(f"pairs[{index}] points must be [lat, lon]")
+        raise ValueError(f"{place} points must be [lat, lon]")
     try:
         return _matched(Coordinate(float(value[0]), float(value[1])))
     except CoordinateOutOfRangeError as error:
-        raise ValueError(f"pairs[{index}]: {error}") from None
+        raise ValueError(f"{place}: {error}") from None
 
 
 def _is_number(value: object) -> bool:
@@ -210,6 +227,7 @@ class MockRoutingProvider:
         self._detour_factor = detour_factor if script is None else script.detour_factor
         self._script = script
         self._pairs: Mapping[RoadPair, RoadMeasure | None] = {} if script is None else script.pairs
+        self._off_network = frozenset[Coordinate]() if script is None else script.off_network
         self._pace = _LookUpPace(None if script is None else script.latency)
         self._sleep = sleep
 
@@ -218,9 +236,13 @@ class MockRoutingProvider:
         default = f"mock:straight_line_x{self._detour_factor}"
         return default if self._script is None else f"{default}:script:{self._script.sha256}"
 
+    @property
+    def profile(self) -> str:
+        return PROFILE
+
     def matrix(
-        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
-    ) -> Sequence[Sequence[RoadMeasure | None]]:
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
+    ) -> Sequence[Sequence[RoadCell]]:
         wait_s = self._pace.wait_s()
         if wait_s is not None:
             self._sleep(wait_s)
@@ -239,15 +261,19 @@ class MockRoutingProvider:
                     ProbeCheck("routing_identical_points_not_zero", self._identical_points_are_zero),
                     ProbeCheck("routing_scripted_pair_wrong", self._answers_its_script),
                     ProbeCheck("routing_scripted_level_wrong", self._answers_each_level_it_lists),
+                    ProbeCheck("routing_off_network_wrong", self._answers_off_network_where_scripted),
                 ),
                 failing_errors=(),
             )
         finally:
             self._pace.probing(False)
 
-    def _measure(self, source: Coordinate, target: Coordinate) -> RoadMeasure | None:
+    def _measure(self, source: Coordinate, target: Coordinate) -> RoadCell:
         if source == target:
             return NOTHING_TO_DRIVE
+        named = frozenset(end for end in (source, target) if _matched(end) in self._off_network)
+        if named:
+            return OffNetwork(named)
         listed = (_matched(source), _matched(target))
         if listed in self._pairs:
             return self._pairs[listed]
@@ -259,7 +285,7 @@ class MockRoutingProvider:
             return True
         expected_m = _TORINO_SUSA_ROAD_M if self._script is None else _TORINO_SUSA_STRAIGHT_M * self._detour_factor
         ((answered,),) = self.matrix([_TORINO], [_SUSA])
-        if answered is None:
+        if not isinstance(answered, RoadMeasure):
             return False
         expected_s = expected_m / _METRES_PER_SECOND
         distance_right = abs(answered.distance_m - expected_m) <= _KNOWN_PAIR_TOLERANCE_M
@@ -276,6 +302,15 @@ class MockRoutingProvider:
         (origin, destination), scripted = listed
         ((answered,),) = self.matrix([origin], [destination])
         return answered == scripted
+
+    def _answers_off_network_where_scripted(self) -> bool:
+        """One listed off-network point answers off the network, named, towards a point that is not listed."""
+        listed = next(iter(sorted(self._off_network, key=lambda p: (p.latitude, p.longitude))), None)
+        if listed is None:
+            return True
+        elsewhere = _SUSA if _matched(_SUSA) not in self._off_network else _TORINO
+        ((answered,),) = self.matrix([listed], [elsewhere])
+        return answered == OffNetwork(frozenset({listed}))
 
     def _answers_each_level_it_lists(self) -> bool:
         """One listed pair of each level present (confirmed, unconfirmed, none) answers exactly as scripted."""

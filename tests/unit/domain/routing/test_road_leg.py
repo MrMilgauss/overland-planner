@@ -16,7 +16,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.domain.catalog.coordinate import Coordinate
-from overland_planner.domain.routing.road_leg import LegTable, NoRoadError, RoadLeg, RoadMeasure, RoadPair
+from overland_planner.domain.routing.road_leg import LegTable, NoRoadError, OffNetwork, RoadLeg, RoadMeasure, RoadPair
 from tests.common.state_delta import assert_state_delta, set_to
 
 TORINO = Coordinate(45.0703, 7.6869)
@@ -218,3 +218,12 @@ def test_two_tables_merge_into_one_that_answers_what_either_did_the_later_one_fi
         {"merged.connected": set_to(expected)},
         strict=True,
     )
+
+
+@given(places=st.frozensets(st.builds(Coordinate, st.floats(-90, 90), st.floats(-180, 180)), min_size=1, max_size=2))
+def test_an_off_network_answer_names_its_places_and_cannot_name_none(
+    places: frozenset[Coordinate],
+) -> None:
+    assert OffNetwork(places).places == places
+    with pytest.raises(ValueError):
+        OffNetwork(frozenset())

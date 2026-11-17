@@ -5,7 +5,9 @@ is driven between identical points, so that leg is 0 m and 0 s and needs no row.
 programming error and raises `KeyError`.
 
 A road map answers each pair at a level (brief section 6): `confirmed`, or `unconfirmed` with the reason it is not; a
-pair with no road at any level has no measure at all (`None` in the port's matrix). The table keeps that answer apart
+pair with no road at any level has no measure at all (`None` in the port's matrix). A pair with an end the road map
+cannot snap to a road is answered `OffNetwork`, which names that end or those ends: for the table it is a pair with no
+road. The table keeps that answer apart
 from a pair nobody asked: the measure of a pair with no road raises `NoRoadError`, a pair nobody asked `KeyError`;
 `connected` says whether any road joins a pair (identical points do: 0 m, nothing to drive).
 """
@@ -38,6 +40,18 @@ class RoadMeasure:
         if self.level == "unconfirmed" and self.reason is not None and self.reason.strip():
             return
         raise ValueError(f"a {self.level} road measure cannot carry the reason {self.reason!r}")
+
+
+@dataclass(frozen=True)
+class OffNetwork:
+    """What the road map answers for a pair when it cannot snap an end of it to a road open to vehicles: the end or
+    ends of the pair it names."""
+
+    places: frozenset[Coordinate]
+
+    def __post_init__(self) -> None:
+        if not self.places:
+            raise ValueError("an off-network answer names at least one place")
 
 
 NOTHING_TO_DRIVE = RoadMeasure(distance_m=0, duration_s=0)

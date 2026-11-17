@@ -24,10 +24,11 @@ from overland_planner.application.ports.plan_job_log import PlanJobLogEntry
 from overland_planner.application.ports.plan_run_repository import NewPlanRun, PlanRunDetail
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.project_snapshot_reader import ProjectStamp
+from overland_planner.application.ports.routing_provider import RoutingObserver
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.planning.plan_run import PlanRun, PlanRunStatus
 from overland_planner.domain.planning.project_snapshot import ProjectSnapshot
-from overland_planner.domain.routing.road_leg import RoadMeasure
+from overland_planner.domain.routing.road_leg import OffNetwork, RoadMeasure
 from tests.common.fakes import FakeClock
 
 MAX_WAIT_S = 30.0
@@ -252,6 +253,7 @@ class RecordingRoadMap:
     """
 
     provider_id = "road-map-double"
+    profile = "road-map-double-profile"
 
     def __init__(
         self,
@@ -271,8 +273,8 @@ class RecordingRoadMap:
         return ProbeResult(outcome="ok")
 
     def matrix(
-        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate]
-    ) -> Sequence[Sequence[RoadMeasure | None]]:
+        self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None
+    ) -> Sequence[Sequence[RoadMeasure | OffNetwork | None]]:
         self.gate.passing()
         self.asked.update((source, target) for source in sources for target in targets)
         return [[self._measure(source, target) for target in targets] for source in sources]
