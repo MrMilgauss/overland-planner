@@ -6,10 +6,10 @@ Solver-side outcomes all store a run (D122); an exception stores nothing, becaus
 Before anything is stored the guard judges the solver's order, then the assembled plan against the canonical files
 (ADR-009), which are read outside any lock; a violation stores a Failed run with no fallback (ADR-015). For each track
 the plan retraces, the file read by version also gives the hash of its points reversed, which the assembler writes on
-the retrace row and the guard checks (ADR-009 Amendment 2). The solve runs
-holding the job's solver slot (D133) and no unit of work. With a fingerprint memo (ADR-014 section 5) the model's
-fingerprint is stored on every run, and a ready run of the project with it gives the order without the solver; the
-totals are recomputed. Later slices add the snapping and the ladder to this sequence.
+the retrace row and the guard checks (ADR-009 Amendment 2). The solve runs holding the job's solver slot (D133) and no
+unit of work. With a fingerprint memo (ADR-014 section 5) the model's fingerprint is stored on every run, and a ready
+run of the project with it gives the order without the solver; the totals are recomputed. Later slices add the snapping
+and the ladder to this sequence.
 
 Stop reaches the solve through the port's stop signal (brief section 6), the one the job's solver slot answers: a
 progress without one (`None`) hands the solve one that is never set. A stopped solve stores the last incumbent

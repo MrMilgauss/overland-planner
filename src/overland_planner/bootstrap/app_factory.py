@@ -126,18 +126,7 @@ class _Wiring:
         self._mount_table = ports.mount_table or ProcMountTable()
         self._gpx_parser = GpxpyParser()
         self._gpx_writer = GpxpyWriter()
-        self._routing_provider: RoutingProvider = ports.routing_provider or (
-            ValhallaRoutingProvider(
-                settings.valhalla_url,
-                expected_version=settings.valhalla_expected_version,
-                max_matrix_pairs=settings.valhalla_max_matrix_pairs,
-                concurrency=settings.valhalla_concurrency,
-                snap_m=settings.confirmed_snap_m,
-                transport=ports.routing_transport,
-            )
-            if settings.routing_provider == "valhalla"
-            else MockRoutingProvider(script=road_map)
-        )
+        self._routing_provider = ports.routing_provider or _routing_provider_for(settings, ports, road_map)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
@@ -234,6 +223,20 @@ class _Wiring:
         runs = PlanRunQueries(self._planning_unit_of_work)
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return export_routes(GpxExportService(runs, projects, self._file_store, self._gpx_writer, self._event_log))
+
+
+def _routing_provider_for(settings: Settings, ports: ExternalPorts, road_map: RoadMapScript | None) -> RoutingProvider:
+    """The road map of ROUTING_PROVIDER: the engine over the scripted transport of the tests, or the offline one."""
+    if settings.routing_provider == "valhalla":
+        return ValhallaRoutingProvider(
+            settings.valhalla_url,
+            expected_version=settings.valhalla_expected_version,
+            max_matrix_pairs=settings.valhalla_max_matrix_pairs,
+            concurrency=settings.valhalla_concurrency,
+            snap_m=settings.confirmed_snap_m,
+            transport=ports.routing_transport,
+        )
+    return MockRoutingProvider(script=road_map)
 
 
 def create_app(

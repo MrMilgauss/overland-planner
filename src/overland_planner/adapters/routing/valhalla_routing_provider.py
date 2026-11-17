@@ -253,10 +253,11 @@ class ValhallaRoutingProvider:
         ]
 
     def _locate_without_edges(self, places: list[Coordinate], observer: RoutingObserver | None) -> set[Coordinate]:
-        question = {**self._question(places, []), "verbose": True}
         question = {
-            "locations": question["sources"],
-            **{k: question[k] for k in ("costing", "costing_options", "verbose")},
+            "locations": [self._place(place) for place in places],
+            "costing": COSTING,
+            "costing_options": COSTING_OPTIONS,
+            "verbose": True,
         }
         answer = self._call(
             "POST",

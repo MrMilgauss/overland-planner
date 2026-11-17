@@ -3,13 +3,12 @@ engine, optimizer.
 
 A refused request creates no job and no plan run, is stored as one `plan_refusals` row (D248; a row that cannot be
 written changes nothing of the refusal and logs `plan.refusal.store_failed` at warning) and logs one `plan.job.refused`
-line. The routing engine is probed
-before each request that gets that far, and the health service keeps the result (ADR-013 Amendment 4, D247); the
-optimizer's readiness is the start-up probe outcome of the component `tour_solver`; nothing probes it again.
-A request that passes every pre-check
-starts a plan job and answers at once with its id. `ignore_memo` ("Re-optimise", ADR-015) changes no pre-check: it only
-travels with the job. The registry decides the active job check again as it starts the job,
-atomically, so of two fast presses that both passed the pre-checks only one gets a job.
+line. The routing engine is probed before each request that gets that far, and the health service keeps the result
+(ADR-013 Amendment 4, D247); the optimizer's readiness is the start-up probe outcome of the component `tour_solver`;
+nothing probes it again. A request that passes every pre-check starts a plan job and answers at once with its id.
+`ignore_memo` ("Re-optimise", ADR-015) changes no pre-check: it only travels with the job. The registry decides the
+active job check again as it starts the job, atomically, so of two fast presses that both passed the pre-checks only
+one gets a job.
 """
 
 from __future__ import annotations

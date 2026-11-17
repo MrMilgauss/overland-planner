@@ -11,13 +11,12 @@ not kept: the place it names is asked about again in the next request (D245). Wi
 those places and answers the later pairs from or to them itself, so a far place costs one question, not one per origin;
 that memory ends with the request. The legs found are kept in memory for the resolver's life, which is the planner
 process's (06-09): per provider_id, profile and pair (D244), safe across the jobs' threads, and never locked while the
-road map is asked. The
-persistent `leg_cache` table is slice 05's; until then a restart forgets them (a recorded deviation from ADR-015). A
-request reports the legs it already holds before it asks anything (`cached`, identical points included), and the
-legs found after every road-map call (`new`); at the end `new + cached = total`, its distinct pairs. A leg answered
-is kept even when the progress that hears of it ends the request, and when the road map fails on a later call (D248):
-the failure propagates, and the legs answered before it are served from the memory next time. The `observer` is handed
-to every road-map call, to hear its retries.
+road map is asked. The persistent `leg_cache` table is slice 05's; until then a restart forgets them (a recorded
+deviation from ADR-015). A request reports the legs it already holds before it asks anything (`cached`, identical
+points included), and the legs found after every road-map call (`new`); at the end `new + cached = total`, its
+distinct pairs. A leg answered is kept even when the progress that hears of it ends the request, and when the road
+map fails on a later call (D248): the failure propagates, and the legs answered before it are served from the memory
+next time. The `observer` is handed to every road-map call, to hear its retries.
 """
 
 from __future__ import annotations

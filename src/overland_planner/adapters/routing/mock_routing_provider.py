@@ -42,7 +42,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TypeGuard, cast
 
 import yaml
 
@@ -59,7 +59,9 @@ from overland_planner.domain.routing.road_leg import NOTHING_TO_DRIVE, OffNetwor
 
 DETOUR_FACTOR = 1.3
 DEFAULT_ROAD_SPEED_KMH = 60
-_METRES_PER_SECOND = DEFAULT_ROAD_SPEED_KMH * 1000 / 3600
+_METRES_PER_KM = 1000
+_SECONDS_PER_HOUR = 3600
+_METRES_PER_SECOND = DEFAULT_ROAD_SPEED_KMH * _METRES_PER_KM / _SECONDS_PER_HOUR
 _MATCH_DECIMALS = 6
 _TORINO = Coordinate(45.0703, 7.6869)
 _SUSA = Coordinate(45.1383, 7.0500)
@@ -175,7 +177,7 @@ def _faults(value: object) -> RoadMapFaults | None:
     return RoadMapFaults(value["kind"], after, once)
 
 
-def _is_whole(value: object) -> bool:
+def _is_whole(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -191,7 +193,7 @@ def _latency(value: object) -> RoadLookUpLatency | None:
     if not isinstance(value, dict) or set(value) != _LATENCY_KEYS:
         raise ValueError("latency must have exactly answered_at_once_pairs and then_each_call_s")
     pairs, seconds = value["answered_at_once_pairs"], value["then_each_call_s"]
-    if not isinstance(pairs, int) or isinstance(pairs, bool) or pairs < 0:
+    if not _is_whole(pairs) or pairs < 0:
         raise ValueError("latency answered_at_once_pairs must be a whole number of at least 0")
     if not _is_number(seconds) or seconds < 0:
         raise ValueError("latency then_each_call_s must be a number of at least 0")
@@ -216,7 +218,7 @@ def _measure_of(index: int, entry: dict[str, object]) -> RoadMeasure | None:
         if "distance_m" in entry or "duration_s" in entry:
             raise ValueError(f"pairs[{index}] at level none has no road, so neither distance_m nor duration_s")
         return None
-    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in figures):
+    if not all(_is_whole(v) and v > 0 for v in figures):
         raise ValueError(f"pairs[{index}] distance_m and duration_s must be whole numbers above 0")
     distance_m, duration_s = cast(int, figures[0]), cast(int, figures[1])
     if level == "confirmed":
@@ -245,50 +247,59 @@ def _matched(point: Coordinate) -> Coordinate:
     return Coordinate(round(point.latitude, _MATCH_DECIMALS), round(point.longitude, _MATCH_DECIMALS))
 
 
-class _LookUpPace:
-    """The script's latency over the road map's life: counts the pairs answered and says how long a call waits."""
+class _PairsAnswered:
+    """The pairs answered over the road map's life. The probe's calls are never counted: `probing(True)` on the probing
+    thread says so."""
 
-    def __init__(self, latency: RoadLookUpLatency | None) -> None:
-        self._latency = latency
+    def __init__(self) -> None:
         self._answered = 0
         self._lock = threading.Lock()
         self._probing = threading.local()
 
-    def wait_s(self) -> float | None:
-        """The wait of the next call, `None` when it answers at once."""
-        if self._latency is None or getattr(self._probing, "on", False):
-            return None
-        with self._lock:
-            reached = self._answered >= self._latency.answered_at_once_pairs
-        return self._latency.then_each_call_s if reached else None
+    def probing(self, on: bool) -> None:
+        self._probing.on = on
+
+    def _is_probing(self) -> bool:
+        return getattr(self._probing, "on", False)
 
     def answered(self, pairs: int) -> None:
-        if getattr(self._probing, "on", False):
+        if self._is_probing():
             return
         with self._lock:
             self._answered += pairs
 
-    def probing(self, on: bool) -> None:
-        self._probing.on = on
+    def _count(self) -> int:
+        with self._lock:
+            return self._answered
 
 
-class _FaultCourse:
+class _LookUpPace(_PairsAnswered):
+    """The script's latency over the road map's life: counts the pairs answered and says how long a call waits."""
+
+    def __init__(self, latency: RoadLookUpLatency | None) -> None:
+        super().__init__()
+        self._latency = latency
+
+    def wait_s(self) -> float | None:
+        """The wait of the next call, `None` when it answers at once."""
+        if self._latency is None or self._is_probing():
+            return None
+        reached = self._count() >= self._latency.answered_at_once_pairs
+        return self._latency.then_each_call_s if reached else None
+
+
+class _FaultCourse(_PairsAnswered):
     """The fault plan over the road map's life: counts the matrix calls and the pairs answered since it was armed, and
     fails or retries a call as the plan says. The probe's calls are never failed nor counted."""
 
     def __init__(self, faults: RoadMapFaults | None) -> None:
+        super().__init__()
         self._faults = faults
         self._calls = 0
-        self._answered = 0
-        self._lock = threading.Lock()
-        self._probing = threading.local()
-
-    def probing(self, on: bool) -> None:
-        self._probing.on = on
 
     def before_answering(self, observer: RoutingObserver | None) -> None:
         """Raises the typed error once the pairs answered have reached the plan; tells the observer of the one retry."""
-        if self._faults is None or getattr(self._probing, "on", False):
+        if self._faults is None or self._is_probing():
             return
         with self._lock:
             self._calls += 1
@@ -297,12 +308,6 @@ class _FaultCourse:
             raise _FAILURES[self._faults.kind](f"scripted fault: {answered} pairs answered")
         if call == self._faults.fail_once_on_call and observer is not None:
             observer.retried()
-
-    def answered(self, pairs: int) -> None:
-        if getattr(self._probing, "on", False):
-            return
-        with self._lock:
-            self._answered += pairs
 
 
 class MockRoutingProvider:

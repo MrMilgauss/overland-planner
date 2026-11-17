@@ -7,9 +7,9 @@ programming error and raises `KeyError`.
 A road map answers each pair at a level (brief section 6): `confirmed`, or `unconfirmed` with the reason it is not; a
 pair with no road at any level has no measure at all (`None` in the port's matrix). A pair with an end the road map
 cannot snap to a road is answered `OffNetwork`, which names that end or those ends: for the table it is a pair with no
-road. The table keeps that answer apart
-from a pair nobody asked: the measure of a pair with no road raises `NoRoadError`, a pair nobody asked `KeyError`;
-`connected` says whether any road joins a pair (identical points do: 0 m, nothing to drive).
+road. The table keeps that answer apart from a pair nobody asked: the measure of a pair with no road raises
+`NoRoadError`, a pair nobody asked `KeyError`; `connected` says whether any road joins a pair (identical points do:
+0 m, nothing to drive).
 """
 
 from __future__ import annotations

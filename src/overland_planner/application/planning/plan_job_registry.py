@@ -30,18 +30,17 @@ and it holds no writer lock while it waits; the legs it was answered stay with t
 
 Finished jobs are kept for 10 minutes by the `Clock` port and forgotten on the next `start` or `get`; nothing waits on
 the clock. Each job logs one `plan.job.finished` line before its end is published, with the kpi-contracts field names;
-fields owned by later slices, and those a job ended before it could note, are null; `unconfirmed_legs` and
-`retraces` are the stored plan's, read from the model's real tables (07-08). A failed job names only the exception's
-class (D197). With a `PlanJobLog`, the
-line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the run is stored and before
-the end is published; a row that cannot be written changes nothing of the ending and logs `plan.job.log_failed` at
-warning with the error's class. The row adds `solver_wait_s`, which the line leaves out (kpi-contracts): the seconds by
-the `Clock` port from the job asking for the solver slot to taking it, or to its wait giving up on Stop or at the
-feasibility limit; 0.0 when the slot was free; null for a job that ended before it asked (before the solve stage).
-The poll shows `stage_ms`, `legs_total`, `legs_new`, `legs_cached` (the road legs asked of the road map and those
-known without asking, as they arrive) and `items_included` once the work noted them, and `incumbent` (null until the
-first valid route): the last incumbent the solve streamed, which the line leaves out (it counts them in `incumbents`),
-and `notices` (the large-project notice, D146), which the line leaves out too.
+fields owned by later slices, and those a job ended before it could note, are null; `unconfirmed_legs` and `retraces`
+are the stored plan's, read from the model's real tables (07-08). A failed job names only the exception's class (D197).
+With a `PlanJobLog`, the line's values are then written as the job's one `plan_job_log` row (ADR-015 DV-2), after the
+run is stored and before the end is published; a row that cannot be written changes nothing of the ending and logs
+`plan.job.log_failed` at warning with the error's class. The row adds `solver_wait_s`, which the line leaves out
+(kpi-contracts): the seconds by the `Clock` port from the job asking for the solver slot to taking it, or to its wait
+giving up on Stop or at the feasibility limit; 0.0 when the slot was free; null for a job that ended before it asked
+(before the solve stage). The poll shows `stage_ms`, `legs_total`, `legs_new`, `legs_cached` (the road legs asked of the
+road map and those known without asking, as they arrive) and `items_included` once the work noted them, and `incumbent`
+(null until the first valid route): the last incumbent the solve streamed, which the line leaves out (it counts them in
+`incumbents`), and `notices` (the large-project notice, D146), which the line leaves out too.
 A job carries the `ignore_memo` it was started with to its work, its poll and its log line; `memo_hit` is what its work
 noted, false until the memo gives the order.
 """
