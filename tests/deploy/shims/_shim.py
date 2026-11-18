@@ -229,7 +229,10 @@ def _compose_run(argv: list[str]) -> None:
         if not (build / "default_speeds.json").is_file():
             sys.stderr.write("curl: (6) Could not resolve host: raw.githubusercontent.com\n")
             sys.exit(1)
-        for name in ("valhalla_tiles.tar", "admins.sqlite", "timezones.sqlite", "valhalla.json"):
+        if not (build / "timezones.sqlite").is_file() or not (build / "timezones.sqlite").stat().st_size:
+            sys.stderr.write("valhalla_build_timezones: curl failed for timezone-boundary-builder (no network)\n")
+            sys.exit(1)  # the image downloads the time-zone db when none is there; the build has no network
+        for name in ("valhalla_tiles.tar", "admins.sqlite", "valhalla.json"):
             (build / name).write_text(f"built {name}\n")
         os.utime(build / "valhalla_tiles.tar", (BUILD_TIME, BUILD_TIME))  # the tile build's own time
 

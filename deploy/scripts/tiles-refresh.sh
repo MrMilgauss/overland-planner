@@ -9,7 +9,8 @@
 #    MemAvailable >= build cap + 1 GiB; the planner's /api/diagnostics is asked (a note when it does not answer)
 #  2 while valhalla serves: valhalla-fetch (the only service with egress) downloads the five Geofabrik extracts into
 #    build/src and default_speeds.json into build/ (the build has no network and would fail without it), and merges the
-#    extracts into build/alps.osm.pbf (MemAvailable >= 7 GiB checked again just before the merge); the extracts are deleted
+#    extracts into build/alps.osm.pbf (MemAvailable >= 7 GiB checked again just before the merge); the extracts are deleted.
+#    The time-zone db is carried over from the serving tileset into build/ (the build has no network and cannot download it)
 #  3 valhalla stopped, valhalla-build makes the tiles under its cap, the deltas of valhalla/valhalla.overrides.json are
 #    applied to the built valhalla.json with jq inside the Valhalla image
 #  4 promote the five tileset files to tilesets/<YYYYMMDD>/ (with SHA256SUMS), build/ deleted; routing.env -> routing.env.prev, new pointer,
@@ -148,6 +149,12 @@ say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset 
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c 'rm -rf /vol/build && mkdir -p /vol/build/src' prepare-build >&2 ||
   fail_stage download "cannot prepare build/ in the volume"
+# The build has no network (D239) and valhalla_build_timezones downloads: the serving tileset's db is reused.
+# shellcheck disable=SC2016 # the script is expanded by the container's sh
+docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+  sh -c 'test -s "/vol/tilesets/$1/timezones.sqlite" && cp "/vol/tilesets/$1/timezones.sqlite" /vol/build/timezones.sqlite' \
+  carry-timezones "$current" >&2 ||
+  fail_stage download "tilesets/$current/timezones.sqlite is missing or empty; the build has no network to download it"
 urls=()
 for extract in "${EXTRACTS[@]}"; do urls+=("$GEOFABRIK/$extract.osm.pbf"); done
 # shellcheck disable=SC2016 # the script is expanded by the container's sh

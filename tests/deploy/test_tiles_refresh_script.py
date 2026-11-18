@@ -22,7 +22,10 @@ SERVED_ROUTING = f"VALHALLA_TILESET={SERVED}\n"
 KEPT_ROUTING = f"VALHALLA_TILESET={KEPT}\n"
 STATUS_MODIFIED = "1793560782"  # what the docker shim's valhalla /status answers on the new tileset
 OLD_MODIFIED = "1790000000"  # what it answers while the served tileset is the old one
-BUILT = {name: f"built {name}\n" for name in TILES_FILES} | {"default_speeds.json": "downloaded default_speeds.json\n"}
+BUILT = {name: f"built {name}\n" for name in TILES_FILES} | {
+    "default_speeds.json": "downloaded default_speeds.json\n",
+    "timezones.sqlite": f"time zones of {SERVED}\n",  # carried over from the serving tileset: the build has no network
+}
 SPEEDS_URL = "https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json"
 MUTATING_VERBS = {"up", "stop", "down", "restart", "rm", "kill", "pull", "create", "run"}
 LOW_DISK = (
@@ -38,6 +41,7 @@ def serving(pi: FakePi) -> FakePi:
     for name in (SERVED, KEPT, OLDER):
         (pi.volume / "tilesets" / name).mkdir(parents=True)
         (pi.volume / "tilesets" / name / "valhalla_tiles.tar").write_text(f"tiles {name}\n")
+        (pi.volume / "tilesets" / name / "timezones.sqlite").write_text(f"time zones of {name}\n")
     (pi.shim_home / "status_by_tileset.json").write_text(json.dumps({SERVED: OLD_MODIFIED}))
     return pi
 
@@ -89,6 +93,7 @@ def test_refresh_builds_while_serving_stops_for_the_build_switches_and_prunes_on
         "tileset-exists",
         "status",  # the old tileset_last_modified, read before the engine is stopped
         "prepare-build",
+        "carry-timezones",  # the build has no network: the serving tileset's time-zone db goes in build/
         "run valhalla-fetch",  # download, valhalla still serving
         "run valhalla-fetch merge",
         "drop-src",
@@ -122,6 +127,25 @@ def test_refresh_builds_while_serving_stops_for_the_build_switches_and_prunes_on
         "reason": "",
     }
     assert "make contract-live" in result.stderr and "make acceptance-pi" in result.stderr
+
+
+@pytest.mark.parametrize("content", [None, ""], ids=["missing", "empty"])
+def test_a_serving_tileset_without_a_time_zone_db_fails_the_download_and_keeps_serving(
+    serving: FakePi, content: str | None
+) -> None:
+    source = serving.volume / "tilesets" / SERVED / "timezones.sqlite"
+    if content is None:
+        source.unlink()
+    else:
+        source.write_text(content)
+    before = pointers(serving)
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 1 and "timezones.sqlite" in result.stderr
+    assert timeline(serving) == ["tileset-exists", "status", "prepare-build", "carry-timezones", "up valhalla"]
+    assert pointers(serving) == before
+    assert last_log(serving)["reason"] == "refresh failed (download)"
 
 
 def test_the_services_run_with_the_overrides_mounted_and_the_extracts_of_the_five_regions(serving: FakePi) -> None:
@@ -208,6 +232,7 @@ def test_every_preflight_refusal_changes_nothing_and_says_why(
 @pytest.mark.parametrize(
     ("stage", "needle", "stopped"),
     [
+        ("download", "carry-timezones", False),
         ("download", "curl -fL", False),
         ("download", "default_speeds.json", False),
         ("merge", "osmium merge", False),
@@ -244,6 +269,7 @@ def test_too_little_memory_just_before_the_merge_stops_the_refresh_while_the_old
         "tileset-exists",
         "status",
         "prepare-build",
+        "carry-timezones",
         "run valhalla-fetch",
         "up valhalla",
     ]
