@@ -70,7 +70,7 @@ kpis:
       diagnostics_field: k2.invariant_violations
       definition: count of plan_runs with status=failed AND failure_reason='internal_invariant_violation' (all time and last 30 days)
     thresholds: {green: 0, red: ">= 1"}
-    alert: red badge on the diagnostics page (#/diagnostics) and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate). Built in slice 03 is the red badge only; the banner is NOT built and is deferred to slice 12 (UI foundation) because it needs an acknowledgement state (ADR-003 Amendment 1, UI-DELIVER-7, 2026-11-11)
+    alert: red badge on the diagnostics page (#/diagnostics) and a warning banner on the home page until acknowledged; treat as an incident (rollback candidate). Built in slice 03 is the red badge only; the banner is NOT built yet; it is planned in slice 12 (UI foundation, US-22, DISCUSS 2026-11-18): shown while k2.invariant_violations > 0, with the acknowledgement kept in the browser only, per count (a higher count shows it again), so no new server data (ADR-003 Amendment 1, UI-DELIVER-7, 2026-11-11)
 
   - id: K3
     name: Plan runs omitting an item from the consideration report

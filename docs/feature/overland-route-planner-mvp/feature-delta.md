@@ -2505,6 +2505,290 @@ Scenario: S5 No track item is ever driven backwards, retraces included
 
 - US-03 (property generators), US-06a; MockProvider per-pair configuration (introduced here, extended in US-08).
 
+### US-20: The planner reads as one product: map first, one look, on any screen
+
+- job_id: J-01 | Slice: 12 | MoSCoW: Must | FR-6 (presentation), NFR usability | Size: 0.8 d
+
+#### Problem
+
+Marco opens the planner and sees a plain page: controls stacked like a form, the map squeezed in among them, buttons that do not look like buttons. Giulia opens it on her phone and has to scroll sideways to see the totals. Neither can tell at a glance where to start.
+
+#### Who
+
+- Marco | laptop, plans in the evening, thinks in maps | Giulia | 390 px iPhone, reads the plan and checks the days
+
+#### Solution
+
+One layout and one look for every existing page. The map is the main surface; stops, itinerary and totals sit beside it (below it on a phone). Items, Start/End and plan controls are grouped by task. One set of type sizes, spacing, colours, buttons and inputs; light and dark themes follow the system setting. Touch-sized targets, visible keyboard focus, text readable outdoors. On the map, direction arrows stay small at trip-wide zoom on a phone, and a "retrace" label never hides a stop number.
+
+#### Elevator Pitch
+
+- Before: Marco scrolls past a stack of form fields to find the map of plan run #4; Giulia scrolls sideways on her phone to read the totals.
+- After: Giulia opens "Alpi Occidentali giugno 2027" on her 390 px iPhone -> sees the map of plan run #4 on top, with Torino, Aosta and Briancon numbered, and the itinerary and totals below it, with nothing cut off at the side.
+- Decision enabled: Giulia decides whether the days look reasonable without asking Marco to show her on the laptop.
+
+#### Domain Examples
+
+1. Happy: Marco on his laptop (1440 px) opens plan run #4; the map fills most of the window, the itinerary (stops 1-11, Torino -> Aosta -> Briancon -> Torino) and totals are in a column beside it; items, Start/End and the Optimize button sit in three labelled groups.
+2. Edge: Giulia on her 390 px iPhone at trip-wide zoom sees the "Strada dell'Assietta" arrows small enough not to cover each other or the stop numbers; zooming in on the Assietta, they grow back to full size.
+3. Edge: the "Colle del Sommeiller" retrace is short (12.4 km); at trip-wide zoom its "retrace" label sits clear of stop number 7.
+4. Boundary: Marco's laptop is in dark mode at night; the planner opens dark; every text still reaches 4.5:1 contrast. He tabs from "Optimize" to "Download GPX" and always sees which control has focus.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 On a laptop the map is the main surface
+  Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
+  When Marco opens the project in a 1440 px wide window
+  Then the map takes more of the window's width than any other part of the page
+  And the stops, itinerary and totals of plan run #4 are beside the map without scrolling
+
+Scenario: S2 On a phone nothing scrolls sideways and every target is touch-sized
+  Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
+  When Giulia opens the home page, the project and the Diagnostics page on her 390 px wide iPhone
+  Then no page scrolls horizontally
+  And on the project page the itinerary and totals come below the map
+  And every button, link and input she can tap is at least 44 px high and 44 px wide
+
+Scenario: S3 At tablet width nothing overlaps
+  Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
+  When Marco opens the project in a 768 px wide window
+  Then no control, label or panel overlaps another
+  And no page scrolls horizontally
+
+Scenario: S4 Every page uses the same look and the controls are grouped by task
+  Given the home page, the project page and the Diagnostics page
+  When Marco opens each of them
+  Then every button, link and input uses the planner's shared styles and none shows the browser's default look
+  And the project page shows its controls in three labelled groups: items, Start and End, and plan
+
+Scenario: S5 The theme follows the system and text stays readable outdoors
+  Given Marco's laptop is set to dark mode
+  When he opens the project page
+  Then the page is dark
+  And in both the dark and the light theme every text has a contrast of at least 4.5:1 against its background
+
+Scenario: S6 Keyboard focus is always visible
+  Given Marco is on the project page of "Alpi Occidentali giugno 2027"
+  When he moves through the controls with the Tab key
+  Then every control that receives focus shows a visible focus indicator
+
+Scenario: S7 The map stays readable on a phone at trip-wide zoom
+  Given plan run #4 of "Alpi Occidentali giugno 2027" includes "Strada dell'Assietta" and a retrace of "Colle del Sommeiller"
+  When Giulia views the whole trip on her 390 px wide iPhone
+  Then the direction arrows are drawn smaller than at trail zoom and do not cover the stop numbers
+  And the "retrace" label does not overlap any stop number
+```
+
+#### Acceptance Criteria
+
+- [ ] On a laptop the map is the widest part of the page; stops, itinerary and totals sit beside it (S1)
+- [ ] At 390 px no page scrolls sideways, the itinerary is below the map, every tap target is >= 44 x 44 px (S2)
+- [ ] At 768 px nothing overlaps and nothing scrolls sideways (S3)
+- [ ] Home, project and Diagnostics pages share one set of styles; no control keeps the browser default; project controls in three labelled groups (S4)
+- [ ] Light and dark themes follow the system; all text >= 4.5:1 in both (S5)
+- [ ] Visible focus on every focusable control (S6)
+- [ ] Arrows scale down at trip-wide zoom; the "retrace" label never covers a stop number (S7, slice 09 dogfood findings)
+
+#### Outcome KPIs
+
+- Who: Marco and Giulia, handed the page cold | Does what: tell what is selected and start a plan without help | By how much: both do each in under 2 minutes (slice 12 learning hypothesis) | Measured by: cold-start check by the owner on a laptop; Giulia's phone check when a phone is to hand | Baseline: not measured; the owner finds today's page "plain and quite ugly".
+
+#### Technical Notes
+
+- No new screens, data or planning behaviour (slice 12 OUT). No new technology: existing Svelte 5 and MapLibre (OD#4). Map tiles and map style unchanged.
+- Checks are automatable: S1-S3 by element boxes and `scrollWidth` in Playwright at 1440, 768 and 390 px; S4 by a style check per control; S5 by an accessibility contrast check in both colour schemes; S6 by tabbing and reading the focused element's outline; S7 by the arrow size following the zoom and the label placement rule in `runMap.ts` (jsdom) plus one Playwright view.
+- Group labels ("Items", "Start and end", "Plan") are UI wording; the planner's messages are not reworded (D211).
+
+#### Dependencies
+
+- US-15 (the map), US-16 (POI by click), US-10a (real road legs to design the layout around).
+
+### US-21: I can always tell what state the plan is in and whether its roads are real
+
+- job_id: J-01 | Slice: 12 | MoSCoW: Must | FR-6, A-10, ADR-007 | Size: 0.6 d
+
+#### Problem
+
+Marco tested an early plan from Milan to Rome and saw straight lines that looked like a route; nothing said they were estimates. A Failed run and a Stale run look much like a good plan, so he cannot be sure what he is looking at before he downloads it.
+
+#### Who
+
+- Marco | plans and exports the trip | Giulia | reads the plan on her phone and asks "is this the real route?"
+
+#### Solution
+
+Every plan state has its own label and look: empty, loading, working (with Stop), done, Failed, Stale. The planner's own words stay as they are. A plan whose road legs came from the offline road map (straight line x factor, ADR-007) carries a visible "estimate" marker near the plan, and the exported GPX says "estimate" in its file name and in the trip name inside the file. A plan on real Valhalla roads carries no marker.
+
+#### Elevator Pitch
+
+- Before: Marco sees straight lines from Torino to Aosta and cannot tell if they are roads or guesses; he downloads "alpi-occidentali-giugno-2027-run4.gpx" without knowing.
+- After: Marco opens plan run #4 -> sees "estimate" next to the plan heading, then presses "Download GPX" and gets "alpi-occidentali-giugno-2027-run4-estimate.gpx".
+- Decision enabled: Marco decides not to load an estimate onto the device and to plan again on real roads.
+
+#### Domain Examples
+
+1. Happy: plan run #6 of "Alpi Occidentali giugno 2027" was planned on Valhalla roads: label "Plan run #6", no "estimate" marker; the file is "alpi-occidentali-giugno-2027-run6.gpx".
+2. Edge: plan run #4 was planned while only the offline road map was available: "estimate" shows next to the heading, and after Marco adds "Lago del Moncenisio" the run also shows "Stale"; both labels are visible together.
+3. Error: plan run #5 failed: the label "Failed" and the planner's words "No valid route found within the time limit - plan run #5 failed", with no Download GPX.
+4. Boundary: a new project "Assietta weekend" with no plan yet shows an empty state that says no plan exists and points to Optimize.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario Outline: S1 Every plan state has its own label and look
+  Given the plan of "Alpi Occidentali giugno 2027" is <state>
+  When Marco opens the project
+  Then the plan area carries the label "<label>"
+  And its look differs from the look of every other plan state
+
+  Examples:
+    | state                            | label        |
+    | not computed yet                 | No plan yet  |
+    | being loaded                     | Loading      |
+    | being planned (Stop is offered)  | Planning     |
+    | done, plan run #6                | Plan run #6  |
+    | Failed, plan run #5              | Failed       |
+    | Stale, plan run #4               | Stale        |
+
+Scenario: S2 While planning, Stop is offered
+  Given Marco pressed Optimize for "Alpi Occidentali giugno 2027"
+  When the plan is being worked on
+  Then the plan area is labelled "Planning"
+  And "Stop and use best so far" is offered
+
+Scenario: S3 A Failed run shows the label Failed and the planner's own words
+  Given plan run #5 of "Alpi Occidentali giugno 2027" failed on its time limit
+  When Marco opens the project
+  Then the plan area carries the label "Failed"
+  And it shows "No valid route found within the time limit - plan run #5 failed" word for word
+  And no Download GPX is offered
+
+Scenario: S4 A plan on the offline road map is marked as an estimate
+  Given plan run #4 of "Alpi Occidentali giugno 2027" took its road legs from the offline road map
+  When Marco opens the project
+  Then "estimate" is shown next to the heading of plan run #4
+
+Scenario: S5 The GPX of an offline-road-map plan says it is an estimate
+  Given plan run #4 of "Alpi Occidentali giugno 2027" took its road legs from the offline road map
+  When Marco downloads its GPX
+  Then the file name is "alpi-occidentali-giugno-2027-run4-estimate.gpx"
+  And the trip name inside the file contains "estimate"
+
+Scenario: S6 A plan on real roads carries no estimate marker
+  Given plan run #6 of "Alpi Occidentali giugno 2027" took its road legs from Valhalla
+  When Marco opens the project and downloads its GPX
+  Then no "estimate" marker is shown
+  And the file name is "alpi-occidentali-giugno-2027-run6.gpx"
+```
+
+#### Acceptance Criteria
+
+- [ ] Empty, loading, working, done, Failed and Stale each have their own label and a look distinct from the others (S1)
+- [ ] Working offers "Stop and use best so far" (S2, US-06b)
+- [ ] Failed shows "Failed" and the planner's words verbatim; no export (S3, A-10, D211)
+- [ ] An offline-road-map plan shows "estimate" next to its heading (S4, ADR-007)
+- [ ] Its GPX file name ends "-estimate.gpx" and the trip name inside contains "estimate" (S5)
+- [ ] A Valhalla plan shows no marker and keeps today's file name (S6)
+- [ ] A Stale estimate shows both labels (example 2)
+
+#### Outcome KPIs
+
+- Who: Marco and Giulia, handed the page cold | Does what: say whether the route shown is real or an estimate | By how much: both right, each in under 2 minutes (slice 12 learning hypothesis) | Measured by: cold-start check by the owner on a laptop | Baseline: 0/1 (the owner took the Milan-Rome straight line for the route, D232).
+
+#### Technical Notes
+
+- "Offline road map" is the MockProvider (straight line x 1.3, ADR-007). A run keeps one provider (the leg cache key holds the provider id, D244); DESIGN confirms the run can tell which provider served its legs, or adds it (the only server change).
+- Labels "No plan yet", "Loading" and "Planning" are new UI wording; the planner's messages (run_messages.py) are shown as they are (D211, D223 b). "Stale" and "Failed" keep their present words.
+- Secondary job J-04 (the exported file must not be mistaken for a real route); overlaps US-18b, which owns the rest of the "what to trust" content of the file.
+- Checks run in jsdom (PlanPanel tests) and on the export endpoint (Content-Disposition, GPX `<metadata><name>`).
+
+#### Dependencies
+
+- US-05 (Stale), US-06b (Stop), US-10a (Valhalla legs), US-18a (export).
+
+### US-22: I am told on the home page when a plan broke one of the planner's own rules
+
+- job_id: J-02 | Slice: 12 | MoSCoW: Should | K2 alert, HC-1/HC-2/HC-5, UI-DELIVER-7 | Size: 0.3 d
+
+#### Problem
+
+If a plan ever breaks a hard rule (a trail driven backwards, a wrong Start or End, a trail cut short), the planner refuses it and counts it on the Diagnostics page. Marco never opens that page during planning, so he would not know the planner misbehaved.
+
+#### Who
+
+- Marco | owner and operator of the Pi; wants to know at once when the planner breaks its own promise
+
+#### Solution
+
+When the Diagnostics count of rule-breaking plan runs is above zero, the home page shows a warning banner with a link to the Diagnostics page. Marco can acknowledge it. The acknowledgement is kept in this browser only and remembers the count: if the count grows, the banner comes back. No new server data.
+
+#### Elevator Pitch
+
+- Before: a plan run of "Alpi Occidentali giugno 2027" broke HC-1 and only a red badge on the Diagnostics page says so.
+- After: Marco opens the home page -> sees "A plan run broke one of the planner's rules (1 so far)" with a link "Open Diagnostics", and an "Acknowledge" button.
+- Decision enabled: Marco decides to treat it as an incident (roll back the last release) before trusting another plan.
+
+#### Domain Examples
+
+1. Happy: the count is 1; the banner shows on Marco's laptop; he presses "Acknowledge"; after a reload no banner.
+2. Edge: the count grows from 1 to 2 after a later run; the banner comes back on Marco's laptop.
+3. Edge: Giulia opens the home page on her phone; she has not acknowledged, so she sees the banner even though Marco did.
+4. Boundary: the count is 0, or the Diagnostics answer cannot be read; no banner, and the home page works as before.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 A rule-breaking plan run raises a banner on the home page
+  Given the Diagnostics page counts 1 plan run that broke a hard rule
+  When Marco opens the home page
+  Then a warning banner says a plan run broke one of the planner's rules and shows the count 1
+  And it links to the Diagnostics page
+
+Scenario: S2 An acknowledged banner stays away in this browser
+  Given the warning banner shows the count 1 on Marco's laptop
+  When Marco acknowledges it and opens the home page again
+  Then no warning banner is shown
+
+Scenario: S3 The banner comes back when the count grows
+  Given Marco acknowledged the warning banner at the count 1
+  And the Diagnostics page now counts 2 plan runs that broke a hard rule
+  When Marco opens the home page
+  Then the warning banner is shown with the count 2
+
+Scenario: S4 No banner when no plan run broke a rule
+  Given the Diagnostics page counts 0 plan runs that broke a hard rule
+  When Marco opens the home page
+  Then no warning banner is shown
+
+Scenario: S5 The home page still works when the count cannot be read
+  Given the Diagnostics answer cannot be read
+  When Marco opens the home page
+  Then no warning banner is shown
+  And his projects are listed as usual
+```
+
+#### Acceptance Criteria
+
+- [ ] k2.invariant_violations > 0 -> home-page warning banner with the count and a link to Diagnostics (S1)
+- [ ] Acknowledging hides it in this browser, across reloads (S2)
+- [ ] A higher count brings it back (S3)
+- [ ] Count 0 -> no banner (S4)
+- [ ] Unreadable diagnostics -> no banner, home page unaffected (S5)
+
+#### Outcome KPIs
+
+- Who: the owner | Does what: learns of a K2 violation | By how much: on the next home-page visit, 100% of the time | Measured by: S1-S3 in CI; K2 stays at target 0 | Baseline: only a red badge on the Diagnostics page (UI-DELIVER-7 item 2).
+
+#### Technical Notes
+
+- Reads `k2.invariant_violations` (all-time) from `GET /api/diagnostics` (kpi-contracts K2; < 200 ms on the Pi). The acknowledgement and its count live in browser storage only; no server state, no new endpoint. Banner wording is UI text, not a planner message.
+- Checks run in jsdom (ProjectsPage tests with a diagnostics stub and browser storage).
+
+#### Dependencies
+
+- Slice 03-ops (Diagnostics page and K2 count). Closes UI-DELIVER-7 item (2).
+
 ## Wave: DISCUSS / [REF] Coverage map (HC and acceptance tests)
 
 | Constraint / test | Stories | Scenario(s) |
@@ -2728,6 +3012,27 @@ Revision 6: DESIGN back-propagation U1-U42 (`design/upstream-changes.md` Revisio
 | Sparse matrices (missing pairs, retraces) make the search hard | M | M | US-08 S4/S5, US-19 property tests; penalties allowed only as an internal search aid (REQUIREMENTS §7, DESIGN D56) |
 | ARM64 build problems | L | H | Verified in slice 01a |
 | Jobs unvalidated | H | M | Re-score after the first dogfood trip |
+
+### Slice 12 DISCUSS (2026-11-18)
+
+- Stories: US-20 (one product, map first, any screen; 7 scenarios), US-21 (plan state and estimate marker; 6 scenarios, S1 an outline of 6 states), US-22 (K2 home-page banner; 5 scenarios). 18 scenarios in all.
+- Scope assessment: PASS. 3 stories, 1 context (the web page) plus one small server touch (the estimate in the GPX name), about 1.7 d. Over the brief's "1 day, at risk" because of the three fold-ins (phone arrow size, retrace label overlap, K2 banner); the learning hypothesis stays the stop rule.
+- Fold-ins (orchestrator, 2026-11-18): phone arrows at trip-wide zoom and the retrace label (US-20 S7, slice 09 dogfood); the K2 banner with a browser-kept acknowledgement per count (US-22, UI-DELIVER-7 item 2).
+- JTBD trace: US-20 -> J-01 (social: the household reads the plan on a phone); US-21 -> J-01 (secondary J-04: an estimate never reaches the device as a real route); US-22 -> J-02 (a broken hard rule is never silent). No new job.
+- Feature type user-facing, brownfield, no walking skeleton, lightweight UX depth.
+- OUT (binding, brief): new planning behaviour, new screens or new data; offline tiles, a custom map style, branding, a logo; translations. The real cold-start check is done by the owner on a laptop only.
+
+| DoR item | US-20 | US-21 | US-22 |
+|----------|-------|-------|-------|
+| 1 Problem in domain words | PASS | PASS | PASS |
+| 2 Persona with traits | PASS (Marco laptop, Giulia 390 px) | PASS | PASS (Marco as operator) |
+| 3 3+ real examples | PASS (4) | PASS (4) | PASS (4) |
+| 4 GWT, 3-7 scenarios | PASS (7) | PASS (6) | PASS (5) |
+| 5 AC from UAT | PASS | PASS | PASS |
+| 6 Right-sized | PASS (0.8 d) | PASS (0.6 d) | PASS (0.3 d) |
+| 7 Technical notes | PASS | PASS (provider per run: DESIGN confirms) | PASS |
+| 8 Dependencies tracked | PASS (US-15, US-16, US-10a) | PASS (US-05, US-06b, US-10a, US-18a) | PASS (03-ops) |
+| 9 Outcome KPIs | PASS (cold-start a, b) | PASS (cold-start c) | PASS (K2 seen on next visit) |
 
 ## Wave: DISCUSS / [WHY] jtbd-narrative
 
