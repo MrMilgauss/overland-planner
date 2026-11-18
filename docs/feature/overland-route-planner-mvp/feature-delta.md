@@ -4801,3 +4801,14 @@ Steps 06-06 to 06-13 (`8d621e8` .. `7a5b5f6`), refactor L1-L6 (10 commits), revi
 | `make contract-live` | 51 passed (after the matrix-route rounding fix, `0c721f1`) |
 | Memory | 12.0 GB available (gate 6 GB) |
 | Household projects | 7 projects, 37 items, 12 runs: identical before and after |
+
+### Slice 09 gate on pi-host (2026-11-18, orchestrator-run under the owner's standing authority)
+
+| Check | Result |
+|---|---|
+| Deploy | `06b8d27` (image `sha256:86b7e207…`), tag `slice-09`; the planner on Valhalla |
+| Map of the owner's trip (`__demo` copy) | real road shapes, the track in its driving direction, numbered stops, one S/E marker; answer in 0.28 s |
+| Dead-end retrace | synthetic demo trail above the Colle del Sommeiller: driven in full, retraced as its own row, on from its entry |
+| Real browser | desktop and 390 px: lines, arrows and retrace render; no horizontal scroll |
+| K5 ending at the road shapes, N=10 | **pass**: slowest 124.0 s (budget 180 s), solve 25.6-27.0 s, no retried run |
+| Household projects | identical to the start of R2a |
