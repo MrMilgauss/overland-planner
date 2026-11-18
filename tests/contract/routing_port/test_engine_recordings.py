@@ -13,8 +13,11 @@ distances were compared exactly or within 5 %.
 
 Comparison, leaf by leaf: both leaves are of the same kind (null, bool, integer, float, string) or it is a difference.
 Strings, bools, integers and nulls are always compared exactly (HTTP status, error code and message, key sets, list
-lengths, null cells, the route polyline). Time, distance and length are exact when the live tileset is the recorded
-one (same `tileset_last_modified`), else within 5 %. Every other float (cost, heading, snapped coordinates) is exact
+lengths, null cells), except a `shape` (the route polyline): exact on the recorded tileset, else decoded on both
+sides and accepted when both have at least 2 points and their first points, and their last points, are within 100 m
+of each other (new OSM edits move the road's encoding as they move distances). Time, distance and length are exact
+when the live tileset is the recorded one (same `tileset_last_modified`), else within 5 %.
+Every other float (cost, heading, snapped coordinates) is exact
 on the recorded tileset and only has to be a float otherwise.
 The answer's top-level `warnings` are the engine's notes on how it answered (for example "CostMatrix turned off
 destination-only on a second pass"): they depend on its configuration, not on the roads, so they are not compared, on
@@ -37,10 +40,12 @@ import httpx
 import pytest
 import respx
 
+from overland_planner.domain.routing.polyline import decode_polyline6
 from tests.contract.routing_port.recordings import REPLAY_URL, REPO, recording
 
 MEASURES = frozenset({"time", "distance", "length"})
 TOLERANCE = 0.05
+SHAPE_END_TOLERANCE_M = 100.0
 RECORDED_QUESTIONS = (
     "route_torino_susa_4x4v1",  # the Torino to Susa route
     "matrix_confirmed_5x5",  # the Confirmed 5x5 matrix
@@ -101,7 +106,23 @@ def _leaf_differences(recorded: Any, live: Any, *, exact: bool, path: str) -> li
         return [] if close else [f"{path}: {live} is not within 5 % of {recorded}"]
     if kind == "float" and not measure and not exact:
         return []
+    if kind == "string" and path.rsplit(".", 1)[-1] == "shape" and not exact:
+        return _shape_differences(recorded, live, path=path)
     return [f"{path}: {live!r} instead of {recorded!r}"]
+
+
+def _shape_differences(recorded: str, live: str, *, path: str) -> list[str]:
+    """Other map data moves the road a little: the two shapes only have to start and end in the same places."""
+    try:
+        before, after = decode_polyline6(recorded), decode_polyline6(live)
+    except ValueError as error:
+        return [f"{path}: the shape cannot be decoded ({error})"]
+    if len(before) < 2 or len(after) < 2:
+        return [f"{path}: a shape needs at least 2 points, found {len(after)} instead of {len(before)}"]
+    start, end = before[0].great_circle_distance_m(after[0]), before[-1].great_circle_distance_m(after[-1])
+    if start > SHAPE_END_TOLERANCE_M or end > SHAPE_END_TOLERANCE_M:
+        return [f"{path}: the shape starts {start:.0f} m and ends {end:.0f} m from the recorded one (at most 100 m)"]
+    return []
 
 
 def require_recorded_engine(client: httpx.Client) -> dict[str, Any]:
@@ -268,6 +289,12 @@ def test_the_engine_answers_a_recorded_question_as_recorded(engine: Engine, name
     assert differences(recorded["response"], answer.json(), exact=engine.exact) == []
 
 
+# Three points each: Torino-ish start, a middle, an end; polyline6.
+SHAPE = "_jz}tA__wsM_ry@_af@_ry@_af@"
+SHAPE_OTHER_MIDDLE = "_jz}tA__wsM_cmA~`f@_af@_etB"  # same ends, another middle
+SHAPE_END_MOVED_1_KM = "_jz}tA__wsM_ry@_af@odkA_af@"  # same start, the end about 1 km north
+
+
 @pytest.mark.parametrize(
     ("recorded", "live", "exact", "expected"),
     [
@@ -291,6 +318,10 @@ def test_the_engine_answers_a_recorded_question_as_recorded(engine: Engine, name
         ({"a": 1, "warnings": [{"code": 400}]}, {"a": 1}, True, 0),
         ({"a": 1, "warnings": [{"code": 400}]}, {"a": 2, "warnings": []}, True, 1),
         ({"cell": {"a": 1}}, {"cell": {"a": 1, "warnings": []}}, True, 1),
+        ({"shape": SHAPE}, {"shape": SHAPE_OTHER_MIDDLE}, True, 1),
+        ({"shape": SHAPE}, {"shape": SHAPE_OTHER_MIDDLE}, False, 0),
+        ({"shape": SHAPE}, {"shape": SHAPE_END_MOVED_1_KM}, False, 1),
+        ({"shape": SHAPE}, {"shape": "!!!"}, False, 1),
     ],
 )
 def test_the_comparison_tells_agreement_from_drift(recorded: Any, live: Any, exact: bool, expected: int) -> None:
