@@ -23,7 +23,7 @@ class PlanRunDetail:
     lines the run shows, which the run queries fill (D223 b); the repository reads none. The `report` of an
     `unreachable` run names its items (07-05); one stored before reads none. `provider_id` and `profile` name the road
     map the run was planned on; a run stored before 0010 has no profile. `provider_header` is the line the results
-    show for them, which the run queries fill."""
+    show for them, and `estimate` whether they were the offline road map (D267); the run queries fill both."""
 
     id: str
     project_id: str
@@ -44,6 +44,7 @@ class PlanRunDetail:
     provider_id: str | None = None
     profile: str | None = None
     provider_header: str = ""
+    estimate: bool = False
 
 
 @dataclass(frozen=True)

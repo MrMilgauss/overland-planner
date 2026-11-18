@@ -874,8 +874,12 @@
         "type": "object"
       },
       "PlanRunDetailResource": {
-        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags (`not_fully_optimised`: `optimizer_failed`, `time_limit` or `stopped`); `messages` the lines the results show\nin words, composed from the run's stored facts, such as \"Planned 60 items in 2 min 41 s\", \"not fully optimised\n(time limit)\", \"Reused the identical plan of run #N\" or, for a run failed on the feasibility limit, \"No valid route\nfound within the time limit - plan run #N failed\" (D151); a run stored before 06-10 has no run time line.\n`memo_hit` is true when the run reused an earlier run's plan: \"Re-optimise (ignore previous result)\" is offered.\n`provider_header` names the road map the run was planned on, from what it stored: \"Provider: Valhalla (map data\n2026-11-01) / profile: 4x4\", or \"Provider: offline estimate (straight line x 1.3) / profile: estimate\".",
+        "description": "A plan run with its ordered stops and totals; a Failed run has neither, names its `failure_reason` and keeps the\nreason in product words in `report`. A ready run shows `report` null, as does any run stored before 05-08; a run\nstored before the totals were (0006) shows `totals` null. `reproducible` and `not_fully_optimised` are the run\nflags (`not_fully_optimised`: `optimizer_failed`, `time_limit` or `stopped`); `messages` the lines the results show\nin words, composed from the run's stored facts, such as \"Planned 60 items in 2 min 41 s\", \"not fully optimised\n(time limit)\", \"Reused the identical plan of run #N\" or, for a run failed on the feasibility limit, \"No valid route\nfound within the time limit - plan run #N failed\" (D151); a run stored before 06-10 has no run time line.\n`memo_hit` is true when the run reused an earlier run's plan: \"Re-optimise (ignore previous result)\" is offered.\n`provider_header` names the road map the run was planned on, from what it stored: \"Provider: Valhalla (map data\n2026-11-01) / profile: 4x4\", or \"Provider: offline estimate (straight line x 1.3) / profile: estimate\".\n`estimate` is true when the roads are that offline road map: the planner says so, and so does the\nexported file (D267, D268).",
         "properties": {
+          "estimate": {
+            "title": "Estimate",
+            "type": "boolean"
+          },
           "failure_reason": {
             "anyOf": [
               {
@@ -993,7 +997,8 @@
           "memo_hit",
           "objective",
           "objective_label",
-          "provider_header"
+          "provider_header",
+          "estimate"
         ],
         "title": "PlanRunDetailResource",
         "type": "object"

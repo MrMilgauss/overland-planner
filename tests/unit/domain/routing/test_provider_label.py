@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from hypothesis import given
 from hypothesis import strategies as st
 
-from overland_planner.domain.routing.provider_label import provider_header
+from overland_planner.domain.routing.provider_label import is_estimate, provider_header
 
 EPOCHS = st.integers(min_value=0, max_value=4_102_444_800)  # 1970 to 2100
 VERSIONS = st.from_regex(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}", fullmatch=True)
@@ -80,3 +80,22 @@ def test_an_epoch_beyond_year_9999_shows_the_provider_id_as_stored(version: str,
     provider_id = f"valhalla:{version}:{epoch}"
 
     assert provider_header(provider_id, "4x4.v1") == f"Provider: {provider_id} / profile: 4x4"
+
+
+@given(factor=FACTORS, script=SCRIPTS, tail=st.text(max_size=12))
+def test_every_offline_road_map_id_is_an_estimate_in_whatever_form_it_was_stored(
+    factor: float, script: str | None, tail: str
+) -> None:
+    scripted = f"mock:straight_line_x{factor}" + ("" if script is None else f":script:{script}")
+
+    assert all(is_estimate(provider_id) for provider_id in ("mock", scripted, f"mock:{tail}"))
+
+
+@given(version=VERSIONS, epoch=EPOCHS, other=UNKNOWN_IDS, around=st.text(alphabet="abcxyz-_", min_size=1, max_size=6))
+def test_a_real_road_map_an_unknown_id_or_a_mock_elsewhere_in_the_id_is_not_an_estimate(
+    version: str, epoch: int, other: str, around: str
+) -> None:
+    not_offline = [f"valhalla:{version}:{epoch}", f"valhalla:mock:{epoch}", f"{around}mock", f"{around}:mock:{around}"]
+
+    assert not any(is_estimate(provider_id) for provider_id in not_offline)
+    assert is_estimate(other) is other.startswith("mock:")

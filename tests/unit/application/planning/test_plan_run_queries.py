@@ -15,7 +15,7 @@ Mutant judged equivalent (07-12, slice 01b precedent): `None if source_id is Non
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from hypothesis import given, settings
@@ -170,6 +170,27 @@ def test_a_run_shows_the_lines_of_its_stored_facts_and_a_memo_hit_names_its_sour
     )
     assert detail.memo_hit is (stored.from_source if written_now else stored.memo_hit_column)
     assert detail.provider_header == "Provider: road-map-double / profile: 4x4"
+    assert detail.estimate is False
+    assert_state_delta(before, _view(planning), UNIVERSE, {}, strict=True)
+
+
+@settings(max_examples=30)
+@given(
+    stored=STORED,
+    provider_id=st.sampled_from(
+        ("mock", "mock:straight_line_x1.3", "mock:straight_line_x1.3:script:ab", "valhalla:3.9.1:1793560782")
+    ),
+)
+def test_a_run_says_it_is_an_estimate_when_its_stored_provider_is_the_offline_road_map(
+    stored: Stored, provider_id: str
+) -> None:
+    planning = _planning(History(run_revisions=(), current=1))
+    planning.runs.append(replace(_stored_run(1, stored, None), provider_id=provider_id))
+    before = _view(planning)
+
+    detail = PlanRunQueries(planning.unit_of_work).get("run-1")
+
+    assert detail is not None and detail.estimate is provider_id.startswith("mock")
     assert_state_delta(before, _view(planning), UNIVERSE, {}, strict=True)
 
 

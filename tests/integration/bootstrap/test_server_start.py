@@ -256,9 +256,11 @@ def test_a_plan_stores_every_stop_field_in_item_order_and_http_shows_the_contrac
         *("id", "project_id", "number", "status", "failure_reason", "stops", "totals", "report"),
         *("reproducible", "not_fully_optimised", "messages", "memo_hit", "objective", "objective_label"),
         "provider_header",
+        "estimate",
     }
     assert (shown["objective"], shown["objective_label"]) == ("distance", "minimise road distance")
     assert shown["provider_header"] == "Provider: offline estimate (straight line x 1.3) / profile: estimate"
+    assert shown["estimate"] is True
     assert (shown["id"], shown["project_id"], shown["number"]) == (job["plan_run_id"], project_id, 1)
     assert (shown["status"], shown["failure_reason"]) == ("ready", None)
     assert (shown["reproducible"], shown["not_fully_optimised"], shown["memo_hit"]) == (True, None, False)

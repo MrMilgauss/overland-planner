@@ -13,10 +13,12 @@ import unicodedata
 _ANYTHING_ELSE = re.compile(r"[^a-z0-9]+")
 _FALLBACK = "plan"
 _LONGEST_PROJECT_PART = 200
+_ESTIMATE = "-estimate"
 
 
-def run_file_name(project_name: str, run_number: int) -> str:
-    return f"{_project_part(project_name)}-run{run_number}.gpx"
+def run_file_name(project_name: str, run_number: int, *, estimate: bool = False) -> str:
+    """`<project>-run<N>.gpx`, or `<project>-run<N>-estimate.gpx` for a plan on the offline road map (D268)."""
+    return f"{_project_part(project_name)}-run{run_number}{_ESTIMATE if estimate else ''}.gpx"
 
 
 def _project_part(project_name: str) -> str:

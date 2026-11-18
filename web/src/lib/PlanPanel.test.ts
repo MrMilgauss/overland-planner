@@ -67,6 +67,7 @@ function readyRun(
       stops: [CASA, stop],
       totals,
       report: null,
+      estimate: false,
       ...fields,
     },
   };
@@ -91,6 +92,7 @@ function failedRun(
       stops: [],
       totals: null,
       report: report === null ? null : { reason: report },
+      estimate: false,
       ...(messages === undefined ? {} : { messages }),
     },
   };

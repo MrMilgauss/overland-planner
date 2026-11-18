@@ -294,7 +294,9 @@ class PlanRunDetailResource(BaseModel):
     found within the time limit - plan run #N failed" (D151); a run stored before 06-10 has no run time line.
     `memo_hit` is true when the run reused an earlier run's plan: "Re-optimise (ignore previous result)" is offered.
     `provider_header` names the road map the run was planned on, from what it stored: "Provider: Valhalla (map data
-    2026-11-01) / profile: 4x4", or "Provider: offline estimate (straight line x 1.3) / profile: estimate"."""
+    2026-11-01) / profile: 4x4", or "Provider: offline estimate (straight line x 1.3) / profile: estimate".
+    `estimate` is true when the roads are that offline road map: the planner says so, and so does the
+    exported file (D267, D268)."""
 
     id: str
     project_id: str
@@ -311,6 +313,7 @@ class PlanRunDetailResource(BaseModel):
     objective: str
     objective_label: str
     provider_header: str
+    estimate: bool
 
     @classmethod
     def of(cls, run: PlanRunDetail) -> PlanRunDetailResource:
@@ -330,6 +333,7 @@ class PlanRunDetailResource(BaseModel):
             objective=run.objective.value,
             objective_label=run.objective.label,
             provider_header=run.provider_header,
+            estimate=run.estimate,
         )
 
 

@@ -28,6 +28,7 @@ from overland_planner.domain.export.gpx_document import GpxDocument
 from overland_planner.domain.export.gpx_document_builder import GpxDocumentBuilder, StopWithoutPlaceError
 from overland_planner.domain.export.run_file_name import run_file_name
 from overland_planner.domain.planning.plan_run import PlanStop
+from overland_planner.domain.routing.provider_label import is_estimate
 
 _INCONSISTENT_MESSAGE = "Track data for this run is inconsistent - recalculate"
 _FAILED_MESSAGE = "This plan run failed"
@@ -72,8 +73,9 @@ class GpxExportService:
             raise PlanRunNotFoundError(plan_run_id)
         if run.status == "failed":
             raise FailedRunExportError()
-        content = self._writer.write(self._document_of(run))
-        file_name = run_file_name(self._projects.open(run.project_id).name.value, run.number)
+        estimate = run.provider_id is not None and is_estimate(run.provider_id)
+        content = self._writer.write(self._document_of(run, estimate))
+        file_name = run_file_name(self._projects.open(run.project_id).name.value, run.number, estimate=estimate)
         self._event_log.info(
             "export.gpx",
             plan_run_id=run.id,
@@ -84,13 +86,13 @@ class GpxExportService:
         )
         return GpxFile(file_name, content)
 
-    def _document_of(self, run: PlanRunDetail) -> GpxDocument:
+    def _document_of(self, run: PlanRunDetail, estimate: bool) -> GpxDocument:
         trail_points = {stop.item_id: self._stored_points(run.id, stop) for stop in run.stops if stop.kind == "track"}
         for stop in run.stops:
             if stop.kind == "retrace":
                 self._prove_retrace(run.id, stop, trail_points.get(stop.item_id))
         try:
-            return GpxDocumentBuilder(run.number, run.stops, trail_points).build()
+            return GpxDocumentBuilder(run.number, run.stops, trail_points, estimate).build()
         except StopWithoutPlaceError as error:
             raise self._refusal(run.id, str(error)) from error
 

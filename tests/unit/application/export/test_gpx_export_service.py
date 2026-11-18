@@ -493,9 +493,9 @@ def test_the_file_and_the_document_are_named_from_the_project_and_the_run(
 
     answer = harness.service.export(RUN)
 
-    assert answer.file_name == run_file_name(project_name, number)
+    assert answer.file_name == run_file_name(project_name, number, estimate=True)  # harness provider `mock`
     document = harness.writer.documents[-1]
-    assert document.name == f"Plan run #{number}"
+    assert document.name == f"Plan run #{number} (estimate)"
     assert [point.name for point in document.waypoints] == ["Casa Marco (S/E)"]
     assert len([track for track in document.tracks if track.kind == "road"]) == len(tracks) + 1
     assert_state_delta(

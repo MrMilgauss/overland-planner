@@ -370,3 +370,12 @@ def test_a_trail_is_written_once_forwards_and_its_reverse_only_as_a_retrace(plan
         strict=True,
     )
     assert len(written) == len(stored)
+
+
+@given(number=st.integers(1, 100_000), estimate=st.booleans())
+def test_the_trip_is_named_an_estimate_only_for_a_plan_on_the_offline_road_map(number: int, estimate: bool) -> None:
+    stops = (_poi("casa", "Casa", CASA),)
+
+    name = GpxDocumentBuilder(number, stops, {}, estimate=estimate).build().name
+
+    assert name == f"Plan run #{number}" + (" (estimate)" if estimate else "")

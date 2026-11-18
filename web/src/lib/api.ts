@@ -101,6 +101,8 @@ export interface PlanRunDetail extends PlanRun {
   memo_hit?: boolean;
   /** Provider header and objective of the run; absent on a run stored before them. */
   provider_header?: string | null;
+  /** True when the roads are the offline road map: the plan is an estimate (D267). */
+  estimate: boolean;
   objective?: Objective | null;
   objective_label?: string | null;
 }

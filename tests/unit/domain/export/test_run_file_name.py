@@ -78,3 +78,14 @@ def test_a_name_with_nothing_usable_falls_back_to_plan(project_name: str, run_nu
 @given(word=_words, repeats=st.integers(100, 400), run_number=_run_numbers)
 def test_a_very_long_project_name_still_fits_a_file_system(word: str, repeats: int, run_number: int) -> None:
     _assert_file_name(f"{word} " * repeats, run_number, _safe_for(run_number))
+
+
+@given(project_name=st.text(max_size=400), run_number=_run_numbers)
+def test_an_estimate_file_name_ends_estimate_gpx_and_still_fits_a_file_system(
+    project_name: str, run_number: int
+) -> None:
+    plain = run_file_name(project_name, run_number)
+    estimate = run_file_name(project_name, run_number, estimate=True)
+
+    assert estimate == plain.removesuffix(".gpx") + "-estimate.gpx"
+    assert estimate.endswith("-estimate.gpx") and len(estimate.encode()) <= LONGEST_FILE_NAME

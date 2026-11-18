@@ -16,12 +16,18 @@ _VALHALLA = re.compile(r"valhalla:[^:]+:(?P<epoch>\d+)")
 _OFFLINE = re.compile(r"mock:straight_line_x(?P<factor>[^:]+)(?::script:.*)?")
 _LAST_DATED_EPOCH = 253_402_300_799  # 9999-12-31T23:59:59Z; beyond it (milliseconds?) the id is shown as stored
 _PROFILE_VERSION = re.compile(r"\.v\d+$")
+_OFFLINE_ID = "mock"
 _PROFILE_WORDS = {"mock": "estimate"}
 
 
 def provider_header(provider_id: str, profile: str | None) -> str:
     header = f"Provider: {_provider_words(provider_id)}"
     return header if profile is None else f"{header} / profile: {_profile_words(profile)}"
+
+
+def is_estimate(provider_id: str) -> bool:
+    """True for the offline road map in every form it was stored: `mock` and every id starting `mock:` (D275)."""
+    return provider_id == _OFFLINE_ID or provider_id.startswith(f"{_OFFLINE_ID}:")
 
 
 def _provider_words(provider_id: str) -> str:

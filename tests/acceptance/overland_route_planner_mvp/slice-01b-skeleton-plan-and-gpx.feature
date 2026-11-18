@@ -29,13 +29,13 @@ Feature: First ordered plan and GPX
   Scenario: Marco downloads the first plan as a standard GPX file
     Given plan run #1 of "Alpi Occidentali giugno 2027" exists
     When Marco presses "Export GPX"
-    Then he downloads "alpi-occidentali-giugno-2027-run1.gpx"
+    Then he downloads "alpi-occidentali-giugno-2027-run1-estimate.gpx"
     And the file is standard GPX 1.1 without proprietary extensions
     And it holds track "Strada dell'Assietta" and the waypoints "Casa Marco, Torino (S/E)" and "Briancon"
 
   @US-02b @J-01 @A-5 @K6 @kpi @manual
   Scenario: The first plan opens in OsmAnd
-    Given Marco downloaded "alpi-occidentali-giugno-2027-run1.gpx"
+    Given Marco downloaded "alpi-occidentali-giugno-2027-run1-estimate.gpx"
     When he opens it in OsmAnd on his tablet
     Then OsmAnd shows "Strada dell'Assietta" and the waypoints "Casa Marco, Torino (S/E)" and "Briancon"
 
@@ -82,4 +82,4 @@ Feature: First ordered plan and GPX
     And he has pressed Calculate
     When he presses "Export GPX"
     Then the browser shows the stops in itinerary order with their road legs
-    And a file "alpi-occidentali-giugno-2027-run1.gpx" is downloaded
+    And a file "alpi-occidentali-giugno-2027-run1-estimate.gpx" is downloaded

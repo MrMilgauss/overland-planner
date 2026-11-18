@@ -21,6 +21,7 @@ from overland_planner.domain.export.gpx_document import GpxDocument, GpxTrack, G
 from overland_planner.domain.planning.plan_run import PlanStop
 
 _ROUND_TRIP_SUFFIX = " (S/E)"
+_ESTIMATE_SUFFIX = " (estimate)"
 _ROAD = "road"
 _OFFROAD = "offroad"
 _RETRACE = "retrace"
@@ -36,15 +37,19 @@ class StopWithoutPlaceError(ValueError):
 
 @dataclass(frozen=True)
 class GpxDocumentBuilder:
-    """`trail_points` holds the stored points of every track stop, by item id."""
+    """`trail_points` holds the stored points of every track stop, by item id; `estimate` names the trip so (D268)."""
 
     run_number: int
     stops: tuple[PlanStop, ...]
     trail_points: Mapping[str, tuple[TrackPoint, ...]]
+    estimate: bool = False
 
     def build(self) -> GpxDocument:
         """Raises `StopWithoutPlaceError` when a stop has lost a coordinate the document needs."""
-        return GpxDocument(name=f"Plan run #{self.run_number}", waypoints=self._waypoints(), tracks=self._tracks())
+        suffix = _ESTIMATE_SUFFIX if self.estimate else ""
+        return GpxDocument(
+            name=f"Plan run #{self.run_number}{suffix}", waypoints=self._waypoints(), tracks=self._tracks()
+        )
 
     def _waypoints(self) -> tuple[GpxWaypoint, ...]:
         places = {stop.item_id: stop for stop in self.stops if stop.kind == "poi"}
