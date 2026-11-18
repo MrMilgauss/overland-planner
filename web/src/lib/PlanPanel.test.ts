@@ -138,7 +138,7 @@ async function tick(ms = 500): Promise<void> {
 }
 
 function exportLink(): HTMLElement | null {
-  return screen.queryByRole('link', { name: 'Export GPX' });
+  return screen.queryByRole('link', { name: /^Export GPX of plan run #\d+$/ });
 }
 
 beforeEach(() => {
@@ -486,6 +486,17 @@ describe('Plan panel: Export GPX during a recalculation', () => {
       job('failed', { message: 'The plan could not be calculated - nothing was changed' }),
       {},
     ],
+    [
+      'a job that ended with a Failed run',
+      job('done', { reason: 'no_valid_route_found', plan_run_id: 'r2' }),
+      {
+        [`GET ${RUNS}`]: [
+          listed(['r1', 1, 'ready']),
+          listed(['r1', 1, 'ready'], ['r2', 2, 'failed']),
+        ],
+        'GET /api/plan-runs/r2': failedRun('r2', 2, 'no_valid_route_found'),
+      },
+    ],
     ['a job that has expired', { status: 404, body: { code: 'not_found', message: 'No job' } }, {}],
   ])('offers the older ready run again after %s', async (_ending, jobReply, routes) => {
     stubPlanner({
@@ -579,7 +590,8 @@ describe('Plan panel: reopening a project', () => {
     expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('This plan run failed (optimizer_failed)');
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
-    expect(exportLink()).not.toBeInTheDocument(); // a Failed plan offers no export (D266)
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx'); // the older run keeps its export (D208)
+    expect(exportLink()).toHaveTextContent('Export GPX of plan run #1');
   });
 
   it('shows the message when the runs cannot be read, and Calculate stays usable', async () => {
@@ -901,7 +913,7 @@ describe('Plan panel: the run the page shows on its map', () => {
     const shown = vi.fn();
     render(PlanPanel, { props: { projectId: 'p1', onrunshown: shown } });
     await settled();
-    expect(shown).toHaveBeenLastCalledWith(undefined);
+    expect(shown).toHaveBeenLastCalledWith(undefined, false);
 
     cleanup();
     stubPlanner({
@@ -911,7 +923,17 @@ describe('Plan panel: the run the page shows on its map', () => {
     render(PlanPanel, { props: { projectId: 'p1', onrunshown: shown } });
     await settled();
 
-    expect(shown).toHaveBeenLastCalledWith('r1');
+    expect(shown).toHaveBeenLastCalledWith('r1', false);
+
+    cleanup();
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, { estimate: true }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1', onrunshown: shown } });
+    await settled();
+
+    expect(shown).toHaveBeenLastCalledWith('r1', true); // the map's chip follows the run on show
   });
 
   it('reads the plan runs again when the page asks, and shows the latest run as Stale at once', async () => {
@@ -1006,7 +1028,7 @@ describe('Plan panel: one plan state at a time', () => {
     expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2715');
     expect(screen.getByRole('alert')).toHaveTextContent(words);
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
-    expect(exportLink()).not.toBeInTheDocument();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 
   it('is Stale, with the run heading kept beside it', async () => {
@@ -1022,5 +1044,99 @@ describe('Plan panel: one plan state at a time', () => {
 
     expect(badge()).toHaveTextContent('Stale');
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+  });
+});
+
+const ESTIMATE = 'estimate: road legs are straight-line guesses, not real roads';
+
+function pills(): HTMLElement[] {
+  return screen.queryAllByRole('note', { name: ESTIMATE });
+}
+
+describe('Plan panel: the estimate pill (D267)', () => {
+  const ESTIMATED = [
+    'Briancon',
+    null,
+    { estimate: true, provider_header: 'Road legs: offline map' },
+  ] as const;
+
+  it('sits by the run heading, above the provider line, when the run says estimate', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, ...ESTIMATED),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(pills()).toHaveLength(1);
+    const pill = pills()[0];
+    expect(pill).toHaveTextContent('estimate');
+    expect(pill).toHaveAttribute('title', ESTIMATE);
+    expect(pill.querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2248');
+    expect(pill).toHaveAttribute('data-role', 'warning');
+    expect(pill.style.borderStyle).toBe('dashed');
+    expect(pill.parentElement).toContainElement(screen.getByText('Road legs: offline map'));
+  });
+
+  it('is not shown for a run on real roads', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, { provider_header: 'Valhalla' }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByText('Valhalla')).toBeInTheDocument();
+    expect(pills()).toHaveLength(0);
+  });
+
+  it('stays beside Stale', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: {
+        status: 200,
+        body: [{ id: 'r1', number: 1, status: 'ready', stale: true }],
+      },
+      'GET /api/plan-runs/r1': readyRun('r1', 1, ...ESTIMATED),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Stale');
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(pills()).toHaveLength(1);
+  });
+
+  it('is never on a Failed run; the older ready run keeps its own pill and its export', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r4', 4, 'ready'], ['r5', 5, 'failed']),
+      'GET /api/plan-runs/r4': readyRun('r4', 4, ...ESTIMATED),
+      'GET /api/plan-runs/r5': failedRun('r5', 5, 'timeout', null, ['Run 5 failed']),
+    });
+    const { container } = render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Failed');
+    expect(pills()).toHaveLength(1);
+    expect(within(screen.getByRole('alert')).queryByRole('note')).not.toBeInTheDocument();
+    expect(exportLink()).toHaveTextContent('Export GPX of plan run #4');
+    expect(
+      screen.queryByRole('link', { name: 'Export GPX of plan run #5' }),
+    ).not.toBeInTheDocument();
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+  });
+
+  it('is not shown for a Failed run that says estimate, when no run is ready', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r5', 5, 'failed']),
+      'GET /api/plan-runs/r5': {
+        status: 200,
+        body: { ...(failedRun('r5', 5, 'timeout') as { body: object }).body, estimate: true },
+      },
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Failed');
+    expect(pills()).toHaveLength(0);
   });
 });

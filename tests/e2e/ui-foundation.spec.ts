@@ -654,16 +654,112 @@ test("A Failed run shows the label Failed and the planner's own words", async ({
     page.getByRole("alert").filter({ hasText: FAILED_WORDS }),
   ).toBeVisible();
   await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
-  await expect(page.getByText(/^\W*estimate\W*$/i)).toHaveCount(0);
-  await expect(page.getByTitle(/^estimate:/)).toHaveCount(0);
+  // plan run #5 offers no export; the older run #4 keeps its own, named with its number (D208, D276)
+  await expect(
+    page.getByRole("link", { name: "Export GPX of plan run #5" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Export GPX of plan run #4" }),
+  ).toBeVisible();
+  // the Failed run carries no estimate marker; run #4 is the real offline-road-map run, so its own pill shows below
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: FAILED_WORDS })
+      .getByTitle(/^estimate:/),
+  ).toHaveCount(0);
+  await expect(planPanel(page).getByRole("note", { name: ESTIMATE })).toHaveCount(
+    1,
+  );
 });
 
-test.fixme("A plan on the offline road map is marked as an estimate", async () => {});
+const ESTIMATE =
+  "estimate: road legs are straight-line guesses, not real roads";
 
-test.fixme("A plan on real roads shows no estimate marker", async () => {});
+function planPanel(page: Page): Locator {
+  return page.getByRole("region", { name: "Plan", exact: true });
+}
 
-test.fixme("A stale estimate shows both labels", async () => {});
+function mapArea(page: Page): Locator {
+  return page.getByRole("region", { name: "Map of the run" });
+}
+
+test("A plan on the offline road map is marked as an estimate", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(420_000);
+  await makeRunFour(page, testInfo);
+  await page.reload();
+
+  await expect(stateBadge(page)).toContainText("Plan run #4");
+  const pill = planPanel(page).getByRole("note", { name: ESTIMATE });
+  await expect(pill).toBeVisible();
+  await expect(pill).toHaveText(/estimate/);
+  await expect(pill).toHaveAttribute("title", ESTIMATE);
+  await expect(pill.locator('[aria-hidden="true"]')).toHaveText("\u2248");
+  // by the heading: within a short way of the state badge, in the same panel
+  const badge = await boxOf(stateBadge(page));
+  const pillBox = await boxOf(pill);
+  expect(Math.abs(pillBox.y - badge.y)).toBeLessThan(200);
+
+  const chip = mapArea(page).getByRole("note", { name: ESTIMATE });
+  await expect(chip).toBeVisible();
+  const mapBox = await boxOf(mapArea(page));
+  const chipBox = await boxOf(chip);
+  expect(chipBox.x - mapBox.x).toBeLessThan(24); // the map's top-left corner
+  expect(chipBox.y - mapBox.y).toBeLessThan(24);
+  const view = page.viewportSize()!;
+  expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(view.height); // in view before any scroll
+  expect(chipBox.x + chipBox.width).toBeLessThanOrEqual(view.width);
+});
+
+test("A plan on real roads shows no estimate marker", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "the real-road run is checked on the desktop browser",
+  );
+  test.setTimeout(600_000);
+  await makeRuns(page, testInfo, 6);
+  // the planner's own answer for a run, rewritten to a Valhalla run (W4)
+  await page.route(/\/api\/plan-runs\/[^/]+$/, async (route) => {
+    const response = await route.fetch();
+    const detail = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...detail, estimate: false } });
+  });
+  await page.reload();
+
+  await expect(stateBadge(page)).toContainText("Plan run #6");
+  await expect(
+    page.getByRole("link", { name: "Export GPX of plan run #6" }),
+  ).toBeVisible();
+  await expect(page.getByRole("note", { name: ESTIMATE })).toHaveCount(0);
+  await expect(page.getByTitle(/^estimate:/)).toHaveCount(0);
+  await expect(mapArea(page).getByText("estimate")).toHaveCount(0);
+});
+
+test("A stale estimate shows both labels", async ({ page }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "the stale estimate is checked on the desktop browser",
+  );
+  test.setTimeout(420_000);
+  await makeRunFour(page, testInfo);
+  await page.getByLabel("Place name").fill("Lago del Moncenisio");
+  await page.getByLabel("Latitude").fill("45.2480");
+  await page.getByLabel("Longitude").fill("6.9980");
+  await page.getByRole("button", { name: "Add place" }).click();
+  await expect(
+    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+  ).toHaveCount(3);
+  await page.reload();
+
+  await expectState(page, "Stale");
+  await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
+  await expect(planPanel(page).getByRole("note", { name: ESTIMATE })).toBeVisible();
+  await expect(mapArea(page).getByRole("note", { name: ESTIMATE })).toBeVisible();
+});
 
 test("A project with no plan yet says so and points to Calculate", async ({
   page,

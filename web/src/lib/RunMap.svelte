@@ -5,6 +5,7 @@
   import 'maplibre-gl/dist/maplibre-gl.css';
   import { addPlace, failureText, readMapConfig, readRunGeometry } from './api';
   import PoiClickForm from './PoiClickForm.svelte';
+  import { estimateMarker } from './planState';
   import {
     arrowImage,
     ARROW_IMAGE,
@@ -19,14 +20,22 @@
   let {
     planRunId,
     projectId,
+    estimate = false,
     onplaceadded,
-  }: { planRunId: string; projectId?: string; onplaceadded?: () => void } = $props();
+  }: {
+    planRunId: string;
+    projectId?: string;
+    estimate?: boolean;
+    onplaceadded?: () => void;
+  } = $props();
 
   let container = $state<HTMLDivElement | undefined>();
   let problem = $state('');
   let clickMode = $state(false);
   let clicked = $state<(Place & { x: number; y: number }) | undefined>();
   let settings: Promise<MapConfig> | undefined;
+
+  const marker = $derived(estimateMarker(estimate));
 
   const NUMBERED = ['stop', 'start', 'end', 'start_end'];
   const FIT_PADDING = 48;
@@ -148,11 +157,20 @@
   {#if problem}
     <p role="alert">{problem}</p>
   {/if}
-  {#if projectId && !problem}
-    <button type="button" aria-pressed={clickMode} onclick={toggleClickMode}>Click on map</button>
-  {/if}
   <div class="frame" class:empty={problem !== ''}>
     <div class="map" bind:this={container}></div>
+    <div class="overlay">
+      {#if marker}
+        <span class="chip" role="note" title={marker.note} aria-label={marker.note}
+          ><span aria-hidden="true">{marker.glyph}</span>{marker.label}</span
+        >
+      {/if}
+      {#if projectId && !problem}
+        <button type="button" class="click-mode" aria-pressed={clickMode} onclick={toggleClickMode}
+          >Click on map</button
+        >
+      {/if}
+    </div>
     {#if clicked}
       <div
         class="name-form"
@@ -180,8 +198,31 @@
     position: absolute;
     z-index: 2;
   }
-  button {
-    margin-bottom: var(--space-2);
+  .overlay {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-3);
+    border: 1px dashed var(--color-warning-fg);
+    border-radius: var(--radius-pill);
+    background: var(--color-warning-bg);
+    color: var(--color-warning-fg);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  .click-mode {
+    min-width: var(--target-min);
+    min-height: var(--target-min);
   }
   .map {
     width: 100%;

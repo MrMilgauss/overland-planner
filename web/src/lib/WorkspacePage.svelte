@@ -30,6 +30,7 @@
   let endId = $state('');
   let objectiveChoice = $state<Objective>('distance');
   let shownRunId = $state<string | undefined>(); // the ready run the panel shows: the map draws it
+  let shownRunIsEstimate = $state(false); // its roads are the offline road map: the map's chip says so
   let panel = $state<{ reload: () => Promise<void> } | undefined>();
 
   const places = $derived(items.filter((item) => item.type === 'poi'));
@@ -116,7 +117,12 @@
   {#if project}
     <div class="stage">
       {#if shownRunId}
-        <RunMap planRunId={shownRunId} {projectId} onplaceadded={placeAddedOnMap} />
+        <RunMap
+          planRunId={shownRunId}
+          {projectId}
+          estimate={shownRunIsEstimate}
+          onplaceadded={placeAddedOnMap}
+        />
       {:else}
         <p class="placeholder">The map shows the plan once one is computed.</p>
       {/if}
@@ -136,7 +142,10 @@
           bind:this={panel}
           {projectId}
           objective={project.objective ?? 'distance'}
-          onrunshown={(id) => (shownRunId = id)}
+          onrunshown={(id, estimate) => {
+            shownRunId = id;
+            shownRunIsEstimate = estimate;
+          }}
         />
       </section>
 

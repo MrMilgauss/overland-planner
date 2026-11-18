@@ -13,7 +13,7 @@
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { planState } from './planState';
+  import { estimateMarker, planState } from './planState';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -49,8 +49,8 @@
   }: {
     projectId: string;
     objective?: Objective;
-    /** The ready run on show, for the page's map; undefined while there is none. */
-    onrunshown?: (planRunId: string | undefined) => void;
+    /** The ready run on show, for the page's map, and whether it is an estimate; undefined while there is none. */
+    onrunshown?: (planRunId: string | undefined, estimate: boolean) => void;
   } = $props();
 
   let pressing = $state(false);
@@ -81,6 +81,7 @@
       readyRunNumber: readyRun?.number,
     }),
   );
+  const estimate = $derived(estimateMarker(readyRun?.estimate));
   const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
 
   function highestNumbered(runs: PlanRun[]): PlanRun | undefined {
@@ -214,7 +215,7 @@
   }
 
   $effect(() => {
-    onrunshown?.(readyRun?.id);
+    onrunshown?.(readyRun?.id, readyRun?.estimate === true);
   });
 
   onMount(() => {
@@ -283,8 +284,19 @@
     {#if look.state !== 'success'}
       <p class="run">Plan run #{readyRun.number}</p>
     {/if}
-    {#if readyRun.provider_header}
-      <p class="provider">{readyRun.provider_header}</p>
+    {#if estimate || readyRun.provider_header}
+      <p class="provider">
+        {#if estimate}<StatusBadge
+            tone={estimate.role}
+            fill={estimate.fill}
+            glyph={estimate.glyph}
+            label={estimate.label}
+            role="note"
+            title={estimate.note}
+            aria-label={estimate.note}
+          />{/if}{#if readyRun.provider_header}
+          {readyRun.provider_header}{/if}
+      </p>
     {/if}
     {#each readyRun.messages ?? [] as message, index (index)}
       <p class="message">{message}</p>
@@ -299,8 +311,10 @@
       totals={readyRun.totals}
       objectiveLabel={readyRun.objective_label}
     />
-    {#if !jobActive && look.state !== 'failed'}
-      <a class="button" href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+    {#if !jobActive}
+      <a class="button" href={planRunExportUrl(readyRun.id)}
+        >Export GPX of plan run #{readyRun.number}</a
+      >
     {/if}
   {/if}
 </div>
@@ -350,6 +364,10 @@
   }
   .run {
     font-weight: 600;
+  }
+  .provider :global(.badge) {
+    margin-right: var(--space-2);
+    vertical-align: middle;
   }
   .message,
   .provider,

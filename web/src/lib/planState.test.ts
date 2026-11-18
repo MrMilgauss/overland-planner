@@ -2,7 +2,7 @@
 // Stale, Plan run #N, No plan yet. Table-driven; the pure function has no DOM.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM); the order is pinned over every combination of facts.
 import { describe, expect, it } from 'vitest';
-import { planState, type PlanFacts, type PlanStateName } from './planState';
+import { estimateMarker, planState, type PlanFacts, type PlanStateName } from './planState';
 
 const NONE: PlanFacts = {
   loading: false,
@@ -69,5 +69,19 @@ describe('planState', () => {
       success: 'success filled ✓',
       empty: 'neutral dashed -',
     });
+  });
+});
+
+describe('estimateMarker', () => {
+  it('is a warning pill with the approx glyph and the road-legs note for an estimate only', () => {
+    expect(estimateMarker(true)).toEqual({
+      label: 'estimate',
+      note: 'estimate: road legs are straight-line guesses, not real roads',
+      role: 'warning',
+      fill: 'dashed',
+      glyph: '\u2248',
+    });
+    expect(estimateMarker(false)).toBeUndefined();
+    expect(estimateMarker(undefined)).toBeUndefined();
   });
 });

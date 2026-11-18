@@ -113,8 +113,9 @@ Feature: A planner that looks and feels like a product
     When Marco opens the project
     Then the plan area carries the label "Failed"
     And it shows "No valid route found within the time limit - plan run #5 failed" word for word
-    And no "Export GPX" is offered
-    And no "estimate" marker is shown
+    And plan run #5 offers no "Export GPX"
+    And the Failed run carries no "estimate" marker
+    And the export of the older plan run #4 stays offered, named with its number
 
   # ui-foundation.spec.ts: "A plan on the offline road map is marked as an estimate" (chromium and webkit-iphone14:
   # the packaged planner plans on the offline road map, so this run is real, not rewritten)

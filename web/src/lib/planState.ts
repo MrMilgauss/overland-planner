@@ -50,3 +50,20 @@ export function planState(facts: PlanFacts): PlanLook {
     glyph: undefined,
   };
 }
+
+export const ESTIMATE_NOTE = 'estimate: road legs are straight-line guesses, not real roads';
+
+export interface EstimateMarker {
+  label: string;
+  /** The title and the accessible name of the pill and of the map's chip. */
+  note: string;
+  role: Tone;
+  fill: Fill;
+  glyph: string;
+}
+
+/** The marker of a run on the offline road map (D267): the browser reads `estimate` from the run detail, never the provider line. */
+export function estimateMarker(estimate: boolean | undefined): EstimateMarker | undefined {
+  if (estimate !== true) return undefined;
+  return { label: 'estimate', note: ESTIMATE_NOTE, role: 'warning', fill: 'dashed', glyph: '≈' };
+}

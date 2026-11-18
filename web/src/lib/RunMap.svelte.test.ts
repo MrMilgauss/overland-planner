@@ -195,6 +195,32 @@ describe('RunMap', () => {
     expect(maps.created).toHaveLength(0);
   });
 
+  describe('the estimate chip (D267)', () => {
+    const NOTE = 'estimate: road legs are straight-line guesses, not real roads';
+
+    async function drawnWith(props: { estimate?: boolean }) {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
+      });
+      render(RunMap, { planRunId: 'r1', ...props });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+    }
+
+    it('shows a chip in the map while an estimate run is shown', async () => {
+      await drawnWith({ estimate: true });
+      const chip = screen.getByRole('note', { name: NOTE });
+      expect(chip).toHaveTextContent('estimate');
+      expect(chip).toHaveAttribute('title', NOTE);
+      expect(chip.closest('.frame')).not.toBeNull();
+    });
+
+    it.each([[{ estimate: false }], [{}]])('shows no chip for %j', async (props) => {
+      await drawnWith(props);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+  });
+
   describe('the "Click on map" mode (step 10-05)', () => {
     const click = (x: number, y: number, lng: number, lat: number) =>
       maps.handlers.click({ point: { x, y }, lngLat: { lng, lat } });
