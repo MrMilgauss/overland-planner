@@ -76,6 +76,15 @@ def pytest_bdd_apply_tag(tag: str, function: Callable[..., Any]) -> Callable[...
     return getattr(pytest.mark, name)(function)
 
 
+def still_pending(marker_names: set[str], enabled_slices: set[str]) -> bool:
+    """A `@pending` scenario runs only when EVERY slice it is tagged with is enabled: a scenario of slice 09 that waits
+    for slice 08 carries both tags and stays pending while only slice 09 is enabled (D262)."""
+    if "pending" not in marker_names:
+        return False
+    slices = {name for name in marker_names if name.startswith("slice_")}
+    return not slices or not slices <= enabled_slices
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     enabled_slices = {_marker_name(s) for s in config.getoption("--run-pending")}
     run_external = config.getoption("--run-external")
@@ -84,7 +93,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if "manual" in names:
             item.add_marker(pytest.mark.skip(reason="manual check: evidence is logged by hand (docs/demo/)"))
             continue
-        if "pending" in names and not (names & enabled_slices):
+        if still_pending(names, enabled_slices):
             slices = sorted(n for n in names if n.startswith("slice_"))
             item.add_marker(pytest.mark.skip(reason=f"pending: {', '.join(slices) or 'unsliced'} not enabled yet"))
             continue

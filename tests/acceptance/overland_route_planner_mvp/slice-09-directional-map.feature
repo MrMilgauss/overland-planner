@@ -23,7 +23,7 @@ Feature: Direction on the map, and POIs by map click
     When Marco opens the map of plan run #4
     Then "Casa Marco, Torino" has one combined S/E marker
 
-  @US-15 @J-02 @HC-1 @pending
+  @US-15 @J-02 @HC-1 @slice-08 @pending
   Scenario: The map follows a reversed track
     Given Marco reversed "Colle del Jafferau descent" and recalculated
     When he opens the map of the new run
@@ -65,7 +65,7 @@ Feature: Direction on the map, and POIs by map click
     Then the planner refuses to start
     And the planner log names the part that failed and the reason
 
-  @US-15 @US-14 @US-18b @J-02 @ui @driving_adapter @pending
+  @US-15 @US-14 @US-18b @J-02 @ui @driving_adapter @slice-08 @pending
   Scenario: Marco reviews the route with its warnings on the map and exports it
     Given Marco's project "Alpi Occidentali giugno 2027" with its 12 items is open in his desktop browser
     And one trail entry is 1.2 km from the nearest road
@@ -98,7 +98,7 @@ Feature: Direction on the map, and POIs by map click
     When he cancels the name prompt
     Then no POI is added
 
-  @US-16 @US-14 @J-01 @FR-8.3 @edge @pending
+  @US-16 @US-14 @J-01 @FR-8.3 @edge @slice-08 @pending
   Scenario: A POI clicked next to an existing POI is flagged as a possible duplicate
     Given POI "Briancon" at 44.8990, 6.6430 exists
     And the map of "Alpi Occidentali giugno 2027" is open in "Click on map" mode
