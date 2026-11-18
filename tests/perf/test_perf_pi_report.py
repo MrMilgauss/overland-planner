@@ -8,6 +8,10 @@ track); any other mode reports without a verdict.
 
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 from hypothesis import given, settings
@@ -15,6 +19,7 @@ from hypothesis import strategies as st
 
 from tests.common.state_delta import assert_state_delta, set_to
 from tests.perf.perf_pi import STAGES, build_e2e_report, build_report, exit_code
+from tests.perf.perf_pi import e2e_run as run_e2e_once
 
 STATES = ("done", "failed", "stopped", "timed_out")
 UNIVERSE = {"n", "items", "points_per_track", "runs", "slowest_ms", "p95_ms", "gate", "verdict"}
@@ -180,3 +185,60 @@ def test_one_failed_run_fails_the_e2e_gate_however_fast_the_others_were() -> Non
     report = build_e2e_report(runs, n=10, items=60)
 
     assert report["verdict"] == "fail" and exit_code(report) == 1
+
+
+class _PlannerFake(BaseHTTPRequestHandler):
+    """A planner that answers a Calculate, a finished job and, when `geometry_status` is 200, the road shapes."""
+
+    geometry_status = 200
+
+    def _answer(self, status: int, body: object) -> None:
+        payload = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:
+        self._answer(202, {"job_id": "j1"})
+
+    def do_GET(self) -> None:
+        routes: dict[str, tuple[int, object]] = {
+            "/healthz": (200, {}),
+            "/api/plan-jobs/j1": (200, {"state": "done", "plan_run_id": "r1", "stage_ms": {"solve": 1}}),
+            "/api/plan-runs/r1": (200, {"id": "r1"}),
+            "/api/plan-runs/r1/geometry": (self.geometry_status, {}),
+        }
+        self._answer(*routes.get(self.path, (404, {})))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def _end_of_a_run(tmp_path: Path, geometry_status: int) -> str:
+    project_file = tmp_path / "project"
+    project_file.write_text("p1\n", encoding="utf-8")
+    handler = type("Fake", (_PlannerFake,), {"geometry_status": geometry_status})
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        record = run_e2e_once(f"http://127.0.0.1:{server.server_port}", project_file=project_file)
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+    assert record["state"] == "done"
+    return str(record["end"])
+
+
+def test_an_e2e_run_ends_at_the_geometry_answer_when_the_planner_offers_it_and_at_the_plan_read_back_otherwise(
+    tmp_path: Path,
+) -> None:
+    # bypass: the two answers of the endpoint (200 here, 404 before slice 09) are the whole input space.
+    assert _end_of_a_run(tmp_path, 200) == "geometry"
+    assert _end_of_a_run(tmp_path, 404) == "plan_read_back"
+    done = {"state": "done", "e2e_s": 1.0, "stage_ms": {"solve": 1}, "end": "geometry"}
+    report = build_e2e_report([done], n=1, items=60)
+    assert report["end"] == "geometry"

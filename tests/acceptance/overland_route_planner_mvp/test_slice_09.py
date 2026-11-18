@@ -1,5 +1,5 @@
-"""pytest-bdd binding: slice 09 scenarios checked at the HTTP API (step 10-02); the feature keeps its `@pending` tag
-until step 10-06, so they run with `--run-pending=slice-09`.
+"""pytest-bdd binding: slice 09 scenarios checked at the HTTP API (step 10-02) and in the browser. Since step 10-06 the
+slice is enabled in CI (PENDING_FLAGS); the three scenarios that wait for slice 08 carry their own `@pending`.
 
 The 11-stop reference run and the Unconfirmed-leg run solve in the solver child, so they are `solver_child` and pre-push
 leaves them to CI job 2, as for slices 03b and 06a. The unavailable-shapes scenario plans on the real Valhalla adapter

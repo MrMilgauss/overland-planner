@@ -18,7 +18,7 @@ make mutate      # mutmut on domain/application files changed since origin/main 
 ```
 
 Acceptance scenarios tagged `@pending` run with `--run-pending=<slice>`; `@requires_external` ones with
-`--run-external` on the right host. CI enables slices 00b and 01a (`PENDING_FLAGS` in ci.yml, D170).
+`--run-external` on the right host. CI enables the finished slices (`PENDING_FLAGS` in ci.yml, D170).
 
 ## Using the planner
 
@@ -28,6 +28,8 @@ project's workspace (`#/projects/<id>`) Marco imports GPX trails, adds places by
 longitude) and chooses the trip's Start and End; the item list shows each item's type, name, the **Included** badge
 and the **S/E**, **Start** or **End** badge. A refusal is shown with the planner's own message. The upload caps
 (`MAX_UPLOAD_FILE_MB`, `MAX_UPLOAD_REQUEST_MB`, `MAX_UPLOAD_FILES`) are set in `.env`; empty means the default.
+Under the itinerary the plan page draws the route on a map: arrows show the direction of each trail, and a click on
+the map adds a POI.
 
 ## CI
 

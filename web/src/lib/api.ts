@@ -80,6 +80,7 @@ export interface PlanRun {
   id: string;
   number: number;
   status: 'ready' | 'failed';
+  stale?: boolean; // the project changed since the run was computed
 }
 
 /** Why a ready run is not fully optimised; the words are in the run's `messages` (D223 b). */

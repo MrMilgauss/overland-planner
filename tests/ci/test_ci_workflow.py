@@ -128,10 +128,10 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     pytest_step = _main_pytest(job)
 
     # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12),
-    # slice 03 (step 06-13), slice 03b (step 07-13), slice 06a (step 09-11).
+    # slice 03 (step 06-13), slice 03b (step 07-13), slice 06a (step 09-11), slice 09 (step 10-06).
     assert workflow["env"]["PENDING_FLAGS"] == (
         "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
-        " --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a"
+        " --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a --run-pending=slice-09"
     )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
@@ -1061,6 +1061,34 @@ def test_slice_06a_is_enabled_in_ci_and_its_files_say_so() -> None:
     assert still_pending and all("@slice-06b" in line for line in still_pending)
     assert "slice-06a" not in pending_slices
     assert "--run-pending=slice-06a" in _workflow()["env"]["PENDING_FLAGS"].split()
+
+
+FEATURE_09 = "tests/acceptance/overland_route_planner_mvp/slice-09-directional-map.feature"
+DEFERRED_09 = (
+    "The map follows a reversed track",
+    "Marco reviews the route with its warnings on the map and exports it",
+    "A POI clicked next to an existing POI is flagged as a possible duplicate",
+)
+
+
+# bypass: tag lines and a flag list; no input space to generate over
+def test_slice_09_is_enabled_in_ci_and_only_the_three_scenarios_that_wait_for_slice_08_stay_pending() -> None:
+    """Step 10-06: the Feature tag line loses `@pending`; the reversed track, the warnings on the map and the duplicate
+    POI carry their own; the pending-slices module no longer binds the feature; PENDING_FLAGS enables the slice."""
+    lines = (REPO_ROOT / FEATURE_09).read_text().splitlines()
+    pending_scenarios = [
+        lines[index + 1].strip().removeprefix("Scenario: ")
+        for index, line in enumerate(lines)
+        if line.strip().startswith("@") and "@pending" in line.split() and index > 5
+    ]
+    pending_slices = (REPO_ROOT / "tests/acceptance/overland_route_planner_mvp/test_pending_slices.py").read_text()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-09"]
+    assert sorted(pending_scenarios) == sorted(DEFERRED_09)
+    assert "scenarios(" not in pending_slices.split("SLICE_09")[1] and pending_slices.count("@scenario(SLICE_09") == 3
+    assert all(name in pending_slices for name in DEFERRED_09)
+    assert '"slice-09-directional-map.feature",' not in pending_slices
+    assert "--run-pending=slice-09" in _workflow()["env"]["PENDING_FLAGS"].split()
 
 
 def test_job_2_runs_the_slice_06a_scenarios_that_need_no_live_engine_and_leaves_the_live_ones_out() -> None:

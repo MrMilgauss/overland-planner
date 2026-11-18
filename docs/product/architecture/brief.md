@@ -117,6 +117,7 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
      - `GET /api/plan-runs/{plan_run_id}/export.gpx`.
    - Cache: `DELETE /api/projects/{project_id}/leg-cache`, `DELETE /api/leg-cache`.
    - (+) `GET /api/config/map`.
+   - As built (slice 09, step 10-06): `GET /api/plan-runs/{plan_run_id}/geometry` answers one GeoJSON `FeatureCollection` (404 `not_found` for a Failed run) and `GET /api/config/map` answers `tile_url`, `attribution` and `max_zoom`; the shapes of both are in ADR-007 Amendment 2 and ADR-003 Amendment 2.
    - **HTTP contract (D130, ratifies DISTILL D107; review R-10/R-21, UI-3):**
      - JSON field names are **snake_case** everywhere (resources, poll payload, diagnostics).
      - Statuses: 201 create, 200 read/update/action, 202 plan job accepted, 204 delete.

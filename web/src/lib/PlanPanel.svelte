@@ -53,6 +53,7 @@
   let problem = $state('');
   let pollProblem = $state(''); // the job may well still run: Calculate is usable meanwhile, and polling goes on
   let readyRun = $state<PlanRunDetail | undefined>();
+  let readyRunStale = $state(false); // from the run list: the project changed since the run was computed
   let failedRun = $state<PlanRunDetail | undefined>();
   let stoppable = $state(false);
   let stopPressed = $state(false);
@@ -81,9 +82,16 @@
       const ready = highestNumbered(runs.filter((run) => run.status === 'ready'));
       failedRun = latest && latest !== ready ? await readPlanRun(latest.id) : undefined;
       readyRun = ready ? await readPlanRun(ready.id) : undefined;
+      readyRunStale = ready?.stale === true;
     } catch (error) {
       problem = failureText(error);
     }
+  }
+
+  /** A POI added on the map changes the project: read the runs again so that the latest shows Stale at once. */
+  async function placeAdded(): Promise<void> {
+    onplaceadded?.();
+    await showLatestRuns();
   }
 
   /** The report's reason in product words (D211); the code only for a run stored without a report. Only for a Failed
@@ -233,6 +241,9 @@
 
 {#if readyRun}
   <p class="run">Run {readyRun.number}</p>
+  {#if readyRunStale}
+    <p class="stale">Stale</p>
+  {/if}
   {#if readyRun.provider_header}
     <p class="provider">{readyRun.provider_header}</p>
   {/if}
@@ -252,7 +263,7 @@
   {#if !jobActive}
     <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
-  <RunMap planRunId={readyRun.id} {projectId} {onplaceadded} />
+  <RunMap planRunId={readyRun.id} {projectId} onplaceadded={placeAdded} />
 {/if}
 
 <style>

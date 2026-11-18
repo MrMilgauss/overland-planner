@@ -2,7 +2,7 @@
 # FR-6.5, FR-3.1. Executable SSOT (D140). Map facts are checked through the run's map data (road shapes, styles,
 # markers) at the HTTP API; @ui scenarios run in Playwright (tests/e2e/). DESIGN D20, D28, D52.
 
-@slice-09 @pending
+@slice-09
 Feature: Direction on the map, and POIs by map click
   As Marco, I want the map to show which way every trail is driven and to let me drop places by clicking,
   so that I can see at a glance that no trail runs the wrong way.
@@ -23,7 +23,7 @@ Feature: Direction on the map, and POIs by map click
     When Marco opens the map of plan run #4
     Then "Casa Marco, Torino" has one combined S/E marker
 
-  @US-15 @J-02 @HC-1
+  @US-15 @J-02 @HC-1 @pending
   Scenario: The map follows a reversed track
     Given Marco reversed "Colle del Jafferau descent" and recalculated
     When he opens the map of the new run
@@ -65,7 +65,7 @@ Feature: Direction on the map, and POIs by map click
     Then the planner refuses to start
     And the planner log names the part that failed and the reason
 
-  @US-15 @US-14 @US-18b @J-02 @ui @driving_adapter
+  @US-15 @US-14 @US-18b @J-02 @ui @driving_adapter @pending
   Scenario: Marco reviews the route with its warnings on the map and exports it
     Given Marco's project "Alpi Occidentali giugno 2027" with its 12 items is open in his desktop browser
     And one trail entry is 1.2 km from the nearest road
@@ -98,7 +98,7 @@ Feature: Direction on the map, and POIs by map click
     When he cancels the name prompt
     Then no POI is added
 
-  @US-16 @US-14 @J-01 @FR-8.3 @edge
+  @US-16 @US-14 @J-01 @FR-8.3 @edge @pending
   Scenario: A POI clicked next to an existing POI is flagged as a possible duplicate
     Given POI "Briancon" at 44.8990, 6.6430 exists
     And the map of "Alpi Occidentali giugno 2027" is open in "Click on map" mode

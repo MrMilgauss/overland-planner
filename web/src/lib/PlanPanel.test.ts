@@ -11,7 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlanPanel from './PlanPanel.svelte';
 
 // The map under the itinerary has its own tests (RunMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing.
-vi.mock('./RunMap.svelte', () => ({ default: () => {} }));
+const map = vi.hoisted(() => ({ props: undefined as { onplaceadded?: () => void } | undefined }));
+vi.mock('./RunMap.svelte', () => ({
+  default: (_anchor: unknown, props: { onplaceadded?: () => void }) => {
+    map.props = props;
+  },
+}));
 
 type Reply = { status: number; body: unknown } | 'network down';
 type Routes = Record<string, Reply | Reply[]>;
@@ -899,5 +904,29 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
     await tick();
 
     expect(screen.getByText(line)).toBeInTheDocument();
+  });
+});
+
+describe('Plan panel: a POI added on the map', () => {
+  it('reads the plan runs again and shows the latest run as Stale at once', async () => {
+    const stale = (value: boolean): Reply => ({
+      status: 200,
+      body: [{ id: 'r1', number: 1, status: 'ready', stale: value }],
+    });
+    const calls = stubPlanner({
+      [`GET ${RUNS}`]: [stale(false), stale(true)],
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+    });
+    const added = vi.fn();
+    render(PlanPanel, { props: { projectId: 'p1', onplaceadded: added } });
+    await settled();
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+
+    map.props?.onplaceadded?.();
+    await settled();
+
+    expect(count(calls, `GET ${RUNS}`)).toBe(2);
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+    expect(added).toHaveBeenCalledTimes(1);
   });
 });
