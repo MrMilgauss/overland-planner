@@ -11,9 +11,18 @@ function stubProjectsEndpoint(
   body: unknown,
   health: unknown = HEALTHY,
   created: { status: number; body: unknown } = { status: 201, body: {} },
+  k2Count: number | null = 0,
 ): ReturnType<typeof vi.fn> {
   const fetchStub = vi.fn(async (url: string, init: RequestInit = {}) => {
     if (url === '/api/health') return new Response(JSON.stringify(health), { status: 200 });
+    if (url === '/api/diagnostics') {
+      return k2Count === null
+        ? new Response('oops', { status: 503 })
+        : new Response(
+            JSON.stringify({ k2: { invariant_violations: { all_time: k2Count, window: 0 } } }),
+            { status: 200 },
+          );
+    }
     if (init.method === 'POST') {
       return new Response(JSON.stringify(created.body), { status: created.status });
     }
@@ -25,6 +34,7 @@ function stubProjectsEndpoint(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  localStorage.clear();
   window.location.hash = '';
 });
 
@@ -143,5 +153,70 @@ describe('Projects home page', () => {
     expect(
       screen.queryByRole('complementary', { name: 'Planner warnings' }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('K2 banner on the home page', () => {
+  const wording = /broke one of the planner's rules/;
+
+  it('shows the count, a link to Diagnostics and Acknowledge, until acknowledged in this browser', async () => {
+    const fetchStub = stubProjectsEndpoint(200, [], HEALTHY, undefined, 1);
+    const first = render(ProjectsPage);
+
+    const shown = await screen.findByText(wording);
+    expect(shown.closest('[role="alert"]')).toHaveTextContent('1');
+    expect(screen.getByRole('link', { name: 'Diagnostics' })).toHaveAttribute(
+      'href',
+      '#/diagnostics',
+    );
+    const before = fetchStub.mock.calls.length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
+    expect(screen.queryByText(wording)).not.toBeInTheDocument();
+    expect(fetchStub.mock.calls.length).toBe(before); // browser only, no request
+
+    first.unmount();
+    render(ProjectsPage);
+    await screen.findByText(/no projects yet/i);
+    expect(screen.queryByText(wording)).not.toBeInTheDocument();
+  });
+
+  it('comes back when the count grows past the acknowledged one', async () => {
+    localStorage.setItem('k2.acknowledged', '1');
+    stubProjectsEndpoint(200, [], HEALTHY, undefined, 2);
+
+    render(ProjectsPage);
+
+    expect((await screen.findByText(wording)).closest('[role="alert"]')).toHaveTextContent('2');
+  });
+
+  it.each([
+    ['no rule was broken', 0],
+    ['the count cannot be read', null],
+  ])('shows no banner and still lists the projects when %s', async (_case, count) => {
+    stubProjectsEndpoint(200, [{ id: 'p1', name: 'Sardinia loop' }], HEALTHY, undefined, count);
+
+    render(ProjectsPage);
+
+    expect(await screen.findByRole('link', { name: 'Sardinia loop' })).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith('/api/diagnostics', expect.anything()),
+    );
+    expect(screen.queryByText(wording)).not.toBeInTheDocument();
+  });
+
+  it('still shows the banner when the browser refuses to keep anything', async () => {
+    const refuse = vi.fn(() => {
+      throw new DOMException('refused', 'SecurityError');
+    });
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(refuse);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(refuse);
+    stubProjectsEndpoint(200, [], HEALTHY, undefined, 1);
+
+    render(ProjectsPage);
+    await screen.findByText(wording);
+    await fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
+
+    expect(screen.getByText(wording)).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 });

@@ -14,6 +14,7 @@
 // run (`estimate: false`), a retrace, and the Diagnostics K2 count. Contrast: a small WCAG ratio helper in tests/e2e.
 import path from "node:path";
 import {
+  devices,
   expect,
   test,
   type Locator,
@@ -991,16 +992,139 @@ test("A project with no plan yet says so and points to Calculate", async ({
 
 // ===================== US-22 The home page tells when a plan broke a hard rule =====================
 
-test.fixme("A rule-breaking plan run raises a banner on the home page", async () => {});
+// The Diagnostics answer with the K2 count rewritten (W4): the packaged planner cannot break a hard rule (W1).
+async function diagnosticsCounting(page: Page, count: number): Promise<void> {
+  await page.route(/\/api\/diagnostics$/, async (route) => {
+    const real = await (await route.fetch()).json();
+    real.k2.invariant_violations.all_time = count;
+    await route.fulfill({ json: real });
+  });
+}
 
-test.fixme("An acknowledged banner stays away in this browser", async () => {});
+const banner = (page: Page): Locator =>
+  page
+    .getByRole("alert")
+    .filter({ hasText: "broke one of the planner's rules" });
 
-test.fixme("The banner comes back when the count grows", async () => {});
+async function openHome(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Projects" }),
+  ).toBeVisible();
+}
 
-test.fixme("Another browser still sees the banner", async () => {});
+test("A rule-breaking plan run raises a banner on the home page", async ({
+  page,
+}) => {
+  await diagnosticsCounting(page, 1);
+  await openHome(page);
+  await expect(banner(page)).toContainText("1");
+  await expect(
+    banner(page).getByRole("link", { name: "Diagnostics" }),
+  ).toHaveAttribute("href", "#/diagnostics");
+});
 
-test.fixme("No banner when no plan run broke a rule", async () => {});
+test("An acknowledged banner stays away in this browser", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one width is enough");
+  await diagnosticsCounting(page, 1);
+  await openHome(page);
+  await banner(page).getByRole("button", { name: "Acknowledge" }).click();
+  await expect(banner(page)).toHaveCount(0);
+  await openHome(page);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Projects" }),
+  ).toBeVisible();
+  await expect(banner(page)).toHaveCount(0);
+});
 
-test.fixme("The home page still works when the count cannot be read", async () => {});
+test("The banner comes back when the count grows", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one width is enough");
+  await diagnosticsCounting(page, 1);
+  await openHome(page);
+  await banner(page).getByRole("button", { name: "Acknowledge" }).click();
+  await expect(banner(page)).toHaveCount(0);
+  await page.unroute(/\/api\/diagnostics$/);
+  await diagnosticsCounting(page, 2);
+  await page.reload();
+  await expect(banner(page)).toContainText("2");
+});
 
-test.fixme("The banner still shows when the browser refuses to keep the acknowledgement", async () => {});
+test("Another browser still sees the banner", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "two contexts of its own");
+  const baseURL = testInfo.project.use.baseURL ?? "http://127.0.0.1:8080";
+  await diagnosticsCounting(page, 1);
+  await openHome(page);
+  await banner(page).getByRole("button", { name: "Acknowledge" }).click();
+  await expect(banner(page)).toHaveCount(0);
+  const giulia = await browser.newContext({ ...devices["iPhone 14"], baseURL });
+  try {
+    const phone = await giulia.newPage();
+    await diagnosticsCounting(phone, 1);
+    await openHome(phone);
+    await expect(banner(phone)).toContainText("1");
+  } finally {
+    await giulia.close();
+  }
+});
+
+test("No banner when no plan run broke a rule", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one width is enough");
+  await openHome(page);
+  await expect(
+    page.getByText("No projects yet.").or(page.getByRole("list")),
+  ).toBeVisible();
+  await expect(banner(page)).toHaveCount(0);
+});
+
+test("The home page still works when the count cannot be read", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one width is enough");
+  const name = `Alpi Occidentali giugno 2027 (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await page.route(/\/api\/diagnostics$/, (route) =>
+    route.fulfill({
+      status: 503,
+      json: { code: "unavailable", message: "Diagnostics are unavailable" },
+    }),
+  );
+  await openHome(page);
+  await expect(page.getByRole("link", { name })).toBeVisible();
+  await expect(banner(page)).toHaveCount(0);
+});
+
+test("The banner still shows when the browser refuses to keep the acknowledgement", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "one width is enough");
+  const name = `Alpi Occidentali giugno 2027 (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await page.addInitScript(() => {
+    const refuse = (): never => {
+      throw new DOMException("refused", "SecurityError");
+    };
+    Storage.prototype.getItem = refuse;
+    Storage.prototype.setItem = refuse;
+  });
+  await diagnosticsCounting(page, 1);
+  await openHome(page);
+  await banner(page).getByRole("button", { name: "Acknowledge" }).click();
+  await openHome(page);
+  await page.reload();
+  await expect(banner(page)).toContainText("1");
+  await expect(page.getByRole("link", { name })).toBeVisible();
+});

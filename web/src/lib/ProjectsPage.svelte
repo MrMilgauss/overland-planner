@@ -1,5 +1,6 @@
 <script lang="ts">
   import HealthBanner from './HealthBanner.svelte';
+  import K2Banner from './K2Banner.svelte';
   import { createProject, listProjects, PlannerError } from './api';
 
   const projects = listProjects();
@@ -23,6 +24,7 @@
 </script>
 
 <HealthBanner />
+<K2Banner />
 <h1>Projects</h1>
 <form onsubmit={create}>
   <label for="project-name">Project name</label>
