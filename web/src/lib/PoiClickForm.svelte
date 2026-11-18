@@ -46,32 +46,25 @@
 <style>
   form {
     display: grid;
-    gap: 0.4rem;
+    gap: var(--space-2);
     box-sizing: border-box;
     width: 15rem;
     max-width: 100%;
-    padding: 0.6rem;
-    border: 1px solid #6b7280;
-    border-radius: 0.4rem;
-    background: #fff;
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
     box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
   }
   label {
     display: grid;
-    gap: 0.2rem;
-  }
-  input,
-  button {
-    min-width: 0;
-    padding: 0.5rem;
-    font-size: 1rem; /* 16 px: no zoom-on-focus on the iPhone */
+    gap: var(--space-1);
   }
   .buttons {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
   [role='alert'] {
     margin: 0;
-    color: #8a1c1c;
   }
 </style>

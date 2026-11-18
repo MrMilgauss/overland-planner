@@ -90,8 +90,8 @@
     margin: 0.5rem 0;
   }
   li {
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #ddd;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-border);
     overflow-wrap: anywhere;
   }
   .name {
@@ -99,15 +99,15 @@
   }
   .type {
     margin-left: 0.5rem;
-    color: #555;
-    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .line {
     display: block;
-    color: #555;
+    color: var(--color-text-muted);
   }
   .unconfirmed {
-    color: #8a4b00;
+    color: var(--color-warning-fg);
   }
   dl {
     margin: 0.5rem 0;

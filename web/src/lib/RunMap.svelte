@@ -177,13 +177,7 @@
     z-index: 2;
   }
   button {
-    margin-bottom: 0.4rem;
-    padding: 0.5rem 1rem;
-    font-size: 1rem;
-  }
-  button[aria-pressed='true'] {
-    background: #1f2937;
-    color: #fff;
+    margin-bottom: var(--space-2);
   }
   .map {
     width: 100%;
@@ -197,9 +191,6 @@
     .map {
       height: 70vh;
     }
-  }
-  [role='alert'] {
-    color: #8a1c1c;
   }
   :global(.run-marker) {
     font:

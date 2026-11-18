@@ -7,9 +7,9 @@ import { render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import DiagnosticsPage from './DiagnosticsPage.svelte';
 
-const RED = 'rgb(176, 0, 32)';
-const AMBER = 'rgb(178, 106, 0)';
-const GREEN = 'rgb(27, 110, 45)';
+const RED = 'var(--color-danger-fg)';
+const AMBER = 'var(--color-warning-fg)';
+const GREEN = 'var(--color-success-fg)';
 
 function diagnostics(fields: Record<string, unknown> = {}): Record<string, unknown> {
   return {

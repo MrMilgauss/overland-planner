@@ -94,108 +94,84 @@
   open();
 </script>
 
-<main>
-  <nav><a href="#/">Projects</a></nav>
-  {#if project}
-    <h1>{project.name}</h1>
-  {/if}
-  {#if problem}
-    <p role="alert">{problem}</p>
-  {/if}
+{#if project}
+  <h1>{project.name}</h1>
+{/if}
+{#if problem}
+  <p role="alert">{problem}</p>
+{/if}
 
-  {#if project}
-    <section aria-labelledby="items-heading">
-      <h2 id="items-heading">Trails and places</h2>
-      <ItemList {items} />
-    </section>
+{#if project}
+  <section aria-labelledby="items-heading">
+    <h2 id="items-heading">Trails and places</h2>
+    <ItemList {items} />
+  </section>
 
-    <section aria-labelledby="import-heading">
-      <h2 id="import-heading">Import trails</h2>
-      <form onsubmit={importFiles}>
-        <label for="gpx-files">GPX files</label>
-        <input id="gpx-files" type="file" accept=".gpx,application/gpx+xml" multiple bind:files />
-        <button type="submit">Import</button>
-      </form>
-    </section>
+  <section aria-labelledby="import-heading">
+    <h2 id="import-heading">Import trails</h2>
+    <form onsubmit={importFiles}>
+      <label for="gpx-files">GPX files</label>
+      <input id="gpx-files" type="file" accept=".gpx,application/gpx+xml" multiple bind:files />
+      <button type="submit">Import</button>
+    </form>
+  </section>
 
-    <section aria-labelledby="place-heading">
-      <h2 id="place-heading">Add a place</h2>
-      <form onsubmit={addThePlace}>
-        <label for="place-name">Place name</label>
-        <input id="place-name" bind:value={placeName} autocomplete="off" />
-        <label for="place-lat">Latitude</label>
-        <input id="place-lat" bind:value={latitude} inputmode="decimal" placeholder="44.8990" />
-        <label for="place-lon">Longitude</label>
-        <input id="place-lon" bind:value={longitude} inputmode="decimal" placeholder="6.6430" />
-        <button type="submit">Add place</button>
-      </form>
-    </section>
+  <section aria-labelledby="place-heading">
+    <h2 id="place-heading">Add a place</h2>
+    <form onsubmit={addThePlace}>
+      <label for="place-name">Place name</label>
+      <input id="place-name" bind:value={placeName} autocomplete="off" />
+      <label for="place-lat">Latitude</label>
+      <input id="place-lat" bind:value={latitude} inputmode="decimal" placeholder="44.8990" />
+      <label for="place-lon">Longitude</label>
+      <input id="place-lon" bind:value={longitude} inputmode="decimal" placeholder="6.6430" />
+      <button type="submit">Add place</button>
+    </form>
+  </section>
 
-    <section aria-labelledby="anchors-heading">
-      <h2 id="anchors-heading">Start and End</h2>
-      <form onsubmit={chooseStartAndEnd}>
-        <label for="start-place">Start</label>
-        <select id="start-place" bind:value={startId}>
-          <option value="" disabled>Choose a place</option>
-          {#each places as place (place.id)}
-            <option value={place.id}>{place.name}</option>
-          {/each}
-        </select>
-        <label for="end-place">End</label>
-        <select id="end-place" bind:value={endId}>
-          <option value="" disabled>Choose a place</option>
-          {#each places as place (place.id)}
-            <option value={place.id}>{place.name}</option>
-          {/each}
-        </select>
-        <button type="submit">Set Start and End</button>
-      </form>
-    </section>
+  <section aria-labelledby="anchors-heading">
+    <h2 id="anchors-heading">Start and End</h2>
+    <form onsubmit={chooseStartAndEnd}>
+      <label for="start-place">Start</label>
+      <select id="start-place" bind:value={startId}>
+        <option value="" disabled>Choose a place</option>
+        {#each places as place (place.id)}
+          <option value={place.id}>{place.name}</option>
+        {/each}
+      </select>
+      <label for="end-place">End</label>
+      <select id="end-place" bind:value={endId}>
+        <option value="" disabled>Choose a place</option>
+        {#each places as place (place.id)}
+          <option value={place.id}>{place.name}</option>
+        {/each}
+      </select>
+      <button type="submit">Set Start and End</button>
+    </form>
+  </section>
 
-    <section aria-labelledby="plan-heading">
-      <h2 id="plan-heading">Plan</h2>
-      <form onsubmit={(event) => event.preventDefault()}>
-        <label for="objective">Objective</label>
-        <select id="objective" bind:value={objectiveChoice} onchange={chooseObjective}>
-          <option value="distance">Minimise road distance</option>
-          <option value="time">Minimise road time</option>
-        </select>
-      </form>
-      <PlanPanel {projectId} objective={project.objective ?? 'distance'} onplaceadded={refresh} />
-    </section>
-  {/if}
-</main>
+  <section aria-labelledby="plan-heading">
+    <h2 id="plan-heading">Plan</h2>
+    <form onsubmit={(event) => event.preventDefault()}>
+      <label for="objective">Objective</label>
+      <select id="objective" bind:value={objectiveChoice} onchange={chooseObjective}>
+        <option value="distance">Minimise road distance</option>
+        <option value="time">Minimise road time</option>
+      </select>
+    </form>
+    <PlanPanel {projectId} objective={project.objective ?? 'distance'} onplaceadded={refresh} />
+  </section>
+{/if}
 
 <style>
-  main {
-    max-width: 48rem;
-    margin: 0 auto;
-    padding: 1rem;
-    font-family: system-ui, sans-serif;
-    overflow-wrap: anywhere;
-  }
   section {
-    margin-top: 1.5rem;
-  }
-  h2 {
-    font-size: 1.1rem;
+    margin-top: var(--space-6);
   }
   form {
     display: grid;
-    gap: 0.4rem;
-  }
-  input,
-  select,
-  button {
-    min-width: 0;
-    padding: 0.5rem;
-    font-size: 1rem; /* 16 px: no zoom-on-focus on the iPhone */
+    gap: var(--space-2);
   }
   button {
     justify-self: start;
-    padding: 0.5rem 1rem;
-  }
-  [role='alert'] {
-    color: #8a1c1c;
   }
 </style>

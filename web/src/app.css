@@ -1,0 +1,192 @@
+/* One look for every page (D265, ADR-003 Amendment 3): tokens, both themes, the base look of the elements. Components
+   use these tokens only; no hex colour in a component (the map overlays aside). */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f5f6f8;
+  --color-text: #1a1d21;
+  --color-text-muted: #4b5563;
+  --color-border: #6b7280;
+  --color-accent: #1d4ed8;
+  --color-on-accent: #ffffff;
+  --color-focus: #1d4ed8;
+  --color-info-fg: #1e40af;
+  --color-info-bg: #dbeafe;
+  --color-success-fg: #166534;
+  --color-success-bg: #dcfce7;
+  --color-warning-fg: #854d0e;
+  --color-warning-bg: #fef9c3;
+  --color-danger-fg: #991b1b;
+  --color-danger-bg: #fee2e2;
+
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  --header-height: 56px;
+  --panel-width: clamp(360px, 30vw, 420px);
+  --target-min: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #121417;
+    --color-surface: #1b1e23;
+    --color-text: #e6e8eb;
+    --color-text-muted: #a1a8b3;
+    --color-border: #8b93a0;
+    --color-accent: #60a5fa;
+    --color-on-accent: #0b1220;
+    --color-focus: #60a5fa;
+    --color-info-fg: #bfdbfe;
+    --color-info-bg: #1e3a8a;
+    --color-success-fg: #bbf7d0;
+    --color-success-bg: #14532d;
+    --color-warning-fg: #fde68a;
+    --color-warning-bg: #713f12;
+    --color-danger-fg: #fecaca;
+    --color-danger-bg: #7f1d1d;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+h1 {
+  font-size: var(--text-xl);
+}
+h2 {
+  font-size: var(--text-lg);
+}
+
+a {
+  color: var(--color-accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select {
+  box-sizing: border-box;
+  min-height: var(--target-min);
+  font: inherit;
+  font-size: var(--text-base); /* 16 px: no zoom-on-focus on the iPhone */
+  color: var(--color-text);
+}
+
+input,
+select {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+button,
+input[type='file']::file-selector-button {
+  min-width: var(--target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+input[type='file']::file-selector-button {
+  min-height: var(--target-min);
+  margin-right: var(--space-3);
+}
+
+/* primary: the one action of a form (Calculate, Acknowledge) */
+button.primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+/* danger-outline: stops work already running (Stop and use best so far) */
+button.danger {
+  border-color: var(--color-danger-fg);
+  background: transparent;
+  color: var(--color-danger-fg);
+}
+button[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+/* disabled: muted text and a dashed border, not only a paler colour */
+button:disabled {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* A link used as a button (Export GPX) and the links that are targets of their own */
+a.button,
+a.target {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+}
+a.button {
+  min-width: var(--target-min);
+  box-sizing: border-box;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+table {
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+[role='alert'] {
+  color: var(--color-danger-fg);
+}

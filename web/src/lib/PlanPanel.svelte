@@ -206,7 +206,9 @@
   });
 </script>
 
-<button type="button" disabled={calculating} onclick={() => calculate()}>Calculate</button>
+<button type="button" class="primary" disabled={calculating} onclick={() => calculate()}>
+  Calculate
+</button>
 
 {#if watchedJobId && STATE_TEXTS[jobState]}
   <p role="status">{STATE_TEXTS[jobState]}</p>
@@ -215,7 +217,9 @@
   <p class="best">Best so far: {bestSoFar(incumbent)}</p>
 {/if}
 {#if watchedJobId && stoppable}
-  <button type="button" disabled={stopPressed} onclick={stop}>Stop and use best so far</button>
+  <button type="button" class="danger" disabled={stopPressed} onclick={stop}
+    >Stop and use best so far</button
+  >
 {/if}
 {#each notices as notice (notice)}
   <p class="notice">{notice}</p>
@@ -261,16 +265,12 @@
     objectiveLabel={readyRun.objective_label}
   />
   {#if !jobActive}
-    <a href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+    <a class="button" href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
   <RunMap planRunId={readyRun.id} {projectId} onplaceadded={placeAdded} />
 {/if}
 
 <style>
-  button {
-    padding: 0.5rem 1rem;
-    font-size: 1rem; /* 16 px: no zoom-on-focus on the iPhone */
-  }
   .run {
     font-weight: 600;
   }
@@ -278,17 +278,9 @@
   .provider,
   .best,
   .notice {
-    margin: 0.25rem 0;
+    margin: var(--space-1) 0;
   }
   .notice {
-    color: #5c3600;
-  }
-  a {
-    display: inline-block;
-    padding: 0.5rem 0;
-    font-size: 1rem;
-  }
-  [role='alert'] {
-    color: #8a1c1c;
+    color: var(--color-warning-fg);
   }
 </style>

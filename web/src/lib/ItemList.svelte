@@ -32,24 +32,28 @@
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #ddd;
+    gap: var(--space-2);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--color-border);
   }
   .name {
     flex: 1 1 12rem;
     font-weight: 600;
   }
   .type {
-    color: #555;
+    color: var(--color-text-muted);
   }
   .badge {
-    padding: 0.1rem 0.5rem;
-    border-radius: 1rem;
-    background: #e6f0e6;
-    font-size: 0.85rem;
+    padding: 0.1rem var(--space-2);
+    border: 1px solid var(--color-success-fg);
+    border-radius: var(--radius-pill);
+    background: var(--color-success-bg);
+    color: var(--color-success-fg);
+    font-size: var(--text-sm);
   }
   .anchor {
-    background: #dde7f7;
+    border-color: var(--color-info-fg);
+    background: var(--color-info-bg);
+    color: var(--color-info-fg);
   }
 </style>

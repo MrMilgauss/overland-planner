@@ -6,9 +6,9 @@
   import { failureText, readDiagnostics, type Diagnostics, type WindowCount } from './api';
 
   const NONE = 'none';
-  const ALARM = '#b00020'; // K2 or K3 above 0: a hard rule broken, or a report that left out an item
-  const AMBER = '#b26a00'; // G4 from 1: plans were refused while the routing engine was down or loading
-  const GREEN = '#1b6e2d'; // G4 at 0
+  const ALARM = 'var(--color-danger-fg)'; // K2 or K3 above 0: a hard rule broken, or a report that left out an item
+  const AMBER = 'var(--color-warning-fg)'; // G4 from 1: plans were refused while the routing engine was down or loading
+  const GREEN = 'var(--color-success-fg)'; // G4 at 0
   const report = readDiagnostics();
 
   function seconds(value: number | null): string {
@@ -35,113 +35,95 @@
   }
 </script>
 
-<main>
-  <p><a href="#/">Projects</a></p>
-  <h1>Diagnostics</h1>
+<h1>Diagnostics</h1>
 
-  {#await report}
-    <p>Loading...</p>
-  {:then diagnostics}
-    <p class="meta">
-      Version {diagnostics.version}, started {diagnostics.process_started_at}, last {diagnostics.days}
-      days
-    </p>
+{#await report}
+  <p>Loading...</p>
+{:then diagnostics}
+  <p class="meta">
+    Version {diagnostics.version}, started {diagnostics.process_started_at}, last {diagnostics.days}
+    days
+  </p>
 
-    {#each runChecks(diagnostics) as [title, count] (title)}
-      <section aria-label={title}>
-        <h2>{title}</h2>
-        <ul>
-          {#each counts(diagnostics.days, count) as [label, value] (label)}
-            <li class:alarm={value > 0} style:color={value > 0 ? ALARM : undefined}>
-              {label}: {value}
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/each}
-
-    <section aria-label="G4 routing engine refusals">
-      <h2>G4 routing engine refusals</h2>
+  {#each runChecks(diagnostics) as [title, count] (title)}
+    <section aria-label={title}>
+      <h2>{title}</h2>
       <ul>
-        <li
-          class:alarm={diagnostics.g4.engine_refusals_30d > 0}
-          style:color={diagnostics.g4.engine_refusals_30d > 0 ? AMBER : GREEN}
-        >
-          last {diagnostics.days} days: {diagnostics.g4.engine_refusals_30d}
-        </li>
-      </ul>
-    </section>
-
-    <section aria-label="Stage p95">
-      <h2>Stage p95</h2>
-      <ul>
-        {#each Object.entries(diagnostics.k5.stage_p95_s) as [stage, value] (stage)}
-          <li>{stage}: {seconds(value)}</li>
+        {#each counts(diagnostics.days, count) as [label, value] (label)}
+          <li class:alarm={value > 0} style:color={value > 0 ? ALARM : undefined}>
+            {label}: {value}
+          </li>
         {/each}
       </ul>
     </section>
+  {/each}
 
-    <section aria-label="Retried jobs">
-      <h2>Retried jobs</h2>
-      <ul>
-        <li>last 30 days: {diagnostics.retried_jobs_30d}</li>
-        {#each Object.entries(diagnostics.k5.retried_jobs) as [band, value] (band)}
-          <li>{band}: {value}</li>
-        {/each}
-      </ul>
-    </section>
+  <section aria-label="G4 routing engine refusals">
+    <h2>G4 routing engine refusals</h2>
+    <ul>
+      <li
+        class:alarm={diagnostics.g4.engine_refusals_30d > 0}
+        style:color={diagnostics.g4.engine_refusals_30d > 0 ? AMBER : GREEN}
+      >
+        last {diagnostics.days} days: {diagnostics.g4.engine_refusals_30d}
+      </li>
+    </ul>
+  </section>
 
-    <section aria-label="Jobs by terminal state">
-      <h2>Jobs by terminal state (last 30 days)</h2>
-      <ul>
-        {#each Object.entries(diagnostics.jobs_by_terminal_state_30d) as [state, value] (state)}
-          <li>{state}: {value}</li>
-        {/each}
-      </ul>
-    </section>
+  <section aria-label="Stage p95">
+    <h2>Stage p95</h2>
+    <ul>
+      {#each Object.entries(diagnostics.k5.stage_p95_s) as [stage, value] (stage)}
+        <li>{stage}: {seconds(value)}</li>
+      {/each}
+    </ul>
+  </section>
 
-    <section aria-label="Variants per project and day">
-      <h2>Variants per project and day</h2>
-      <ul>
-        <li>median: {figure(diagnostics.k7.runs_per_project_day.median)}</li>
-        <li>max: {figure(diagnostics.k7.runs_per_project_day.max)}</li>
-      </ul>
-    </section>
-  {:catch error}
-    <p role="alert">{failureText(error)}</p>
-  {/await}
-</main>
+  <section aria-label="Retried jobs">
+    <h2>Retried jobs</h2>
+    <ul>
+      <li>last 30 days: {diagnostics.retried_jobs_30d}</li>
+      {#each Object.entries(diagnostics.k5.retried_jobs) as [band, value] (band)}
+        <li>{band}: {value}</li>
+      {/each}
+    </ul>
+  </section>
+
+  <section aria-label="Jobs by terminal state">
+    <h2>Jobs by terminal state (last 30 days)</h2>
+    <ul>
+      {#each Object.entries(diagnostics.jobs_by_terminal_state_30d) as [state, value] (state)}
+        <li>{state}: {value}</li>
+      {/each}
+    </ul>
+  </section>
+
+  <section aria-label="Variants per project and day">
+    <h2>Variants per project and day</h2>
+    <ul>
+      <li>median: {figure(diagnostics.k7.runs_per_project_day.median)}</li>
+      <li>max: {figure(diagnostics.k7.runs_per_project_day.max)}</li>
+    </ul>
+  </section>
+{:catch error}
+  <p role="alert">{failureText(error)}</p>
+{/await}
 
 <style>
-  main {
-    max-width: 40rem;
-    margin: 0 auto;
-    padding: 1rem;
-    overflow-wrap: anywhere; /* readable at 390 px: long keys and dates wrap */
-  }
-  h1 {
-    font-size: 1.5rem;
-  }
   h2 {
-    font-size: 1.1rem;
-    margin: 1rem 0 0.25rem;
+    margin: var(--space-4) 0 var(--space-1);
   }
   ul {
     margin: 0;
-    padding-left: 1.25rem;
+    padding-left: var(--space-6);
   }
-  li,
-  a,
-  p {
-    font-size: 1rem;
+  section {
+    overflow-x: auto; /* a wide table scrolls in its own box, never the page */
   }
   .meta {
-    color: #555;
+    color: var(--color-text-muted);
   }
   .alarm {
     font-weight: 600;
-  }
-  [role='alert'] {
-    color: #8a1c1c;
   }
 </style>

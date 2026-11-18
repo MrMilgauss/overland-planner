@@ -17,14 +17,14 @@
 
 <style>
   aside {
-    margin: 0 0 1rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #b26b00;
-    border-radius: 0.25rem;
-    background: #fff4e0;
-    color: #5c3600;
+    margin: 0 0 var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-warning-fg);
+    border-radius: var(--radius-md);
+    background: var(--color-warning-bg);
+    color: var(--color-warning-fg);
   }
   p {
-    margin: 0.25rem 0;
+    margin: var(--space-1) 0;
   }
 </style>
