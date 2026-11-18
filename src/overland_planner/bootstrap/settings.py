@@ -15,8 +15,10 @@ ROUTING_PROVIDER is `mock` (default) or `valhalla`; the engine's keys (ADR-013 A
 or https with a host), VALHALLA_EXPECTED_VERSION, VALHALLA_MAX_MATRIX_PAIRS (1 or more), VALHALLA_CONCURRENCY (1 to 8)
 and CONFIRMED_SNAP_M (above 0); an empty value is the default. MOCK_PLAN with `valhalla` refuses the start.
 The map's tiles (ADR-004, ADR-003 Amendment 2) are MAP_TILE_URL (http or https with a host and the placeholders {z},
-{x} and {y}; a query parameter whose name contains key, token, secret, signature or auth refuses the start, naming the
-parameter and never its value, D256), MAP_TILE_ATTRIBUTION and MAP_TILE_MAX_ZOOM (1 to 22); an empty value is
+{x} and {y}; userinfo, a fragment, or a query parameter whose name contains key, token, secret, sig, auth, apikey,
+api_key, appid, app_id, password, pwd, access or client_id refuses the start, naming the part and never its value,
+D256; a key hidden in a path segment cannot be told from a tile path and is not detected: use a provider without a
+key), MAP_TILE_ATTRIBUTION and MAP_TILE_MAX_ZOOM (1 to 22); an empty value is
 the default.
 """
 
@@ -42,7 +44,10 @@ _REPO_WEB_DIST = _REPO_ROOT / "web" / "dist"
 _REPO_MIGRATIONS = _REPO_ROOT / "migrations"
 _WHOLE_SECONDS = re.compile(r"[0-9]+")
 _TILE_PLACEHOLDERS = ("{z}", "{x}", "{y}")
-_PRIVATE_PARAMETER_WORDS = ("key", "token", "secret", "signature", "auth")
+_PRIVATE_PARAMETER_WORDS = (
+    *("key", "token", "secret", "signature", "sig", "auth", "apikey", "api_key", "appid", "app_id"),
+    *("password", "pwd", "access", "client_id"),
+)
 
 
 class InvalidSettingsError(ValueError):
@@ -97,7 +102,12 @@ class Settings(BaseSettings):
         cls._http_url_with_host(value)
         if any(placeholder not in value for placeholder in _TILE_PLACEHOLDERS):
             raise ValueError("must contain {z}, {x} and {y}")
-        for pair in urlsplit(value).query.split("&"):
+        parts = urlsplit(value)
+        if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+            raise ValueError("carries userinfo")
+        if parts.fragment or "#" in value:
+            raise ValueError("carries a fragment")
+        for pair in parts.query.split("&"):
             name = unquote_plus(pair.partition("=")[0])
             if any(word in name.lower() for word in _PRIVATE_PARAMETER_WORDS):
                 raise ValueError(f"carries the private parameter {name}")  # the name only, never the value (D256)

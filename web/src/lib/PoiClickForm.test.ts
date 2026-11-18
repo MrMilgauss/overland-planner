@@ -34,6 +34,22 @@ describe('PoiClickForm', () => {
     expect(screen.getByLabelText('Name')).toBeInTheDocument();
   });
 
+  it('adds one place when submitted twice while the first is in flight, and cannot be cancelled meanwhile', async () => {
+    let finish: () => void = () => {};
+    const slow = vi.fn(
+      (name: string) =>
+        new Promise<undefined>((resolve) => ((finish = () => resolve(undefined)), void name)),
+    );
+    const { close } = open(slow);
+    const form = screen.getByRole('form', { name: 'Add a place here' });
+    await fireEvent.submit(form);
+    await fireEvent.submit(form);
+    expect(slow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    finish();
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
   it('closes and adds nothing on Cancel and on Escape', async () => {
     const first = open();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

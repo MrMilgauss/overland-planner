@@ -11,6 +11,7 @@ Accepted (user decision, 2026-11-01).
 ## Decision
 - The tile source is configured in `.env`: `MAP_TILE_URL` (XYZ template), `MAP_TILE_ATTRIBUTION`, `MAP_TILE_MAX_ZOOM`. It is exposed to the SPA through `GET /api/config/map`.
 - Default: **OpenTopoMap** (`https://tile.opentopomap.org/{z}/{x}/{y}.png`, max zoom 17, attribution "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"). Documented alternative: **OSM Standard** (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`, max zoom 19, "© OpenStreetMap contributors").
+- Keys in the path are not detected; use a provider without a key (start-up refuses userinfo, a fragment and key-like query parameters only).
 - Policy compliance: attribution is always visible (MapLibre attribution control, cannot be disabled); tiles are only requested on demand by the browser (no prefetch, no server-side cache warming, no offline packs); the browser sends its normal Referer; the default max zoom is no higher than the provider's.
 
 ## Alternatives considered

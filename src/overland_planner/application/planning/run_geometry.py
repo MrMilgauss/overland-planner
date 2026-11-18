@@ -8,7 +8,9 @@ the line leads to or belongs to. Point features: a numbered `stop` marker at a p
 road leg between identical places has nothing to draw.
 
 Tracks and retraces come from the canonical points of the run's direction version, thinned for display to at most
-`MAX_TRACK_POINTS` (first and last kept, every n-th between), and never depend on the road map. Road shapes come from
+`MAX_TRACK_POINTS` (first and last kept, every n-th between), and never depend on the road map; when a track's points
+cannot be read (no file, unreadable or invalid file, no direction version) it is drawn as the entry-to-exit chord and
+marked `unavailable`, as is its retrace. Road shapes come from
 the shape store, at most two at a time, only while the road map's identity (read once) is the run's stored
 `provider_id` and `profile`; otherwise, or from the first typed failure of the road map on, a leg is the straight line
 between its places marked `unavailable` and the answer is still whole. Reading changes no run. Each answer logs one
@@ -79,6 +81,14 @@ class PointFeature:
 class RunGeometry:
     lines: tuple[LineFeature, ...]
     markers: tuple[PointFeature, ...]
+
+
+@dataclass(frozen=True)
+class _Trail:
+    """The points to draw for a track and whether they are the trail's own (else: the entry-to-exit chord)."""
+
+    points: tuple[Coordinate, ...]
+    stored: bool
 
 
 @dataclass(frozen=True)
@@ -165,30 +175,30 @@ class RunGeometryService:
             return None
         return identity if identity == (run.provider_id, run.profile) else None
 
-    def _tracks(self, stops: Sequence[PlanStop]) -> dict[str, tuple[Coordinate, ...]]:
+    def _tracks(self, stops: Sequence[PlanStop]) -> dict[str, _Trail]:
         """The points of each track to draw, from the file of its run's direction version, thinned."""
         return {stop.item_id: self._track_points(stop) for stop in stops if stop.kind == "track"}
 
-    def _track_points(self, stop: PlanStop) -> tuple[Coordinate, ...]:
-        """The stored points; a file that is missing or unreadable leaves the straight line from entry to exit."""
-        straight = (_arrival(stop), _departure(stop))
+    def _track_points(self, stop: PlanStop) -> _Trail:
+        """The stored points; a file that is missing, unreadable or invalid leaves the chord from entry to exit."""
+        chord = _Trail((_arrival(stop), _departure(stop)), stored=False)
         if stop.direction_version is None:
-            return straight
-        content = self._files.read_canonical_points(stop.item_id, stop.direction_version)
-        if isinstance(content, CanonicalPointsMissing):
-            return straight
+            return chord
         try:
+            content = self._files.read_canonical_points(stop.item_id, stop.direction_version)
+            if isinstance(content, CanonicalPointsMissing):
+                return chord
             points = tuple(point.coordinate for point in parse_canonical_points_file(content))
-        except InvalidCanonicalPointsFileError:
-            return straight
-        return thinned(points) if len(points) > 1 else straight
+        except (OSError, InvalidCanonicalPointsFileError):
+            return chord
+        return _Trail(thinned(points), stored=True) if len(points) > 1 else chord
 
     def _lines(
         self,
         stops: Sequence[PlanStop],
         legs: Sequence[_Leg],
         shapes: Sequence[RoadShape],
-        tracks: dict[str, tuple[Coordinate, ...]],
+        tracks: dict[str, _Trail],
     ) -> list[LineFeature]:
         roads = {leg.stop: (leg, shape) for leg, shape in zip(legs, shapes, strict=True)}
         lines: list[LineFeature] = []
@@ -199,7 +209,8 @@ class RunGeometryService:
             if stop.kind == "track":
                 lines.append(_own_line("track", number, stop, tracks[stop.item_id]))
             if stop.kind == "retrace":
-                lines.append(_own_line("retrace", number, stop, tuple(reversed(tracks[stop.item_id]))))
+                trail = tracks[stop.item_id]
+                lines.append(_own_line("retrace", number, stop, _Trail(trail.points[::-1], trail.stored)))
         return lines
 
 
@@ -235,9 +246,11 @@ def _road_line(leg: _Leg, shape: RoadShape) -> LineFeature:
     )
 
 
-def _own_line(kind: LineKind, number: int, stop: PlanStop, points: tuple[Coordinate, ...]) -> LineFeature:
-    """A track or retrace line: a retrace is Unconfirmed with its reason, a track has neither."""
-    return LineFeature(kind, number, stop.item_id, stop.name, stop.confidence, stop.reason, "available", points)
+def _own_line(kind: LineKind, number: int, stop: PlanStop, trail: _Trail) -> LineFeature:
+    """A track or retrace line: a retrace is Unconfirmed with its reason, a track has neither; the chord drawn for a
+    trail whose points cannot be read is `unavailable`."""
+    geometry: Geometry = "available" if trail.stored else "unavailable"
+    return LineFeature(kind, number, stop.item_id, stop.name, stop.confidence, stop.reason, geometry, trail.points)
 
 
 def _markers_of(stops: Sequence[PlanStop]) -> list[PointFeature]:

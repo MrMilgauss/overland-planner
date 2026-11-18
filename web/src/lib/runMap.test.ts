@@ -194,6 +194,28 @@ describe('labels at the middle of a line', () => {
     expect(plan.overlays).toMatchObject([{ kind: 'unavailable', text: 'geometry unavailable' }]);
   });
 
+  it('labels an unavailable track like any unavailable line, and keeps arrows off it', () => {
+    const plan = buildRunMap(
+      collection(line(ROAD, { kind: 'track', level: null, geometry: 'unavailable' })),
+      CONFIG,
+    );
+    expect(plan.overlays).toMatchObject([{ kind: 'unavailable', text: 'geometry unavailable' }]);
+    expect(JSON.stringify((layer(plan, 'track-arrows') as { filter: unknown }).filter)).toContain(
+      '"available"',
+    );
+  });
+
+  it('draws the map whole when a line has no point or one point', () => {
+    const plan = buildRunMap(
+      collection(
+        line([], { geometry: 'unavailable' }),
+        line([[7.0, 45.0]], { geometry: 'unavailable' }),
+      ),
+      CONFIG,
+    );
+    expect(plan.overlays).toMatchObject([{ kind: 'unavailable', lngLat: [7.0, 45.0] }]);
+  });
+
   it('labels nothing on a Confirmed road or a track', () => {
     const plan = buildRunMap(
       collection(line(ROAD), line(ROAD, { kind: 'track', level: null })),

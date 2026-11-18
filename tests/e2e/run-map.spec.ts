@@ -29,8 +29,13 @@ if (driven && screenWidth > 0) {
   });
 }
 
-async function makeAPlan(page: Page, testDir: string, projectName: string): Promise<void> {
-  await page.goto('/');
+async function makeAPlan(
+  page: Page,
+  testDir: string,
+  projectName: string,
+  query = '',
+): Promise<void> {
+  await page.goto(`/${query}`);
   await page.getByLabel('Project name').fill(projectName);
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.getByRole('heading', { level: 1, name: projectName })).toBeVisible();
@@ -63,6 +68,58 @@ async function centres(markers: Locator): Promise<{ x: number; y: number }[]> {
 const spread = (points: { x: number; y: number }[]): number =>
   Math.hypot(points[0].x - points.at(-1)!.x, points[0].y - points.at(-1)!.y);
 
+type RenderedMap = {
+  queryRenderedFeatures(options: { layers: string[] }): unknown[];
+  getFilter(layer: string): unknown;
+  getSource(id: string): {
+    serialize(): { data: { features: SourceFeature[] } };
+  };
+};
+type SourceFeature = {
+  properties: { kind: string };
+  geometry: { coordinates: [number, number][] };
+};
+
+// What the map RENDERED, asked of MapLibre (polled until the first frames are drawn): the track line and its direction arrows draw features, a
+// retrace (when the run has one) draws without arrows, and the track's drawn line starts at the track's entry.
+async function checkRenderedLines(page: Page, projectIdShown: string): Promise<void> {
+  const state = () =>
+    page.evaluate(() => {
+      const map = (window as unknown as { __overlandRunMap?: RenderedMap }).__overlandRunMap;
+      if (!map) return undefined;
+      const count = (layer: string): number =>
+        map.queryRenderedFeatures({ layers: [layer] }).length;
+      const drawn = map.getSource('run').serialize().data.features;
+      return {
+        track: count('track'),
+        arrows: count('track-arrows'),
+        retrace: count('retrace'),
+        retraces: drawn.filter((feature) => feature.properties.kind === 'retrace').length,
+        arrowFilter: JSON.stringify(map.getFilter('track-arrows')),
+        trackStart: drawn.find((feature) => feature.properties.kind === 'track')?.geometry
+          .coordinates[0],
+      };
+    });
+  await expect
+    .poll(async () => (await state())?.track ?? 0, {
+      message: 'the track line renders',
+    })
+    .toBeGreaterThan(0);
+  await expect
+    .poll(async () => (await state())?.arrows ?? 0, {
+      message: 'the arrows render',
+    })
+    .toBeGreaterThan(0);
+  const seen = (await state())!;
+  expect(seen.arrowFilter, 'arrows are for tracks, never retraces').toContain('track');
+  expect(seen.arrowFilter).not.toContain('retrace');
+  if (seen.retraces > 0) expect(seen.retrace, 'the retrace renders').toBeGreaterThan(0);
+  const listed = await (await page.request.get(`/api/projects/${projectIdShown}/items`)).json();
+  const track = listed.find((item: { type: string }) => item.type === 'track');
+  expect(seen.trackStart![1]).toBeCloseTo(track.entry.lat, 5);
+  expect(seen.trackStart![0]).toBeCloseTo(track.entry.lon, 5);
+}
+
 test('the map of the run shows its roads, tracks, numbers and credit, and pans and zooms', async ({
   page,
 }, testInfo) => {
@@ -70,9 +127,15 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
   test.setTimeout(180_000);
   await serveBlankTiles(page, String(testInfo.project.use.baseURL));
 
-  if (driven) await page.goto(`/#/projects/${projectId}`);
+  // `?e2e=1` makes the page hand its MapLibre map to `window.__overlandRunMap`, to ask what was rendered.
+  if (driven) await page.goto(`/?e2e=1#/projects/${projectId}`);
   else
-    await makeAPlan(page, testInfo.project.testDir, `Mappa ${testInfo.project.name} ${Date.now()}`);
+    await makeAPlan(
+      page,
+      testInfo.project.testDir,
+      `Mappa ${testInfo.project.name} ${Date.now()}`,
+      '?e2e=1',
+    );
 
   const map = page.getByRole('region', { name: 'Map of the run' });
   await expect(map.locator('canvas.maplibregl-canvas')).toBeVisible({
@@ -89,6 +152,8 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
   const numbers = await numbered.allInnerTexts();
   expect(numbers.length).toBeGreaterThan(1);
   for (const text of numbers) expect(text).toMatch(/\d/);
+
+  await checkRenderedLines(page, driven ? projectId! : new URL(page.url()).hash.split('/').pop()!);
 
   const screen = page.viewportSize()!.width;
   const pageWidth = await page.evaluate(() =>
@@ -240,11 +305,15 @@ async function nameIt(page: Page, name: string): Promise<void> {
   await nameForm(page).getByRole('button', { name: 'Add' }).click();
 }
 
-async function clickEntryMarker(page: Page, map: Locator): Promise<void> {
-  const box = (await map.locator('.run-marker.entry').first().boundingBox())!;
+/** Clicks next to the first entry marker and answers the name of the track it enters (its title: "Entry of NAME"). */
+async function clickEntryMarker(page: Page, map: Locator): Promise<string> {
+  const marker = map.locator('.run-marker.entry').first();
+  const entered = ((await marker.getAttribute('title')) ?? '').replace(/^Entry of /, '');
+  const box = (await marker.boundingBox())!;
   // Five pixels off the middle of the marker: the click is "next to" the entry, which is what snapping is for.
   await page.mouse.click(box.x + box.width / 2 + 5, box.y + box.height / 2);
   await expect(nameForm(page)).toBeVisible();
+  return entered;
 }
 
 test('a POI by a click on the map: named, placed, snapped to an entry, cancelled', async ({
@@ -275,7 +344,7 @@ test('a POI by a click on the map: named, placed, snapped to an entry, cancelled
 
   if (action('entry')) {
     const name = process.env.MAP_POI_NAME || 'Assietta trailhead';
-    await clickEntryMarker(page, map);
+    const entered = await clickEntryMarker(page, map);
     seen.form_shown = true;
     await nameIt(page, name);
     await expect(items.getByText(name)).toBeVisible();
@@ -285,7 +354,8 @@ test('a POI by a click on the map: named, placed, snapped to an entry, cancelled
     const id = driven ? projectId : new URL(page.url()).hash.split('/').pop();
     const listed = await (await page.request.get(`/api/projects/${id}/items`)).json();
     const poi = listed.find((item: { name: string }) => item.name === name);
-    const track = listed.find((item: { type: string }) => item.type === 'track');
+    const track = listed.find((item: { name: string }) => item.name === entered);
+    expect(track, `the track ${entered} whose entry was clicked`).toBeDefined();
     expect(poi.location, 'the POI is at the entry, exactly').toEqual(track.entry);
   }
 

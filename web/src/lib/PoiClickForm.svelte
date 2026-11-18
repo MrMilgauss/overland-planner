@@ -12,6 +12,7 @@
 
   async function submit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    if (busy) return; // a second submit while one is in flight adds nothing
     busy = true;
     problem = '';
     try {
@@ -38,7 +39,7 @@
   {/if}
   <span class="buttons">
     <button type="submit" disabled={busy}>Add</button>
-    <button type="button" onclick={close}>Cancel</button>
+    <button type="button" onclick={close} disabled={busy}>Cancel</button>
   </span>
 </form>
 

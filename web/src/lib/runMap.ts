@@ -208,6 +208,7 @@ function middleOf(points: LngLat[]): LngLat {
 
 function labelOf(line: LineFeature): MapOverlay | undefined {
   const { kind, level, reason, geometry } = line.properties;
+  if (line.geometry.coordinates.length === 0) return undefined; // nothing drawn, nothing to label
   const lngLat = middleOf(line.geometry.coordinates);
   if (geometry === 'unavailable') {
     return {

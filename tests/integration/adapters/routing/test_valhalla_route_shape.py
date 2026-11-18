@@ -68,6 +68,16 @@ def test_no_path_and_no_suitable_edges_answer_the_straight_line_not_available(na
     assert len(engine.asked("route")) == 1
 
 
+@pytest.mark.parametrize("shape", ["", "??"])
+def test_an_answer_with_fewer_than_two_points_is_the_straight_line_not_available(shape: str) -> None:
+    """An empty shape and a one-point shape (`??` decodes to one point) are no road to draw."""
+    recorded = recording("route_torino_susa_4x4v1")
+    answer = {**recorded["response"], "trip": {"legs": [{"shape": shape}]}}
+    engine = ScriptedEngine(route=[httpx.Response(200, json=answer)])
+
+    assert provider(httpx.MockTransport(engine)).route_shape(TORINO, SUSA) == RoadShape((TORINO, SUSA), available=False)
+
+
 @given(failures=st.lists(st.sampled_from(["connect", "timeout", "server"]), min_size=0, max_size=4))
 @settings(max_examples=30, deadline=None)
 def test_a_failure_that_may_pass_is_retried_with_the_matrix_waits_and_the_last_names_the_error(

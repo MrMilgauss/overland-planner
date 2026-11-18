@@ -176,6 +176,9 @@ def when_marco_opens_its_map(world: PlannerWorld) -> None:
 # ----------------------------------------------------------------------------------------------------- Then
 @then(parsers.re(r'"(?P<track>[^"]+)" is drawn with arrows towards (?P<exit>.+) and with entry and exit markers'))
 def then_the_track_is_drawn_towards_its_exit(world: PlannerWorld, track: str, exit: str) -> None:
+    """Checked at the API: the line runs from the entry to the exit and the entry and exit markers stand there.
+
+    That arrows are rendered along it is checked in the browser, by tests/e2e/run-map.spec.ts."""
     map_data = opened_map(world)
     (line,) = [f for f in lines(map_data) if props(f)["kind"] == "track" and props(f)["name"] == track]
     coordinates = line["geometry"]["coordinates"]
@@ -229,6 +232,8 @@ def then_the_place_has_one_combined_marker(world: PlannerWorld, place: str) -> N
 
 @then('the road legs are drawn as dashed straight lines marked "geometry unavailable"')
 def then_the_road_legs_are_straight_and_unavailable(world: PlannerWorld) -> None:
+    """Checked at the API: each road line is two points marked unavailable. That the web draws them dashed and labelled
+    "geometry unavailable" is checked by the web unit tests and tests/e2e/run-map.spec.ts."""
     map_data = opened_map(world)
     roads = [f for f in lines(map_data) if props(f)["kind"] == "road"]
     assert roads, "no road leg is drawn"
@@ -238,6 +243,8 @@ def then_the_road_legs_are_straight_and_unavailable(world: PlannerWorld) -> None
 
 @then("the tracks are still drawn with their direction arrows")
 def then_the_tracks_are_still_drawn(world: PlannerWorld) -> None:
+    """Checked at the API: each track is available and drawn from its entry to its exit. That arrows are rendered is
+    checked in the browser, by tests/e2e/run-map.spec.ts."""
     map_data = opened_map(world)
     rows = world.marco().plan_run(world.scratch["map_run_id"]).json()["stops"]
     tracks = {props(f)["name"]: f for f in lines(map_data) if props(f)["kind"] == "track"}
@@ -260,6 +267,9 @@ def then_the_unconfirmed_leg_is_flagged(world: PlannerWorld) -> None:
 
 @then('the retrace is drawn in its own style without direction arrows, labelled "retrace"')
 def then_the_retrace_is_its_own_kind(world: PlannerWorld) -> None:
+    """Checked at the API: one retrace line of its own kind, Unconfirmed, from the exit back to the entry.
+
+    Its style, its label and the absence of arrows are checked by the web unit tests and tests/e2e/run-map.spec.ts."""
     rows = world.marco().plan_run(world.scratch["map_run_id"]).json()["stops"]
     track = next(row for row in rows if row["type"] == "track" and any(r["type"] == "retrace" for r in rows))
     retrace = next(row for row in rows if row["type"] == "retrace")

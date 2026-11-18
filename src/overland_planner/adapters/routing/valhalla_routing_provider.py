@@ -63,6 +63,7 @@ COSTING_OPTIONS: dict[str, dict[str, Any]] = {
     }
 }
 _METRES_PER_KM = 1000
+_TWO_POINTS = 2
 _CONNECT_TIMEOUT_S = 2
 _MATRIX_READ_TIMEOUT_S = 120
 _OTHER_READ_TIMEOUT_S = 30
@@ -177,9 +178,12 @@ class ValhallaRoutingProvider:
                 return RoadShape.straight_line(origin, destination, available=False)
             raise refusal
         try:
-            return RoadShape(decode_polyline6(answer.json()["trip"]["legs"][0]["shape"]), available=True)
+            points = decode_polyline6(answer.json()["trip"]["legs"][0]["shape"])
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as unreadable:
             raise ProviderRejected("the routing engine's route answer cannot be read") from unreadable
+        if len(points) < _TWO_POINTS:  # an empty or one-point shape is no road to draw
+            return RoadShape.straight_line(origin, destination, available=False)
+        return RoadShape(points, available=True)
 
     def _read_identity(self) -> str:
         found, tileset = self._read_status(retry=True)

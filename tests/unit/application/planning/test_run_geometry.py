@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.catalog.facade import canonical_points_file
@@ -28,6 +28,7 @@ from overland_planner.application.planning.facade import (
     RunGeometryService,
     RunHasNoRouteError,
 )
+from overland_planner.application.ports.file_store import CanonicalPointsMissing
 from overland_planner.application.ports.plan_run_repository import NewPlanRun
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.routing_provider import ProviderUnreachable
@@ -52,14 +53,18 @@ def at(index: int) -> Coordinate:
 
 
 class Engine:
-    """The road map's `route_shape`: a bent line through a midpoint, failing from call `fail_from` on (counted over
-    the engine's life, safe across threads); `most_at_once` is the most calls it ever had in flight."""
+    """The road map's `route_shape`: a bent line through a midpoint. With `fail_from` it fails for the legs from the
+    `fail_from`-th of `legs` (the run's road legs in itinerary order) on, whichever call reaches it first, so the
+    outcome does not depend on thread timing; `answered` are the legs it answered, `most_at_once` the most calls it
+    ever had in flight."""
 
     provider_id = ROAD_MAP[0]
     profile = ROAD_MAP[1]
 
-    def __init__(self, *, fail_from: int | None = None) -> None:
+    def __init__(self, *, fail_from: int | None = None, legs: Sequence[tuple[Coordinate, Coordinate]] = ()) -> None:
         self._fail_from = fail_from
+        self._legs = list(legs)
+        self.answered: list[tuple[Coordinate, Coordinate]] = []
         self._lock = threading.Lock()
         self.asked: list[tuple[Coordinate, Coordinate]] = []
         self.most_at_once = 0
@@ -68,12 +73,13 @@ class Engine:
     def route_shape(self, origin: Coordinate, destination: Coordinate) -> RoadShape:
         with self._lock:
             self.asked.append((origin, destination))
-            call = len(self.asked)
             self._in_flight += 1
             self.most_at_once = max(self.most_at_once, self._in_flight)
         try:
-            if self._fail_from is not None and call >= self._fail_from:
+            if self._fail_from is not None and self._legs.index((origin, destination)) + 1 >= self._fail_from:
                 raise ProviderUnreachable("the engine is down")
+            with self._lock:
+                self.answered.append((origin, destination))
             return RoadShape((origin, bent(origin, destination), destination), available=True)
         finally:
             with self._lock:
@@ -119,7 +125,15 @@ def itineraries(draw: st.DrawFn) -> tuple[bool, tuple[Row, ...]]:
 class Trip:
     """A stored run built from rows, with its canonical files, and how the map should read it."""
 
-    def __init__(self, round_trip: bool, middle: Sequence[Row], *, provider_id: str = ROAD_MAP[0]) -> None:
+    def __init__(
+        self,
+        round_trip: bool,
+        middle: Sequence[Row],
+        *,
+        provider_id: str = ROAD_MAP[0],
+        direction_version: int | None = 2,
+    ) -> None:
+        self.direction_version = direction_version
         self.files = InMemoryFileStore()
         self.events = RecordingEventLog()
         self.planning = InMemoryPlanning()
@@ -163,7 +177,7 @@ class Trip:
                 leg,
                 entry=points[0],
                 exit=points[-1],
-                direction_version=2,
+                direction_version=self.direction_version,
                 leg_confidence=row.level,
                 leg_reason=reason,
             )
@@ -226,6 +240,14 @@ class Trip:
         assert place is not None
         return place
 
+    def road_legs(self) -> list[tuple[Coordinate, Coordinate]]:
+        """(origin, destination) of each road leg, in itinerary order."""
+        return [
+            (self.departure(self.stops[number - 2]), self.arrival(self.stops[number - 1]))
+            for kind, number, *_ in self.expected_lines()
+            if kind == "road"
+        ]
+
     def expected_lines(self) -> list[tuple[str, int, str, str | None, str | None]]:
         """(kind, stop number, item id, level, reason) of each line, in itinerary order: the road leg into a row, then
         the row's own line."""
@@ -265,6 +287,8 @@ def test_lines_follow_the_itinerary_and_tracks_run_the_way_they_are_driven(
             assert line.points == tuple(reversed(trip.tracks[line.item_id]))  # exit back to entry
 
 
+@example(count=1_500)
+@example(count=1_501)
 @given(count=st.integers(2, 4_000))
 @settings(max_examples=40, deadline=None)
 def test_a_long_track_is_thinned_to_at_most_1500_points_keeping_first_and_last(count: int) -> None:
@@ -273,6 +297,7 @@ def test_a_long_track_is_thinned_to_at_most_1500_points_keeping_first_and_last(c
     stored = list(trip.tracks["track-2"])
 
     assert len(track_line.points) <= 1_500
+    assert count <= 1_500 or len(track_line.points) >= 750  # thinned, never to a mere handful
     assert (track_line.points[0], track_line.points[-1]) == (stored[0], stored[-1])
     positions = [stored.index(point) for point in track_line.points]
     assert positions == sorted(set(positions))  # the stored points, in their order
@@ -301,13 +326,16 @@ def test_the_answer_stays_whole_when_the_engine_fails_part_way(
     itinerary: tuple[bool, tuple[Row, ...]], fail_from: int
 ) -> None:
     trip = Trip(*itinerary)
-    engine = Engine(fail_from=fail_from)
+    engine = Engine(fail_from=fail_from, legs=trip.road_legs())
     answer = trip.service(engine).geometry(RUN_ID)
 
     assert seen_lines(answer) == trip.expected_lines()
     roads = [line for line in answer.lines if line.kind == "road"]
     fetched = [line for line in roads if line.geometry == "available"]
-    assert len(fetched) <= fail_from - 1
+    fetched_count = min(fail_from - 1, len(roads))
+    assert [line.stop for line in fetched] == [line.stop for line in roads[:fetched_count]]  # the first legs, no other
+    assert sorted(engine.answered, key=repr) == sorted(trip.road_legs()[:fetched_count], key=repr)  # each asked once
+    assert len(engine.asked) >= fetched_count
     assert all(len(line.points) == 2 for line in roads if line.geometry == "unavailable")
     served = trip.events.fields_of("plan.run.geometry_served")[0]
     assert (served["legs"], served["legs_fetched"], served["unavailable"]) == (
@@ -328,6 +356,10 @@ def test_markers_number_the_stops_and_mark_where_each_trail_is_entered_and_left(
     markers = trip.service(Engine()).geometry(RUN_ID).markers
     last = len(trip.stops)
 
+    for marker in markers:  # each carries its stop's identity and place
+        stop = trip.stops[marker.stop - 1]
+        assert (marker.item_id, marker.name) == (stop.item_id, stop.name)
+        assert marker.point == (trip.departure(stop) if marker.marker == "exit" else trip.arrival(stop))
     numbered = sorted(
         [m.stop for m in markers if m.marker in {"stop", "start", "end", "start_end"}]
         + [m.end_stop for m in markers if m.end_stop is not None]
@@ -340,6 +372,43 @@ def test_markers_number_the_stops_and_mark_where_each_trail_is_entered_and_left(
         if stop.kind == "track":
             placed = {m.marker: m.point for m in markers if m.stop == number and m.marker in {"entry", "exit"}}
             assert placed == {"entry": stop.entry, "exit": stop.exit}
+
+
+class UnreadableFileStore(InMemoryFileStore):
+    def __init__(self, failure: OSError) -> None:
+        super().__init__()
+        self._failure = failure
+
+    def read_canonical_points(self, track_id: str, direction_version: int) -> bytes | CanonicalPointsMissing:
+        raise self._failure
+
+
+@pytest.mark.parametrize(
+    "cause", ["missing", "permission", "is_a_directory", "invalid", "one_point", "no_direction_version"]
+)
+def test_a_track_whose_points_cannot_be_read_is_the_chord_marked_unavailable_with_its_retrace(cause: str) -> None:
+    trip = Trip(
+        False, (Row("track", 5), Row("retrace")), direction_version=None if cause == "no_direction_version" else 2
+    )
+    if cause == "missing":
+        trip.files = InMemoryFileStore()
+    elif cause == "permission":
+        trip.files = UnreadableFileStore(PermissionError("denied"))
+    elif cause == "is_a_directory":
+        trip.files = UnreadableFileStore(IsADirectoryError("a folder"))
+    elif cause == "invalid":
+        trip.files.files = {path: b"{not points" for path in trip.files.files}
+    elif cause == "one_point":
+        trip.files.files = {path: canonical_points_file([TrackPoint(at(1))]) for path in trip.files.files}
+    track = trip.stops[1]
+    assert track.entry is not None and track.exit is not None
+
+    answer = trip.service(Engine()).geometry(RUN_ID)
+
+    drawn = {line.kind: line for line in answer.lines if line.kind != "road"}
+    assert (drawn["track"].geometry, drawn["track"].points) == ("unavailable", (track.entry, track.exit))
+    assert (drawn["retrace"].geometry, drawn["retrace"].points) == ("unavailable", (track.exit, track.entry))
+    assert all(line.geometry == "available" for line in answer.lines if line.kind == "road")
 
 
 def test_a_failed_run_and_an_unknown_run_have_nothing_to_draw_and_each_answer_is_logged() -> None:

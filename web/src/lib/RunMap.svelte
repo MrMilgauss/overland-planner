@@ -50,12 +50,16 @@
     frame: HTMLDivElement,
     current: () => boolean,
   ): Promise<() => void> {
-    const [config, geometry, maplibre] = await Promise.all([
+    const [config, geometry, maplibre, worker] = await Promise.all([
       settingsOnce(),
       readRunGeometry(id),
       import('maplibre-gl'),
+      // MapLibre finds its worker next to its own script, which the build does not copy: name it, so that it is a file
+      // of the build (without it, no line is ever drawn).
+      import('maplibre-gl/dist/maplibre-gl-worker.mjs?url'),
     ]);
     if (!current()) return () => {};
+    maplibre.setWorkerUrl(worker.default);
     const plan = buildRunMap(geometry, config);
     const map = new maplibre.Map({
       container: frame,
@@ -67,6 +71,10 @@
     map.addControl(new maplibre.AttributionControl({ compact: false })); // always open: nothing to close
     map.addControl(new maplibre.NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => map.addImage(ARROW_IMAGE, arrowImage()));
+    // Read-only hook of the browser tests (tests/e2e/run-map.spec.ts): the map object, only when the page's URL has
+    // `?e2e=1`, so that they can ask what was rendered. Nothing in the app reads or writes it.
+    const exposed = new URLSearchParams(window.location.search).get('e2e') === '1';
+    if (exposed) (window as unknown as { __overlandRunMap?: unknown }).__overlandRunMap = map;
     // The view is read-only on the frame, so that a test can turn a place into the pixel to click.
     const publish = (): void => {
       const centre = map.getCenter();
@@ -101,7 +109,10 @@
         .setLngLat(overlay.lngLat)
         .addTo(map);
     }
-    return () => map.remove();
+    return () => {
+      if (exposed) delete (window as unknown as { __overlandRunMap?: unknown }).__overlandRunMap;
+      map.remove();
+    };
   }
 
   async function addClicked(name: string): Promise<void> {

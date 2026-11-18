@@ -310,7 +310,12 @@ TILE_UNIVERSE = frozenset(TILE_DEFAULTS)
 _host = st.from_regex(r"[a-z]{1,8}(\.[a-z]{1,8}){0,2}", fullmatch=True)
 _tile_path = st.sampled_from(["/{z}/{x}/{y}.png", "/t/{z}/{x}/{y}.jpg", "/{z}/{y}/{x}"])
 _secret_value = st.from_regex(r"[0-9a-f]{16,32}", fullmatch=True)  # never a substring of any fixed message text
-_key_words = st.sampled_from(["key", "token", "secret", "signature", "auth"])
+_key_words = st.sampled_from(
+    [
+        *("key", "token", "secret", "signature", "auth", "sig", "apikey", "api_key"),
+        *("appid", "app_id", "password", "pwd", "access", "client_id"),
+    ]
+)
 _case = st.sampled_from([str.lower, str.upper, str.title])
 
 
@@ -375,6 +380,25 @@ def test_a_tile_address_that_is_not_http_with_a_host_and_all_three_placeholders_
     with pytest.raises(InvalidSettingsError) as refused:
         Settings.from_environ({"MAP_TILE_URL": url})
     assert refused.value.setting_names == frozenset({"MAP_TILE_URL"})
+
+
+@given(
+    host=_host,
+    secret=_secret_value,
+    part=st.sampled_from(["userinfo", "fragment"]),
+)
+def test_a_tile_address_with_userinfo_or_a_fragment_is_refused_naming_the_part_but_never_its_value(
+    host: str, secret: str, part: str
+) -> None:
+    userinfo = f"user:{secret}@" if part == "userinfo" else ""
+    fragment = f"#{secret}" if part == "fragment" else ""
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_TILE_URL": f"https://{userinfo}{host}/{{z}}/{{x}}/{{y}}.png{fragment}"})
+    message = str(refused.value)
+    assert refused.value.setting_names == frozenset({"MAP_TILE_URL"})
+    assert "MAP_TILE_URL" in message and part in message
+    assert secret not in message
+    assert secret not in repr(refused.value) and secret not in repr(refused.value.__cause__)
 
 
 @given(zoom=st.sampled_from(["0", "-1", "23", "100", "high", "1.5"]))

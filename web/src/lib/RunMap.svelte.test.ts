@@ -15,6 +15,7 @@ const maps = vi.hoisted(() => ({
   handlers: {} as Record<string, (event: unknown) => void>,
   images: [] as string[],
   removed: 0,
+  workerUrls: [] as string[],
 }));
 
 vi.mock('maplibre-gl', () => {
@@ -63,7 +64,8 @@ vi.mock('maplibre-gl', () => {
     constructor(public readonly options: unknown) {}
   }
   class NavigationControl {}
-  return { Map: FakeMap, Marker: FakeMarker, AttributionControl, NavigationControl };
+  const setWorkerUrl = (url: string): void => void maps.workerUrls.push(url);
+  return { setWorkerUrl, Map: FakeMap, Marker: FakeMarker, AttributionControl, NavigationControl };
 });
 
 import RunMap from './RunMap.svelte';
@@ -128,11 +130,23 @@ beforeEach(() => {
     maps.images.length =
       0;
   maps.removed = 0;
+  maps.workerUrls.length = 0;
   maps.handlers = {};
 });
 afterEach(() => vi.unstubAllGlobals());
 
 describe('RunMap', () => {
+  it('gives MapLibre its worker as a file of the build, so that the lines are computed in the browser', async () => {
+    planner({
+      '/api/config/map': { status: 200, body: CONFIG },
+      '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
+    });
+    render(RunMap, { planRunId: 'r1' });
+    await waitFor(() => expect(maps.created).toHaveLength(1));
+    expect(maps.workerUrls).toHaveLength(1);
+    expect(maps.workerUrls[0]).toMatch(/maplibre-gl-worker.*\.mjs/);
+  });
+
   it('draws the run: the style, an arrow image, its markers, a fit to the bounds and a credit that stays open', async () => {
     planner({
       '/api/config/map': { status: 200, body: CONFIG },
