@@ -3907,6 +3907,41 @@
       "s": "EXECUTED",
       "d": "PASS",
       "t": "2026-11-18T23:38:29Z"
+    },
+    {
+      "sid": "11-08",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-18T23:40:17Z"
+    },
+    {
+      "sid": "11-08",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: no scenario of its own (it makes the twenty-four of 11-01 to 11-07 block in CI)",
+      "t": "2026-11-18T23:40:17Z"
+    },
+    {
+      "sid": "11-08",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "FAIL",
+      "t": "2026-11-18T23:40:17Z"
+    },
+    {
+      "sid": "11-08",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-18T23:47:38Z"
+    },
+    {
+      "sid": "11-08",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-11-18T23:47:39Z"
     }
   ]
 }
