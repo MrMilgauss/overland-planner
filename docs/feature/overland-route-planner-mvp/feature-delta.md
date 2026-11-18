@@ -3987,6 +3987,225 @@ Applied from `distill/review-gate-fixlist.md` (Architect section, R-01..R-21) un
 
 No peer-review iteration was run on these amendments in this pass (the orchestrator's gate covers it).
 
+## Wave: DESIGN / [REF] Slice 12 UI foundation (2026-11-18)
+
+Propose mode, application scope. Inputs: slice-12 brief, US-20/21/22, ADR-003 (Amendments 1-2), ADR-004, ADR-007, ADR-010, all of `web/src`, the export and provider-label code. Decisions D264-D273 (Upstream Issues table). ADR-003 Amendment 3 and ADR-010 Amendment 2 record the durable parts.
+
+### Existing system (what is reused)
+
+- The pages are three Svelte components (`ProjectsPage`, `WorkspacePage`, `DiagnosticsPage`) behind a hash router in `App.svelte`. Each sets its own `main`, fonts, paddings and colours; the same `button`/`input` rules are repeated in five files.
+- `PlanPanel` owns the job and run state and renders `RunMap` below the itinerary. The map can only sit where the panel is.
+- The run detail already carries `provider_header`, built from the stored `provider_id` (never null in `plan_runs`) by `domain/routing/provider_label.py`. The browser can show it but should not parse it.
+- `run_file_name(project, number)` and `GpxDocumentBuilder.build()` (`<metadata><name>` "Plan run #N") are pure domain; `GpxExportService.export` calls both and already holds the run (with `provider_id`).
+- `GET /api/diagnostics` already answers `k2.invariant_violations.all_time`; `readDiagnostics()` exists in `api.ts`.
+- Arrows are one `symbol` layer (`track-arrows`, fixed 24 px image, spacing 80). The "retrace" label is an HTML marker at the line's middle, like the stop numbers.
+
+### Layout per width (D264)
+
+The map leaves `PlanPanel` and becomes the main column of `WorkspacePage`. `PlanPanel` tells the page which ready run it shows; a place added on the map still makes the panel read its runs again (D259 kept). With no ready run the map column shows a quiet placeholder ("The map shows the plan once one is computed."); MapLibre still loads only with a run. The side panel holds three labelled groups: "Plan" (objective, Calculate, Stop, state, messages, itinerary, totals, Export GPX), "Items" (list, import, add a place), "Start and end". Plan comes first, so the itinerary is in view without scrolling (US-20 S1).
+
+Phone, <= 599 px (390 px iPhone): one column. Map on top, panel below.
+
+```
++------------------------------+
+| Overland  Projects  Diagnost.|  header, 56 px
++------------------------------+
+| Alpi Occidentali giugno 2027 |
+| +--------------------------+ |
+| | [~ estimate]         [+-]| |
+| |   MAP, 55dvh             | |
+| +--------------------------+ |
+| PLAN                         |
+| [v Plan run #4] [~ estimate] |
+| Provider: offline estimate.. |
+| [Calculate]   [Export GPX]   |
+| Itinerary 1..11, Totals      |
+| ITEMS                        |
+| START AND END                |
++------------------------------+
+```
+
+Tablet, 600-1023 px (768 px): map full width on top, panel below in two columns.
+
+```
++--------------------------------------------+
+| header                                     |
++--------------------------------------------+
+| MAP, full width, 50dvh                     |
++---------------------+----------------------+
+| PLAN                | ITEMS                |
+| state, run, itiner. | START AND END        |
+| totals, Export GPX  |                      |
++---------------------+----------------------+
+```
+
+Laptop, >= 1024 px (1440 px): the map fills the main column at full height; the side panel is `clamp(360px, 30vw, 420px)` and scrolls on its own.
+
+```
++----------------------------------------------------------+
+| header                                                   |
++--------------------------------------+-------------------+
+|                                      | Project name      |
+|                                      | PLAN  state, run  |
+|          MAP                         |  itinerary 1..11  |
+|  (100dvh minus header)               |  totals, Export   |
+|                                      | ITEMS             |
+|                                      | START AND END     |
++--------------------------------------+-------------------+
+                                        side panel 360-420 px
+```
+
+Home and Diagnostics: one centred column, max 48rem, same header. Wide tables on Diagnostics scroll inside their own box, never the page.
+
+### Visual system (D265)
+
+One global stylesheet `web/src/app.css`, imported once in `main.ts`. It holds the tokens (CSS custom properties on `:root`), the dark values under `@media (prefers-color-scheme: dark)`, and the base look of `body`, headings, `a`, `button`, `input`, `select`, `input[type=file]::file-selector-button`, `table`, `:focus-visible`. Components use tokens only; no hex value stays in a component (map overlays aside, see below). `index.html` gains `<meta name="color-scheme" content="light dark">`. No CSS framework, no icon font, no runtime dependency.
+
+Colour roles (text pairs >= 4.5:1, borders and focus >= 3:1; WCAG 2.x relative luminance):
+
+| Role | Light | Dark | Checked pair (light / dark) |
+|---|---|---|---|
+| `--color-bg` | #ffffff | #121417 | page |
+| `--color-surface` | #f5f6f8 | #1b1e23 | panel, cards |
+| `--color-text` | #1a1d21 | #e6e8eb | on bg 17.9 / 15.0; on surface 16.5 / 13.6 |
+| `--color-text-muted` | #4b5563 | #a1a8b3 | on bg 7.6 / 7.7; on surface 7.0 / 7.1 |
+| `--color-border` | #6b7280 | #8b93a0 | on bg 4.8 / 6.0; on surface 4.5 / 5.5 (UI, >= 3) |
+| `--color-accent` (links, primary button) | #1d4ed8 | #60a5fa | link on bg 6.7 / 7.3 |
+| `--color-on-accent` | #ffffff | #0b1220 | on accent 6.7 / 7.4 |
+| `--color-focus` | #1d4ed8 | #60a5fa | ring on bg 6.7 / 7.3; on surface 6.2 / 6.7 |
+| `--color-info-fg` / `-bg` | #1e40af / #dbeafe | #bfdbfe / #1e3a8a | 7.2 / 7.3 |
+| `--color-success-fg` / `-bg` | #166534 / #dcfce7 | #bbf7d0 / #14532d | 6.5 / 7.5 |
+| `--color-warning-fg` / `-bg` | #854d0e / #fef9c3 | #fde68a / #713f12 | 6.4 / 7.0 |
+| `--color-danger-fg` / `-bg` | #991b1b / #fee2e2 | #fecaca / #7f1d1d | 7.0 / 7.2 |
+
+Badge borders use their `-fg` colour, so they pass 3:1 against the page in both themes. The ratios are recomputed by the Playwright contrast check; a token change that breaks one fails CI.
+
+The map keeps one light palette in both themes: the tiles (OpenTopoMap) are light, so the line colours and HTML markers of slice 09 stay as they are. Only the controls around the map (Click on map, the estimate chip) use tokens.
+
+Type scale (system font stack, line height 1.5, headings 1.25): `--text-sm` 0.875rem (secondary lines only), `--text-base` 1rem (all inputs: no iPhone zoom on focus), `--text-lg` 1.125rem (group headings), `--text-xl` 1.375rem (page heading), `--text-2xl` 1.75rem (home title).
+
+Spacing: `--space-1` 0.25rem, `--space-2` 0.5rem, `--space-3` 0.75rem, `--space-4` 1rem, `--space-6` 1.5rem, `--space-8` 2rem. Radii: `--radius-sm` 4px (inputs), `--radius-md` 8px (buttons, cards, banners), `--radius-pill` 999px (badges). Layout: `--header-height` 56px, `--panel-width` clamp(360px, 30vw, 420px).
+
+Focus: `:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }` on every focusable element; never `outline: none` without it. The offset puts the ring on the page colour, so it shows on a blue button too.
+
+Touch targets: `--target-min` 44px. Buttons, inputs, selects, nav links and list links have `min-height` 44px; buttons and nav links also `min-width` 44px. A link inside a sentence is not a target in this sense (WCAG 2.5.8 inline exception); the planner has none on its pages except the attribution.
+
+Buttons: primary (accent fill: Calculate, Acknowledge), secondary (surface fill, border: Export GPX, Import, Add place, Set Start and End, Click on map, Re-optimise), danger-outline (Stop and use best so far). Disabled: muted text and a dashed border, not only paler colour.
+
+### Plan state model (D266)
+
+One state badge (`StatusBadge`) at the top of the "Plan" group. The panel picks exactly one state, in this order: Loading, then Planning, then Failed, then Stale, then Plan run #N, then No plan yet. The run shown keeps its heading "Plan run #N" under any badge other than its own (so a Failed run #5 over ready run #4 reads "Failed" and, below, "Plan run #4"). The planner's own lines (job sub-state words, messages, notices, Failed words) are shown below the badge, verbatim.
+
+| State | Label | Colour role | Non-colour cue | Where |
+|---|---|---|---|---|
+| empty | No plan yet | neutral (muted text, border) | dashed outline badge; the hint "Press Calculate to plan this trip."; map placeholder | Plan group; map column |
+| loading | Loading | info | outline badge, `aria-busy`; no run heading yet | Plan group, while the run list is first read |
+| working | Planning | info (filled) | a thin progress bar (static under `prefers-reduced-motion`), "Stop and use best so far" button, job sub-state line | Plan group |
+| success | Plan run #N | success (filled) | check glyph (U+2713, `aria-hidden`); Export GPX offered | Plan group |
+| Failed | Failed | danger (filled) | cross glyph (U+2715), `role="alert"` on the words; no Export GPX | Plan group |
+| Stale | Stale | warning (filled) | "!" glyph; the run heading stays beside it | Plan group |
+
+The run heading changes from "Run N" to "Plan run #N" (the GPX trip name and the planner's own lines already say it that way). Two looks never share role, fill and glyph together, so S1's "differs from every other state" holds without colour.
+
+### Estimate marker (D267)
+
+- Wording: "estimate", with a dashed-border warning pill and the approx glyph (U+2248, `aria-hidden`); its `title` and accessible name: "estimate: road legs are straight-line guesses, not real roads". UI wording, not a planner message.
+- Placement: next to the state badge and run heading, on the same line as (or directly above) the `provider_header` line ("Provider: offline estimate (straight line x 1.3) / profile: estimate"). And on the map: a fixed chip in the map's top-left corner, above the tiles, for as long as an estimate run is shown. A phone user sees it before scrolling.
+- Shown when the run detail says `estimate: true`; never otherwise. Stale and estimate show together (US-21 example 2). A Failed run shows no marker (nothing is drawn).
+
+### Map fold-ins (D269, D270)
+
+- Arrows: the `track-arrows` layer's `icon-size` follows the zoom (about 0.5 at trip-wide zoom, up to 1.0 at trail zoom) and so does `symbol-spacing` (wider when zoomed out). Both are MapLibre zoom expressions in `runMap.ts`; a phone at trip-wide zoom simply sits at a lower zoom, so no viewport rule is needed. The zoom stops are tuned against the plan run #4 view at 390 px.
+- Retrace label: `runMap.ts` gains a pure placement rule. Candidate spots along the retrace line (half, then a quarter, then three quarters of its length); the first whose label box overlaps no numbered marker box at the current view wins; if none is clear the label is hidden at that view and comes back on zoom in. `RunMap` re-applies the rule after each move. The dashed purple line and the Warnings list keep the retrace visible meanwhile.
+
+### Component decomposition
+
+| Component | Action | Change |
+|---|---|---|
+| `web/src/app.css` | CREATE NEW | Tokens, both themes, base element look, focus ring, targets |
+| `main.ts` | EXTEND | Imports `app.css` |
+| `index.html` | EXTEND | `color-scheme` meta |
+| `App.svelte` | EXTEND | One header (product name, Projects, Diagnostics) for all pages; page frame |
+| `WorkspacePage.svelte` | EXTEND | Grid per width; map column; three labelled groups |
+| `PlanPanel.svelte` | EXTEND | State badge, "Plan run #N", estimate marker, reports the shown run; no longer renders the map |
+| `RunMap.svelte` | EXTEND | Fills its column; estimate chip; re-applies the retrace rule on move; tokens for its controls |
+| `runMap.ts` | EXTEND | Zoom-scaled arrows; retrace label placement rule |
+| `ProjectsPage.svelte` | EXTEND | `K2Banner`; tokens |
+| `DiagnosticsPage.svelte` | EXTEND | Tokens; its red badge uses `StatusBadge` (danger) |
+| `HealthBanner`, `ItemList`, `Itinerary`, `PoiClickForm` | EXTEND | Local colours and control rules replaced by tokens |
+| `api.ts` | EXTEND | `estimate: boolean` on `PlanRunDetail` |
+| `StatusBadge.svelte` | CREATE NEW | One look for labelled states |
+| `planState.ts` | CREATE NEW | Picks the one plan state and its label from the panel's facts |
+| `K2Banner.svelte` + `k2Acknowledgement.ts` | CREATE NEW | Home-page K2 warning and the browser-kept acknowledgement |
+
+Reuse analysis (each CREATE NEW):
+
+| New | Existing alternative considered | Why new |
+|---|---|---|
+| `app.css` | per-component `<style>` (today) | The same rules sit in five files and drift; S4 needs one source. One file, no framework |
+| `StatusBadge` | a `<p class="stale">` per state in `PlanPanel` | Used in three places (plan state, estimate pill and map chip, Diagnostics badge); one look is the point of S1/S4 |
+| `planState.ts` | more `{#if}` branches in `PlanPanel` (295 lines) | The priority rule is the heart of US-21 S1 and is tested without a DOM, as `runMap.ts` is for the map |
+| `K2Banner` + `k2Acknowledgement` | extend `HealthBanner` | Different source (`/api/diagnostics`, not `/api/health`) and its own acknowledgement; `HealthBanner` has no state. The storage class keeps the try/catch in one place |
+| (not created) `AppShell` | `App.svelte` | `App.svelte` already is the shell; it gains the header |
+
+### Driving ports touched
+
+- UI actions, all existing: Calculate, Stop and use best so far, Re-optimise, Export GPX, Click on map, Import, Add place, Set Start and End, Objective. New: Acknowledge (K2 banner; browser only, no request).
+- HTTP: `GET /api/plan-runs/{plan_run_id}` (+ `estimate`); `GET /api/plan-runs/{plan_run_id}/export.gpx` (file name and trip name); `GET /api/diagnostics` (now also read by the home page; unchanged). No new endpoint.
+- Wording kept: the buttons stay "Calculate" and "Export GPX" (D272); the stories' "Optimize" and "Download GPX" mean them.
+
+### Server change (D267, D268)
+
+- Domain: `domain/routing/provider_label.py` gains a pure predicate: a provider id is an estimate when it starts with `mock:` (the offline road map, ADR-007, with or without `:script:`). It sits next to the header words that already recognise the offline road map. Valhalla ids and unknown ids are not estimates.
+- Run detail: `PlanRunQueries` fills `estimate` on `PlanRunDetail` from the stored `provider_id`, as it fills `provider_header`; `PlanRunDetailResource` exposes `estimate: bool`. No migration: `plan_runs.provider_id` is never null.
+- Export: `GpxExportService` asks the same predicate. `run_file_name` gains an `estimate` flag: `<project>-run<N>-estimate.gpx`. `GpxDocumentBuilder` gains it too: `<metadata><name>` "Plan run #N (estimate)". Valhalla runs keep `<project>-run<N>.gpx` and "Plan run #N". The 255-byte cut keeps its margin (9 more bytes).
+- The solver, the fingerprint and the leg cache are untouched; `tests/golden` and `tests/perf/test_golden_model_pin.py` are not affected.
+
+### Testability (how each scenario is checked)
+
+| Scenario | Check |
+|---|---|
+| US-20 S1 | Playwright chromium 1440 px: map box wider than any other region; itinerary and totals boxes inside the viewport, right of the map |
+| US-20 S2 | Playwright webkit iPhone 14 (390 px): `scrollWidth <= clientWidth` on home, project, Diagnostics; itinerary box below the map box; every visible button, link, input, select >= 44 x 44 px (attribution excluded) |
+| US-20 S3 | Playwright 768 px: pairwise bounding boxes of controls, labels and panels do not intersect; no horizontal scroll |
+| US-20 S4 | Playwright: computed style of every control matches the token values (not the user-agent default: border, radius, font size); three group headings "Items", "Start and end", "Plan". vitest: `WorkspacePage` renders the three labelled groups |
+| US-20 S5 | Playwright `emulateMedia({ colorScheme: 'dark' })` and `'light'`: body background equals the token; for every visible text node, computed colour vs effective background >= 4.5:1 by a small WCAG ratio helper in `tests/e2e` |
+| US-20 S6 | Playwright: Tab through the project page; each focused element has a non-`none` outline of >= 2 px whose colour vs page is >= 3:1 |
+| US-20 S7 | vitest (`runMap.test.ts`): the arrow layer's size and spacing are zoom expressions, smaller at low zoom; the retrace placement rule picks a clear spot or hides the label, never one that overlaps a numbered box. Playwright (as slice 09): at the trip-wide view on 390 px, `queryRenderedFeatures` on `track-arrows` and the label and stop marker boxes do not intersect |
+| US-21 S1 | vitest (`planState.test.ts`, `PlanPanel.test.ts`): each of the six fact sets gives its label; the six looks differ in role or glyph |
+| US-21 S2 | vitest `PlanPanel`: during a stubbed job the badge says "Planning" and Stop is offered |
+| US-21 S3 | vitest `PlanPanel`: Failed run: badge "Failed", the planner's words verbatim, no Export GPX link |
+| US-21 S4 | vitest `PlanPanel` and `RunMap`: `estimate: true` shows "estimate" by the heading and the map chip; pytest: run detail `estimate` true for a `mock:` run |
+| US-21 S5 | pytest unit (`run_file_name`, `GpxDocumentBuilder`) and acceptance on the export endpoint: Content-Disposition "...-run4-estimate.gpx", `<metadata><name>` contains "estimate" |
+| US-21 S6 | pytest: `valhalla:` run gives `estimate` false, today's file name and trip name; vitest: no marker for `estimate: false` |
+| US-22 S1-S5 | vitest (`ProjectsPage.test.ts`, `k2Acknowledgement.test.ts`) with a diagnostics stub and a fake `Storage`: count 1 shows the banner with the count and a link to `#/diagnostics`; Acknowledge then reload hides it; count 2 brings it back; count 0 or a failed read shows none and the projects still list; a throwing storage still shows the banner |
+
+### Open questions for DISTILL
+
+1. Existing tests that export a mock-provider run assert today's names (`test_run_file_name.py`, `test_gpx_document_builder.py`, `test_gpxpy_writer.py`, slice-01b, 06a, 09 and 11 acceptance). Each one gets the estimate name where its run is on the offline road map; DISTILL lists them so the change is deliberate, not a regression.
+2. Slice 11 adds "(stale: project changed since this run)" to the trip name (ADR-010). Proposed order: "Plan run #4 (estimate) (stale: ...)". Confirm.
+3. With 60 items the side panel scrolls on its own on a laptop. Is "beside the map without scrolling" (US-20 S1) met when the itinerary starts in view, even if its end needs the panel scrolled?
+4. On a phone the 55dvh map takes one-finger drags; the page scrolls from the panel only. Accept, or turn on MapLibre's own cooperative gestures (two-finger pan)?
+5. A retrace label hidden at a crowded trip-wide view (D270): acceptable, given the dashed line and the Warnings list, or must it always show somewhere?
+
+### C4 container delta
+
+```mermaid
+C4Container
+  title Container delta - slice 12 (UI foundation)
+  Person(marco, "Marco / Giulia", "Laptop, tablet width, 390 px phone")
+  Container_Boundary(browser, "Browser") {
+    Container(spa, "Planner SPA", "Svelte 5, Vite, MapLibre 6.19, app.css tokens", "Map-first layout, state badges, estimate marker, K2 banner")
+    ContainerDb(storage, "localStorage", "Web Storage", "K2 acknowledged count")
+  }
+  Container(planner, "planner", "FastAPI, Python", "JSON API; run detail estimate flag; GPX names")
+  System_Ext(tiles, "Tile server", "OpenTopoMap")
+  Rel(marco, spa, "Plans and reads trips in")
+  Rel(spa, planner, "Reads run detail, export and diagnostics from")
+  Rel(spa, storage, "Keeps the K2 acknowledgement in")
+  Rel(spa, tiles, "Loads map tiles from")
+```
+
 ## Wave: SPIKE
 
 ### [REF] Outcome (2026-11-02)
@@ -4922,6 +5141,17 @@ Unchanged from the first pass: `nwave-ai outcomes register` fails on this machin
 | D261 | 2026-11-18 | Slice 09 quality gates: adversarial review (nw-software-crafter-reviewer: 0 BLOCKER, 4 HIGH, 7 MEDIUM, 8 LOW); `make mutate BASE=slice-06a` 89.4 % | The orchestrator checked the claims against the code. **Fixed in `7ec3976`:** an unreadable track file made the map answer 500; a track whose points cannot be read was drawn as a straight chord marked available (arrows on a line that is not the trail); an empty engine shape broke the whole map; the tile-key guard missed userinfo, fragments and several key names (a key in the path cannot be detected: ADR-004 says so); nothing checked the rendered map; a double submit could add a POI twice; weak test oracles and the mutation survivors on markers and thinning. **Found by the new rendered-map check:** MapLibre 6's worker file was not in the build, so the built app drew no lines at all, only the HTML markers (fixed with `setWorkerUrl`). **Rejected:** the offline road map's straight shapes stay available (ADR-007: straight by definition); the engine limit is already process-wide in the adapter. **Carried over:** the shape store has no size bound, no single-flight and no negative cache (slice 05, with the persistent cache); the identity read is retried per geometry request while the engine hangs; a leg already in flight when another fails still counts as available. Mutation after the fixes: **92.7 %** (430 of 464); the 34 survivors are in `run_geometry.py`, mostly message text, log fields and the cancel path. No separate refactor pass (the fix pass was the L1-L3 pass), recorded as a deviation. | **Orchestrator decision:** gate passed with the carry-overs above. |
 | D262 | 2026-11-18 | CI run of `c927d91` (job 2 failed); tests/conftest.py pending rule; the three slice-09 scenarios deferred to slice 08 (D256) | CI enables `--run-pending=slice-09`, and the rule ran a pending scenario when ANY of its slice tags was enabled, so the three deferred scenarios ran there and failed for missing steps; locally (no flags) they were skipped. | **Orchestrator decision:** the three carry `@slice-08` too, and a pending scenario runs only when EVERY slice it is tagged with is enabled; no other scenario carries two slice tags, so nothing else changes (pinned by tests/ci/test_pending_rule.py). |
 | D263 | 2026-11-18 | D233 order (04, 05, 12, 06b, 07, 08, 10, 11); R2a done | The owner judges the UI not worth testing until it looks like a product. | **User decision (2026-11-18):** slice 12 (UI foundation) comes next, before 04 and 05. New order: 12, 04, 05, 06b, 07, 08, 10, 11. |
+| D264 | 2026-11-18 | Slice 12 DESIGN; US-20 S1-S3; ADR-003 Amendment 2 (map below the itinerary) | The map lives inside `PlanPanel`, so it cannot be the main surface. | **Architect decision (DESIGN):** the map becomes `WorkspacePage`'s main column. Phone <= 599 px: map on top, panel below. Tablet 600-1023 px: map on top, panel in two columns. Laptop >= 1024 px: map full height, side panel 360-420 px. Panel groups: Plan, Items, Start and end (Plan first). |
+| D265 | 2026-11-18 | Slice 12 DESIGN; US-20 S4-S6; ADR-003 Amendment 3 | Five components repeat their own control styles and colours. | **Architect decision (DESIGN):** one global stylesheet `web/src/app.css` with CSS custom-property tokens (colour roles checked >= 4.5:1 text, >= 3:1 borders and focus, type, spacing, radii, 3 px focus ring, 44 px targets), imported in `main.ts`; dark theme by `prefers-color-scheme`. No CSS framework, no icon font. The map keeps its light palette in both themes. |
+| D266 | 2026-11-18 | Slice 12 DESIGN; US-21 S1-S3 | States are scattered `<p>` lines; "Run N" differs from the GPX "Plan run #N". | **Architect decision (DESIGN):** one state badge in the Plan group, chosen in order Loading, Planning, Failed, Stale, Plan run #N, No plan yet; each with a label, a colour role and a non-colour cue (glyph or border). The run heading reads "Plan run #N". The planner's lines stay verbatim. |
+| D267 | 2026-11-18 | Slice 12 DESIGN; US-21 S4, S6; ADR-007; `provider_label.py` | The browser would have to parse `provider_header` to know a run is an estimate. | **Architect decision (DESIGN):** a pure domain predicate in `domain/routing/provider_label.py` (provider id starts `mock:`); the run detail exposes `estimate: bool`. The UI shows an "estimate" pill by the run heading and a chip on the map. |
+| D268 | 2026-11-18 | Slice 12 DESIGN; US-21 S5-S6; ADR-010 | The exported GPX does not say it is an estimate. | **Architect decision (DESIGN):** for an estimate run, `run_file_name` answers `<project>-run<N>-estimate.gpx` and the trip name is "Plan run #N (estimate)" (ADR-010 Amendment 2). Valhalla runs unchanged. Solver untouched. |
+| D269 | 2026-11-18 | Slice 12 DESIGN; US-20 S7; slice 09 dogfood | Arrows are a fixed 24 px every 80 px, too large at trip-wide zoom on a phone. | **Architect decision (DESIGN):** `icon-size` and `symbol-spacing` of `track-arrows` follow the zoom (MapLibre expressions); no viewport rule. |
+| D270 | 2026-11-18 | Slice 12 DESIGN; US-20 S7; slice 09 dogfood | The "retrace" label at a short line's middle can cover a stop number. | **Architect decision (DESIGN):** a pure placement rule in `runMap.ts`: try half, a quarter, three quarters along the line; first spot clear of every numbered marker wins; none clear hides the label at that view. Re-applied after each move. |
+| D271 | 2026-11-18 | Slice 12 DESIGN; US-22; ADR-003 Amendment 1 (K2 banner deferred) | The K2 banner needs an acknowledgement but no server state. | **Architect decision (DESIGN):** `K2Banner` on the home page reads `k2.invariant_violations.all_time`; `k2Acknowledgement` keeps the acknowledged count in `localStorage` (try/catch). Shown when the count is above the acknowledged one; a failed read of storage shows it; a failed diagnostics read shows nothing. |
+| D272 | 2026-11-18 | Slice 12 DESIGN; US-20/US-21 wording ("Optimize", "Download GPX") | The stories name buttons the UI calls "Calculate" and "Export GPX". | **Architect decision (DESIGN):** the buttons keep "Calculate" and "Export GPX" (existing tests and docs use them; slice 12 adds no new words beyond its labels). DISTILL reads the stories' words as these. |
+| D273 | 2026-11-18 | Slice 12 DESIGN; DISTILL | Visual work has no hard gate. | **Architect decision (DESIGN):** checks split: vitest + jsdom for states, labels, banner and map rules; Playwright (chromium desktop, webkit iPhone 14) for widths, overlap, 44 px, focus, themes, contrast (computed colours, a small WCAG helper) and rendered-map checks; pytest for the estimate flag and GPX names. |
+| D274 | 2026-11-18 | Slice 12 DESIGN open questions (feature-delta, DESIGN section "Slice 12 UI foundation") | Five questions were left for DISTILL. | **Orchestrator decision:** (1) tests that assert the GPX names of offline-road-map runs move to the estimate names on purpose, in the step that adds them; real-road names are unchanged. (2) When slice 11 adds a stale label, the order is "Plan run #N (estimate) (stale: ...)"; slice 11 confirms it. (3) US-20 S1 passes when the map fills the main column and the itinerary heading is in view; the side panel may scroll for a long trip. (4) One-finger drag on the map stays as it is (MapLibre default); a two-finger pan would be new behaviour, out of scope. (5) The "retrace" label may hide at a crowded trip-wide view; the retrace line keeps its own style, and the label shows again when zoomed in. |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 

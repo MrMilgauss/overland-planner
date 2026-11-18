@@ -100,6 +100,8 @@ tests/          # unit, property, integration (mock), gold (probe faults), contr
 | `OrphanSweep` | application/catalog | Deletes version files only if unreferenced, unpinned and older than 1 h, under the write lock (ADR-018 Rev 2) |
 | Solver slot | application/planning (inside `PlanJobRegistry`) | One solver child at a time; a second job waits in `waiting_for_optimizer` (ADR-015 amendment D133) |
 
+Frontend (slice 12, ADR-003 Amendment 3): one global stylesheet `web/src/app.css` with design tokens, light and dark by `prefers-color-scheme`, no CSS framework. The workspace is map-first: the map is the main column with a 360-420 px side panel from 1024 px, and sits above the panel below that. One state badge per plan area; an "estimate" pill and map chip when the run detail's `estimate` flag (domain predicate on the stored provider id, `domain/routing/provider_label.py`) is true; the GPX of such a run is named `...-run<N>-estimate.gpx` (ADR-010 Amendment 2). The K2 banner on the home page keeps its acknowledgement in `localStorage`.
+
 ### 5. Driving ports
 
 1. **Browser UI**: Svelte SPA at `http://pi.example:8080/` (`PLANNER_PORT`, default 8080).
@@ -396,7 +398,7 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 |---|---|---|
 | ADR-001 | Modular monolith + ports and adapters | Accepted |
 | ADR-002 | Routing: ORS now, Valhalla later | **Superseded by ADR-013** |
-| ADR-003 | Frontend Svelte 5 + MapLibre | Accepted |
+| ADR-003 | Frontend Svelte 5 + MapLibre | Accepted; Amendment 1 slice 03b; Amendment 2 slice 09; Amendment 3 slice 12 (D264-D271) |
 | ADR-004 | Map tiles | Accepted |
 | ADR-005 | Budget + 30 s ceiling + fingerprint | **Superseded by ADR-014** |
 | ADR-006 | Persistence SQLAlchemy + Alembic | Accepted, **partly superseded by ADR-018** |

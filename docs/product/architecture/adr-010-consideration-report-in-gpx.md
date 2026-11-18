@@ -36,3 +36,6 @@ Document structure (GPX 1.1 element order is fixed by the schema: metadata, wpt*
 - Off-road track `<trk>` points are read **by the run's snapshot `direction_version`** (ADR-018), so exporting an old or stale run after a Reverse emits the direction it was planned with.
 - The report in `<metadata><desc>` adds a line "Unconfirmed legs: N" listing them, and a "Failed" line with the reason (`unreachable` / `timeout`) where relevant. Failed runs remain non-exportable.
 - Export is refused only when road geometry cannot be obtained (engine unreachable, or a provider_id mismatch, ADR-007 Amendment 1).
+
+## Amendment 2 (slice 12, D268) — 2026-11-18
+- A run planned on the offline road map (provider id `mock:...`, ADR-007) is an estimate: its `<metadata><name>` is "Plan run #N (estimate)" and its file is `<project>-run<N>-estimate.gpx`. Valhalla runs keep "Plan run #N" and `<project>-run<N>.gpx`. With the slice-11 stale label the proposed order is "Plan run #N (estimate) (stale: ...)" (open for DISTILL).
