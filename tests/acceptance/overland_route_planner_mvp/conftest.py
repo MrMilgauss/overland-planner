@@ -23,6 +23,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.plan_steps import *  # no
 from tests.acceptance.overland_route_planner_mvp.steps.platform_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.retrace_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.routing_steps import *  # noqa: F403
+from tests.acceptance.overland_route_planner_mvp.steps.ui_foundation_steps import *  # noqa: F403
 from tests.acceptance.overland_route_planner_mvp.steps.world import PlannerWorld
 from tests.common.fakes import FakeClock, FakeMountTable
 from tests.common.workspace import workspace_data_dir

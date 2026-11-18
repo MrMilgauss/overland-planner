@@ -5055,6 +5055,62 @@ Unchanged from the first pass: `nwave-ai outcomes register` fails on this machin
 - CM-F / CM-H: no Hypothesis in layer-3 tests; sad paths are named examples and outlines.
 - CM-G: Tier B declared for slices 04/05 (D114).
 
+## Wave: DISTILL / [REF] Slice 12 scenarios (2026-11-18)
+
+Executable SSOT: `tests/acceptance/overland_route_planner_mvp/slice-12-ui-foundation.feature` (`@slice-12 @pending`). Reconciliation passed: 0 contradictions (DISCUSS words "Optimize"/"Download GPX" are the UI's "Calculate"/"Export GPX", D272; D274 answers the five DESIGN questions). Brownfield, no walking skeleton (DISCUSS). Policy inherited; waiver W4 added (browser-side rewrite of planner answers the packaged planner cannot produce).
+
+Summary: 24 scenarios (29 cases; the plan-state outline has 6 rows). US-20 7, US-21 10, US-22 7. Tool: Playwright `@ui` 21 (26 cases), pytest-bdd `@driving_port` 3. Error/edge (`@error`, `@edge`, `@infrastructure-failure`): 13 of 24 = 54%. `@kpi` 1 (K2).
+
+Changes from the 18 DISCUSS scenarios (+6): US-21 S4 split into the screen marker (`@ui`) and the run detail flag (`@driving_port`); S6 split the same way; added "A stale estimate shows both labels" (US-21 example 2, an AC with no scenario), "A project with no plan yet says so and points to Calculate" (hint and map placeholder of D264/D266, beyond the outline row), "Another browser still sees the banner" (US-22 example 3: no server state), "The banner still shows when the browser refuses to keep the acknowledgement" (D271). US-21 S3 gains "no estimate marker" (D267). The trip name is checked exactly ("Plan run #4 (estimate)", D268), not "contains".
+
+| Scenario | Story | Tags | Checked by |
+|---|---|---|---|
+| On a laptop the map is the main surface | US-20 | @ui @desktop | ui-foundation.spec.ts, chromium 1440 px |
+| On a phone nothing scrolls sideways and every target is touch-sized | US-20 | @ui @phone | ui-foundation.spec.ts, webkit-iphone14 |
+| At tablet width nothing overlaps | US-20 | @ui @edge | ui-foundation.spec.ts, chromium 768 px |
+| Every page uses the same look and the controls are grouped by task | US-20 | @ui | ui-foundation.spec.ts; vitest WorkspacePage |
+| The theme follows the system and text stays readable outdoors | US-20 | @ui @edge | ui-foundation.spec.ts (emulateMedia dark/light, WCAG helper) |
+| Keyboard focus is always visible | US-20 | @ui | ui-foundation.spec.ts |
+| The map stays readable on a phone at trip-wide zoom | US-20 | @ui @phone @edge | ui-foundation.spec.ts (W4 retrace); vitest runMap.test.ts |
+| Every plan state has its own label and look (6 rows) | US-21 | @ui | ui-foundation.spec.ts (Loading/Planning/Failed by W4); vitest planState, PlanPanel |
+| While planning, Stop is offered | US-21 | @ui | ui-foundation.spec.ts (W4); vitest PlanPanel |
+| A Failed run shows the label Failed and the planner's own words | US-21 | @ui @error | ui-foundation.spec.ts (W4); vitest PlanPanel |
+| A plan on the offline road map is marked as an estimate | US-21 | @ui | ui-foundation.spec.ts (real mock run); vitest PlanPanel, RunMap |
+| The planner reports a plan on the offline road map as an estimate | US-21 | @driving_port | test_slice_12.py, `GET /api/plan-runs/{id}` |
+| The GPX of an offline-road-map plan says it is an estimate | US-21 | @driving_port | test_slice_12.py, `GET /api/plan-runs/{id}/export.gpx` |
+| A plan on real roads is not called an estimate, in the planner or in its GPX | US-21 | @driving_port @edge | test_slice_12.py (synthetic Valhalla, as 06a) |
+| A plan on real roads shows no estimate marker | US-21 | @ui @edge | ui-foundation.spec.ts (W4); vitest `estimate: false` |
+| A stale estimate shows both labels | US-21 | @ui @edge @HC-4 | ui-foundation.spec.ts (real) |
+| A project with no plan yet says so and points to Calculate | US-21 | @ui @edge | ui-foundation.spec.ts (real) |
+| A rule-breaking plan run raises a banner on the home page | US-22 | @ui @kpi @K2 @HC-1 | ui-foundation.spec.ts (W4); vitest ProjectsPage |
+| An acknowledged banner stays away in this browser | US-22 | @ui | ui-foundation.spec.ts; vitest k2Acknowledgement |
+| The banner comes back when the count grows | US-22 | @ui @edge | ui-foundation.spec.ts (W4) |
+| Another browser still sees the banner | US-22 | @ui @edge | ui-foundation.spec.ts (two contexts) |
+| No banner when no plan run broke a rule | US-22 | @ui @edge | ui-foundation.spec.ts (real count 0) |
+| The home page still works when the count cannot be read | US-22 | @ui @error @infrastructure-failure | ui-foundation.spec.ts (W4, 503) |
+| The banner still shows when the browser refuses to keep the acknowledgement | US-22 | @ui @error @infrastructure-failure | ui-foundation.spec.ts (storage refuses) |
+
+Driving ports: `GET /api/plan-runs/{plan_run_id}` (new `estimate: bool`), `GET /api/plan-runs/{plan_run_id}/export.gpx` (Content-Disposition file name, `<metadata><name>`), `GET /api/diagnostics` (unchanged, now read by the home page), and the browser UI (Calculate, Stop and use best so far, Export GPX, Acknowledge). No new endpoint, no production module imported by the steps.
+
+Files: `test_slice_12.py` binds the 3 `@driving_port` scenarios (`solver_child`); steps in `steps/ui_foundation_steps.py` (registered in the acceptance `conftest.py`), reusing `given_plan_run_4_has_been_computed`, `route_on_synthetic_valhalla`, `export_the_plan` and "he downloads" (Pillar 2). No `__SCAFFOLD__` stubs are needed: the steps import no new production code, and with `--run-pending=slice-12` all 3 fail RED on the planner's answer (no `estimate` in the run detail; file `...-run4.gpx`). `tests/e2e/ui-foundation.spec.ts`: 26 `test.fixme` (skipped on both CI projects). PENDING_FLAGS unchanged: the last DELIVER step adds `--run-pending=slice-12`, removes the feature's `@pending` and turns every `test.fixme` into `test`.
+
+Existing tests that change on purpose (D266, D268, D274):
+
+| File | Why |
+|---|---|
+| `slice-01b-skeleton-plan-and-gpx.feature` lines 32, 38, 85 (`alpi-occidentali-giugno-2027-run1.gpx`) | Run 1 is on the offline road map: `...-run1-estimate.gpx` (85 is the `@ui` download read by `steps/plan_steps.py` from `tests/e2e/first-plan.spec.ts`) |
+| `slice-11-device-ready-gpx.feature` line 66 (pending) | "Plan run #4 (estimate) (stale: project changed since this run)" when on the offline road map (D274 (2)); slice 11 confirms |
+| `tests/unit/domain/export/test_run_file_name.py` | Gains the estimate flag; existing cases stay the non-estimate name |
+| `tests/unit/domain/export/test_gpx_document_builder.py` | Gains the flag: "Plan run #N (estimate)"; existing cases stay "Plan run #N" |
+| `tests/unit/application/export/test_gpx_export_service.py` (line 498, harness `provider_id="mock"`) | Its provider id has no `mock:` prefix, so under D267's wording it is not an estimate; DELIVER either keeps it or moves it to `mock:straight_line_x1.3` and the estimate names |
+| `tests/contract/http/openapi.json` | The run detail gains `estimate`: snapshot regenerated |
+| `web/src/lib/PlanPanel.test.ts` (12 assertions `getByText('Run N')`, lines 425-884) and `PlanPanel.svelte:243` | Heading "Run N" becomes "Plan run #N" (D266) |
+| `tests/e2e/*.spec.ts`, `steps/browser.py` | No "Run N" text is read; specs that read the itinerary keep working, the layout move of the map (D264) may change locators in `run-map.spec.ts` |
+
+Unchanged: `tests/integration/adapters/gpx/test_gpxpy_writer.py` (the name is passed in), `tests/golden`, `tests/perf/test_golden_model_pin.py` (solver untouched).
+
+DoD (slice 12): (1) the 3 `@driving_port` scenarios and the 26 Playwright cases GREEN, `@pending` gone from the feature, `--run-pending=slice-12` in PENDING_FLAGS, no `test.fixme` left in `ui-foundation.spec.ts`; (2) the vitest checks of D273 GREEN; (3) the deliberate test changes above done in the step that causes them; (4) mutation kill rate >= 80% on the modified files (`provider_label.py`, `run_file_name.py`, `gpx_document_builder.py`, `planState.ts`, `k2Acknowledgement.ts`, `runMap.ts`); (5) cold-start check by the owner on a laptop logged in docs/demo (learning hypothesis a-c, each < 2 min).
+
 ## Wave: DISTILL / [REF] Handoff to DELIVER
 
 - Default run `uv run pytest -q tests`: the walking skeleton fails RED, everything else is skipped. Enable 00b and 01a scenarios one at a time (remove `@pending`), or see them all RED with `--run-pending=slice-00b --run-pending=slice-01a`. Evidence: `distill/red-classification.md`.
@@ -5152,6 +5208,7 @@ Unchanged from the first pass: `nwave-ai outcomes register` fails on this machin
 | D272 | 2026-11-18 | Slice 12 DESIGN; US-20/US-21 wording ("Optimize", "Download GPX") | The stories name buttons the UI calls "Calculate" and "Export GPX". | **Architect decision (DESIGN):** the buttons keep "Calculate" and "Export GPX" (existing tests and docs use them; slice 12 adds no new words beyond its labels). DISTILL reads the stories' words as these. |
 | D273 | 2026-11-18 | Slice 12 DESIGN; DISTILL | Visual work has no hard gate. | **Architect decision (DESIGN):** checks split: vitest + jsdom for states, labels, banner and map rules; Playwright (chromium desktop, webkit iPhone 14) for widths, overlap, 44 px, focus, themes, contrast (computed colours, a small WCAG helper) and rendered-map checks; pytest for the estimate flag and GPX names. |
 | D274 | 2026-11-18 | Slice 12 DESIGN open questions (feature-delta, DESIGN section "Slice 12 UI foundation") | Five questions were left for DISTILL. | **Orchestrator decision:** (1) tests that assert the GPX names of offline-road-map runs move to the estimate names on purpose, in the step that adds them; real-road names are unchanged. (2) When slice 11 adds a stale label, the order is "Plan run #N (estimate) (stale: ...)"; slice 11 confirms it. (3) US-20 S1 passes when the map fills the main column and the itinerary heading is in view; the side panel may scroll for a long trip. (4) One-finger drag on the map stays as it is (MapLibre default); a two-finger pan would be new behaviour, out of scope. (5) The "retrace" label may hide at a crowded trip-wide view; the retrace line keeps its own style, and the label shows again when zoomed in. |
+| D275 | 2026-11-18 | Slice 12 DISTILL hand-back; D267 ("starts with `mock:`"); `test_gpx_export_service.py` uses provider id `mock`; atdd-infrastructure-policy W4 | DISTILL wrote 24 scenarios (US-20 7, US-21 10, US-22 7; 21 in the browser, 3 at the HTTP API; 13 error or edge paths). CI job 7 plans only on the offline road map and cannot produce a K2 count above 0, Loading, Planning, Failed, a Valhalla run or a retrace on demand. | **Orchestrator decision:** (1) a run is an estimate when its provider id is `mock` or starts with `mock:` (the offline road map in every form it was ever stored), else not. (2) Waiver W4 accepted: for those states the browser checks rewrite the planner's answer in Playwright (page.route); the state logic itself is also covered by vitest, and the HTTP facts by pytest. (3) The exact trip name "Plan run #4 (estimate)" is checked (D268). |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 
