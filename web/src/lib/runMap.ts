@@ -56,6 +56,8 @@ export interface MapOverlay {
   text: string;
   title: string;
   lngLat: LngLat;
+  /** A retrace label's candidate places along its line, in the order they are tried. */
+  candidates?: { fraction: number; lngLat: LngLat }[];
 }
 
 export interface RunMapPlan {
@@ -71,7 +73,12 @@ const RETRACE_PURPLE = '#7e22ce';
 const TRACK_GREEN = '#14532d';
 const UNAVAILABLE_GREY = '#6b7280';
 const LINE_WIDTH = 4;
-const ARROW_SPACING = 80;
+// Arrows and their spacing follow the zoom (D269): small and far apart for the whole trip on a phone, full size and
+// close together on a trail. Zoom 8 shows a trip of some hundred km on 390 px; zoom 13 is a trail.
+const TRIP_ZOOM = 8;
+const TRAIL_ZOOM = 13;
+const ARROW_SIZES = [0.5, 1];
+const ARROW_SPACINGS = [160, 80];
 const DISPLAY_DECIMALS = 1e6;
 /** A click this close to an entry or exit marker (inclusive) means that marker's place. */
 export const SNAP_PIXELS = 12;
@@ -82,6 +89,16 @@ const is = (property: string, value: string): ExpressionSpecification => [
   value,
 ];
 const drawn = (...tests: ExpressionSpecification[]): ExpressionSpecification => ['all', ...tests];
+
+const zoomed = ([trip, trail]: number[]): ExpressionSpecification => [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  TRIP_ZOOM,
+  trip,
+  TRAIL_ZOOM,
+  trail,
+];
 
 function lineLayer(
   id: string,
@@ -172,8 +189,9 @@ function layersOf(config: MapConfig): LayerSpecification[] {
       filter: drawn(is('kind', 'track'), available),
       layout: {
         'symbol-placement': 'line',
-        'symbol-spacing': ARROW_SPACING,
+        'symbol-spacing': zoomed(ARROW_SPACINGS),
         'icon-image': ARROW_IMAGE,
+        'icon-size': zoomed(ARROW_SIZES),
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
@@ -187,14 +205,14 @@ function isLine(feature: LineFeature | MarkerFeature): feature is LineFeature {
 
 const rounded = (value: number): number => Math.round(value * DISPLAY_DECIMALS) / DISPLAY_DECIMALS;
 
-/** The point half way along a line, by length in the plane of the map's own degrees (right for a label). */
-function middleOf(points: LngLat[]): LngLat {
+/** The point a fraction of the way along a line, by length in the plane of the map's own degrees (right for a label). */
+function pointAlong(points: LngLat[], fraction: number): LngLat {
   const scale = Math.cos((points[0][1] * Math.PI) / 180);
   const lengths = points.slice(1).map((point, index) => {
     const previous = points[index];
     return Math.hypot((point[0] - previous[0]) * scale, point[1] - previous[1]);
   });
-  let remaining = lengths.reduce((sum, length) => sum + length, 0) / 2;
+  let remaining = lengths.reduce((sum, length) => sum + length, 0) * fraction;
   for (const [index, length] of lengths.entries()) {
     if (remaining <= length || index === lengths.length - 1) {
       const t = length === 0 ? 0 : Math.min(remaining / length, 1);
@@ -209,7 +227,7 @@ function middleOf(points: LngLat[]): LngLat {
 function labelOf(line: LineFeature): MapOverlay | undefined {
   const { kind, level, reason, geometry } = line.properties;
   if (line.geometry.coordinates.length === 0) return undefined; // nothing drawn, nothing to label
-  const lngLat = middleOf(line.geometry.coordinates);
+  const lngLat = pointAlong(line.geometry.coordinates, 0.5);
   if (geometry === 'unavailable') {
     return {
       kind: 'unavailable',
@@ -218,8 +236,13 @@ function labelOf(line: LineFeature): MapOverlay | undefined {
       lngLat,
     };
   }
-  if (kind === 'retrace')
-    return { kind: 'retrace', text: 'retrace', title: line.properties.name, lngLat };
+  if (kind === 'retrace') {
+    const candidates = RETRACE_FRACTIONS.map((fraction) => ({
+      fraction,
+      lngLat: pointAlong(line.geometry.coordinates, fraction),
+    }));
+    return { kind: 'retrace', text: 'retrace', title: line.properties.name, lngLat, candidates };
+  }
   if (kind === 'road' && level === 'unconfirmed') {
     return { kind: 'unconfirmed', text: '!', title: reason ?? 'Unconfirmed', lngLat };
   }
@@ -314,4 +337,30 @@ export function placeClicked(click: ScreenPoint, clickedAt: LngLat, markers: Mar
     .sort((a, b) => gap(a) - gap(b))[0];
   if (near) return { lat: near.lngLat[1], lon: near.lngLat[0] };
   return { lat: rounded(clickedAt[1]), lon: rounded(clickedAt[0]) };
+}
+
+/** A box on the screen, in pixels. */
+export interface ScreenBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Where along a retrace line its label may stand, in the order tried: the middle, then a quarter, then three quarters. */
+export const RETRACE_FRACTIONS = [0.5, 0.25, 0.75];
+
+const overlaps = (a: ScreenBox, b: ScreenBox): boolean =>
+  a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+/** The first candidate place whose label box covers no numbered marker (D270); 'hidden' when every one does, until the
+ * map is zoomed in. `labelAt` gives the label's screen box at a fraction of the line's length. */
+export function placeRetraceLabel(
+  labelAt: (fraction: number) => ScreenBox,
+  numbered: ScreenBox[],
+): number | 'hidden' {
+  const clear = RETRACE_FRACTIONS.find(
+    (fraction) => !numbered.some((box) => overlaps(labelAt(fraction), box)),
+  );
+  return clear ?? 'hidden';
 }

@@ -11,6 +11,8 @@
     ARROW_IMAGE,
     buildRunMap,
     placeClicked,
+    placeRetraceLabel,
+    type ScreenBox,
     type MapConfig,
     type MapOverlay,
     type Place,
@@ -112,12 +114,46 @@
     );
     if (plan.bounds) map.fitBounds(plan.bounds, { padding: FIT_PADDING, animate: false });
     publish();
+    const retraces: {
+      marker: { setLngLat(lngLat: [number, number]): unknown };
+      element: HTMLElement;
+      candidates: NonNullable<MapOverlay['candidates']>;
+    }[] = [];
     for (const overlay of plan.overlays) {
       const anchor = NUMBERED.includes(overlay.kind) ? 'bottom' : 'center';
-      new maplibre.Marker({ element: overlayElement(overlay), anchor })
-        .setLngLat(overlay.lngLat)
-        .addTo(map);
+      const element = overlayElement(overlay);
+      const placed = new maplibre.Marker({ element, anchor }).setLngLat(overlay.lngLat).addTo(map);
+      if (overlay.candidates)
+        retraces.push({ marker: placed, element, candidates: overlay.candidates });
     }
+    // A "retrace" label stands at the first candidate place whose box covers no stop number, and waits (hidden) until a
+    // move leaves one clear (D270). Read from the page's own boxes, after every move.
+    const keepClear = (): void => {
+      const origin = frame.getBoundingClientRect();
+      const numbers: ScreenBox[] = [...frame.querySelectorAll('.run-marker.numbered')].map((el) =>
+        el.getBoundingClientRect(),
+      );
+      for (const { marker: placed, element, candidates } of retraces) {
+        element.style.display = ''; // a hidden label has no size to measure
+        const size = element.getBoundingClientRect();
+        const spotOf = (fraction: number) =>
+          candidates.find((candidate) => candidate.fraction === fraction)!.lngLat;
+        const chosen = placeRetraceLabel((fraction) => {
+          const at = map.project(spotOf(fraction));
+          const [x, y] = [origin.left + at.x, origin.top + at.y];
+          return {
+            left: x - size.width / 2,
+            right: x + size.width / 2,
+            top: y - size.height / 2,
+            bottom: y + size.height / 2,
+          };
+        }, numbers);
+        if (chosen === 'hidden') element.style.display = 'none';
+        else placed.setLngLat(spotOf(chosen));
+      }
+    };
+    map.on('moveend', keepClear);
+    keepClear();
     return () => {
       if (exposed) delete (window as unknown as { __overlandRunMap?: unknown }).__overlandRunMap;
       map.remove();

@@ -3,6 +3,7 @@
 // tests/e2e/run-map.spec.ts.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11); the rules are pinned by
 // examples, one per style of the map; the geometry's own rules are property-tested on the server (step 10-02).
+import { expression, latest } from '@maplibre/maplibre-gl-style-spec';
 import { describe, expect, it } from 'vitest';
 import {
   ARROW_IMAGE,
@@ -16,6 +17,9 @@ import {
   type RunGeometry,
   type RunMapPlan,
   placeClicked,
+  placeRetraceLabel,
+  RETRACE_FRACTIONS,
+  type ScreenBox,
   SNAP_PIXELS,
 } from './runMap';
 
@@ -289,5 +293,126 @@ describe('placeClicked: the place a click on the map stands for', () => {
       lat: 45.123457,
       lon: 7.123456,
     });
+  });
+});
+
+// A layout setting of the arrow layer as MapLibre evaluates it at a zoom (the expression's shape is not asserted).
+function arrowSetting(
+  plan: RunMapPlan,
+  name: 'icon-size' | 'symbol-spacing',
+  zoom: number,
+): number {
+  const layout = (layer(plan, 'track-arrows') as { layout: Record<string, unknown> }).layout;
+  const made = expression.createPropertyExpression(
+    layout[name],
+    name,
+    latest.layout_symbol[name] as never,
+  );
+  if (made.result !== 'success') throw new Error(`${name} does not evaluate`);
+  return made.value.evaluate({ zoom } as never) as number;
+}
+
+describe('arrows sized by zoom', () => {
+  const plan = buildRunMap(collection(line(ROAD, { kind: 'track', level: null })), CONFIG);
+  const TRIP_WIDE = 8;
+  const TRAIL = 14;
+
+  it('draws a smaller arrow, and spaces arrows wider, at a trip-wide zoom than at a trail zoom', () => {
+    expect(arrowSetting(plan, 'icon-size', TRIP_WIDE)).toBeLessThan(
+      arrowSetting(plan, 'icon-size', TRAIL),
+    );
+    expect(arrowSetting(plan, 'symbol-spacing', TRIP_WIDE)).toBeGreaterThan(
+      arrowSetting(plan, 'symbol-spacing', TRAIL),
+    );
+  });
+
+  it('keeps the arrow within half to full size, and spaced between 80 and 160 px, at any zoom', () => {
+    for (const zoom of [0, 4, 8, 11, 13, 17]) {
+      expect(arrowSetting(plan, 'icon-size', zoom)).toBeGreaterThanOrEqual(0.5);
+      expect(arrowSetting(plan, 'icon-size', zoom)).toBeLessThanOrEqual(1);
+      expect(arrowSetting(plan, 'symbol-spacing', zoom)).toBeGreaterThanOrEqual(80);
+      expect(arrowSetting(plan, 'symbol-spacing', zoom)).toBeLessThanOrEqual(160);
+    }
+  });
+});
+
+describe('the retrace label keeps clear of stop numbers', () => {
+  const LABEL = { width: 40, height: 16 };
+  // A label standing at a fraction of a 1000 px line: its box is centred on that spot of the line.
+  const labelAt = (fraction: number): ScreenBox => ({
+    left: fraction * 1000 - LABEL.width / 2,
+    right: fraction * 1000 + LABEL.width / 2,
+    top: -LABEL.height / 2,
+    bottom: LABEL.height / 2,
+  });
+  const numberAt = (x: number): ScreenBox => ({
+    left: x - 12,
+    right: x + 12,
+    top: -12,
+    bottom: 12,
+  });
+
+  it.each([
+    ['clear at the middle', [numberAt(100)], 0.5],
+    ['the middle blocked, a quarter clear', [numberAt(500)], 0.25],
+    [
+      'the middle and a quarter blocked, three quarters clear',
+      [numberAt(510), numberAt(250)],
+      0.75,
+    ],
+    ['every candidate blocked: hidden', [numberAt(500), numberAt(250), numberAt(750)], 'hidden'],
+    ['a stop number that only touches the label does not block it', [numberAt(500 + 20 + 12)], 0.5],
+  ] as [string, ScreenBox[], number | 'hidden'][])('%s', (_name, numbers, expected) => {
+    expect(placeRetraceLabel(labelAt, numbers)).toBe(expected);
+  });
+
+  it('is tried at the middle, then a quarter, then three quarters, along the line itself', () => {
+    expect(RETRACE_FRACTIONS).toEqual([0.5, 0.25, 0.75]);
+    const plan = buildRunMap(
+      collection(
+        line(
+          [
+            [7.0, 45.0],
+            [7.0, 45.4],
+          ],
+          { kind: 'retrace' },
+        ),
+      ),
+      CONFIG,
+    );
+    expect(plan.overlays[0].candidates).toEqual([
+      { fraction: 0.5, lngLat: [7.0, 45.2] },
+      { fraction: 0.25, lngLat: [7.0, 45.1] },
+      { fraction: 0.75, lngLat: [7.0, 45.3] },
+    ]);
+  });
+
+  it('never covers a numbered box with the spot it chooses (seeded)', () => {
+    let seed = 20260519;
+    const next = (): number => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    let hidden = 0;
+    for (let round = 0; round < 500; round += 1) {
+      const numbers = Array.from({ length: Math.floor(next() * 7) }, () => {
+        const centre = next() * 1000;
+        const half = 6 + next() * 40;
+        return { left: centre - half, right: centre + half, top: -half, bottom: half };
+      });
+      const chosen = placeRetraceLabel(labelAt, numbers);
+      if (chosen === 'hidden') {
+        hidden += 1;
+        continue;
+      }
+      const box = labelAt(chosen);
+      for (const n of numbers) {
+        expect(
+          box.left < n.right && n.left < box.right && box.top < n.bottom && n.top < box.bottom,
+        ).toBe(false);
+      }
+    }
+    expect(hidden, 'the generated boxes hide it sometimes and not always').toBeGreaterThan(0);
+    expect(hidden).toBeLessThan(500);
   });
 });

@@ -20,7 +20,9 @@ const maps = vi.hoisted(() => ({
 
 vi.mock('maplibre-gl', () => {
   class FakeMap {
+    readonly container: HTMLElement;
     constructor(options: { style: unknown; container: HTMLElement }) {
+      this.container = options.container;
       maps.created.push(options);
     }
     on(event: string, handler: (event?: unknown) => void) {
@@ -53,10 +55,13 @@ vi.mock('maplibre-gl', () => {
   class FakeMarker {
     constructor(private readonly options: { element: HTMLElement }) {}
     setLngLat(lngLat: unknown) {
-      maps.markers.push({ element: this.options.element, lngLat });
+      const known = maps.markers.find((placed) => placed.element === this.options.element);
+      if (known) known.lngLat = lngLat;
+      else maps.markers.push({ element: this.options.element, lngLat });
       return this;
     }
-    addTo() {
+    addTo(map: { container: HTMLElement }) {
+      map.container.appendChild(this.options.element); // on the map's page, where its box can be read
       return this;
     }
   }
@@ -278,6 +283,95 @@ describe('RunMap', () => {
       expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/projects/p1/pois')).toBe(
         false,
       );
+    });
+  });
+
+  describe('the retrace label after each move (D270)', () => {
+    // A retrace of one degree, so that the fake map's pixels (100 a degree) put its middle at (750, 4550), a quarter at
+    // (725, 4525) and three quarters at (775, 4575); the label is 40 x 16 px, the stop number a box set by the test.
+    const RETRACE = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          ...GEOMETRY.features[0],
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [7, 45],
+              [8, 46],
+            ],
+          },
+          properties: { ...GEOMETRY.features[0].properties, kind: 'retrace' },
+        },
+        GEOMETRY.features[1],
+      ],
+    };
+    let stopNumber: { left: number; top: number; right: number; bottom: number };
+    const box = (l: number, t: number, r: number, b: number) => ({
+      left: l,
+      top: t,
+      right: r,
+      bottom: b,
+      x: l,
+      y: t,
+      width: r - l,
+      height: b - t,
+      toJSON: () => ({}),
+    });
+
+    beforeEach(() => {
+      stopNumber = { left: 0, top: 0, right: 1, bottom: 1 };
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('numbered')) {
+          return box(stopNumber.left, stopNumber.top, stopNumber.right, stopNumber.bottom);
+        }
+        if (this.classList.contains('retrace')) return box(0, 0, 40, 16);
+        return box(0, 0, 0, 0);
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    async function drawnRetrace(): Promise<{ label: HTMLElement; at: () => unknown }> {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/plan-runs/r1/geometry': { status: 200, body: RETRACE },
+      });
+      render(RunMap, { planRunId: 'r1' });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+      const placed = maps.markers.find((m) => m.element.classList.contains('retrace'))!;
+      return { label: placed.element, at: () => placed.lngLat };
+    }
+    const move = (): void => maps.handlers['moveend']({});
+
+    it('keeps the label at the middle when no stop number is under it', async () => {
+      const { label, at } = await drawnRetrace();
+      move();
+      expect(label.style.display).not.toBe('none');
+      expect(at()).toEqual([7.5, 45.5]);
+    });
+
+    it('moves it to a quarter when a stop number covers the middle, and hides it when all are covered', async () => {
+      const { label, at } = await drawnRetrace();
+      stopNumber = { left: 740, top: 4540, right: 760, bottom: 4560 };
+      move();
+      expect(label.style.display).not.toBe('none');
+      expect(at()).toEqual([7.25, 45.25]);
+      stopNumber = { left: 600, top: 4400, right: 900, bottom: 4700 };
+      move();
+      expect(label.style.display).toBe('none');
+    });
+
+    it('brings a hidden label back, at the middle, when a move leaves the stop numbers clear of it', async () => {
+      const { label, at } = await drawnRetrace();
+      stopNumber = { left: 600, top: 4400, right: 900, bottom: 4700 };
+      move();
+      expect(label.style.display).toBe('none');
+      stopNumber = { left: 0, top: 0, right: 1, bottom: 1 };
+      move();
+      expect(label.style.display).not.toBe('none');
+      expect(at()).toEqual([7.5, 45.5]);
     });
   });
 });

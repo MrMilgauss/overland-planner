@@ -20,6 +20,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { expression, latest } from "@maplibre/maplibre-gl-style-spec";
 import { serveBlankTiles } from "./blankTile";
 import { contrastRatio, parseColour, readColours } from "./contrast";
 
@@ -440,7 +441,215 @@ test("Keyboard focus is always visible", async ({ page }, testInfo) => {
   expect(seen.at(-1)).toContain("Export GPX");
 });
 
-test.fixme("The map stays readable on a phone at trip-wide zoom", async () => {});
+// The run's geometry with a 12.4 km retrace of "Colle del Sommeiller" added (W4: the packaged planner's one-track run
+// has none): a line of five points west of the track's entry, and its numbered stop at the far end.
+const RETRACE_KM = 12.4;
+
+type Geometry = {
+  features: {
+    geometry: { type: string; coordinates: unknown };
+    properties: { kind?: string; marker?: string; stop: number };
+  }[];
+};
+
+function withSommeillerRetrace(answer: Geometry): Geometry {
+  const track = answer.features.find((f) => f.properties.kind === "track")!;
+  const [lon, lat] = (track.geometry.coordinates as [number, number][])[0];
+  const degrees = RETRACE_KM / (111.32 * Math.cos((lat * Math.PI) / 180));
+  const points = [0, 1, 2, 3, 4].map((i) => [
+    lon - (degrees * i) / 4,
+    lat + (i % 2 === 0 ? 0 : 0.004),
+  ]);
+  const stop = Math.max(...answer.features.map((f) => f.properties.stop)) + 1;
+  const retrace = {
+    type: "Feature",
+    geometry: { type: "LineString", coordinates: points },
+    properties: {
+      kind: "retrace",
+      stop,
+      item_id: "sommeiller",
+      name: "Colle del Sommeiller",
+      level: "unconfirmed",
+      reason: null,
+      geometry: "available",
+    },
+  };
+  const end = {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: points[4] },
+    properties: {
+      marker: "stop",
+      stop,
+      item_id: "sommeiller",
+      name: "Colle del Sommeiller",
+      end_stop: null,
+    },
+  };
+  const lines = answer.features.filter((f) => f.geometry.type === "LineString");
+  const markers = answer.features.filter((f) => f.geometry.type === "Point");
+  return {
+    ...answer,
+    features: [...lines, retrace, ...markers, end] as Geometry["features"],
+  };
+}
+
+type MapLook = {
+  zoom: number;
+  iconSize: unknown;
+  spacing: unknown;
+  stopNumbers: number;
+  arrowsOnStopNumbers: number;
+  label: Box | undefined;
+  labelOnStopNumber: boolean;
+};
+
+// What the map shows now: the zoom, the arrow layer's settings, and (from the rendered features and the boxes of the
+// page's own markers) what covers a stop number.
+const lookAtMap = (page: Page): Promise<MapLook> =>
+  page.evaluate(() => {
+    type Rendered = {
+      getZoom(): number;
+      getLayoutProperty(layer: string, name: string): unknown;
+      queryRenderedFeatures(
+        box: number[][],
+        options: { layers: string[] },
+      ): unknown[];
+    };
+    const map = (window as unknown as { __overlandRunMap: Rendered })
+      .__overlandRunMap;
+    const canvas = document
+      .querySelector("canvas.maplibregl-canvas")!
+      .getBoundingClientRect();
+    const shown = (el: Element): DOMRect | undefined => {
+      const style = getComputedStyle(el);
+      return style.display === "none" || style.visibility === "hidden"
+        ? undefined
+        : el.getBoundingClientRect();
+    };
+    const numbers = [...document.querySelectorAll(".run-marker.numbered")]
+      .map(shown)
+      .filter((box): box is DOMRect => box !== undefined);
+    const arrows = numbers.filter(
+      (b) =>
+        map.queryRenderedFeatures(
+          [
+            [b.left - canvas.left, b.top - canvas.top],
+            [b.right - canvas.left, b.bottom - canvas.top],
+          ],
+          { layers: ["track-arrows"] },
+        ).length > 0,
+    );
+    const element = document.querySelector(".run-marker.retrace");
+    const label = element ? shown(element) : undefined;
+    const meets = (a: DOMRect, b: DOMRect): boolean =>
+      a.left < b.right &&
+      b.left < a.right &&
+      a.top < b.bottom &&
+      b.top < a.bottom;
+    return {
+      zoom: map.getZoom(),
+      iconSize: map.getLayoutProperty("track-arrows", "icon-size"),
+      spacing: map.getLayoutProperty("track-arrows", "symbol-spacing"),
+      stopNumbers: numbers.length,
+      arrowsOnStopNumbers: arrows.length,
+      label: label && {
+        x: label.x,
+        y: label.y,
+        width: label.width,
+        height: label.height,
+      },
+      labelOnStopNumber: label ? numbers.some((n) => meets(label, n)) : false,
+    };
+  });
+
+// A layout setting as the map evaluates it at a zoom (its own expression evaluator; absent = 1 and 0, the defaults).
+function settingAt(
+  name: "icon-size" | "symbol-spacing",
+  value: unknown,
+  zoom: number,
+): number {
+  const fallback = name === "icon-size" ? 1 : 250;
+  if (value === undefined) return fallback;
+  const made = expression.createPropertyExpression(
+    value,
+    name,
+    latest.layout_symbol[name],
+  );
+  if (made.result !== "success")
+    throw new Error(`${name} is not an expression`);
+  return made.value.evaluate({ zoom } as never) as number;
+}
+
+test("The map stays readable on a phone at trip-wide zoom", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "webkit-iphone14",
+    "the 390 px phone is checked on the phone profile",
+  );
+  test.setTimeout(240_000);
+
+  const projectUrl = await makeAPlannedProject(page, testInfo);
+  await page.route(/\/api\/plan-runs\/[^/]+\/geometry$/, async (route) => {
+    const answer = await route.fetch();
+    await route.fulfill({
+      response: answer,
+      json: withSommeillerRetrace((await answer.json()) as Geometry),
+    });
+  });
+  await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(map.locator(".run-marker.retrace")).toHaveCount(1);
+  await expect
+    .poll(async () => (await lookAtMap(page)).stopNumbers, {
+      message: "the stop numbers are on the map",
+    })
+    .toBeGreaterThan(1);
+
+  // The whole trip.
+  const wide = await lookAtMap(page);
+  const wideSize = settingAt("icon-size", wide.iconSize, wide.zoom);
+  expect(wide.arrowsOnStopNumbers, "no arrow covers a stop number").toBe(0);
+  expect(
+    wide.labelOnStopNumber,
+    "the retrace label covers no stop number",
+  ).toBe(false);
+
+  // Zoomed in to the trail (the map's own Zoom in control: a phone has no wheel here).
+  const zoomIn = map.getByRole("button", { name: "Zoom in" });
+  for (let tries = 0; tries < 8; tries += 1) {
+    const before = (await lookAtMap(page)).zoom;
+    if (before >= 13) break;
+    await zoomIn.click();
+    await expect
+      .poll(async () => (await lookAtMap(page)).zoom, {
+        message: "the map zooms in",
+      })
+      .toBeGreaterThan(before + 0.5);
+  }
+  await expect
+    .poll(async () => (await lookAtMap(page)).labelOnStopNumber, {
+      message: "the retrace label covers no stop number once zoomed in",
+    })
+    .toBe(false);
+  const close = await lookAtMap(page);
+  expect(close.zoom).toBeGreaterThanOrEqual(13);
+  expect(
+    close.arrowsOnStopNumbers,
+    "no arrow covers a stop number, zoomed in",
+  ).toBe(0);
+  expect(
+    wideSize,
+    `arrows at the trip-wide view (zoom ${wide.zoom.toFixed(1)}) are smaller than on the trail (zoom ${close.zoom.toFixed(1)})`,
+  ).toBeLessThan(settingAt("icon-size", close.iconSize, close.zoom));
+  expect(
+    settingAt("symbol-spacing", wide.spacing, wide.zoom),
+    "the arrows are spaced wider apart when zoomed out",
+  ).toBeGreaterThan(settingAt("symbol-spacing", close.spacing, close.zoom));
+});
 
 // ===================== US-21 Plan state and whether its roads are real =====================
 
@@ -668,9 +877,9 @@ test("A Failed run shows the label Failed and the planner's own words", async ({
       .filter({ hasText: FAILED_WORDS })
       .getByTitle(/^estimate:/),
   ).toHaveCount(0);
-  await expect(planPanel(page).getByRole("note", { name: ESTIMATE })).toHaveCount(
-    1,
-  );
+  await expect(
+    planPanel(page).getByRole("note", { name: ESTIMATE }),
+  ).toHaveCount(1);
 });
 
 const ESTIMATE =
@@ -757,8 +966,12 @@ test("A stale estimate shows both labels", async ({ page }, testInfo) => {
 
   await expectState(page, "Stale");
   await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
-  await expect(planPanel(page).getByRole("note", { name: ESTIMATE })).toBeVisible();
-  await expect(mapArea(page).getByRole("note", { name: ESTIMATE })).toBeVisible();
+  await expect(
+    planPanel(page).getByRole("note", { name: ESTIMATE }),
+  ).toBeVisible();
+  await expect(
+    mapArea(page).getByRole("note", { name: ESTIMATE }),
+  ).toBeVisible();
 });
 
 test("A project with no plan yet says so and points to Calculate", async ({
