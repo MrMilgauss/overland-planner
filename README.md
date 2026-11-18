@@ -30,6 +30,7 @@ and the **S/E**, **Start** or **End** badge. A refusal is shown with the planner
 (`MAX_UPLOAD_FILE_MB`, `MAX_UPLOAD_REQUEST_MB`, `MAX_UPLOAD_FILES`) are set in `.env`; empty means the default.
 Under the itinerary the plan page draws the route on a map: arrows show the direction of each trail, and a click on
 the map adds a POI.
+A plan on the offline road map is marked "estimate" (a pill and a map chip), and so is its GPX file name.
 
 ## CI
 

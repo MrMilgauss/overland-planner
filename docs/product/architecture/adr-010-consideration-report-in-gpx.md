@@ -39,3 +39,4 @@ Document structure (GPX 1.1 element order is fixed by the schema: metadata, wpt*
 
 ## Amendment 2 (slice 12, D268) — 2026-11-18
 - A run planned on the offline road map (provider id `mock:...`, ADR-007) is an estimate: its `<metadata><name>` is "Plan run #N (estimate)" and its file is `<project>-run<N>-estimate.gpx`. Valhalla runs keep "Plan run #N" and `<project>-run<N>.gpx`. With the slice-11 stale label the proposed order is "Plan run #N (estimate) (stale: ...)" (open for DISTILL).
+- **As built (step 11-08).** No deviation in the file name or the trip name; the export link in the UI reads "Export GPX of plan run #N" and the older run's export stays under a Failed run (D276, D208). The stale-label order stays as built in slice 11.

@@ -13,7 +13,7 @@
 #    RunMap, runMap, ProjectsPage, k2Acknowledgement) come with each scenario in DELIVER.
 # "Calculate" and "Export GPX" are the stories' "Optimize" and "Download GPX" (D272). Outcomes, not pixels.
 
-@slice-12 @pending
+@slice-12
 Feature: A planner that looks and feels like a product
   As Marco and Giulia, we want the planner to read as one product on a laptop, a tablet and a phone,
   so that we can tell what is selected, start a plan and say whether the route shown is real or an estimate.

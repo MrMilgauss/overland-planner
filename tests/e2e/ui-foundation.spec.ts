@@ -1,7 +1,6 @@
 // Slice 12 UI foundation (US-20, US-21, US-22): the @ui scenarios of
 // tests/acceptance/overland_route_planner_mvp/slice-12-ui-foundation.feature, one test per scenario (one per row of
-// the plan-state outline), named after it. DISTILL skeleton: every test was `test.fixme` (skipped, CI stays green);
-// DELIVER writes each body and turns it into `test` in the step that makes the scenario pass.
+// the plan-state outline), named after it. Every test blocks in CI job 7 (step 11-08).
 //
 // Runs in CI job 7 on chromium (Desktop Chrome; 1440 and 768 px set per test with `page.setViewportSize`) and
 // webkit-iphone14 (390 px) against the packaged planner on PLANNER_URL, which plans on the offline road map.
@@ -1127,4 +1126,41 @@ test("The banner still shows when the browser refuses to keep the acknowledgemen
   await page.reload();
   await expect(banner(page)).toContainText("1");
   await expect(page.getByRole("link", { name })).toBeVisible();
+});
+
+// Evidence for the orchestrator, `make e2e-local` only (E2E_START_LOCAL): full-page screenshots of the home page, the
+// project page with plan run #4 and the Diagnostics page, saved under .data/e2e/slice-12 (gitignored). Never compared
+// by pixels, never uploaded by CI.
+test("Screenshots of the three pages are saved for the orchestrator", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !process.env.E2E_START_LOCAL,
+    "evidence is taken under make e2e-local only",
+  );
+  test.setTimeout(420_000);
+  if (testInfo.project.name === "chromium")
+    await page.setViewportSize({ width: 1440, height: 900 });
+  const folder = path.resolve(
+    testInfo.project.testDir,
+    "../../.data/e2e/slice-12",
+  );
+
+  const projectUrl = await makeRunFour(page, testInfo);
+  for (const [where, address] of [
+    ["home", "/"],
+    ["project", projectUrl],
+    ["diagnostics", "/#/diagnostics"],
+  ] as const) {
+    await page.goto(address);
+    if (where === "project")
+      await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
+        timeout: 30_000,
+      });
+    else await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await page.screenshot({
+      path: path.join(folder, `${where}-${testInfo.project.name}.png`),
+      fullPage: true,
+    });
+  }
 });

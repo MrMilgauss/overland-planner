@@ -1,8 +1,7 @@
 """pytest-bdd binding: the slice 12 scenarios checked at the HTTP API (US-21: the estimate flag, the GPX names).
 
-The feature is `@slice-12 @pending`: these run only with `--run-pending=slice-12` until the last DELIVER step of the
-slice adds it to PENDING_FLAGS in ci.yml. The `@ui` scenarios are checked by tests/e2e/ui-foundation.spec.ts
-(Playwright, CI job 7) and are not bound here.
+The feature is `@slice-12`, enabled in CI by `--run-pending=slice-12` in PENDING_FLAGS (step 11-08).
+The `@ui` scenarios are checked by tests/e2e/ui-foundation.spec.ts (Playwright, CI job 7) and are not bound here.
 
 Plan run #4 solves in the solver child, so every scenario is `solver_child` and pre-push leaves them to CI job 2, as for
 slices 06a and 09. The Valhalla run plans on the real adapter against the synthetic engine of slice 06a.

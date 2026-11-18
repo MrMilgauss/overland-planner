@@ -128,10 +128,12 @@ def test_test_python_builds_web_before_pytest_and_passes_pending_flags() -> None
     pytest_step = _main_pytest(job)
 
     # D170: slice 00b is GREEN (step 02-07), slice 01a (step 03-10), slice 01b (step 04-11), slice 02 (step 05-12),
-    # slice 03 (step 06-13), slice 03b (step 07-13), slice 06a (step 09-11), slice 09 (step 10-06).
+    # slice 03 (step 06-13), slice 03b (step 07-13), slice 06a (step 09-11), slice 09 (step 10-06),
+    # slice 12 (step 11-08).
     assert workflow["env"]["PENDING_FLAGS"] == (
         "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02"
         " --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a --run-pending=slice-09"
+        " --run-pending=slice-12"
     )
     assert _index(job, "vite build") < _index(job, "df -T") < job["steps"].index(pytest_step)
     assert _index(job, "npm ci") <= _index(job, "vite build")
@@ -412,6 +414,7 @@ def test_e2e_runs_on_the_compose_stack_and_tears_it_down_before_the_selection() 
     assert _index(job, "docker load") < up < playwright < down < _index(job, "pytest-selection.sh")
     assert steps[down]["if"] == "always()"
     assert "--project=chromium --project=webkit-iphone14" in _runs(job)[playwright]
+    assert not re.search(r"\.spec\.ts|tests/e2e", _runs(job)[playwright]), "job 7 runs every spec in tests/e2e"
 
 
 def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
@@ -1089,6 +1092,23 @@ def test_slice_09_is_enabled_in_ci_and_only_the_three_scenarios_that_wait_for_sl
     assert all(name in pending_slices for name in DEFERRED_09)
     assert '"slice-09-directional-map.feature",' not in pending_slices
     assert "--run-pending=slice-09" in _workflow()["env"]["PENDING_FLAGS"].split()
+
+
+FEATURE_12 = "tests/acceptance/overland_route_planner_mvp/slice-12-ui-foundation.feature"
+
+
+# bypass: tag lines, a flag list and a spec file; no input space to generate over
+def test_slice_12_is_enabled_in_ci_and_its_playwright_spec_has_no_fixme_left() -> None:
+    """Step 11-08: the feature's tag line loses `@pending`, the pending-slices module does not bind it, PENDING_FLAGS
+    enables the slice and every test of ui-foundation.spec.ts runs (job 7 runs the whole tests/e2e folder)."""
+    lines = (REPO_ROOT / FEATURE_12).read_text().splitlines()
+    pending_slices = (REPO_ROOT / "tests/acceptance/overland_route_planner_mvp/test_pending_slices.py").read_text()
+    spec = (REPO_ROOT / "tests/e2e/ui-foundation.spec.ts").read_text()
+
+    assert [line for line in lines if line.startswith("@")] == ["@slice-12"]
+    assert "slice-12" not in pending_slices
+    assert "--run-pending=slice-12" in _workflow()["env"]["PENDING_FLAGS"].split()
+    assert "test.fixme" not in spec
 
 
 def test_job_2_runs_the_slice_06a_scenarios_that_need_no_live_engine_and_leaves_the_live_ones_out() -> None:
