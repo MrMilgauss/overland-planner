@@ -107,6 +107,10 @@ select {
   color: var(--color-text);
 }
 
+select {
+  height: var(--target-min); /* Safari ignores min-height on a native select */
+}
+
 input,
 select {
   min-width: 0;
@@ -189,4 +193,16 @@ td {
 
 [role='alert'] {
   color: var(--color-danger-fg);
+}
+
+/* The workspace's map-first layout owns the whole width under the header; Home and Diagnostics keep one centred column */
+body main:has(> .workspace) {
+  max-width: none;
+  padding: 0;
+}
+
+/* The map's zoom buttons are touch targets too (44 px); its attribution is not */
+.maplibregl-ctrl-group button {
+  width: var(--target-min);
+  height: var(--target-min);
 }

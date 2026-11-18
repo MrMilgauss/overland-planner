@@ -12,7 +12,6 @@
   // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
-  import RunMap from './RunMap.svelte';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -44,8 +43,13 @@
   let {
     projectId,
     objective = 'distance',
-    onplaceadded,
-  }: { projectId: string; objective?: Objective; onplaceadded?: () => void } = $props();
+    onrunshown,
+  }: {
+    projectId: string;
+    objective?: Objective;
+    /** The ready run on show, for the page's map; undefined while there is none. */
+    onrunshown?: (planRunId: string | undefined) => void;
+  } = $props();
 
   let pressing = $state(false);
   let watchedJobId = $state<string | undefined>();
@@ -88,9 +92,8 @@
     }
   }
 
-  /** A POI added on the map changes the project: read the runs again so that the latest shows Stale at once. */
-  async function placeAdded(): Promise<void> {
-    onplaceadded?.();
+  /** The page asks for the runs again, e.g. after a POI added on the map, so that the latest shows Stale at once. */
+  export async function reload(): Promise<void> {
     await showLatestRuns();
   }
 
@@ -197,6 +200,10 @@
     }
   }
 
+  $effect(() => {
+    onrunshown?.(readyRun?.id);
+  });
+
   onMount(() => {
     void showLatestRuns();
     return () => {
@@ -267,7 +274,6 @@
   {#if !jobActive}
     <a class="button" href={planRunExportUrl(readyRun.id)}>Export GPX</a>
   {/if}
-  <RunMap planRunId={readyRun.id} {projectId} onplaceadded={placeAdded} />
 {/if}
 
 <style>

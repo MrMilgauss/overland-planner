@@ -8,6 +8,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import WorkspacePage from './WorkspacePage.svelte';
 import type { Item } from './api';
 
+// The map has its own tests (RunMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing and records its props.
+const map = vi.hoisted(() => ({
+  props: undefined as { planRunId: string; onplaceadded?: () => void } | undefined,
+}));
+vi.mock('./RunMap.svelte', () => ({
+  default: (_anchor: unknown, props: { planRunId: string; onplaceadded?: () => void }) => {
+    map.props = props;
+  },
+}));
+
 type Reply = { status: number; body: unknown };
 type Call = { method: string; url: string; body: unknown };
 
@@ -66,6 +76,7 @@ async function itemNamed(name: string): Promise<HTMLElement> {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  map.props = undefined;
 });
 
 describe('Workspace page', () => {
@@ -243,5 +254,58 @@ describe('Workspace page: the objective', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Unknown objective');
     expect((screen.getByLabelText('Objective') as HTMLSelectElement).value).toBe('distance');
+  });
+});
+
+describe('Workspace page: the map as the main column', () => {
+  const RUN_LIST: Reply = { status: 200, body: [{ id: 'r1', number: 1, status: 'ready' }] };
+  const RUN: Reply = {
+    status: 200,
+    body: { id: 'r1', project_id: 'p1', number: 1, status: 'ready', stops: [], estimate: false },
+  };
+
+  it('offers the controls in three labelled groups: Plan, Items, Start and end', async () => {
+    stubPlanner([[]]);
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    const headings = await screen.findAllByRole('heading', { level: 2 });
+
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      'Plan',
+      'Items',
+      'Start and end',
+    ]);
+    for (const name of ['Plan', 'Items', 'Start and end']) {
+      expect(screen.getByRole('region', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('says the map waits for a plan, and loads no map, while no run is ready', async () => {
+    stubPlanner([[]]);
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    expect(
+      await screen.findByText('The map shows the plan once one is computed.'),
+    ).toBeInTheDocument();
+    expect(map.props).toBeUndefined();
+  });
+
+  it('draws the ready run the panel shows, and reads items and runs again when a place is added on the map', async () => {
+    const calls = stubPlanner([[], [place('i1', 'Susa')]], {
+      'GET /api/projects/p1/plan-runs': RUN_LIST,
+      'GET /api/plan-runs/r1': RUN,
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await vi.waitFor(() => expect(map.props?.planRunId).toBe('r1'));
+    expect(
+      screen.queryByText('The map shows the plan once one is computed.'),
+    ).not.toBeInTheDocument();
+    const runReads = () => calls.filter((c) => c.url === '/api/projects/p1/plan-runs').length;
+    expect(runReads()).toBe(1);
+
+    map.props?.onplaceadded?.();
+
+    await itemNamed('Susa');
+    await vi.waitFor(() => expect(runReads()).toBe(2));
   });
 });

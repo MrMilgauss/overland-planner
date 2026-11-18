@@ -167,10 +167,14 @@
 
 <style>
   section {
-    margin: 1rem 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
   }
   .frame {
     position: relative;
+    flex: 1;
+    min-height: 0;
   }
   .name-form {
     position: absolute;
@@ -181,16 +185,10 @@
   }
   .map {
     width: 100%;
-    height: 60vh;
-    min-height: 18rem;
+    height: 100%;
   }
   .empty {
     display: none;
-  }
-  @media (max-width: 600px) {
-    .map {
-      height: 70vh;
-    }
   }
   :global(.run-marker) {
     font:

@@ -6,17 +6,9 @@
 // labels, messages and notices, and Re-optimise are pinned by examples here; the invariants behind them are the property
 // tests of steps 06-06 to 06-10.
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlanPanel from './PlanPanel.svelte';
-
-// The map under the itinerary has its own tests (RunMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing.
-const map = vi.hoisted(() => ({ props: undefined as { onplaceadded?: () => void } | undefined }));
-vi.mock('./RunMap.svelte', () => ({
-  default: (_anchor: unknown, props: { onplaceadded?: () => void }) => {
-    map.props = props;
-  },
-}));
 
 type Reply = { status: number; body: unknown } | 'network down';
 type Routes = Record<string, Reply | Reply[]>;
@@ -909,26 +901,43 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
   });
 });
 
-describe('Plan panel: a POI added on the map', () => {
-  it('reads the plan runs again and shows the latest run as Stale at once', async () => {
-    const stale = (value: boolean): Reply => ({
-      status: 200,
-      body: [{ id: 'r1', number: 1, status: 'ready', stale: value }],
+describe('Plan panel: the run the page shows on its map', () => {
+  const stale = (value: boolean): Reply => ({
+    status: 200,
+    body: [{ id: 'r1', number: 1, status: 'ready', stale: value }],
+  });
+
+  it('tells the page which ready run it shows, and none when there is none', async () => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    const shown = vi.fn();
+    render(PlanPanel, { props: { projectId: 'p1', onrunshown: shown } });
+    await settled();
+    expect(shown).toHaveBeenLastCalledWith(undefined);
+
+    cleanup();
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
     });
+    render(PlanPanel, { props: { projectId: 'p1', onrunshown: shown } });
+    await settled();
+
+    expect(shown).toHaveBeenLastCalledWith('r1');
+  });
+
+  it('reads the plan runs again when the page asks, and shows the latest run as Stale at once', async () => {
     const calls = stubPlanner({
       [`GET ${RUNS}`]: [stale(false), stale(true)],
       'GET /api/plan-runs/r1': readyRun('r1', 1),
     });
-    const added = vi.fn();
-    render(PlanPanel, { props: { projectId: 'p1', onplaceadded: added } });
+    const { component } = render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
     expect(screen.queryByText('Stale')).not.toBeInTheDocument();
 
-    map.props?.onplaceadded?.();
+    await component.reload();
     await settled();
 
     expect(count(calls, `GET ${RUNS}`)).toBe(2);
     expect(screen.getByText('Stale')).toBeInTheDocument();
-    expect(added).toHaveBeenCalledTimes(1);
   });
 });
