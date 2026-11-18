@@ -12,6 +12,8 @@
   // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
+  import StatusBadge from './StatusBadge.svelte';
+  import { planState } from './planState';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -63,12 +65,22 @@
   let stopPressed = $state(false);
   let notices = $state<string[]>([]);
   let incumbent = $state<Incumbent | undefined>();
+  let firstRead = $state(true); // the run list has not been read yet: the state is Loading
   let endedWithoutRun = $state(''); // a job stopped before the solve: what it did, not a problem
 
   let nextPoll: ReturnType<typeof setTimeout> | undefined;
   let gone = false;
 
   const calculating = $derived(pressing || (watchedJobId !== undefined && pollProblem === ''));
+  const look = $derived(
+    planState({
+      loading: firstRead,
+      planning: calculating,
+      failed: failedRun !== undefined,
+      stale: readyRun !== undefined && readyRunStale,
+      readyRunNumber: readyRun?.number,
+    }),
+  );
   const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
 
   function highestNumbered(runs: PlanRun[]): PlanRun | undefined {
@@ -90,6 +102,7 @@
     } catch (error) {
       problem = failureText(error);
     }
+    firstRead = false;
   }
 
   /** The page asks for the runs again, e.g. after a POI added on the map, so that the latest shows Stale at once. */
@@ -213,70 +226,128 @@
   });
 </script>
 
-<button type="button" class="primary" disabled={calculating} onclick={() => calculate()}>
-  Calculate
-</button>
-
-{#if watchedJobId && STATE_TEXTS[jobState]}
-  <p role="status">{STATE_TEXTS[jobState]}</p>
-{/if}
-{#if watchedJobId && incumbent}
-  <p class="best">Best so far: {bestSoFar(incumbent)}</p>
-{/if}
-{#if watchedJobId && stoppable}
-  <button type="button" class="danger" disabled={stopPressed} onclick={stop}
-    >Stop and use best so far</button
-  >
-{/if}
-{#each notices as notice (notice)}
-  <p class="notice">{notice}</p>
-{/each}
-{#if endedWithoutRun}
-  <p>{endedWithoutRun}</p>
-{/if}
-{#if problem}
-  <p role="alert">{problem}</p>
-{/if}
-{#if pollProblem}
-  <p role="alert">{pollProblem}</p>
-{/if}
-{#if failedRun?.messages?.length}
-  <div role="alert">
-    {#each failedRun.messages as message, index (index)}
-      <p>{message}</p>
-    {/each}
-  </div>
-{:else if failedRun}
-  <p role="alert">This plan run failed{failedReason(failedRun)}</p>
-{/if}
-
-{#if readyRun}
-  <p class="run">Run {readyRun.number}</p>
-  {#if readyRunStale}
-    <p class="stale">Stale</p>
-  {/if}
-  {#if readyRun.provider_header}
-    <p class="provider">{readyRun.provider_header}</p>
-  {/if}
-  {#each readyRun.messages ?? [] as message, index (index)}
-    <p class="message">{message}</p>
-  {/each}
-  {#if readyRun.memo_hit}
-    <button type="button" disabled={calculating} onclick={() => calculate(true)}>
-      Re-optimise (ignore previous result)
-    </button>
-  {/if}
-  <Itinerary
-    stops={readyRun.stops}
-    totals={readyRun.totals}
-    objectiveLabel={readyRun.objective_label}
+<div class="panel">
+  <StatusBadge
+    tone={look.role}
+    fill={look.fill}
+    glyph={look.glyph}
+    label={look.label}
+    data-plan-state={look.state}
+    aria-busy={look.state === 'loading' ? 'true' : undefined}
   />
-  {#if !jobActive}
-    <a class="button" href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+  {#if look.state === 'planning'}
+    <div class="progress" data-testid="plan-progress" aria-hidden="true"><span></span></div>
   {/if}
-{/if}
+
+  <button type="button" class="primary" disabled={calculating} onclick={() => calculate()}>
+    Calculate
+  </button>
+  {#if look.state === 'empty'}
+    <p class="hint">Press Calculate to plan this trip.</p>
+  {/if}
+
+  {#if watchedJobId && STATE_TEXTS[jobState]}
+    <p role="status">{STATE_TEXTS[jobState]}</p>
+  {/if}
+  {#if watchedJobId && incumbent}
+    <p class="best">Best so far: {bestSoFar(incumbent)}</p>
+  {/if}
+  {#if watchedJobId && stoppable}
+    <button type="button" class="danger" disabled={stopPressed} onclick={stop}
+      >Stop and use best so far</button
+    >
+  {/if}
+  {#each notices as notice (notice)}
+    <p class="notice">{notice}</p>
+  {/each}
+  {#if endedWithoutRun}
+    <p>{endedWithoutRun}</p>
+  {/if}
+  {#if problem}
+    <p role="alert">{problem}</p>
+  {/if}
+  {#if pollProblem}
+    <p role="alert">{pollProblem}</p>
+  {/if}
+  {#if failedRun?.messages?.length}
+    <div role="alert">
+      {#each failedRun.messages as message, index (index)}
+        <p>{message}</p>
+      {/each}
+    </div>
+  {:else if failedRun}
+    <p role="alert">This plan run failed{failedReason(failedRun)}</p>
+  {/if}
+
+  {#if readyRun}
+    {#if look.state !== 'success'}
+      <p class="run">Plan run #{readyRun.number}</p>
+    {/if}
+    {#if readyRun.provider_header}
+      <p class="provider">{readyRun.provider_header}</p>
+    {/if}
+    {#each readyRun.messages ?? [] as message, index (index)}
+      <p class="message">{message}</p>
+    {/each}
+    {#if readyRun.memo_hit}
+      <button type="button" disabled={calculating} onclick={() => calculate(true)}>
+        Re-optimise (ignore previous result)
+      </button>
+    {/if}
+    <Itinerary
+      stops={readyRun.stops}
+      totals={readyRun.totals}
+      objectiveLabel={readyRun.objective_label}
+    />
+    {#if !jobActive && look.state !== 'failed'}
+      <a class="button" href={planRunExportUrl(readyRun.id)}>Export GPX</a>
+    {/if}
+  {/if}
+</div>
 
 <style>
+  .panel {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .panel > :global(*) {
+    justify-self: start;
+  }
+  .panel > :global(p),
+  .panel > :global(div[role='alert']),
+  .panel > :global(.progress) {
+    justify-self: stretch;
+  }
+  p {
+    margin: 0;
+  }
+  .hint {
+    color: var(--color-text-muted);
+  }
+  .progress {
+    height: var(--space-1);
+    overflow: hidden;
+    border-radius: var(--radius-pill);
+    background: var(--color-info-bg);
+  }
+  .progress span {
+    display: block;
+    width: 40%;
+    height: 100%;
+    background: var(--color-info-fg);
+    animation: slide 1.4s ease-in-out infinite alternate;
+  }
+  @keyframes slide {
+    to {
+      transform: translateX(150%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .progress span {
+      width: 100%;
+      animation: none;
+    }
+  }
   .run {
     font-weight: 600;
   }

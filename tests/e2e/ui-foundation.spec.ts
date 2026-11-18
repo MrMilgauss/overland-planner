@@ -1,6 +1,6 @@
 // Slice 12 UI foundation (US-20, US-21, US-22): the @ui scenarios of
 // tests/acceptance/overland_route_planner_mvp/slice-12-ui-foundation.feature, one test per scenario (one per row of
-// the plan-state outline), named after it. DISTILL skeleton: every test is `test.fixme` (skipped, CI stays green);
+// the plan-state outline), named after it. DISTILL skeleton: every test was `test.fixme` (skipped, CI stays green);
 // DELIVER writes each body and turns it into `test` in the step that makes the scenario pass.
 //
 // Runs in CI job 7 on chromium (Desktop Chrome; 1440 and 768 px set per test with `page.setViewportSize`) and
@@ -72,6 +72,14 @@ async function makeAPlannedProject(
 // (makeAPlannedProject presses Calculate once, three more presses follow); the planner's own run list says when the
 // fourth run is ready, so the test never reads the page's wording of the run.
 async function makeRunFour(page: Page, testInfo: TestInfo): Promise<string> {
+  return makeRuns(page, testInfo, 4);
+}
+
+async function makeRuns(
+  page: Page,
+  testInfo: TestInfo,
+  runs: number,
+): Promise<string> {
   const projectUrl = await makeAPlannedProject(page, testInfo);
   const projectId = decodeURIComponent(
     /#\/projects\/([^/]+)$/.exec(projectUrl)![1],
@@ -84,7 +92,7 @@ async function makeRunFour(page: Page, testInfo: TestInfo): Promise<string> {
     }[];
     return runs.filter((run) => run.status === "ready").length;
   };
-  for (let ready = 1; ready < 4; ready += 1) {
+  for (let ready = 1; ready < runs; ready += 1) {
     await page.getByRole("button", { name: "Calculate" }).click();
     await expect.poll(readyRuns, { timeout: 120_000 }).toBe(ready + 1);
     await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
@@ -436,20 +444,220 @@ test.fixme("The map stays readable on a phone at trip-wide zoom", async () => {}
 
 // ===================== US-21 Plan state and whether its roads are real =====================
 
-for (const label of [
-  "No plan yet",
-  "Loading",
-  "Planning",
-  "Plan run #6",
-  "Failed",
-  "Stale",
-]) {
-  test.fixme(`Every plan state has its own label and look: ${label}`, async () => {});
+type StateLook = { glyph: string; border: string; fill: string };
+
+// The D266 table: what each state shows besides its colour. Two states never share glyph, border style and fill.
+const STATE_LOOKS: Record<string, StateLook> = {
+  "No plan yet": { glyph: "", border: "dashed", fill: "outline" },
+  Loading: { glyph: "", border: "solid", fill: "outline" },
+  Planning: { glyph: "", border: "solid", fill: "filled" },
+  "Plan run #6": { glyph: "\u2713", border: "solid", fill: "filled" },
+  Failed: { glyph: "\u2715", border: "solid", fill: "filled" },
+  Stale: { glyph: "!", border: "solid", fill: "filled" },
+};
+
+const stateBadge = (page: Page): Locator => page.locator("[data-plan-state]");
+
+// The badge as the page draws it: its words without the glyph, the glyph, the border style and whether it is filled.
+async function badgeLook(
+  badge: Locator,
+): Promise<StateLook & { label: string }> {
+  return badge.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const glyph = el.querySelector('[aria-hidden="true"]');
+    const words = el.cloneNode(true) as HTMLElement;
+    words.querySelectorAll('[aria-hidden="true"]').forEach((g) => g.remove());
+    const fill = /^rgba?\(.*,\s*0\)$|^transparent$/.test(style.backgroundColor)
+      ? "outline"
+      : "filled";
+    return {
+      label: (words.textContent ?? "").trim(),
+      glyph: (glyph?.textContent ?? "").trim(),
+      border: style.borderTopStyle,
+      fill,
+    };
+  });
 }
 
-test.fixme("While planning, Stop is offered", async () => {});
+async function expectState(page: Page, label: string): Promise<void> {
+  const own = STATE_LOOKS[label];
+  const looks = Object.values(STATE_LOOKS).map((l) => JSON.stringify(l));
+  expect(
+    new Set(looks).size,
+    "no two states share glyph, border and fill",
+  ).toBe(looks.length);
+  await expect(stateBadge(page)).toHaveCount(1);
+  await expect(stateBadge(page)).toBeVisible();
+  await expect
+    .poll(() => badgeLook(stateBadge(page)))
+    .toEqual({ label, ...own });
+}
 
-test.fixme("A Failed run shows the label Failed and the planner's own words", async () => {});
+// Planning without a real solve: the planner's answer to Calculate and to the job is rewritten (W4), the job held at
+// "solving" and stoppable.
+async function holdPlanning(page: Page): Promise<void> {
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, async (route) => {
+    if (route.request().method() === "POST")
+      await route.fulfill({ status: 202, json: { job_id: "held-job" } });
+    else await route.continue();
+  });
+  await page.route(/\/api\/plan-jobs\/held-job$/, (route) =>
+    route.fulfill({
+      json: {
+        state: "solving",
+        reason: null,
+        message: null,
+        plan_run_id: null,
+        elapsed_s: 1.5,
+        stoppable: true,
+      },
+    }),
+  );
+}
+
+async function makeAnEmptyProject(
+  page: Page,
+  testInfo: TestInfo,
+): Promise<void> {
+  await serveBlankTiles(
+    page,
+    testInfo.project.use.baseURL ?? "http://127.0.0.1:8080",
+  );
+  const name = `Alpi Occidentali giugno 2027 (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+}
+
+const FAILED_WORDS =
+  "No valid route found within the time limit - plan run #5 failed";
+
+for (const label of Object.keys(STATE_LOOKS)) {
+  test(`Every plan state has its own label and look: ${label}`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium",
+      "the look is checked on the desktop browser",
+    );
+    test.setTimeout(300_000);
+
+    if (label === "No plan yet") {
+      await makeAnEmptyProject(page, testInfo);
+    } else if (label === "Loading") {
+      await makeAnEmptyProject(page, testInfo);
+      const projectUrl = page.url();
+      let release: () => void = () => {};
+      const held = new Promise<void>((done) => (release = done));
+      await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, async (route) => {
+        await held;
+        await route.continue();
+      });
+      await page.goto("/");
+      await page.goto(projectUrl);
+      await expectState(page, label);
+      await expect(stateBadge(page)).toHaveAttribute("aria-busy", "true");
+      release();
+      await expect(stateBadge(page)).toContainText("No plan yet");
+      return;
+    } else if (label === "Planning") {
+      await makeAnEmptyProject(page, testInfo);
+      await holdPlanning(page);
+      await page.getByRole("button", { name: "Calculate" }).click();
+    } else if (label === "Plan run #6") {
+      await makeRuns(page, testInfo, 6);
+    } else if (label === "Failed") {
+      await makeRunFour(page, testInfo);
+      await failRunFive(page);
+      await page.reload();
+    } else {
+      await makeRunFour(page, testInfo);
+      await page.getByLabel("Place name").fill("Rifugio Selleries");
+      await page.getByLabel("Latitude").fill("45.0123");
+      await page.getByLabel("Longitude").fill("7.0456");
+      await page.getByRole("button", { name: "Add place" }).click();
+      await expect(
+        page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+      ).toHaveCount(3);
+      await page.reload();
+      await expect(
+        page.getByText("Plan run #4", { exact: true }),
+      ).toBeVisible();
+    }
+    await expectState(page, label);
+  });
+}
+
+// Plan run #5 failed on its time limit, as the planner words it: the run list and that run's detail are rewritten (W4),
+// every other answer is the planner's own.
+async function failRunFive(page: Page): Promise<void> {
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const runs = (await response.json()) as object[];
+    await route.fulfill({
+      response,
+      json: [
+        ...runs,
+        { id: "failed-run-5", number: 5, status: "failed", stale: false },
+      ],
+    });
+  });
+  await page.route(/\/api\/plan-runs\/failed-run-5$/, (route) =>
+    route.fulfill({
+      json: {
+        id: "failed-run-5",
+        project_id: "p",
+        number: 5,
+        status: "failed",
+        failure_reason: "timeout",
+        stops: [],
+        totals: null,
+        report: null,
+        estimate: false,
+        messages: [FAILED_WORDS],
+      },
+    }),
+  );
+}
+
+test("While planning, Stop is offered", async ({ page }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "the planning state is checked on the desktop browser",
+  );
+  test.setTimeout(120_000);
+  await makeAnEmptyProject(page, testInfo);
+  await holdPlanning(page);
+  await page.getByRole("button", { name: "Calculate" }).click();
+  await expectState(page, "Planning");
+  await expect(
+    page.getByRole("button", { name: "Stop and use best so far" }),
+  ).toBeVisible();
+});
+
+test("A Failed run shows the label Failed and the planner's own words", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "the failed state is checked on the desktop browser",
+  );
+  test.setTimeout(300_000);
+  await makeRunFour(page, testInfo);
+  await failRunFive(page);
+  await page.reload();
+
+  await expectState(page, "Failed");
+  await expect(
+    page.getByRole("alert").filter({ hasText: FAILED_WORDS }),
+  ).toBeVisible();
+  await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
+  await expect(page.getByText(/^\W*estimate\W*$/i)).toHaveCount(0);
+  await expect(page.getByTitle(/^estimate:/)).toHaveCount(0);
+});
 
 test.fixme("A plan on the offline road map is marked as an estimate", async () => {});
 
@@ -457,7 +665,20 @@ test.fixme("A plan on real roads shows no estimate marker", async () => {});
 
 test.fixme("A stale estimate shows both labels", async () => {});
 
-test.fixme("A project with no plan yet says so and points to Calculate", async () => {});
+test("A project with no plan yet says so and points to Calculate", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await makeAnEmptyProject(page, testInfo);
+  await expect(stateBadge(page)).toContainText("No plan yet");
+  await expect(
+    page.getByText("Press Calculate to plan this trip."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The map shows the plan once one is computed."),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
+});
 
 // ===================== US-22 The home page tells when a plan broke a hard rule =====================
 

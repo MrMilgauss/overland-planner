@@ -1,12 +1,12 @@
 <script lang="ts">
   // GET /api/diagnostics as it comes (kpi-contracts `diagnostics_endpoint`): the stage p95s, the retried jobs, the jobs
-  // by terminal state, the variants per project and day, the K2 and K3 counts, any above 0 in red, and the G4 count of
+  // by terminal state, the variants per project and day, the K2 and K3 counts, any above 0 in a red badge, and the G4 count of
   // refusals for the routing engine, green at 0 and amber from 1. Keys are the
   // planner's own (stages, bands, states); seconds to one decimal; a figure without a job shows 'none'.
+  import StatusBadge from './StatusBadge.svelte';
   import { failureText, readDiagnostics, type Diagnostics, type WindowCount } from './api';
 
   const NONE = 'none';
-  const ALARM = 'var(--color-danger-fg)'; // K2 or K3 above 0: a hard rule broken, or a report that left out an item
   const AMBER = 'var(--color-warning-fg)'; // G4 from 1: plans were refused while the routing engine was down or loading
   const GREEN = 'var(--color-success-fg)'; // G4 at 0
   const report = readDiagnostics();
@@ -50,8 +50,12 @@
       <h2>{title}</h2>
       <ul>
         {#each counts(diagnostics.days, count) as [label, value] (label)}
-          <li class:alarm={value > 0} style:color={value > 0 ? ALARM : undefined}>
-            {label}: {value}
+          <li class:alarm={value > 0}>
+            {#if value > 0}
+              <StatusBadge tone="danger" fill="filled" glyph="✕" label={`${label}: ${value}`} />
+            {:else}
+              {label}: {value}
+            {/if}
           </li>
         {/each}
       </ul>

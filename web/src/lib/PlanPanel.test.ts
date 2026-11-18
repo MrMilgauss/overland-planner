@@ -416,7 +416,7 @@ describe('Plan panel: Export GPX during a recalculation', () => {
   function showsTheOldRunWithoutExport(state: string): void {
     expect(screen.getByRole('status')).toHaveTextContent(state);
     expect(exportLink()).not.toBeInTheDocument();
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
   }
 
@@ -456,7 +456,7 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     showsTheOldRunWithoutExport('Solving');
     await tick();
 
-    expect(screen.getByText('Run 2')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #2')).toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r2/export.gpx');
   });
 
@@ -486,17 +486,6 @@ describe('Plan panel: Export GPX during a recalculation', () => {
       job('failed', { message: 'The plan could not be calculated - nothing was changed' }),
       {},
     ],
-    [
-      'a job that ended with a Failed run',
-      job('done', { reason: 'no_valid_route_found', plan_run_id: 'r2' }),
-      {
-        [`GET ${RUNS}`]: [
-          listed(['r1', 1, 'ready']),
-          listed(['r1', 1, 'ready'], ['r2', 2, 'failed']),
-        ],
-        'GET /api/plan-runs/r2': failedRun('r2', 2, 'no_valid_route_found'),
-      },
-    ],
     ['a job that has expired', { status: 404, body: { code: 'not_found', message: 'No job' } }, {}],
   ])('offers the older ready run again after %s', async (_ending, jobReply, routes) => {
     stubPlanner({
@@ -512,7 +501,7 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     expect(exportLink()).not.toBeInTheDocument();
     await tick();
 
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 
@@ -529,7 +518,7 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     await tick();
 
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load the plan.');
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(exportLink()).not.toBeInTheDocument();
   });
 
@@ -572,7 +561,7 @@ describe('Plan panel: reopening a project', () => {
 
     const itinerary = screen.getByRole('list', { name: 'Itinerary' });
     expect(within(itinerary).getByText('Aosta')).toBeInTheDocument();
-    expect(screen.getByText('Run 3')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #3')).toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r3/export.gpx');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -589,8 +578,8 @@ describe('Plan panel: reopening a project', () => {
 
     expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('This plan run failed (optimizer_failed)');
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
-    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument(); // a Failed plan offers no export (D266)
   });
 
   it('shows the message when the runs cannot be read, and Calculate stays usable', async () => {
@@ -643,7 +632,7 @@ describe('Plan panel: Stop and use best so far', () => {
 
     await tick();
     expect(screen.getByText(STOPPED_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(stopButton()).not.toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
@@ -749,7 +738,7 @@ describe('Plan panel: labels, messages and notices', () => {
     expect(screen.getByText(notice)).toBeInTheDocument();
     await tick();
 
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(screen.getAllByText(notice)).toHaveLength(1);
     expect(screen.getByText('Planned 5 items in 2.4 s')).toBeInTheDocument();
   });
@@ -793,7 +782,7 @@ describe('Plan panel: Re-optimise a reused plan', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: REOPTIMISE })).not.toBeInTheDocument();
   });
 });
@@ -854,7 +843,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
     await pressCalculate();
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByText('Run 1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
   });
 
@@ -875,7 +864,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
       await tick();
 
       expect(screen.getByRole('alert')).toHaveTextContent(message);
-      expect(screen.getByText('Run 1')).toBeInTheDocument();
+      expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     },
   );
 
@@ -939,5 +928,99 @@ describe('Plan panel: the run the page shows on its map', () => {
 
     expect(count(calls, `GET ${RUNS}`)).toBe(2);
     expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+});
+
+function badge(): HTMLElement {
+  const found = document.querySelectorAll<HTMLElement>('[data-plan-state]');
+  expect(found).toHaveLength(1); // exactly one state badge at a time (D266)
+  return found[0];
+}
+
+describe('Plan panel: one plan state at a time', () => {
+  it('is Loading, as an outline badge that is busy, while the runs are first read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    expect(badge()).toHaveTextContent('Loading');
+    expect(badge()).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('No plan yet')).not.toBeInTheDocument();
+  });
+
+  it('says No plan yet and points to Calculate when the project has no run', async () => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('No plan yet');
+    expect(badge()).not.toHaveAttribute('aria-busy');
+    expect(screen.getByText('Press Calculate to plan this trip.')).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument();
+  });
+
+  it('is Planning with a progress bar, the job line and Stop while a job runs', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: NO_RUNS,
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('solving', { stoppable: true }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await pressCalculate();
+    await tick();
+
+    expect(badge()).toHaveTextContent('Planning');
+    expect(screen.getByTestId('plan-progress')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Solving');
+    expect(screen.getByRole('button', { name: 'Stop and use best so far' })).toBeEnabled();
+    expect(screen.queryByText('Press Calculate to plan this trip.')).not.toBeInTheDocument();
+  });
+
+  it('is Plan run #N, with the check glyph hidden from readers and no second heading', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Plan run #1');
+    expect(screen.getAllByText('Plan run #1')).toHaveLength(1);
+    expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2713');
+    expect(exportLink()).toBeInTheDocument();
+  });
+
+  it('is Failed, in the planner words, with the ready run kept as the heading below', async () => {
+    const words = 'No valid route found within the time limit - plan run #2 failed';
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready'], ['r2', 2, 'failed']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+      'GET /api/plan-runs/r2': failedRun('r2', 2, 'timeout', null, [words]),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Failed');
+    expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2715');
+    expect(screen.getByRole('alert')).toHaveTextContent(words);
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument();
+  });
+
+  it('is Stale, with the run heading kept beside it', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: {
+        status: 200,
+        body: [{ id: 'r1', number: 1, status: 'ready', stale: true }],
+      },
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(badge()).toHaveTextContent('Stale');
+    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
   });
 });

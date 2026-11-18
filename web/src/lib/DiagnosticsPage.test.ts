@@ -92,6 +92,8 @@ describe('Diagnostics page', () => {
 
     const k2 = await section('K2 invariant violations');
     expect(within(k2).getByText('all time: 1')).toHaveStyle({ color: RED });
+    expect(within(k2).getByText('all time: 1')).toHaveAttribute('data-role', 'danger'); // the danger badge
+    expect(within(k2).getByText('last 30 days: 0')).not.toHaveAttribute('data-role');
     expect(within(k2).getByText('last 30 days: 0')).not.toHaveStyle({ color: RED });
     const k3 = await section('K3 report omissions');
     expect(within(k3).getByText('all time: 0')).not.toHaveStyle({ color: RED });

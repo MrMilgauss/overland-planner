@@ -219,6 +219,10 @@
   section {
     min-width: 0;
   }
+  .plan {
+    display: grid;
+    gap: var(--space-2); /* the Objective control and the panel's controls stand apart */
+  }
   form {
     display: grid;
     gap: var(--space-2);
