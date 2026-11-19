@@ -5677,6 +5677,104 @@ Unchanged: `tests/integration/adapters/gpx/test_gpxpy_writer.py` (the name is pa
 
 DoD (slice 12): (1) the 3 `@driving_port` scenarios and the 26 Playwright cases GREEN, `@pending` gone from the feature, `--run-pending=slice-12` in PENDING_FLAGS, no `test.fixme` left in `ui-foundation.spec.ts`; (2) the vitest checks of D273 GREEN; (3) the deliberate test changes above done in the step that causes them; (4) mutation kill rate >= 80% on the modified files (`provider_label.py`, `run_file_name.py`, `gpx_document_builder.py`, `planState.ts`, `k2Acknowledgement.ts`, `runMap.ts`); (5) cold-start check by the owner on a laptop logged in docs/demo (learning hypothesis a-c, each < 2 min).
 
+## Wave: DISTILL / [REF] Slice 12b scenarios (2026-11-19)
+
+Executable SSOT: `tests/acceptance/overland_route_planner_mvp/slice-12b-trip-workflow.feature` (`@slice-12b @pending`). Inputs read: US-23 to US-26, the DESIGN section "Slice 12b trip workflow", D208, D211, D259, D262, D264-D291, the slice 12 scenarios and tests, the brief. No 12b DEVOPS section (none needed: no new service, setting files only): CI job 2 (pytest) and job 7 (Playwright) as in slice 12. **Reconciliation passed: 0 open contradictions.** The two DISCUSS/DESIGN differences are already resolved upstream: US-23 S5's line moves into Details (D285, "DISTILL writes S5 this way"); "Calculate" and "Export GPX of plan run #N" are superseded by "Plan the route" and "Export GPX" (D284 over D272). Brownfield, no walking skeleton (DISCUSS). Policy inherited; W4 extended to 12b (read the real answer once, the handler only fulfills), the map-tiles row now says how the base map is served in tests. No scaffold: the steps import no production code (as slice 12).
+
+Summary: 29 scenarios (35 cases; two outlines, 6 and 2 rows). US-23 7, US-24 6, US-25 7, US-26 9. Tool: Playwright `@ui` 27 (33 tests per browser project), pytest-bdd `@driving_port` 2. Error/edge (`@error`, `@edge`, `@infrastructure-failure`): 17 of 29 = 59 %. No `@kpi` (the KPIs are the owner's cold-start check).
+
+Changes from the 27 DISCUSS scenarios (+2): the two `@driving_port` scenarios of US-26 (DESIGN testability: `/api/config/map` fields; the key guard on `MAP_BASE_STYLE_URL`). Wording tightened, not changed in meaning: US-23 S5 per D285 (card tag "Not fully optimised", Details "not fully optimised (stopped)" word for word); US-23 S7 names the planner's refusal "Set the Start before calculating" (D211); US-25 S1 adds "also without colour" (as slice 12); US-25 S2 adds "in the planner's order" (D285); US-25 S3 says "under the heading Previous route" and "its Details names Plan run #6" (D208, below). Scenario titles are the DISCUSS titles without the S-number.
+
+| Scenario | Story | Tags | Checked by |
+|---|---|---|---|
+| A project without a route opens on Build the trip | US-23 | @ui | trip-workflow.spec.ts (real); vitest tripPhase, WorkspacePage |
+| Every way to add a stop is in one Add control and lands in the one list | US-23 | @ui | trip-workflow.spec.ts (real); vitest AddMenu, TripMap |
+| Start and End are set on a place in the list | US-23 | @ui | trip-workflow.spec.ts (real); vitest TripList |
+| While planning, the trip is read-only and nothing is exported | US-23 | @ui @edge | trip-workflow.spec.ts (W4 held job); vitest PlanPanel |
+| Stopping shows the best route found so far | US-23 | @ui @edge | trip-workflow.spec.ts (W4); vitest RouteCard, RunDetails |
+| Edit trip goes back to building and the shown route goes out of date | US-23 | @ui @edge @HC-4 | trip-workflow.spec.ts (real) |
+| A refusal keeps Marco on Build the trip with the planner's own words | US-23 | @ui @error | trip-workflow.spec.ts (real 422) |
+| On a laptop the summary card and the first steps are in view | US-24 | @ui @desktop | trip-workflow.spec.ts, chromium 1440 x 900 (W4 Valhalla) |
+| An estimate route says Estimate in the card and on the map | US-24 | @ui @edge | trip-workflow.spec.ts (real); slice 12 `@driving_port` pins the name |
+| Selecting a step moves the map to it | US-24 | @ui | trip-workflow.spec.ts (W4); vitest Itinerary, runMap |
+| Selecting a stop on the map highlights its step | US-24 | @ui | trip-workflow.spec.ts (W4) |
+| A retrace is its own step, linked to its own line | US-24 | @ui @edge | trip-workflow.spec.ts (W4 retrace) |
+| On a phone the map follows the selected step | US-24 | @ui @phone @edge | trip-workflow.spec.ts, webkit-iphone14 (W4) |
+| Every status has its own words and look (6 rows) | US-25 | @ui | trip-workflow.spec.ts (Loading, Planning, Couldn't plan by W4); vitest planState |
+| Engine details wait behind one closed Details | US-25 | @ui | trip-workflow.spec.ts (real memo reuse); vitest RunDetails |
+| Couldn't plan keeps the previous route and its export | US-25 | @ui @error | trip-workflow.spec.ts (W4 failed run); vitest PlanPanel |
+| Couldn't plan without an earlier route keeps Marco on Build the trip | US-25 | @ui @error @infrastructure-failure | trip-workflow.spec.ts (W4 job failed) |
+| An out-of-date route asks to be planned again and can still be exported | US-25 | @ui @edge @HC-4 | trip-workflow.spec.ts (real) |
+| Planning an unchanged trip with a retrace reuses the route and keeps each stop once | US-25 | @ui @edge | trip-workflow.spec.ts (real reuse, W4 retrace) |
+| The planner's notices stay in view | US-25 | @ui @edge | trip-workflow.spec.ts (W4 notice) |
+| The planner names the light base map and its credit and keeps the Terrain map | US-26 | @driving_port | test_slice_12b.py, `GET /api/config/map` |
+| A light base map address carrying a private access key stops the planner at start-up | US-26 | @driving_port @driving_adapter @wiring_e2e @error @security | test_slice_12b.py, real server process |
+| The map opens on a calm base map with its credit | US-26 | @ui | trip-workflow.spec.ts (test style); vitest TripMap |
+| Terrain switches to the topographic map and back | US-26 | @ui | trip-workflow.spec.ts |
+| The route stands out on both base maps (2 rows) | US-26 | @ui | trip-workflow.spec.ts (layer order, contrast.ts); vitest runMap |
+| Road, trail and retrace stay apart on both base maps | US-26 | @ui @edge | trip-workflow.spec.ts (W4 retrace) |
+| An estimate says so on the map on both base maps | US-26 | @ui @edge | trip-workflow.spec.ts (real) |
+| On a phone the map controls fit and can be tapped | US-26 | @ui @phone @edge | trip-workflow.spec.ts, webkit-iphone14 |
+| The route still shows when the base map does not load | US-26 | @ui @error @infrastructure-failure | trip-workflow.spec.ts (`route.abort()`) |
+
+The key guard is an acceptance scenario on the real server process (`@wiring_e2e`), not only a unit check: its slice 09 twin for `MAP_TILE_URL` is one, and the steps "Marco starts the planner" and "the planner refuses to start" are reused (Pillar 2). The settings rule itself (empty means default, userinfo, fragment, each key-like word) is DELIVER's inner check in `tests/unit/bootstrap/test_settings.py` and `tests/integration/http/test_map_config.py`.
+
+**Reconciliation with user and design decisions (D276 lesson):**
+
+| Decision | Scenario(s) | Holds |
+|---|---|---|
+| D208 (user): an older ready run keeps its itinerary and export under a later failed run, labelled so the user can tell which | US-25 "Couldn't plan keeps the previous route and its export" | Yes: card and itinerary of run #6 stay, headed "Previous route"; its Details names "Plan run #6"; "Export GPX" gives `...-run6.gpx`; the failed run offers no export and no "Estimate". The run number is no longer on the link (D284): the label is "Previous route", which is the brief's own wording of D208 (outcome check 3, user decision D281), with the number one click away and in the file name |
+| D208 F2: no export while a job of the page is active | US-23 "While planning, the trip is read-only and nothing is exported" ("not even for the earlier route"); US-25 status row "being planned" | Yes. The known limit (reload during a job) is unchanged and not tested |
+| D211: the planner's words verbatim | US-23 refusal ("Set the Start before calculating"), stopped line; US-24 retrace reason; US-25 time-limit failure, engine unreachable, reuse line, large-project notice | Yes: every planner line is quoted from `run_messages.py` / `plan_request_service.py` and checked word for word; the browser reads them from the answer |
+| D268: GPX names unchanged | US-24 estimate export (`assietta-weekend-run1-estimate.gpx`); US-25 previous route (`...-run6.gpx`), out of date (`...-run4-estimate.gpx`) | Yes: names as slice 12; no scenario changes a name |
+| D285: a ready run's whole messages list is in Details | US-23 "Stopping shows the best route found so far": the card shows the tag "Not fully optimised", Details shows "not fully optimised (stopped)" word for word; US-25 "Engine details wait behind one closed Details" (in the planner's order) | Yes. A failed run's words, notices and the job's step words stay in view (US-25 S3, S4, S7; US-23 S4) |
+| D287: Positron default, credit, Terrain kept, key guard, route on top, failed load leaves the route | US-26 both `@driving_port`, S1-S7 | Yes |
+| D288: the map before a route, "Click on map to add" works in it | US-23 "Every way to add a stop...", "Edit trip goes back..." | Yes. No scenario asks for track shapes before a plan (only their ends are drawn) |
+| D259 / A-10: a change makes the route out of date, still exportable | US-23 Edit trip; US-25 out-of-date route | Yes |
+| D262: a pending scenario runs only when every slice tag on it is enabled | The feature carries one slice tag, `@slice-12b`; no scenario adds another | Yes |
+| D283, D284, D286, D289 | US-23 S1/S4/S6, US-25 S1/S3/S4; US-24 S1-S6; US-24 S1/S6, US-26 S6 | Yes |
+
+**Slice 12 checks changed on purpose (D290).** DISTILL does not edit them now: the DELIVER step that changes the behaviour edits the line and its test in the same commit; everything not listed keeps running unchanged.
+
+| Slice 12 check | Today | New wording / change |
+|---|---|---|
+| feature line 14 (header) | "Calculate" and "Export GPX" are the stories' words (D272) | "Plan the route" and "Export GPX" (D284) |
+| feature line 29 ("On a laptop the map is the main surface") | "the stops, itinerary heading and totals of plan run #4 are beside the map without scrolling the page" | "the summary card and the first steps of the itinerary are beside the map without scrolling the page" (US-24 S1 holds the rest) |
+| feature line 37 (phone) | "the itinerary and totals come below the map" | "the summary card and the itinerary come below the map" |
+| feature lines 50 and 54 | title "...and the controls are grouped by task"; "three labelled groups: Plan, Items and Start and end" | title "Every page uses the same look and the project page follows the trip's phases"; line 54: 'the project page shows the phase steps "Build the trip", "Planning" and "Your route" in that order, with one main action' |
+| feature line 68 (keyboard focus) | 'from "Calculate" to "Export GPX"' | 'from the phase steps to "Details"' (on "Your route") |
+| feature lines 83-99 (plan-state outline, 6 rows) | labels Planning, Plan run #6, Failed, Stale | removed: replaced by 12b "Every status has its own words and look" (same six states, D284 words) |
+| feature lines 104 and 106 ("While planning, Stop is offered") | 'pressed "Calculate"'; 'labelled "Planning"' | 'pressed "Plan the route"'; 'the status reads "Planning…"' |
+| feature lines 111-118 (failed run) | title "A Failed run shows the label Failed..."; 'label "Failed"'; '"estimate" marker'; "the export of the older plan run #4 stays offered, named with its number" | title "A failed plan shows Couldn't plan and the planner's own words"; 'the status reads "Couldn't plan"'; '"Estimate" marker'; 'the route of plan run #4 stays under the heading "Previous route" with its "Export GPX", and its Details names "Plan run #4"' (lines 115-116 unchanged) |
+| feature lines 126-127 (estimate) | '"estimate" is shown next to the heading "Plan run #4"'; 'the map of plan run #4 carries the same "estimate" marker' | '"Estimate" is shown in the summary card'; 'the map carries the same "Estimate" marker' |
+| feature lines 159-160 (real roads, `@ui`) | 'label "Plan run #6"'; 'no "estimate" marker ... by the heading nor on the map' | 'the status reads "Route ready" and the card says "Real roads"'; 'no "Estimate" marker is shown, neither in the card nor on the map' |
+| feature lines 162-169 ("A stale estimate shows both labels") | Stale + estimate by the heading | removed: replaced by 12b "An out-of-date route asks to be planned again and can still be exported" |
+| feature lines 171-179 ("A project with no plan yet ... points to Calculate") | hint "Press Calculate to plan this trip."; "The map shows the plan once one is computed." | removed: replaced by 12b "A project without a route opens on Build the trip" (the hint and the map placeholder go, D283, D288) |
+| ui-foundation.spec.ts helpers `makeAPlannedProject`, `makeRuns`, `makeAnEmptyProject`, `planPanel`, `mapArea` | old forms ("GPX files"/"Import", "Place name"/"Add place", Start/End selects, "Set Start and End", "Calculate"), regions "Plan", "Items", "Map of the run" | the 12b controls ("Add" menu, row menu, "Plan the route"; repeated runs by `page.request` or "Edit trip" + "Plan the route"); the card and TripMap locators. Locators only, no behaviour |
+| ui-foundation.spec.ts "On a laptop the map is the main surface" | three group regions, heading "Plan", "Totals" | map wider than the phase panel; the card and steps 1-3 inside the viewport |
+| ui-foundation.spec.ts "Every page uses the same look and the controls are grouped by task" | group-heading order | new title; phase-step order |
+| ui-foundation.spec.ts "Keyboard focus is always visible" | starts at "Calculate", ends at "Export GPX" | starts at the first phase step, ends at the "Details" summary |
+| ui-foundation.spec.ts "Every plan state has its own label and look: *" (6 tests), `STATE_LOOKS` | old labels | removed; the looks table moves to trip-workflow.spec.ts with the D284 labels |
+| ui-foundation.spec.ts "While planning, Stop is offered" | "Calculate", "Planning" | "Plan the route", "Planning…" |
+| ui-foundation.spec.ts "A Failed run shows the label Failed and the planner's own words" | "Failed", "Plan run #4" text, links "Export GPX of plan run #5/#4", pill in region "Plan" | new title; "Couldn't plan"; "Previous route" card with "Export GPX"; no export for the failed run; the card's own pill |
+| ui-foundation.spec.ts "A plan on the offline road map is marked as an estimate" | badge "Plan run #4", pill by the badge, `ESTIMATE` note | pill in the card, text "Estimate"; map chip unchanged in place |
+| ui-foundation.spec.ts "A plan on real roads shows no estimate marker" | badge "Plan run #6", link "Export GPX of plan run #6" | "Route ready", "Real roads", link "Export GPX" |
+| ui-foundation.spec.ts "A stale estimate shows both labels", "A project with no plan yet says so and points to Calculate" | | removed (replaced, above) |
+| first-plan.spec.ts "Marco presses Calculate and exports the plan" (read by steps/plan_steps.py, slice 01b) | button "Calculate" | button "Plan the route"; the title stays (it is the 01b journey's name) |
+| run-map.spec.ts (both tests), workspace.spec.ts, phone-itinerary.spec.ts, steps/browser.py | old forms, "Items", "Totals", "Click on map" | 12b controls, "Your trip", the card, "Click on map to add" (D288). Locators only |
+| web/src/lib/planState.test.ts lines 2, 18-21 | 'Planning', 'Failed', 'Stale', 'Plan run #6' | 'Planning…', "Couldn't plan", 'Out of date, plan again', 'Route ready' (order and looks unchanged) |
+| web/src/lib/PlanPanel.test.ts (86 hits): "calculating", "refusals and failures", "Export GPX during a recalculation", "reopening a project", "Re-optimise a reused plan" (l. 759), "provider header, objective and the engine messages" (l. 802), "one plan state at a time" (l. 962), "the estimate pill" (l. 1072) | "Calculate", heading "Plan run #N", "Export GPX of plan run #N", provider and objective lines and "Re-optimise" in view, hint "Press Calculate", pill by the heading | "Plan the route"; the run number, provider, objective, every line of a ready run's messages and "Re-optimise" inside RunDetails; "Export GPX" in RouteCard; "Previous route"; pill in the card. Cases may move to RouteCard.test.ts / RunDetails.test.ts |
+| web/src/lib/WorkspacePage.test.ts lines 95, 114, 134, 267, 283 | Add place form, Import form, Start and End form, three groups, "the map waits for a plan, and loads no map, while no run is ready" | Add menu, row menu, phase steps, the map drawn in items mode (D288) |
+| web/src/lib/ItemList.test.ts | ItemList | renamed TripList.test.ts; read-only mode and row menu added |
+| web/src/lib/Itinerary.test.ts lines 105, 120, 129 | cumulative km and time, entry -> exit coordinates, the totals in the list | cumulative and coordinates leave the list (kept in the step's title, D286); totals in RouteCard |
+| web/src/lib/RunMap.svelte.test.ts lines 155, 188, 229-288 | RunMap, its style and "Click on map" | TripMap: own style then the base style, the "Click on map to add" mode, items mode |
+
+Waivers: W4 as D275 for Loading, Planning, Couldn't plan, a Valhalla run, a retrace, a stopped plan, the large-project notice and an unanswering engine (each `@ui` scenario's comment names its rewrite). No new waiver.
+
+Test placement: `tests/acceptance/overland_route_planner_mvp/` (`slice-12b-trip-workflow.feature`, `test_slice_12b.py`, `steps/trip_workflow_steps.py`, registered in the acceptance `conftest.py`) and `tests/e2e/trip-workflow.spec.ts`, as slice 12. Pending: the feature is `@slice-12b @pending`, so `uv run pytest` skips both bound scenarios; `--run-pending=slice-12b` runs them RED on the planner's answer ("the map settings name no light base map"; "the planner started and answered its health check"). The spec has 33 `test.fixme` (66 skipped on chromium and webkit-iphone14). PENDING_FLAGS unchanged: the last DELIVER step adds `--run-pending=slice-12b`, removes the feature's `@pending` and turns every `test.fixme` into `test`.
+
+DoD (slice 12b): (1) the 2 `@driving_port` scenarios and the 33 Playwright tests GREEN on their projects, `@pending` gone, `--run-pending=slice-12b` in PENDING_FLAGS, no `test.fixme` left in `trip-workflow.spec.ts`; (2) the vitest and pytest inner checks of the DESIGN testability table GREEN; (3) every D290 row above done in the step that causes it, no other slice-12 check changed; (4) mutation >= 80 % on the modified Python files (`settings.py`, `schemas.py`, `app_factory.py`); (5) real tiles looked at on screenshots by the orchestrator, and the owner's cold-start check (learning hypothesis a-c, under 3 minutes, page no longer "chaotic").
+
 ## Wave: DISTILL / [REF] Handoff to DELIVER
 
 - Default run `uv run pytest -q tests`: the walking skeleton fails RED, everything else is skipped. Enable 00b and 01a scenarios one at a time (remove `@pending`), or see them all RED with `--run-pending=slice-00b --run-pending=slice-01a`. Evidence: `distill/red-classification.md`.
@@ -5791,6 +5889,7 @@ DoD (slice 12): (1) the 3 `@driving_port` scenarios and the 26 Playwright cases 
 | D289 | 2026-11-19 | Slice 12b DESIGN; D264 | One phase has one column of content. | **Architect decision (DESIGN):** below 1024 px the phase panel is one column under the map (phone 45dvh, tablet 50dvh); the slice 12 two-column tablet panel is dropped. The main action sits in a bar pinned to the panel's bottom on a laptop and to the viewport's bottom (with the safe-area inset) below 1024 px. |
 | D290 | 2026-11-19 | Slice 12b DESIGN; D276 lesson; US-20, US-21 | Some slice-12 checks describe the screen 12b replaces. | **Architect decision (DESIGN):** US-20 S1, US-20 S4's group headings, US-21 S1-S4's labels and the "Plan run #N" badge, US-21 S3's export name line, and D272's button names are changed on purpose by DISTILL, in the step that changes the behaviour; every other slice-12 check keeps running unchanged. |
 | D291 | 2026-11-19 | Slice 12b DESIGN; process | The DESIGN wave was written by the orchestrator, not dispatched to nw-solution-architect. | **Orchestrator decision, recorded as a deviation:** the sketches had to be built and shown first and they carried most of the design; the orchestrator wrote this section from them and from the code it had read. The consolidated DISTILL review covers it. |
+| D292 | 2026-11-19 | Slice 12b DISTILL; US-23 to US-26; DESIGN D282-D291; D208, D211, D268, D276 lesson | The slice needs executable scenarios, the browser checks pending, and the slice-12 checks it replaces named before DELIVER. | **Acceptance designer decision (DISTILL):** `slice-12b-trip-workflow.feature` (`@slice-12b @pending`): 29 scenarios, 35 cases (US-23 7, US-24 6, US-25 7, US-26 9); 27 `@ui` (33 `test.fixme` in `tests/e2e/trip-workflow.spec.ts`, 66 on the two CI projects), 2 `@driving_port` bound in `test_slice_12b.py` (`/api/config/map` fields; the `MAP_BASE_STYLE_URL` key guard on the real server process, as its slice 09 twin), both RED with `--run-pending=slice-12b`; 17 of 29 error or edge (59 %). Reconciliation: 0 open contradictions; D208, D208 F2, D211, D268, D285, D287, D288 hold (table in DISTILL section). Deviations from DISCUSS: +2 `@driving_port` scenarios; US-23 S5 written per D285; US-23 S7 names the refusal 'Set the Start before calculating'; US-25 S3 says 'Previous route' and its Details names the run (D208's label, as the brief words it); browser checks read run numbers and lines from the planner's answer instead of re-creating run #7. W4 extended to 12b with the rule 'read once with page.request, the handler only fulfills'; policy map-tiles row updated. D290 list written as a table (12 feature lines or blocks, 3 slice-12 scenarios removed as replaced, 10 Playwright tests, 4 other specs, 6 vitest files); none edited now. PENDING_FLAGS unchanged. To confirm: D208's run number now shows in Details and the file name, not on the export link (D284). **Orchestrator note:** the "Previous route" label with the run number only in Details and the file name was in the sketches the owner approved (D282: "it is called previous route, and its run number is in Details"), so D208 holds as the owner now words it; no further question. |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 
