@@ -22,6 +22,8 @@ from overland_planner.domain.planning.plan_run import PlanStop
 
 _ROUND_TRIP_SUFFIX = " (S/E)"
 _ESTIMATE_SUFFIX = " (estimate)"
+_POI = "poi"
+_TRACK = "track"
 _ROAD = "road"
 _OFFROAD = "offroad"
 _RETRACE = "retrace"
@@ -52,7 +54,7 @@ class GpxDocumentBuilder:
         )
 
     def _waypoints(self) -> tuple[GpxWaypoint, ...]:
-        places = {stop.item_id: stop for stop in self.stops if stop.kind == "poi"}
+        places = {stop.item_id: stop for stop in self.stops if stop.kind == _POI}
         return tuple(GpxWaypoint(self._waypoint_name(stop), _placed(stop, stop.location)) for stop in places.values())
 
     def _waypoint_name(self, stop: PlanStop) -> str:
@@ -72,7 +74,7 @@ class GpxDocumentBuilder:
             if number > 1:
                 legs += 1
                 tracks.append(_road_leg(legs, number - 1, self.stops[number - 2], stop))
-            if stop.kind == "track":
+            if stop.kind == _TRACK:
                 tracks.append(GpxTrack(stop.name, self.trail_points[stop.item_id], number=number, kind=_OFFROAD))
         return tuple(tracks)
 
@@ -82,8 +84,8 @@ class GpxDocumentBuilder:
 
 
 def _road_leg(leg: int, number: int, origin: PlanStop, destination: PlanStop) -> GpxTrack:
-    left = origin.location if origin.kind == "poi" else origin.exit
-    reached = destination.entry if destination.kind == "track" else destination.location
+    left = origin.location if origin.kind == _POI else origin.exit
+    reached = destination.entry if destination.kind == _TRACK else destination.location
     name = f"Leg {leg}: {origin.name} -> {destination.name}"
     return GpxTrack(
         _marked(name, destination.leg_confidence, destination.leg_reason),

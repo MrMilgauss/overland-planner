@@ -25,9 +25,10 @@ def provider_header(provider_id: str, profile: str | None) -> str:
     return header if profile is None else f"{header} / profile: {_profile_words(profile)}"
 
 
-def is_estimate(provider_id: str) -> bool:
-    """True for the offline road map in every form it was stored: `mock` and every id starting `mock:` (D275)."""
-    return provider_id == _OFFLINE_ID or provider_id.startswith(f"{_OFFLINE_ID}:")
+def is_estimate(provider_id: str | None) -> bool:
+    """True for the offline road map in every form it was stored: `mock` and every id starting `mock:` (D275); false
+    for a run stored without a provider."""
+    return provider_id is not None and (provider_id == _OFFLINE_ID or provider_id.startswith(f"{_OFFLINE_ID}:"))
 
 
 def _provider_words(provider_id: str) -> str:

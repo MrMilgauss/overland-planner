@@ -73,7 +73,7 @@ class GpxExportService:
             raise PlanRunNotFoundError(plan_run_id)
         if run.status == "failed":
             raise FailedRunExportError()
-        estimate = run.provider_id is not None and is_estimate(run.provider_id)
+        estimate = is_estimate(run.provider_id)
         content = self._writer.write(self._document_of(run, estimate))
         file_name = run_file_name(self._projects.open(run.project_id).name.value, run.number, estimate=estimate)
         self._event_log.info(

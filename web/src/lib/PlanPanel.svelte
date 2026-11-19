@@ -13,7 +13,7 @@
   import { onMount } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { estimateMarker, planState } from './planState';
+  import { estimateMarker, planRunLabel, planState } from './planState';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -282,7 +282,7 @@
 
   {#if readyRun}
     {#if look.state !== 'success'}
-      <p class="run">Plan run #{readyRun.number}</p>
+      <p class="run">{planRunLabel(readyRun.number)}</p>
     {/if}
     {#if estimate || readyRun.provider_header}
       <p class="provider">

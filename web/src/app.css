@@ -181,18 +181,21 @@ a.button {
   text-decoration: none;
 }
 
-table {
-  border-collapse: collapse;
-}
-th,
-td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  text-align: left;
-}
-
 [role='alert'] {
   color: var(--color-danger-fg);
+}
+
+/* A warning banner above the home page's heading (HealthBanner, K2Banner) */
+aside.banner {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-warning-fg);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+}
+aside.banner p {
+  margin: var(--space-1) 0;
 }
 
 /* The workspace's map-first layout owns the whole width under the header; Home and Diagnostics keep one centred column */

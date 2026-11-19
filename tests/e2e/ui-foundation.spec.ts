@@ -1128,6 +1128,26 @@ test("The banner still shows when the browser refuses to keep the acknowledgemen
   await expect(page.getByRole("link", { name })).toBeVisible();
 });
 
+// The map has drawn the run's lines (asked of MapLibre through the `?e2e=1` hook, as run-map.spec.ts does).
+async function expectLinesDrawn(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const map = (
+            window as unknown as {
+              __overlandRunMap?: {
+                queryRenderedFeatures(options: { layers: string[] }): unknown[];
+              };
+            }
+          ).__overlandRunMap;
+          return map?.queryRenderedFeatures({ layers: ["track"] }).length ?? 0;
+        }),
+      { message: "the map draws the track line" },
+    )
+    .toBeGreaterThan(0);
+}
+
 // Evidence for the orchestrator, `make e2e-local` only (E2E_START_LOCAL): full-page screenshots of the home page, the
 // project page with plan run #4 and the Diagnostics page, saved under .data/e2e/slice-12 (gitignored). Never compared
 // by pixels, never uploaded by CI.
@@ -1149,14 +1169,19 @@ test("Screenshots of the three pages are saved for the orchestrator", async ({
   const projectUrl = await makeRunFour(page, testInfo);
   for (const [where, address] of [
     ["home", "/"],
-    ["project", projectUrl],
+    ["project", projectUrl.replace("/#/", "/?e2e=1#/")],
     ["diagnostics", "/#/diagnostics"],
   ] as const) {
     await page.goto(address);
-    if (where === "project")
+    if (where === "project") {
       await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
         timeout: 30_000,
       });
+      await expectLinesDrawn(page);
+    } else if (where === "diagnostics")
+      await expect(
+        page.getByRole("heading", { name: "K2 invariant violations" }),
+      ).toBeVisible();
     else await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page.screenshot({
       path: path.join(folder, `${where}-${testInfo.project.name}.png`),

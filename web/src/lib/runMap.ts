@@ -79,6 +79,7 @@ const TRIP_ZOOM = 8;
 const TRAIL_ZOOM = 13;
 const ARROW_SIZES = [0.5, 1];
 const ARROW_SPACINGS = [160, 80];
+const MIDDLE = 0.5; // half way along a line, by length
 const DISPLAY_DECIMALS = 1e6;
 /** A click this close to an entry or exit marker (inclusive) means that marker's place. */
 export const SNAP_PIXELS = 12;
@@ -120,9 +121,10 @@ function lineLayer(
   };
 }
 
-const ARROW_SIZE = 24;
-const WHITE = [255, 255, 255, 255];
-const GREEN = [20, 83, 45, 255];
+const ARROW_SIZE = 24; // pixels, square
+const PIXEL_CENTRE = 0.5; // the pixel (x, y) is the point (x + 0.5, y + 0.5)
+const ARROW_WHITE = [255, 255, 255, 255];
+const ARROW_GREEN = [20, 83, 45, 255];
 
 /** Is the pixel inside the triangle of the three corners (all given the same way round)? */
 function inside(x: number, y: number, [a, b, c]: [number, number][]): boolean {
@@ -132,26 +134,29 @@ function inside(x: number, y: number, [a, b, c]: [number, number][]): boolean {
   return signs.every((value) => value >= 0) || signs.every((value) => value <= 0);
 }
 
+// The two triangles of the arrow, in its own 24 px square: the white edge around the green head.
+const ARROW_EDGE: [number, number][] = [
+  [3, 3],
+  [21, 12],
+  [3, 21],
+];
+const ARROW_HEAD: [number, number][] = [
+  [6, 7],
+  [16, 12],
+  [6, 17],
+];
+
 /** The direction arrow, pointing right (a line's own direction when placed along it): a green head with a white
  * edge, as pixels: no sprite file and no canvas to draw on. */
 export function arrowImage(): { width: number; height: number; data: Uint8ClampedArray } {
   const data = new Uint8ClampedArray(ARROW_SIZE * ARROW_SIZE * 4);
-  const edge: [number, number][] = [
-    [3, 3],
-    [21, 12],
-    [3, 21],
-  ];
-  const head: [number, number][] = [
-    [6, 7],
-    [16, 12],
-    [6, 17],
-  ];
   for (let y = 0; y < ARROW_SIZE; y += 1) {
     for (let x = 0; x < ARROW_SIZE; x += 1) {
-      const colour = inside(x + 0.5, y + 0.5, head)
-        ? GREEN
-        : inside(x + 0.5, y + 0.5, edge)
-          ? WHITE
+      const [px, py] = [x + PIXEL_CENTRE, y + PIXEL_CENTRE];
+      const colour = inside(px, py, ARROW_HEAD)
+        ? ARROW_GREEN
+        : inside(px, py, ARROW_EDGE)
+          ? ARROW_WHITE
           : undefined;
       if (colour) data.set(colour, (y * ARROW_SIZE + x) * 4);
     }
@@ -227,7 +232,7 @@ function pointAlong(points: LngLat[], fraction: number): LngLat {
 function labelOf(line: LineFeature): MapOverlay | undefined {
   const { kind, level, reason, geometry } = line.properties;
   if (line.geometry.coordinates.length === 0) return undefined; // nothing drawn, nothing to label
-  const lngLat = pointAlong(line.geometry.coordinates, 0.5);
+  const lngLat = pointAlong(line.geometry.coordinates, MIDDLE);
   if (geometry === 'unavailable') {
     return {
       kind: 'unavailable',
@@ -348,7 +353,7 @@ export interface ScreenBox {
 }
 
 /** Where along a retrace line its label may stand, in the order tried: the middle, then a quarter, then three quarters. */
-export const RETRACE_FRACTIONS = [0.5, 0.25, 0.75];
+export const RETRACE_FRACTIONS = [MIDDLE, 0.25, 0.75];
 
 const overlaps = (a: ScreenBox, b: ScreenBox): boolean =>
   a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;

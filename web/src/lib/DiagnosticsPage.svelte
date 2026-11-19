@@ -1,8 +1,8 @@
 <script lang="ts">
   // GET /api/diagnostics as it comes (kpi-contracts `diagnostics_endpoint`): the stage p95s, the retried jobs, the jobs
-  // by terminal state, the variants per project and day, the K2 and K3 counts, any above 0 in a red badge, and the G4 count of
-  // refusals for the routing engine, green at 0 and amber from 1. Keys are the
-  // planner's own (stages, bands, states); seconds to one decimal; a figure without a job shows 'none'.
+  // by terminal state, the variants per project and day, the K2 and K3 counts, any above 0 in a red badge, and the G4
+  // count of refusals for the routing engine, green at 0 and amber from 1. Keys are the planner's own (stages, bands,
+  // states); seconds to one decimal; a figure without a job shows 'none'.
   import StatusBadge from './StatusBadge.svelte';
   import { failureText, readDiagnostics, type Diagnostics, type WindowCount } from './api';
 
@@ -122,7 +122,7 @@
     padding-left: var(--space-6);
   }
   section {
-    overflow-x: auto; /* a wide table scrolls in its own box, never the page */
+    overflow-x: auto; /* a wide line scrolls in its own box, never the page */
   }
   .meta {
     color: var(--color-text-muted);

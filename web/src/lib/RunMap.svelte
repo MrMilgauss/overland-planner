@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The map of a plan run under its itinerary (slice 09, ADR-003 Amendment 2). Everything that can be decided without
+  // The map of the plan run on show (slice 09, ADR-003 Amendment 2). Everything that can be decided without
   // a screen is runMap.ts's; this draws it with MapLibre, loaded only when a run is shown, and tells a refusal in the
   // planner's words. The map settings are read once; the geometry again whenever the run shown changes.
   import 'maplibre-gl/dist/maplibre-gl.css';
@@ -255,10 +255,6 @@
     color: var(--color-warning-fg);
     font-size: var(--text-sm);
     font-weight: 600;
-  }
-  .click-mode {
-    min-width: var(--target-min);
-    min-height: var(--target-min);
   }
   .map {
     width: 100%;

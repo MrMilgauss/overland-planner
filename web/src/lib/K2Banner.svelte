@@ -21,7 +21,7 @@
 </script>
 
 {#if count > acknowledged}
-  <aside role="alert">
+  <aside class="banner" role="alert">
     <p>
       {count} plan {count === 1 ? 'run' : 'runs'} broke one of the planner's rules.
       <a href="#/diagnostics">Diagnostics</a>
@@ -37,15 +37,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    margin: 0 0 var(--space-4);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--color-warning-fg);
-    border-radius: var(--radius-md);
-    background: var(--color-warning-bg);
-    color: var(--color-warning-fg);
-  }
-  p {
-    margin: var(--space-1) 0;
   }
   a {
     color: inherit;

@@ -61,7 +61,7 @@ class PlanRunQueries:
         )
         memo_hit = detail.memo_hit if detail.run_time_ms is None else source_id is not None
         header = "" if detail.provider_id is None else provider_header(detail.provider_id, detail.profile)
-        estimate = detail.provider_id is not None and is_estimate(detail.provider_id)
+        estimate = is_estimate(detail.provider_id)
         return replace(detail, messages=messages, memo_hit=memo_hit, provider_header=header, estimate=estimate)
 
     def notices(self, project_id: str) -> tuple[str, ...]:

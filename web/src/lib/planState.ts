@@ -26,6 +26,9 @@ export interface PlanLook {
   glyph: string | undefined;
 }
 
+/** The label of the ready run on show, also the Plan group's success label. */
+export const planRunLabel = (number: number): string => `Plan run #${number}`;
+
 const CHECK = '✓';
 const CROSS = '✕';
 
@@ -39,7 +42,7 @@ export function planState(facts: PlanFacts): PlanLook {
   if (facts.stale)
     return { state: 'stale', label: 'Stale', role: 'warning', fill: 'filled', glyph: '!' };
   if (facts.readyRunNumber !== undefined) {
-    const label = `Plan run #${facts.readyRunNumber}`;
+    const label = planRunLabel(facts.readyRunNumber);
     return { state: 'success', label, role: 'success', fill: 'filled', glyph: CHECK };
   }
   return {
