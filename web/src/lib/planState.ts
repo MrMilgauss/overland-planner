@@ -1,6 +1,7 @@
 // The one state of the Plan group (D266), chosen from what the panel knows, in this order: Loading, Planning, Failed,
-// Stale, Plan run #N, No plan yet. Pure, so that the rules are tested without a DOM.
-export type PlanStateName = 'loading' | 'planning' | 'failed' | 'stale' | 'success' | 'empty';
+// Stale, Plan run #N, then No plan yet, or no state at all when the runs are unreadable. Pure, so that the rules are tested without a DOM.
+export type PlanStateName =
+  'loading' | 'planning' | 'failed' | 'stale' | 'success' | 'empty' | 'unknown';
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 export type Fill = 'filled' | 'outline' | 'dashed';
 
@@ -15,6 +16,8 @@ export interface PlanFacts {
   stale: boolean;
   /** The number of the ready run on show, if any. */
   readyRunNumber: number | undefined;
+  /** The run list could not be read: nothing is known, so nothing is claimed (US-21). */
+  unreadable: boolean;
 }
 
 export interface PlanLook {
@@ -45,6 +48,8 @@ export function planState(facts: PlanFacts): PlanLook {
     const label = planRunLabel(facts.readyRunNumber);
     return { state: 'success', label, role: 'success', fill: 'filled', glyph: CHECK };
   }
+  if (facts.unreadable)
+    return { state: 'unknown', label: '', role: 'neutral', fill: 'dashed', glyph: undefined };
   return {
     state: 'empty',
     label: 'No plan yet',

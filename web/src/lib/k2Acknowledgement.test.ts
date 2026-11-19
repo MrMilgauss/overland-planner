@@ -22,8 +22,8 @@ const refusing = (): never => {
 describe('K2 acknowledgement kept in the browser', () => {
   it('answers what was acknowledged, shared by every instance on the same storage', () => {
     const storage = fakeStorage();
-    new K2Acknowledgement(storage).acknowledge(3);
-    expect(new K2Acknowledgement(storage).acknowledged()).toBe(3);
+    new K2Acknowledgement(() => storage).acknowledge(3);
+    expect(new K2Acknowledgement(() => storage).acknowledged()).toBe(3);
   });
 
   it.each([
@@ -32,16 +32,22 @@ describe('K2 acknowledgement kept in the browser', () => {
     ['a negative number', { 'k2.acknowledged': '-2' }],
     ['a fraction', { 'k2.acknowledged': '1.5' }],
   ])('answers nothing acknowledged for %s', (_case, initial) => {
-    expect(new K2Acknowledgement(fakeStorage(initial)).acknowledged()).toBe(0);
+    expect(new K2Acknowledgement(() => fakeStorage(initial)).acknowledged()).toBe(0);
   });
 
   it('answers nothing acknowledged when reading throws', () => {
     const storage = { ...fakeStorage(), getItem: refusing } as Storage;
-    expect(new K2Acknowledgement(storage).acknowledged()).toBe(0);
+    expect(new K2Acknowledgement(() => storage).acknowledged()).toBe(0);
   });
 
   it('swallows a failed write', () => {
     const storage = { ...fakeStorage(), setItem: refusing } as Storage;
-    expect(() => new K2Acknowledgement(storage).acknowledge(1)).not.toThrow();
+    expect(() => new K2Acknowledgement(() => storage).acknowledge(1)).not.toThrow();
+  });
+
+  it('treats a storage that cannot even be reached as nothing acknowledged and a write as swallowed', () => {
+    const blocked = new K2Acknowledgement(refusing);
+    expect(blocked.acknowledged()).toBe(0);
+    expect(() => blocked.acknowledge(2)).not.toThrow();
   });
 });

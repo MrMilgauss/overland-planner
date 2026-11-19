@@ -8,7 +8,15 @@
   const PROJECT_ROUTE = /^#\/projects\/([^/]+)$/;
 
   let hash = $state(window.location.hash);
-  const projectId = $derived(PROJECT_ROUTE.exec(hash)?.[1]);
+  /** A hash that is not valid percent-encoding names no project: the home page opens. */
+  function decoded(raw: string | undefined): string | undefined {
+    try {
+      return raw === undefined ? undefined : decodeURIComponent(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  const projectId = $derived(decoded(PROJECT_ROUTE.exec(hash)?.[1]));
   const diagnostics = $derived(hash === '#/diagnostics');
 </script>
 
@@ -25,7 +33,7 @@
 <main>
   {#if projectId}
     {#key projectId}
-      <WorkspacePage projectId={decodeURIComponent(projectId)} />
+      <WorkspacePage {projectId} />
     {/key}
   {:else if diagnostics}
     <DiagnosticsPage />

@@ -10,6 +10,7 @@ const NONE: PlanFacts = {
   failed: false,
   stale: false,
   readyRunNumber: undefined,
+  unreadable: false,
 };
 
 const SIX: [string, Partial<PlanFacts>, PlanStateName, string][] = [
@@ -28,6 +29,11 @@ describe('planState', () => {
     expect(picked.label).toBe(label);
   });
 
+  it('claims no state when the runs are unreadable and nothing else is known', () => {
+    expect(planState({ ...NONE, unreadable: true }).state).toBe('unknown');
+    expect(planState({ ...NONE, unreadable: true, readyRunNumber: 2 }).state).toBe('success');
+  });
+
   it('lets the earlier state win in every overlapping pair', () => {
     const all: PlanFacts = {
       loading: true,
@@ -35,6 +41,7 @@ describe('planState', () => {
       failed: true,
       stale: true,
       readyRunNumber: 4,
+      unreadable: false,
     };
     const dropping: (keyof PlanFacts)[] = ['loading', 'planning', 'failed', 'stale'];
     const order: PlanStateName[] = ['loading', 'planning', 'failed', 'stale', 'success'];

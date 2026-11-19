@@ -219,4 +219,26 @@ describe('K2 banner on the home page', () => {
     expect(screen.getByText(wording)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
+
+  it('still shows the banner and lists the projects when merely reaching localStorage throws', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new DOMException('blocked', 'SecurityError');
+      },
+    });
+    try {
+      stubProjectsEndpoint(200, [{ id: 'p1', name: 'Sardinia loop' }], HEALTHY, undefined, 1);
+
+      render(ProjectsPage);
+
+      await screen.findByText(wording);
+      expect(await screen.findByRole('link', { name: 'Sardinia loop' })).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
+      expect(screen.getByText(wording)).toBeInTheDocument();
+    } finally {
+      if (original) Object.defineProperty(window, 'localStorage', original);
+    }
+  });
 });

@@ -65,6 +65,7 @@
   let stopPressed = $state(false);
   let notices = $state<string[]>([]);
   let incumbent = $state<Incumbent | undefined>();
+  let unreadable = $state(false); // the last read of the run list failed: the page does not know whether runs exist
   let firstRead = $state(true); // the run list has not been read yet: the state is Loading
   let endedWithoutRun = $state(''); // a job stopped before the solve: what it did, not a problem
 
@@ -79,6 +80,7 @@
       failed: failedRun !== undefined,
       stale: readyRun !== undefined && readyRunStale,
       readyRunNumber: readyRun?.number,
+      unreadable,
     }),
   );
   const estimate = $derived(estimateMarker(readyRun?.estimate));
@@ -100,8 +102,10 @@
       failedRun = latest && latest !== ready ? await readPlanRun(latest.id) : undefined;
       readyRun = ready ? await readPlanRun(ready.id) : undefined;
       readyRunStale = ready?.stale === true;
+      unreadable = false;
     } catch (error) {
       problem = failureText(error);
+      unreadable = true;
     }
     firstRead = false;
   }
@@ -228,14 +232,16 @@
 </script>
 
 <div class="panel">
-  <StatusBadge
-    tone={look.role}
-    fill={look.fill}
-    glyph={look.glyph}
-    label={look.label}
-    data-plan-state={look.state}
-    aria-busy={look.state === 'loading' ? 'true' : undefined}
-  />
+  {#if look.state !== 'unknown'}
+    <StatusBadge
+      tone={look.role}
+      fill={look.fill}
+      glyph={look.glyph}
+      label={look.label}
+      data-plan-state={look.state}
+      aria-busy={look.state === 'loading' ? 'true' : undefined}
+    />
+  {/if}
   {#if look.state === 'planning'}
     <div class="progress" data-testid="plan-progress" aria-hidden="true"><span></span></div>
   {/if}

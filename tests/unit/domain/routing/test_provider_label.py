@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from overland_planner.domain.routing.provider_label import is_estimate, provider_header
@@ -91,6 +91,7 @@ def test_every_offline_road_map_id_is_an_estimate_in_whatever_form_it_was_stored
     assert all(is_estimate(provider_id) for provider_id in ("mock", scripted, f"mock:{tail}"))
 
 
+@example(version="1.0.0", epoch=0, other="mock", around="a")  # D275: plain `mock` is an estimate
 @given(version=VERSIONS, epoch=EPOCHS, other=UNKNOWN_IDS, around=st.text(alphabet="abcxyz-_", min_size=1, max_size=6))
 def test_a_real_road_map_an_unknown_id_or_a_mock_elsewhere_in_the_id_is_not_an_estimate(
     version: str, epoch: int, other: str, around: str
@@ -98,4 +99,4 @@ def test_a_real_road_map_an_unknown_id_or_a_mock_elsewhere_in_the_id_is_not_an_e
     not_offline = [f"valhalla:{version}:{epoch}", f"valhalla:mock:{epoch}", f"{around}mock", f"{around}:mock:{around}"]
 
     assert not any(is_estimate(provider_id) for provider_id in not_offline)
-    assert is_estimate(other) is other.startswith("mock:")
+    assert is_estimate(other) is (other == "mock" or other.startswith("mock:"))

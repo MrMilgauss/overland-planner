@@ -972,6 +972,22 @@ describe('Plan panel: one plan state at a time', () => {
     expect(screen.queryByText('No plan yet')).not.toBeInTheDocument();
   });
 
+  it('claims neither a state nor No plan yet when the run list cannot be read', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: {
+        status: 503,
+        body: { code: 'unavailable', message: 'Planner is starting up' },
+      },
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Planner is starting up');
+    expect(document.querySelector('[data-plan-state]')).toBeNull();
+    expect(screen.queryByText('No plan yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Press Calculate to plan this trip.')).not.toBeInTheDocument();
+  });
+
   it('says No plan yet and points to Calculate when the project has no run', async () => {
     stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
     render(PlanPanel, { props: { projectId: 'p1' } });
