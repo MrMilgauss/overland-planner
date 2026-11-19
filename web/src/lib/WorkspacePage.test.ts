@@ -197,7 +197,9 @@ describe('Workspace page', () => {
     await act();
 
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
-    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+    expect(
+      within(screen.getByRole('list', { name: 'Items' })).getAllByRole('listitem'),
+    ).toHaveLength(1);
   });
 
   it('shows the planner message verbatim when the project cannot be opened', async () => {
@@ -264,20 +266,21 @@ describe('Workspace page: the map as the main column', () => {
     body: { id: 'r1', project_id: 'p1', number: 1, status: 'ready', stops: [], estimate: false },
   };
 
-  it('offers the controls in three labelled groups: Plan, Items, Start and end', async () => {
+  it('offers the phase steps Build the trip, Planning and Your route in that order, with one main action', async () => {
     stubPlanner([[]]);
     render(WorkspacePage, { props: { projectId: 'p1' } });
 
-    const headings = await screen.findAllByRole('heading', { level: 2 });
+    const steps = within(await screen.findByRole('list', { name: 'Steps' })).getAllByRole(
+      'listitem',
+    );
 
-    expect(headings.map((heading) => heading.textContent)).toEqual([
-      'Plan',
-      'Items',
-      'Start and end',
+    expect(steps.map((step) => step.textContent?.replace(/^\d\s*/, '').trim())).toEqual([
+      'Build the trip',
+      'Planning',
+      'Your route',
     ]);
-    for (const name of ['Plan', 'Items', 'Start and end']) {
-      expect(screen.getByRole('region', { name })).toBeInTheDocument();
-    }
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toHaveClass('primary');
   });
 
   it('says the map waits for a plan, and loads no map, while no run is ready', async () => {

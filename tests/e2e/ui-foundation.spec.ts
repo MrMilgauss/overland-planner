@@ -6,11 +6,11 @@
 // webkit-iphone14 (390 px) against the packaged planner on PLANNER_URL, which plans on the offline road map.
 // A test meant for one width skips itself on the other project (`test.skip(testInfo.project.name !== ...)`).
 // Seeding follows workspace.spec.ts and run-map.spec.ts: the page itself (New project, Import assietta.gpx, Add place,
-// Set Start and End, Calculate), `page.request` to the planner's own API, and the served base map (`serveTheBaseMap`).
+// Set Start and End, Plan the route), `page.request` to the planner's own API, and the served base map (`serveTheBaseMap`).
 // Each test creates its own project (both projects run at once against one planner).
 // States the packaged planner cannot reach on its own are set by rewriting the planner's answer in this browser
-// (`page.route`, policy waiver W4): Loading (held answer), Planning (job held at running), Failed run #5, a Valhalla
-// run (`estimate: false`), a retrace, and the Diagnostics K2 count. Contrast: a small WCAG ratio helper in tests/e2e.
+// (`page.route`, policy waiver W4): Planning (job held at running), a Failed run #5, a Valhalla run (`estimate: false`),
+// a retrace, and the Diagnostics K2 count (the plan statuses' own checks moved to trip-workflow.spec.ts, 12-03). Contrast: a small WCAG ratio helper in tests/e2e.
 import path from "node:path";
 import {
   devices,
@@ -57,7 +57,7 @@ async function makeAPlannedProject(
   await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
   await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
   await page.getByRole("button", { name: "Set Start and End" }).click();
-  await page.getByRole("button", { name: "Calculate" }).click();
+  await page.getByRole("button", { name: "Plan the route" }).click();
   await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
     timeout: 120_000,
   });
@@ -66,8 +66,8 @@ async function makeAPlannedProject(
 
 // ===================== US-20 One product: map first, one look, on any screen =====================
 
-// "Plan run #4" is reached as Marco reaches it: the same project is Calculated four times on the offline road map
-// (makeAPlannedProject presses Calculate once, three more presses follow); the planner's own run list says when the
+// "Plan run #4" is reached as Marco reaches it: the same project is planned four times on the offline road map
+// (makeAPlannedProject presses Plan the route once, three more rounds of Edit trip and Plan the route follow); the planner's own run list says when the
 // fourth run is ready, so the test never reads the page's wording of the run.
 async function makeRunFour(page: Page, testInfo: TestInfo): Promise<string> {
   return makeRuns(page, testInfo, 4);
@@ -91,7 +91,8 @@ async function makeRuns(
     return runs.filter((run) => run.status === "ready").length;
   };
   for (let ready = 1; ready < runs; ready += 1) {
-    await page.getByRole("button", { name: "Calculate" }).click();
+    await page.getByRole("button", { name: "Edit trip" }).click();
+    await page.getByRole("button", { name: "Plan the route" }).click();
     await expect.poll(readyRuns, { timeout: 120_000 }).toBe(ready + 1);
     await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
       timeout: 30_000,
@@ -157,18 +158,15 @@ test("On a laptop the map is the main surface", async ({ page }, testInfo) => {
   });
 
   const map = await boxOf(page.getByRole("region", { name: "Map of the run" }));
-  for (const group of ["Plan", "Items", "Start and end"]) {
-    const region = await boxOf(
-      page.getByRole("region", { name: group, exact: true }),
-    );
-    expect(
-      map.width,
-      `the map is wider than the ${group} group`,
-    ).toBeGreaterThan(region.width);
-  }
+  const phasePanel = await boxOf(
+    page.getByRole("region", { name: "Your route", exact: true }),
+  );
+  expect(map.width, "the map is wider than the phase panel").toBeGreaterThan(
+    phasePanel.width,
+  );
   const viewport = page.viewportSize()!;
   const inView = [
-    page.getByRole("heading", { name: "Plan", exact: true }),
+    page.getByRole("region", { name: "Your route", exact: true }),
     page.getByRole("list", { name: "Itinerary" }),
     page.getByLabel("Totals"),
   ];
@@ -271,7 +269,7 @@ test("At tablet width nothing overlaps", async ({ page }, testInfo) => {
   expect(await scrollsSideways(page), "the page scrolls sideways").toBe(false);
 });
 
-test("Every page uses the same look and the controls are grouped by task", async ({
+test("Every page uses the same look and the project page follows the trip's phases", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -341,15 +339,16 @@ test("Every page uses the same look and the controls are grouped by task", async
   }
 
   await page.goto(projectUrl);
-  const order: number[] = [];
-  for (const group of ["Plan", "Items", "Start and end"]) {
-    const heading = page.getByRole("heading", { name: group, exact: true });
-    order.push((await boxOf(heading)).y);
-  }
+  const steps = page.getByRole("list", { name: "Steps" }).getByRole("listitem");
+  await expect(steps).toHaveText([/Build the trip/, /Planning/, /Your route/]);
+  const order = await steps.evaluateAll((els) =>
+    els.map((el) => el.getBoundingClientRect().x),
+  );
   expect(
     order,
-    "the groups follow one another: Plan, Items, Start and end",
+    "the phase steps follow one another: Build the trip, Planning, Your route",
   ).toEqual([...order].sort((a, b) => a - b));
+  await expect(page.locator("button.primary")).toHaveCount(1);
 });
 
 test("The theme follows the system and text stays readable outdoors", async ({
@@ -415,8 +414,9 @@ test("Keyboard focus is always visible", async ({ page }, testInfo) => {
   const exportGpx = page.getByRole("link", { name: "Export GPX" });
   await expect(exportGpx).toBeVisible({ timeout: 30_000 });
 
+  const editTrip = page.getByRole("button", { name: "Edit trip" });
   await page.keyboard.press("Tab"); // keyboard use is on; from here focus() shows a focus ring as Tab does
-  await page.getByRole("button", { name: "Calculate" }).focus();
+  await page.getByRole("button", { name: "Your route" }).focus(); // the first of the phase steps
   const seen: string[] = [];
   for (let step = 0; step < 12; step += 1) {
     const look = await readColours(page, "focus");
@@ -432,10 +432,11 @@ test("Keyboard focus is always visible", async ({ page }, testInfo) => {
       contrastRatio(look.outlineColour, look.background),
       `${look.element} outline against the page`,
     ).toBeGreaterThanOrEqual(3);
-    if (await exportGpx.evaluate((el) => el === document.activeElement)) break;
+    if (await editTrip.evaluate((el) => el === document.activeElement)) break;
     await page.keyboard.press("Tab");
   }
-  expect(seen.at(-1)).toContain("Export GPX");
+  expect(seen.at(-1)).toContain("Edit trip"); // the last control of Your route, until Details (12-05)
+  expect(seen.join("|")).toContain("Export GPX");
 });
 
 // The run's geometry with a 12.4 km retrace of "Colle del Sommeiller" added (W4: the packaged planner's one-track run
@@ -650,54 +651,7 @@ test("The map stays readable on a phone at trip-wide zoom", async ({
 
 // ===================== US-21 Plan state and whether its roads are real =====================
 
-type StateLook = { glyph: string; border: string; fill: string };
-
-// The D266 table: what each state shows besides its colour. Two states never share glyph, border style and fill.
-const STATE_LOOKS: Record<string, StateLook> = {
-  "No plan yet": { glyph: "", border: "dashed", fill: "outline" },
-  Loading: { glyph: "", border: "solid", fill: "outline" },
-  Planning: { glyph: "", border: "solid", fill: "filled" },
-  "Plan run #6": { glyph: "\u2713", border: "solid", fill: "filled" },
-  Failed: { glyph: "\u2715", border: "solid", fill: "filled" },
-  Stale: { glyph: "!", border: "solid", fill: "filled" },
-};
-
 const stateBadge = (page: Page): Locator => page.locator("[data-plan-state]");
-
-// The badge as the page draws it: its words without the glyph, the glyph, the border style and whether it is filled.
-async function badgeLook(
-  badge: Locator,
-): Promise<StateLook & { label: string }> {
-  return badge.evaluate((el) => {
-    const style = getComputedStyle(el);
-    const glyph = el.querySelector('[aria-hidden="true"]');
-    const words = el.cloneNode(true) as HTMLElement;
-    words.querySelectorAll('[aria-hidden="true"]').forEach((g) => g.remove());
-    const fill = /^rgba?\(.*,\s*0\)$|^transparent$/.test(style.backgroundColor)
-      ? "outline"
-      : "filled";
-    return {
-      label: (words.textContent ?? "").trim(),
-      glyph: (glyph?.textContent ?? "").trim(),
-      border: style.borderTopStyle,
-      fill,
-    };
-  });
-}
-
-async function expectState(page: Page, label: string): Promise<void> {
-  const own = STATE_LOOKS[label];
-  const looks = Object.values(STATE_LOOKS).map((l) => JSON.stringify(l));
-  expect(
-    new Set(looks).size,
-    "no two states share glyph, border and fill",
-  ).toBe(looks.length);
-  await expect(stateBadge(page)).toHaveCount(1);
-  await expect(stateBadge(page)).toBeVisible();
-  await expect
-    .poll(() => badgeLook(stateBadge(page)))
-    .toEqual({ label, ...own });
-}
 
 // Planning without a real solve: the planner's answer to Calculate and to the job is rewritten (W4), the job held at
 // "solving" and stoppable.
@@ -735,62 +689,6 @@ async function makeAnEmptyProject(
 
 const FAILED_WORDS =
   "No valid route found within the time limit - plan run #5 failed";
-
-for (const label of Object.keys(STATE_LOOKS)) {
-  test(`Every plan state has its own label and look: ${label}`, async ({
-    page,
-  }, testInfo) => {
-    test.skip(
-      testInfo.project.name !== "chromium",
-      "the look is checked on the desktop browser",
-    );
-    test.setTimeout(300_000);
-
-    if (label === "No plan yet") {
-      await makeAnEmptyProject(page, testInfo);
-    } else if (label === "Loading") {
-      await makeAnEmptyProject(page, testInfo);
-      const projectUrl = page.url();
-      let release: () => void = () => {};
-      const held = new Promise<void>((done) => (release = done));
-      await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, async (route) => {
-        await held;
-        await route.continue();
-      });
-      await page.goto("/");
-      await page.goto(projectUrl);
-      await expectState(page, label);
-      await expect(stateBadge(page)).toHaveAttribute("aria-busy", "true");
-      release();
-      await expect(stateBadge(page)).toContainText("No plan yet");
-      return;
-    } else if (label === "Planning") {
-      await makeAnEmptyProject(page, testInfo);
-      await holdPlanning(page);
-      await page.getByRole("button", { name: "Calculate" }).click();
-    } else if (label === "Plan run #6") {
-      await makeRuns(page, testInfo, 6);
-    } else if (label === "Failed") {
-      await makeRunFour(page, testInfo);
-      await failRunFive(page);
-      await page.reload();
-    } else {
-      await makeRunFour(page, testInfo);
-      await page.getByLabel("Place name").fill("Rifugio Selleries");
-      await page.getByLabel("Latitude").fill("45.0123");
-      await page.getByLabel("Longitude").fill("7.0456");
-      await page.getByRole("button", { name: "Add place" }).click();
-      await expect(
-        page.getByRole("list", { name: "Items" }).getByRole("listitem"),
-      ).toHaveCount(3);
-      await page.reload();
-      await expect(
-        page.getByText("Plan run #4", { exact: true }),
-      ).toBeVisible();
-    }
-    await expectState(page, label);
-  });
-}
 
 // Plan run #5 failed on its time limit, as the planner words it: the run list and that run's detail are rewritten (W4),
 // every other answer is the planner's own.
@@ -833,14 +731,14 @@ test("While planning, Stop is offered", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await makeAnEmptyProject(page, testInfo);
   await holdPlanning(page);
-  await page.getByRole("button", { name: "Calculate" }).click();
-  await expectState(page, "Planning");
+  await page.getByRole("button", { name: "Plan the route" }).click();
+  await expect(stateBadge(page)).toHaveText(/Planning…/);
   await expect(
     page.getByRole("button", { name: "Stop and use best so far" }),
   ).toBeVisible();
 });
 
-test("A Failed run shows the label Failed and the planner's own words", async ({
+test("A failed plan shows Couldn't plan and the planner's own words", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -852,19 +750,15 @@ test("A Failed run shows the label Failed and the planner's own words", async ({
   await failRunFive(page);
   await page.reload();
 
-  await expectState(page, "Failed");
+  await expect(stateBadge(page)).toHaveText(/Couldn't plan/);
   await expect(
     page.getByRole("alert").filter({ hasText: FAILED_WORDS }),
   ).toBeVisible();
+  // the route of plan run #4 stays under "Previous route" with its own export; plan run #5 offers none (D208, D276)
+  await expect(page.getByText("Previous route")).toBeVisible();
   await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
-  // plan run #5 offers no export; the older run #4 keeps its own, named with its number (D208, D276)
-  await expect(
-    page.getByRole("link", { name: "Export GPX of plan run #5" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Export GPX of plan run #4" }),
-  ).toBeVisible();
-  // the Failed run carries no estimate marker; run #4 is the real offline-road-map run, so its own pill shows below
+  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(1);
+  // the failed plan carries no estimate marker; run #4 is the real offline-road-map run, so its own pill shows below
   await expect(
     page
       .getByRole("alert")
@@ -880,7 +774,7 @@ const ESTIMATE =
   "estimate: road legs are straight-line guesses, not real roads";
 
 function planPanel(page: Page): Locator {
-  return page.getByRole("region", { name: "Plan", exact: true });
+  return page.getByRole("region", { name: "Your route", exact: true });
 }
 
 function mapArea(page: Page): Locator {
@@ -894,16 +788,16 @@ test("A plan on the offline road map is marked as an estimate", async ({
   await makeRunFour(page, testInfo);
   await page.reload();
 
-  await expect(stateBadge(page)).toContainText("Plan run #4");
+  await expect(stateBadge(page)).toContainText("Route ready");
   const pill = planPanel(page).getByRole("note", { name: ESTIMATE });
   await expect(pill).toBeVisible();
   await expect(pill).toHaveText(/Estimate/);
   await expect(pill).toHaveAttribute("title", ESTIMATE);
   await expect(pill.locator('[aria-hidden="true"]')).toHaveText("\u2248");
-  // by the heading: within a short way of the state badge, in the same panel
+  // in the summary card, beside the status
   const badge = await boxOf(stateBadge(page));
   const pillBox = await boxOf(pill);
-  expect(Math.abs(pillBox.y - badge.y)).toBeLessThan(200);
+  expect(Math.abs(pillBox.y - badge.y)).toBeLessThan(20);
 
   const chip = mapArea(page).getByRole("note", { name: ESTIMATE });
   await expect(chip).toBeVisible();
@@ -933,54 +827,12 @@ test("A plan on real roads shows no estimate marker", async ({
   });
   await page.reload();
 
-  await expect(stateBadge(page)).toContainText("Plan run #6");
-  await expect(
-    page.getByRole("link", { name: "Export GPX of plan run #6" }),
-  ).toBeVisible();
+  await expect(stateBadge(page)).toContainText("Route ready");
+  await expect(planPanel(page).getByText("Real roads")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible();
   await expect(page.getByRole("note", { name: ESTIMATE })).toHaveCount(0);
   await expect(page.getByTitle(/^estimate:/)).toHaveCount(0);
   await expect(mapArea(page).getByText("Estimate")).toHaveCount(0);
-});
-
-test("A stale estimate shows both labels", async ({ page }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "chromium",
-    "the stale estimate is checked on the desktop browser",
-  );
-  test.setTimeout(420_000);
-  await makeRunFour(page, testInfo);
-  await page.getByLabel("Place name").fill("Lago del Moncenisio");
-  await page.getByLabel("Latitude").fill("45.2480");
-  await page.getByLabel("Longitude").fill("6.9980");
-  await page.getByRole("button", { name: "Add place" }).click();
-  await expect(
-    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
-  ).toHaveCount(3);
-  await page.reload();
-
-  await expectState(page, "Stale");
-  await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
-  await expect(
-    planPanel(page).getByRole("note", { name: ESTIMATE }),
-  ).toBeVisible();
-  await expect(
-    mapArea(page).getByRole("note", { name: ESTIMATE }),
-  ).toBeVisible();
-});
-
-test("A project with no plan yet says so and points to Calculate", async ({
-  page,
-}, testInfo) => {
-  test.setTimeout(120_000);
-  await makeAnEmptyProject(page, testInfo);
-  await expect(stateBadge(page)).toContainText("No plan yet");
-  await expect(
-    page.getByText("Press Calculate to plan this trip."),
-  ).toBeVisible();
-  await expect(
-    page.getByText("The map shows the plan once one is computed."),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
 });
 
 // ===================== US-22 The home page tells when a plan broke a hard rule =====================

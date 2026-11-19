@@ -136,7 +136,7 @@ input[type='file']::file-selector-button {
   margin-right: var(--space-3);
 }
 
-/* primary: the one action of a form (Calculate, Acknowledge) */
+/* primary: the one action of a form (Plan the route, Acknowledge) */
 button.primary {
   border-color: var(--color-accent);
   background: var(--color-accent);
@@ -179,6 +179,12 @@ a.button {
   background: var(--color-surface);
   color: var(--color-text);
   text-decoration: none;
+}
+
+a.button.primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
 [role='alert'] {

@@ -1,4 +1,4 @@
-// The plan of a project (slices 01b and 02): Calculate, polling every 500 ms, the Itinerary with its Totals and Export
+// The plan of a project (slices 01b and 02, the phases of 12b): Plan the route, polling every 500 ms, the Itinerary with its Totals and Export
 // GPX, each job state, each refusal and a Failed run's report. The fetch stub stands in for the planner's HTTP API (the port of the page); only setTimeout is faked,
 // so the polling clock is the test's.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11); the job's states are property-tested on
@@ -122,9 +122,12 @@ async function settled(): Promise<void> {
   for (let turn = 0; turn < 10; turn += 1) await new Promise((done) => setImmediate(done));
 }
 
+/** Plan the route, from Build the trip; on a ready route Marco first presses Edit trip, as the page asks of him. */
 async function clickCalculate(): Promise<void> {
   await settled();
-  await fireEvent.click(screen.getByRole('button', { name: 'Calculate' }));
+  const edit = screen.queryByRole('button', { name: 'Edit trip' });
+  if (edit) await fireEvent.click(edit);
+  await fireEvent.click(screen.getByRole('button', { name: 'Plan the route' }));
 }
 
 async function pressCalculate(): Promise<void> {
@@ -138,7 +141,7 @@ async function tick(ms = 500): Promise<void> {
 }
 
 function exportLink(): HTMLElement | null {
-  return screen.queryByRole('link', { name: /^Export GPX of plan run #\d+$/ });
+  return screen.queryByRole('link', { name: 'Export GPX' });
 }
 
 beforeEach(() => {
@@ -157,7 +160,7 @@ describe('Plan panel: calculating', () => {
     ['waiting_for_optimizer', 'Waiting for the optimizer'],
     ['solving', 'Solving'],
     ['finalising', 'Finalising'],
-  ])('shows the running state %s as %s, with Calculate disabled', async (state, text) => {
+  ])('shows the running state %s as %s, with the planning phase open', async (state, text) => {
     stubPlanner({
       [`GET ${RUNS}`]: NO_RUNS,
       [`POST ${RUNS}`]: ACCEPTED,
@@ -169,7 +172,7 @@ describe('Plan panel: calculating', () => {
     await tick();
 
     expect(screen.getByRole('status')).toHaveTextContent(text);
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Plan the route' })).not.toBeInTheDocument();
     expect(exportLink()).not.toBeInTheDocument();
   });
 
@@ -210,7 +213,7 @@ describe('Plan panel: calculating', () => {
     const link = exportLink();
     expect(link).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
     expect(link).not.toHaveAttribute('download');
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Edit trip' })).toBeEnabled();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     const asked = count(calls, `GET ${JOB}`);
     await tick(2000);
@@ -247,21 +250,24 @@ describe('Plan panel: refusals and failures', () => {
     [422, 'missing_anchor', 'Set a Start and an End first'],
     [409, 'job_active', 'A calculation is already running for this project'],
     [503, 'optimizer_unavailable', 'The optimizer is not available right now'],
-  ])('shows a %d refusal verbatim and leaves Calculate usable', async (status, code, message) => {
-    const calls = stubPlanner({
-      [`GET ${RUNS}`]: NO_RUNS,
-      [`POST ${RUNS}`]: { status, body: { code, message } },
-    });
-    render(PlanPanel, { props: { projectId: 'p1' } });
+  ])(
+    'shows a %d refusal verbatim and leaves Plan the route usable',
+    async (status, code, message) => {
+      const calls = stubPlanner({
+        [`GET ${RUNS}`]: NO_RUNS,
+        [`POST ${RUNS}`]: { status, body: { code, message } },
+      });
+      render(PlanPanel, { props: { projectId: 'p1' } });
 
-    await pressCalculate();
+      await pressCalculate();
 
-    expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
-    await tick(2000);
-    expect(count(calls, `GET ${JOB}`)).toBe(0);
-  });
+      expect(screen.getByRole('alert')).toHaveTextContent(message);
+      expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      await tick(2000);
+      expect(count(calls, `GET ${JOB}`)).toBe(0);
+    },
+  );
 
   it('shows the message of a job in state failed, offers no export and stops asking', async () => {
     const message = 'The plan could not be calculated - nothing was changed';
@@ -277,7 +283,7 @@ describe('Plan panel: refusals and failures', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(exportLink()).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
     await tick(2000);
     expect(count(calls, `GET ${JOB}`)).toBe(1);
   });
@@ -299,7 +305,7 @@ describe('Plan panel: refusals and failures', () => {
     );
     expect(exportLink()).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Itinerary' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
   });
 
   // The planner's words for a Failed run (run_messages._FAILED), shown verbatim instead of the composed line.
@@ -323,7 +329,7 @@ describe('Plan panel: refusals and failures', () => {
     expect(alert).not.toHaveTextContent('This plan run failed');
     expect(alert).not.toHaveTextContent(`(${code})`);
     expect(exportLink()).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
   });
 
   it('reads a Failed run by its report reason rather than its code', async () => {
@@ -360,7 +366,7 @@ describe('Plan panel: refusals and failures', () => {
     expect(totals).toHaveTextContent('Total 511.0 km, 17h50');
   });
 
-  it('keeps asking through a lost connection, with Calculate usable, until the job answers again', async () => {
+  it('keeps asking through a lost connection, with Plan the route usable, until the job answers again', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: [NO_RUNS, listed(['r1', 1, 'ready'])],
       [`POST ${RUNS}`]: ACCEPTED,
@@ -377,12 +383,11 @@ describe('Plan panel: refusals and failures', () => {
     await pressCalculate();
     await tick();
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load the plan.');
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
 
     await tick();
     screen.getByText('Solving');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Plan the route' })).not.toBeInTheDocument();
 
     await tick();
     await tick();
@@ -390,7 +395,7 @@ describe('Plan panel: refusals and failures', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('stops asking when the job has expired, shows why and leaves Calculate usable', async () => {
+  it('stops asking when the job has expired, shows why and leaves Plan the route usable', async () => {
     const message = 'No plan job j1';
     const calls = stubPlanner({
       [`GET ${RUNS}`]: NO_RUNS,
@@ -403,7 +408,7 @@ describe('Plan panel: refusals and failures', () => {
     await tick();
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     await tick(2000);
     expect(count(calls, `GET ${JOB}`)).toBe(1);
@@ -415,9 +420,8 @@ describe('Plan panel: Export GPX during a recalculation', () => {
 
   function showsTheOldRunWithoutExport(state: string): void {
     expect(screen.getByRole('status')).toHaveTextContent(state);
-    expect(exportLink()).not.toBeInTheDocument();
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument(); // nowhere on the page while a job runs (D208 F2)
+    expect(screen.getByRole('region', { name: 'Planning' })).toBeInTheDocument();
   }
 
   /** Holds back the planner's answers to `url` until the returned function is called. */
@@ -436,7 +440,7 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     return arrive;
   }
 
-  it('offers no export while a job runs, keeps the itinerary on show, then offers the new run', async () => {
+  it('offers no export while a job runs, then shows and offers the new run', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: [listed(['r1', 1, 'ready']), listed(['r1', 1, 'ready'], ['r2', 2, 'ready'])],
       [`POST ${RUNS}`]: ACCEPTED,
@@ -529,11 +533,10 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     await tick();
 
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load the plan.');
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(exportLink()).not.toBeInTheDocument();
   });
 
-  it('offers the older ready run again when Calculate is refused', async () => {
+  it('stays on Build the trip, with no export, when Plan the route is refused', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       [`POST ${RUNS}`]: { status: 409, body: { code: 'job_active', message: 'Already running' } },
@@ -544,7 +547,8 @@ describe('Plan panel: Export GPX during a recalculation', () => {
     await pressCalculate();
 
     expect(screen.getByRole('alert')).toHaveTextContent('Already running');
-    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(exportLink()).not.toBeInTheDocument();
   });
 });
 
@@ -555,7 +559,7 @@ describe('Plan panel: reopening a project', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
 
     await settled();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
     expect(screen.queryByRole('list', { name: 'Itinerary' })).not.toBeInTheDocument();
     expect(exportLink()).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -590,11 +594,11 @@ describe('Plan panel: reopening a project', () => {
     expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('This plan run failed (optimizer_failed)');
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(screen.getByText('Previous route')).toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx'); // the older run keeps its export (D208)
-    expect(exportLink()).toHaveTextContent('Export GPX of plan run #1');
   });
 
-  it('shows the message when the runs cannot be read, and Calculate stays usable', async () => {
+  it('shows the message when the runs cannot be read, and Plan the route stays usable', async () => {
     const message = 'The planner is restarting';
     stubPlanner({ [`GET ${RUNS}`]: { status: 500, body: { code: 'internal', message } } });
 
@@ -602,7 +606,7 @@ describe('Plan panel: reopening a project', () => {
     await settled();
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
   });
 });
 
@@ -685,7 +689,7 @@ describe('Plan panel: Stop and use best so far', () => {
 
       expect(screen.getByText(message)).toBeInTheDocument();
       expect(stopButton()).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
       const asked = count(calls, `GET ${JOB}`);
       await tick(2000);
       expect(count(calls, `GET ${JOB}`)).toBe(asked);
@@ -845,7 +849,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
   it.each([
     ['routing_engine_unreachable', UNREACHABLE],
     ['routing_engine_not_ready', NOT_READY],
-  ])('shows the %s refusal as it is and keeps the last run on screen', async (code, message) => {
+  ])('shows the %s refusal as it is and stays on Build the trip', async (code, message) => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': OLD_RUN,
@@ -855,8 +859,8 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
     await pressCalculate();
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
   });
 
   it.each([
@@ -943,13 +947,13 @@ describe('Plan panel: the run the page shows on its map', () => {
     });
     const { component } = render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
-    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+    expect(screen.queryByText('Out of date, plan again')).not.toBeInTheDocument();
 
     await component.reload();
     await settled();
 
     expect(count(calls, `GET ${RUNS}`)).toBe(2);
-    expect(screen.getByText('Stale')).toBeInTheDocument();
+    expect(screen.getByText('Out of date, plan again')).toBeInTheDocument();
   });
 });
 
@@ -985,17 +989,18 @@ describe('Plan panel: one plan state at a time', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Planner is starting up');
     expect(document.querySelector('[data-plan-state]')).toBeNull();
     expect(screen.queryByText('No plan yet')).not.toBeInTheDocument();
-    expect(screen.queryByText('Press Calculate to plan this trip.')).not.toBeInTheDocument();
   });
 
-  it('says No plan yet and points to Calculate when the project has no run', async () => {
+  it('says No plan yet, on Build the trip with Plan the route as its one main action, when the project has no run', async () => {
     stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
     expect(badge()).toHaveTextContent('No plan yet');
     expect(badge()).not.toHaveAttribute('aria-busy');
-    expect(screen.getByText('Press Calculate to plan this trip.')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toHaveClass('primary');
+    expect(screen.queryByText(/Press Calculate/)).not.toBeInTheDocument();
     expect(exportLink()).not.toBeInTheDocument();
   });
 
@@ -1009,14 +1014,13 @@ describe('Plan panel: one plan state at a time', () => {
     await pressCalculate();
     await tick();
 
-    expect(badge()).toHaveTextContent('Planning');
-    expect(screen.getByTestId('plan-progress')).toBeInTheDocument();
+    expect(badge()).toHaveTextContent('Planning…');
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Solving');
     expect(screen.getByRole('button', { name: 'Stop and use best so far' })).toBeEnabled();
-    expect(screen.queryByText('Press Calculate to plan this trip.')).not.toBeInTheDocument();
   });
 
-  it('is Plan run #N, with the check glyph hidden from readers and no second heading', async () => {
+  it('is Route ready, in the card, with the check glyph hidden from readers', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': readyRun('r1', 1),
@@ -1024,13 +1028,13 @@ describe('Plan panel: one plan state at a time', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Plan run #1');
-    expect(screen.getAllByText('Plan run #1')).toHaveLength(1);
+    expect(badge()).toHaveTextContent('Route ready');
+    expect(screen.getByRole('region', { name: 'Your route' })).toContainElement(badge());
     expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2713');
     expect(exportLink()).toBeInTheDocument();
   });
 
-  it('is Failed, in the planner words, with the ready run kept as the heading below', async () => {
+  it("is Couldn't plan, in the planner words, with the ready run kept as the Previous route", async () => {
     const words = 'No valid route found within the time limit - plan run #2 failed';
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready'], ['r2', 2, 'failed']),
@@ -1040,14 +1044,14 @@ describe('Plan panel: one plan state at a time', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Failed');
+    expect(badge()).toHaveTextContent("Couldn't plan");
     expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2715');
     expect(screen.getByRole('alert')).toHaveTextContent(words);
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 
-  it('is Stale, with the run heading kept beside it', async () => {
+  it('is Out of date, plan again, with the run heading kept below', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: {
         status: 200,
@@ -1058,7 +1062,7 @@ describe('Plan panel: one plan state at a time', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Stale');
+    expect(badge()).toHaveTextContent('Out of date, plan again');
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
   });
 });
@@ -1076,7 +1080,7 @@ describe('Plan panel: the estimate pill (D267)', () => {
     { estimate: true, provider_header: 'Road legs: offline map' },
   ] as const;
 
-  it('sits by the run heading, above the provider line, when the run says estimate', async () => {
+  it('sits in the route card, not by the provider line, when the run says estimate', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': readyRun('r1', 1, ...ESTIMATED),
@@ -1091,7 +1095,9 @@ describe('Plan panel: the estimate pill (D267)', () => {
     expect(pill.querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2248');
     expect(pill).toHaveAttribute('data-role', 'warning');
     expect(pill.style.borderStyle).toBe('dashed');
-    expect(pill.parentElement).toContainElement(screen.getByText('Road legs: offline map'));
+    expect(screen.getByRole('region', { name: 'Your route' })).toContainElement(pill);
+    expect(screen.getByText('Road legs: offline map')).toBeInTheDocument();
+    expect(screen.queryByText('Real roads')).not.toBeInTheDocument();
   });
 
   it('is not shown for a run on real roads', async () => {
@@ -1103,6 +1109,7 @@ describe('Plan panel: the estimate pill (D267)', () => {
     await settled();
 
     expect(screen.getByText('Valhalla')).toBeInTheDocument();
+    expect(screen.getByText('Real roads')).toBeInTheDocument();
     expect(pills()).toHaveLength(0);
   });
 
@@ -1117,7 +1124,7 @@ describe('Plan panel: the estimate pill (D267)', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Stale');
+    expect(badge()).toHaveTextContent('Out of date, plan again');
     expect(screen.getByText('Plan run #1')).toBeInTheDocument();
     expect(pills()).toHaveLength(1);
   });
@@ -1131,13 +1138,10 @@ describe('Plan panel: the estimate pill (D267)', () => {
     const { container } = render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Failed');
+    expect(badge()).toHaveTextContent("Couldn't plan");
     expect(pills()).toHaveLength(1);
     expect(within(screen.getByRole('alert')).queryByRole('note')).not.toBeInTheDocument();
-    expect(exportLink()).toHaveTextContent('Export GPX of plan run #4');
-    expect(
-      screen.queryByRole('link', { name: 'Export GPX of plan run #5' }),
-    ).not.toBeInTheDocument();
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r4/export.gpx');
     expect(container.querySelectorAll('a')).toHaveLength(1);
   });
 
@@ -1152,7 +1156,62 @@ describe('Plan panel: the estimate pill (D267)', () => {
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
 
-    expect(badge()).toHaveTextContent('Failed');
+    expect(badge()).toHaveTextContent("Couldn't plan");
     expect(pills()).toHaveLength(0);
+  });
+});
+
+describe('Plan panel: one phase at a time (D283)', () => {
+  it('opens a project with a ready route on Your route, with the card, and Edit trip goes back to building', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+    });
+    render(PlanPanel, { props: { projectId: 'p1', build: undefined } });
+    await settled();
+
+    expect(screen.getByRole('region', { name: 'Your route' })).toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')).toHaveTextContent('Your route');
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit trip' }));
+
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Export GPX' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Your route' }));
+    expect(screen.getByRole('region', { name: 'Your route' })).toBeInTheDocument();
+  });
+
+  it('is Planning with Stop as its only main action, no export and no way back while the job runs', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('solving', { stoppable: true }),
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await pressCalculate();
+    await tick();
+
+    const panel = screen.getByRole('region', { name: 'Planning' });
+    expect(within(panel).getAllByRole('button')).toHaveLength(1);
+    expect(within(panel).getByRole('button')).toHaveTextContent('Stop and use best so far');
+    expect(screen.queryByRole('button', { name: 'Your route' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Export GPX/ })).not.toBeInTheDocument();
+  });
+
+  it("returns to Build the trip with the planner's words when a plan ends without any ready route", async () => {
+    const message = 'Routing engine unreachable - nothing was changed. Try again later.';
+    stubPlanner({
+      [`GET ${RUNS}`]: NO_RUNS,
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('failed', { reason: 'routing_engine_unreachable', message }),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await pressCalculate();
+    await tick();
+
+    expect(screen.getByRole('region', { name: 'Build the trip' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    expect(badge()).toHaveTextContent("Couldn't plan");
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
   });
 });

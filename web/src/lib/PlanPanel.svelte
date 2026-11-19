@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The plan of a project: Calculate, the running job's state (polled every 500 ms), then the latest ready run with
-  // its Itinerary, Totals and Export GPX. Every refusal shows the planner's own message, verbatim.
+  // The plan of a project, one phase at a time (D283, tripPhase): Build the trip with 'Plan the route', Planning with the
+  // running job's state (polled every 500 ms) and Stop, then Your route: the latest ready run's card with its Itinerary
+  // and Totals. Every refusal shows the planner's own message, verbatim.
   //
   // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
   // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
@@ -10,10 +11,13 @@
   // shows how the job ended. The run's messages (run time, label, reuse, a Failed run's failure) and the job's notices
   // are the planner's lines, shown verbatim: the web composes no wording (D211, D223 b), but for a Failed run stored
   // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import Itinerary from './Itinerary.svelte';
+  import PhaseSteps from './PhaseSteps.svelte';
+  import RouteCard from './RouteCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { estimateMarker, planRunLabel, planState } from './planState';
+  import { planRunLabel, planState } from './planState';
+  import { tripPhase } from './tripPhase';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -46,18 +50,26 @@
     projectId,
     objective = 'distance',
     onrunshown,
+    build,
+    trip,
   }: {
     projectId: string;
     objective?: Objective;
     /** The ready run on show, for the page's map, and whether it is an estimate; undefined while there is none. */
     onrunshown?: (planRunId: string | undefined, estimate: boolean) => void;
+    /** What Build the trip holds above its main action: the trip's list and the controls that change it. */
+    build?: Snippet;
+    /** What Planning shows of the trip: a read-only list, no control. */
+    trip?: Snippet;
   } = $props();
 
   let pressing = $state(false);
+  let editing = $state(false); // Edit trip pressed on a ready route and no plan accepted since
+  let jobFailed = $state(false); // the last job ended without a run: failed or timed out
   let watchedJobId = $state<string | undefined>();
   let jobState = $state<PlanJobState>('queued');
   let problem = $state('');
-  let pollProblem = $state(''); // the job may well still run: Calculate is usable meanwhile, and polling goes on
+  let pollProblem = $state(''); // the job may well still run: polling goes on
   let readyRun = $state<PlanRunDetail | undefined>();
   let readyRunStale = $state(false); // from the run list: the project changed since the run was computed
   let failedRun = $state<PlanRunDetail | undefined>();
@@ -72,19 +84,32 @@
   let nextPoll: ReturnType<typeof setTimeout> | undefined;
   let gone = false;
 
-  const calculating = $derived(pressing || (watchedJobId !== undefined && pollProblem === ''));
+  const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
+  const previous = $derived(failedRun !== undefined || jobFailed); // a ready route is on show under a failed plan
+  const phase = $derived(
+    tripPhase({
+      loading: firstRead,
+      jobActive,
+      readyRun: readyRun !== undefined,
+      editing,
+      failedLatest: previous,
+    }),
+  );
   const look = $derived(
     planState({
       loading: firstRead,
-      planning: calculating,
-      failed: failedRun !== undefined,
+      planning: jobActive,
+      failed: previous,
       stale: readyRun !== undefined && readyRunStale,
       readyRunNumber: readyRun?.number,
       unreadable,
     }),
   );
-  const estimate = $derived(estimateMarker(readyRun?.estimate));
-  const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
+  const PHASE_NAMES = { build: 'Build the trip', planning: 'Planning', route: 'Your route' };
+
+  function showRoute(): void {
+    editing = false;
+  }
 
   function highestNumbered(runs: PlanRun[]): PlanRun | undefined {
     return runs.reduce<PlanRun | undefined>(
@@ -108,6 +133,11 @@
       unreadable = true;
     }
     firstRead = false;
+  }
+
+  /** A change of the trip made elsewhere on the page (a place added on the map) takes Marco back to building. */
+  export function edit(): void {
+    editing = true;
   }
 
   /** The page asks for the runs again, e.g. after a POI added on the map, so that the latest shows Stale at once. */
@@ -155,6 +185,7 @@
     if (job.notices && job.notices.length > 0) notices = job.notices;
     if (job.state === 'failed' || job.state === 'timed_out') {
       stopWatching();
+      jobFailed = true;
       problem = job.message ?? failureText(undefined);
     } else if (job.state === 'cancelled') {
       stopWatching();
@@ -188,6 +219,7 @@
 
   async function calculate(ignoreMemo = false): Promise<void> {
     pressing = true;
+    jobFailed = false;
     problem = '';
     endedWithoutRun = '';
     notices = [];
@@ -196,6 +228,7 @@
     try {
       const accepted = await startPlan(projectId, ignoreMemo);
       notices = accepted.notices ?? [];
+      editing = false;
       watch(accepted.job_id);
     } catch (error) {
       problem = failureText(error);
@@ -231,118 +264,140 @@
   });
 </script>
 
-<div class="panel">
-  {#if look.state !== 'unknown'}
-    <StatusBadge
-      tone={look.role}
-      fill={look.fill}
-      glyph={look.glyph}
-      label={look.label}
-      data-plan-state={look.state}
-      aria-busy={look.state === 'loading' ? 'true' : undefined}
-    />
-  {/if}
-  {#if look.state === 'planning'}
-    <div class="progress" data-testid="plan-progress" aria-hidden="true"><span></span></div>
-  {/if}
+<div class="plan">
+  <PhaseSteps {phase} canShowRoute={readyRun !== undefined && !jobActive} onshowroute={showRoute} />
 
-  <button type="button" class="primary" disabled={calculating} onclick={() => calculate()}>
-    Calculate
-  </button>
-  {#if look.state === 'empty'}
-    <p class="hint">Press Calculate to plan this trip.</p>
-  {/if}
-
-  {#if watchedJobId && STATE_TEXTS[jobState]}
-    <p role="status">{STATE_TEXTS[jobState]}</p>
-  {/if}
-  {#if watchedJobId && incumbent}
-    <p class="best">Best so far: {bestSoFar(incumbent)}</p>
-  {/if}
-  {#if watchedJobId && stoppable}
-    <button type="button" class="danger" disabled={stopPressed} onclick={stop}
-      >Stop and use best so far</button
-    >
-  {/if}
-  {#each notices as notice (notice)}
-    <p class="notice">{notice}</p>
-  {/each}
-  {#if endedWithoutRun}
-    <p>{endedWithoutRun}</p>
-  {/if}
-  {#if problem}
-    <p role="alert">{problem}</p>
-  {/if}
-  {#if pollProblem}
-    <p role="alert">{pollProblem}</p>
-  {/if}
-  {#if failedRun?.messages?.length}
-    <div role="alert">
-      {#each failedRun.messages as message, index (index)}
-        <p>{message}</p>
-      {/each}
-    </div>
-  {:else if failedRun}
-    <p role="alert">This plan run failed{failedReason(failedRun)}</p>
-  {/if}
-
-  {#if readyRun}
-    {#if look.state !== 'success'}
-      <p class="run">{planRunLabel(readyRun.number)}</p>
+  <section class="phase" aria-label={PHASE_NAMES[phase]}>
+    {#if phase !== 'route' && look.state !== 'unknown'}
+      <StatusBadge
+        tone={look.role}
+        fill={look.fill}
+        glyph={look.glyph}
+        label={look.label}
+        data-plan-state={look.state}
+        aria-busy={look.state === 'loading' ? 'true' : undefined}
+      />
     {/if}
-    {#if estimate || readyRun.provider_header}
-      <p class="provider">
-        {#if estimate}<StatusBadge
-            tone={estimate.role}
-            fill={estimate.fill}
-            glyph={estimate.glyph}
-            label={estimate.label}
-            role="note"
-            title={estimate.note}
-            aria-label={estimate.note}
-          />{/if}{#if readyRun.provider_header}
-          {readyRun.provider_header}{/if}
-      </p>
+    {#if phase === 'planning'}
+      <div class="progress" role="progressbar" aria-label="Planning" data-testid="plan-progress">
+        <span></span>
+      </div>
     {/if}
-    {#each readyRun.messages ?? [] as message, index (index)}
-      <p class="message">{message}</p>
+    {#if phase === 'route' && previous}
+      <StatusBadge
+        tone={look.role}
+        fill={look.fill}
+        glyph={look.glyph}
+        label={look.label}
+        data-plan-state={look.state}
+      />
+    {/if}
+
+    {#if watchedJobId && STATE_TEXTS[jobState]}
+      <p role="status">{STATE_TEXTS[jobState]}</p>
+    {/if}
+    {#if watchedJobId && incumbent}
+      <p class="best">Best so far: {bestSoFar(incumbent)}</p>
+    {/if}
+    {#each notices as notice (notice)}
+      <p class="notice">{notice}</p>
     {/each}
-    {#if readyRun.memo_hit}
-      <button type="button" disabled={calculating} onclick={() => calculate(true)}>
-        Re-optimise (ignore previous result)
-      </button>
+    {#if endedWithoutRun}
+      <p>{endedWithoutRun}</p>
     {/if}
-    <Itinerary
-      stops={readyRun.stops}
-      totals={readyRun.totals}
-      objectiveLabel={readyRun.objective_label}
-    />
-    {#if !jobActive}
-      <a class="button" href={planRunExportUrl(readyRun.id)}
-        >Export GPX of plan run #{readyRun.number}</a
-      >
+    {#if problem}
+      <p role="alert">{problem}</p>
     {/if}
-  {/if}
+    {#if pollProblem}
+      <p role="alert">{pollProblem}</p>
+    {/if}
+    {#if failedRun?.messages?.length}
+      <div role="alert">
+        {#each failedRun.messages as message, index (index)}
+          <p>{message}</p>
+        {/each}
+      </div>
+    {:else if failedRun}
+      <p role="alert">This plan run failed{failedReason(failedRun)}</p>
+    {/if}
+
+    {#if phase === 'build'}
+      {@render build?.()}
+      <div class="action">
+        <button type="button" class="primary" onclick={() => calculate()}>Plan the route</button>
+      </div>
+    {:else if phase === 'planning'}
+      {@render trip?.()}
+      {#if watchedJobId && stoppable}
+        <div class="action">
+          <button type="button" class="danger" disabled={stopPressed} onclick={stop}
+            >Stop and use best so far</button
+          >
+        </div>
+      {/if}
+    {:else if readyRun}
+      <RouteCard
+        run={readyRun}
+        {look}
+        {previous}
+        exportUrl={planRunExportUrl(readyRun.id)}
+        onedit={() => (editing = true)}
+      />
+      <p class="run">{planRunLabel(readyRun.number)}</p>
+      {#if readyRun.provider_header}
+        <p class="provider">{readyRun.provider_header}</p>
+      {/if}
+      {#each readyRun.messages ?? [] as message, index (index)}
+        <p class="message">{message}</p>
+      {/each}
+      {#if readyRun.memo_hit}
+        <button type="button" onclick={() => calculate(true)}>
+          Re-optimise (ignore previous result)
+        </button>
+      {/if}
+      <Itinerary
+        stops={readyRun.stops}
+        totals={readyRun.totals}
+        objectiveLabel={readyRun.objective_label}
+      />
+    {/if}
+  </section>
 </div>
 
 <style>
-  .panel {
+  .plan {
+    display: grid;
+    gap: var(--space-3);
+    min-height: 100%;
+    align-content: start;
+  }
+  .phase {
     display: grid;
     gap: var(--space-2);
+    align-content: start;
   }
-  .panel > :global(*) {
+  .phase > :global(*) {
     justify-self: start;
   }
-  .panel > :global(p),
-  .panel > :global(div[role='alert']),
-  .panel > :global(.progress) {
+  .phase > :global(p),
+  .phase > :global(div),
+  .phase > :global(ul),
+  .phase > :global(ol),
+  .phase > :global(section) {
     justify-self: stretch;
+  }
+  /* The main action stays in reach: the bottom of the panel on a laptop, of the screen on a phone (D289) */
+  .action {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: grid;
+    padding: var(--space-3) 0 max(var(--space-3), env(safe-area-inset-bottom));
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg);
   }
   p {
     margin: 0;
-  }
-  .hint {
-    color: var(--color-text-muted);
   }
   .progress {
     height: var(--space-1);

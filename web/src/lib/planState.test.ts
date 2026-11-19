@@ -15,10 +15,15 @@ const NONE: PlanFacts = {
 
 const SIX: [string, Partial<PlanFacts>, PlanStateName, string][] = [
   ['runs being read', { loading: true }, 'loading', 'Loading'],
-  ['a job running', { planning: true }, 'planning', 'Planning'],
-  ['the latest run Failed', { failed: true }, 'failed', 'Failed'],
-  ['the shown ready run Stale', { stale: true, readyRunNumber: 4 }, 'stale', 'Stale'],
-  ['a ready run', { readyRunNumber: 6 }, 'success', 'Plan run #6'],
+  ['a job running', { planning: true }, 'planning', 'Planning…'],
+  ['the latest run Failed', { failed: true }, 'failed', "Couldn't plan"],
+  [
+    'the shown ready run Stale',
+    { stale: true, readyRunNumber: 4 },
+    'stale',
+    'Out of date, plan again',
+  ],
+  ['a ready run', { readyRunNumber: 6 }, 'success', 'Route ready'],
   ['none', {}, 'empty', 'No plan yet'],
 ];
 

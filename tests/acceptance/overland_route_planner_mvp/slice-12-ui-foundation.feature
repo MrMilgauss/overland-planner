@@ -11,7 +11,7 @@
 #    (Loading, Planning, Failed, a Valhalla run, a K2 count above 0) are set by rewriting the planner's answer in the
 #    browser (`page.route`, policy waiver W4). The inner checks of DESIGN D273 (vitest + jsdom: planState, PlanPanel,
 #    RunMap, runMap, ProjectsPage, k2Acknowledgement) come with each scenario in DELIVER.
-# "Calculate" and "Export GPX" are the stories' "Optimize" and "Download GPX" (D272). Outcomes, not pixels.
+# "Plan the route" and "Export GPX" are the stories' "Optimize" and "Download GPX" (D284). Outcomes, not pixels.
 
 @slice-12
 Feature: A planner that looks and feels like a product
@@ -45,13 +45,13 @@ Feature: A planner that looks and feels like a product
     Then no control, label or panel overlaps another
     And no page scrolls sideways
 
-  # ui-foundation.spec.ts: "Every page uses the same look and the controls are grouped by task" (chromium)
+  # ui-foundation.spec.ts: "Every page uses the same look and the project page follows the trip's phases" (chromium)
   @US-20 @J-01 @ui
-  Scenario: Every page uses the same look and the controls are grouped by task
+  Scenario: Every page uses the same look and the project page follows the trip's phases
     Given Marco's project "Alpi Occidentali giugno 2027" exists
     When Marco opens the home page, the project page and the Diagnostics page
     Then every button, link and field uses the planner's shared look and none keeps the browser's plain look
-    And the project page shows its controls in three labelled groups: "Plan", "Items" and "Start and end"
+    And the project page shows the phase steps "Build the trip", "Planning" and "Your route" in that order, with one main action
 
   # ui-foundation.spec.ts: "The theme follows the system and text stays readable outdoors" (chromium, dark and light)
   @US-20 @J-01 @ui @edge
@@ -65,7 +65,7 @@ Feature: A planner that looks and feels like a product
   @US-20 @J-01 @ui
   Scenario: Keyboard focus is always visible
     Given Marco is on the project page of "Alpi Occidentali giugno 2027"
-    When he moves through the controls with the Tab key, from "Calculate" to "Export GPX"
+    When he moves through the controls with the Tab key, from the phase steps to "Details"
     Then every control that receives focus shows a visible focus ring
 
   # ui-foundation.spec.ts: "The map stays readable on a phone at trip-wide zoom" (webkit-iphone14; the retrace comes from
@@ -80,42 +80,24 @@ Feature: A planner that looks and feels like a product
 
   # ===================== US-21 Plan state and whether its roads are real (J-01, J-04) =====================
 
-  # ui-foundation.spec.ts: "Every plan state has its own label and look" (chromium; one test per row; Loading, Planning
-  # and Failed by rewritten answers, W4). Inner: planState.test.ts, PlanPanel.test.ts.
-  @US-21 @J-01 @ui
-  Scenario Outline: Every plan state has its own label and look
-    Given the plan of "Alpi Occidentali giugno 2027" is <state>
-    When Marco opens the project
-    Then the plan area carries the label "<label>"
-    And its look differs from the look of every other plan state, also without colour
-
-    Examples:
-      | state                           | label       |
-      | not computed yet                | No plan yet |
-      | being loaded                    | Loading     |
-      | being planned (Stop is offered) | Planning    |
-      | done, plan run #6               | Plan run #6 |
-      | Failed, plan run #5             | Failed      |
-      | Stale, plan run #4              | Stale       |
-
   # ui-foundation.spec.ts: "While planning, Stop is offered" (chromium, the job answer held at "running", W4)
   @US-21 @J-01 @ui
   Scenario: While planning, Stop is offered
-    Given Marco pressed "Calculate" for "Alpi Occidentali giugno 2027"
+    Given Marco pressed "Plan the route" for "Alpi Occidentali giugno 2027"
     When the plan is being worked on
-    Then the plan area is labelled "Planning"
+    Then the status reads "Planning…"
     And "Stop and use best so far" is offered
 
-  # ui-foundation.spec.ts: "A Failed run shows the label Failed and the planner's own words" (chromium, W4)
+  # ui-foundation.spec.ts: "A failed plan shows Couldn't plan and the planner's own words" (chromium, W4)
   @US-21 @J-01 @ui @error
-  Scenario: A Failed run shows the label Failed and the planner's own words
+  Scenario: A failed plan shows Couldn't plan and the planner's own words
     Given plan run #5 of "Alpi Occidentali giugno 2027" failed on its time limit
     When Marco opens the project
-    Then the plan area carries the label "Failed"
+    Then the status reads "Couldn't plan"
     And it shows "No valid route found within the time limit - plan run #5 failed" word for word
     And plan run #5 offers no "Export GPX"
-    And the Failed run carries no "Estimate" marker
-    And the export of the older plan run #4 stays offered, named with its number
+    And the failed run carries no "Estimate" marker
+    And the route of plan run #4 stays under the heading "Previous route" with its "Export GPX", and its Details names "Plan run #4"
 
   # ui-foundation.spec.ts: "A plan on the offline road map is marked as an estimate" (chromium and webkit-iphone14:
   # the packaged planner plans on the offline road map, so this run is real, not rewritten)
@@ -123,8 +105,8 @@ Feature: A planner that looks and feels like a product
   Scenario: A plan on the offline road map is marked as an estimate
     Given plan run #4 of "Alpi Occidentali giugno 2027" took its road legs from the offline road map
     When Marco opens the project
-    Then "Estimate" is shown next to the heading "Plan run #4"
-    And the map of plan run #4 carries the same "Estimate" marker
+    Then "Estimate" is shown in the summary card
+    And the map carries the same "Estimate" marker
 
   # test_slice_12.py (HTTP API): the run detail of plan run #4
   @US-21 @J-01 @J-04 @driving_port
@@ -156,27 +138,8 @@ Feature: A planner that looks and feels like a product
   Scenario: A plan on real roads shows no estimate marker
     Given plan run #6 of "Alpi Occidentali giugno 2027" took its road legs from Valhalla
     When Marco opens the project
-    Then the plan area carries the label "Plan run #6"
-    And no "Estimate" marker is shown, neither by the heading nor on the map
-
-  # ui-foundation.spec.ts: "A stale estimate shows both labels" (chromium; real: offline road map, then a place added)
-  @US-21 @J-01 @HC-4 @ui @edge
-  Scenario: A stale estimate shows both labels
-    Given plan run #4 of "Alpi Occidentali giugno 2027" took its road legs from the offline road map
-    And Marco has added "Lago del Moncenisio" since plan run #4
-    When Marco opens the project
-    Then the plan area carries the label "Stale"
-    And "estimate" is still shown next to the heading "Plan run #4"
-
-  # ui-foundation.spec.ts: "A project with no plan yet says so and points to Calculate" (chromium and webkit-iphone14;
-  # real: a new project). Adds to the outline's "No plan yet" row what an empty project offers (D264, D266).
-  @US-21 @J-01 @ui @edge
-  Scenario: A project with no plan yet says so and points to Calculate
-    Given Marco has just created the project "Assietta weekend"
-    When he opens it
-    Then the plan area carries the label "No plan yet" and the hint "Press Calculate to plan this trip."
-    And the map area says "The map shows the plan once one is computed."
-    And no "Export GPX" is offered
+    Then the status reads "Route ready" and the card says "Real roads"
+    And no "Estimate" marker is shown, neither in the card nor on the map
 
   # ===================== US-22 The home page tells when a plan broke a hard rule (J-02, K2) =====================
   # The K2 count comes from the Diagnostics answer, rewritten in the browser (W4): a real rule-breaking run cannot be

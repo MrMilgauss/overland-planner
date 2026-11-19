@@ -60,15 +60,97 @@ const onRealRoads = (detail: Record<string, unknown>) => ({
   provider_header: "Provider: Valhalla (map data 2026-11-18) / profile: 4x4",
 });
 
+const ASSIETTA_FILE =
+  "../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx";
+const TORINO = "Casa Marco, Torino";
+
+// A new project of this test's own; with the old item forms (they stay in Build the trip until 12-04): the Assietta
+// trail, Torino, and Torino as Start and End, each unless the options say no.
+async function seedTrip(
+  page: Page,
+  testInfo: TestInfo,
+  options: { trail?: boolean; place?: boolean; start?: boolean },
+): Promise<void> {
+  const name = `Assietta weekend (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  const items = page.getByRole("list", { name: "Items" });
+  if (options.trail !== false) {
+    await page
+      .getByLabel("GPX files")
+      .setInputFiles(path.join(testInfo.project.testDir, ASSIETTA_FILE));
+    await page.getByRole("button", { name: "Import" }).click();
+    await expect(items.getByRole("listitem")).toHaveCount(1);
+  }
+  if (options.place !== false) {
+    await addPlaceOnTheForm(page, TORINO, "45.0703", "7.6869");
+    if (options.start !== false) {
+      await page
+        .getByLabel("Start", { exact: true })
+        .selectOption({ label: TORINO });
+      await page
+        .getByLabel("End", { exact: true })
+        .selectOption({ label: TORINO });
+      await page.getByRole("button", { name: "Set Start and End" }).click();
+    }
+  }
+}
+
+async function addPlaceOnTheForm(
+  page: Page,
+  name: string,
+  lat: string,
+  lon: string,
+): Promise<void> {
+  const items = page.getByRole("list", { name: "Items" });
+  const before = await items.getByRole("listitem").count();
+  await page.getByLabel("Place name").fill(name);
+  await page.getByLabel("Latitude").fill(lat);
+  await page.getByLabel("Longitude").fill(lon);
+  await page.getByRole("button", { name: "Add place" }).click();
+  await expect(items.getByRole("listitem")).toHaveCount(before + 1);
+}
+
+const projectIdOf = (url: string): string =>
+  decodeURIComponent(/#\/projects\/([^/]+)$/.exec(url)![1]);
+
+// The ids of the project's ready runs, oldest first, from the planner's own run list.
+async function readyRunIds(page: Page, projectId: string): Promise<string[]> {
+  const runs = (await (
+    await page.request.get(`/api/projects/${projectId}/plan-runs`)
+  ).json()) as { id: string; status: string }[];
+  return runs.filter((run) => run.status === "ready").map((run) => run.id);
+}
+
 // ===================== US-23 Build the trip, plan it, see the route =====================
 
-test.fixme("A project without a route opens on Build the trip", async ({
+test("A project without a route opens on Build the trip", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // Real: New project, Add -> Upload GPX trails (assietta.gpx), Add -> Type coordinates (Torino 45.0703, 7.6869).
-  // Checks: phase "Build the trip", one list "Your trip" with both, badge "No plan yet", one main action
-  // "Plan the route", no card, itinerary, "Export GPX" or "Details".
+  await seedTrip(page, testInfo, { start: false });
+
+  const panel = page.getByRole("region", { name: "Build the trip" });
+  await expect(panel).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toHaveText(
+    /Build the trip/,
+  );
+  const items = page.getByRole("list", { name: "Items" });
+  await expect(items.getByRole("listitem")).toHaveCount(2);
+  await expect(items).toContainText("Assietta");
+  await expect(items).toContainText(HOME);
+  await expect(page.locator("[data-plan-state]")).toHaveText(/No plan yet/);
+  await expect(page.locator("button.primary")).toHaveCount(1);
+  await expect(
+    panel.getByRole("button", { name: "Plan the route" }),
+  ).toHaveClass(/primary/);
+  await expect(page.getByRole("list", { name: "Itinerary" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
+  await expect(page.getByText("Route ready")).toHaveCount(0);
+  await expect(page.getByText("Details", { exact: true })).toHaveCount(0);
 });
 
 test.fixme("Every way to add a stop is in one Add control and lands in the one list", async ({
@@ -87,14 +169,43 @@ test.fixme("Start and End are set on a place in the list", async ({
   // Checks: Torino's row tags Start and End; the trail's row offers neither; no "Set Start and End" form.
 });
 
-test.fixme("While planning, the trip is read-only and nothing is exported", async ({
+test("While planning, the trip is read-only and nothing is exported", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(240_000);
   await serveTheBaseMap(page, testInfo);
-  // A real ready run (rewritten to real roads with answerWith/onRealRoads), a place added, then the POST answered
-  // {job_id: "held-job", notices: []} and the job held at "solving", stoppable (W4, fulfill only).
-  // Checks: "Planning…" with a progressbar; "Stop and use best so far" the only main action; list read-only, no
-  // "Add"; no "Export GPX" link anywhere on the page (D208 F2).
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const id = projectIdOf(projectUrl);
+  const runs = await readyRunIds(page, id);
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${runs[0]}$`),
+    `/api/plan-runs/${runs[0]}`,
+    onRealRoads,
+  );
+  await page.reload();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible();
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  await addPlaceOnTheForm(page, "Lago del Moncenisio", "45.2280", "6.9420");
+  await holdPlanning(page);
+
+  await page.getByRole("button", { name: "Plan the route" }).click();
+
+  const panel = page.getByRole("region", { name: "Planning" });
+  await expect(panel).toBeVisible();
+  await expect(page.locator("[data-plan-state]")).toHaveText(/Planning…/);
+  await expect(page.getByRole("progressbar")).toBeVisible();
+  const stop = panel.getByRole("button");
+  await expect(stop).toHaveCount(1);
+  await expect(stop).toHaveText("Stop and use best so far");
+  await expect(
+    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+  ).toHaveCount(3);
+  await expect(page.getByRole("button", { name: /^Add/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Import" })).toHaveCount(0);
+  await expect(page.getByLabel("Place name")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
 });
 
 test.fixme("Stopping shows the best route found so far", async ({
@@ -115,12 +226,33 @@ test.fixme("Edit trip goes back to building and the shown route goes out of date
   // Checks: "Build the trip" with the place listed; badge "Out of date, plan again"; main action "Plan the route".
 });
 
-test.fixme("A refusal keeps Marco on Build the trip with the planner's own words", async ({
+test("A refusal keeps Marco on Build the trip with the planner's own words", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // Real: the trail and a place, no Start; "Plan the route" is refused by the planner (422 missing_anchor).
-  // Checks: "Set the Start before calculating" word for word; still "Build the trip"; the list unchanged.
+  await seedTrip(page, testInfo, { start: false });
+  const refusal = (await (
+    await page.request.post(
+      `/api/projects/${projectIdOf(page.url())}/plan-runs`,
+    )
+  ).json()) as { message: string };
+  expect(refusal.message).toContain("Set the Start before calculating");
+
+  await page.getByRole("button", { name: "Plan the route" }).click();
+
+  await expect(
+    page.getByRole("alert").filter({ hasText: refusal.message }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Build the trip" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+  ).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "Plan the route" }),
+  ).toBeEnabled();
 });
 
 // ===================== US-24 The route is the main result =====================
@@ -135,12 +267,36 @@ test.fixme("On a laptop the summary card and the first steps are in view", async
   // the viewport without scrolling; main action "Export GPX", "Edit trip" offered.
 });
 
-test.fixme("An estimate route says Estimate in the card and on the map", async ({
+test("An estimate route says Estimate in the card and on the map", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(240_000);
   await serveTheBaseMap(page, testInfo);
-  // Real plan on the offline road map; the download through "Export GPX".
-  // Checks: "Estimate" in the card and on the map; no "Real roads"; the file is "<project>-run1-estimate.gpx" (D268).
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const [id] = await readyRunIds(page, projectIdOf(projectUrl));
+  const exported = await page.request.get(`/api/plan-runs/${id}/export.gpx`);
+  const planners = /filename="?([^";]+)"?/.exec(
+    exported.headers()["content-disposition"] ?? "",
+  )![1];
+  expect(planners).toMatch(/-run1-estimate\.gpx$/);
+
+  const link = page.getByRole("link", { name: "Export GPX" });
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    link.click(),
+  ]);
+
+  expect(download.suggestedFilename()).toBe(planners);
+  const card = page.getByRole("region", { name: "Your route" });
+  await expect(card.getByRole("note", { name: ESTIMATE_NOTE })).toHaveText(
+    /Estimate/,
+  );
+  await expect(
+    page
+      .getByRole("region", { name: "Map of the run" })
+      .getByRole("note", { name: ESTIMATE_NOTE }),
+  ).toHaveText(/Estimate/);
+  await expect(page.getByText("Real roads")).toHaveCount(0);
 });
 
 test.fixme("Selecting a step moves the map to it", async ({
@@ -178,21 +334,155 @@ test.fixme("On a phone the map follows the selected step", async ({
 
 // ===================== US-25 The status in user words, engine details behind Details =====================
 
-for (const status of [
-  "No plan yet",
-  "Loading",
-  "Planning…",
-  "Route ready",
-  "Couldn't plan",
-  "Out of date, plan again",
-]) {
-  test.fixme(`Every status has its own words and look: ${status}`, async ({
+type StateLook = { glyph: string; border: string; fill: string };
+
+// The D266 table with the D284 words: what each status shows besides its colour. Two statuses never share glyph,
+// border style and fill.
+const STATE_LOOKS: Record<string, StateLook> = {
+  "No plan yet": { glyph: "", border: "dashed", fill: "outline" },
+  Loading: { glyph: "", border: "solid", fill: "outline" },
+  "Planning…": { glyph: "", border: "solid", fill: "filled" },
+  "Route ready": { glyph: "\u2713", border: "solid", fill: "filled" },
+  "Couldn't plan": { glyph: "\u2715", border: "solid", fill: "filled" },
+  "Out of date, plan again": { glyph: "!", border: "solid", fill: "filled" },
+};
+
+const stateBadge = (page: Page): Locator => page.locator("[data-plan-state]");
+
+// The badge as the page draws it: its words without the glyph, the glyph, the border style and whether it is filled.
+async function badgeLook(
+  badge: Locator,
+): Promise<StateLook & { label: string }> {
+  return badge.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const glyph = el.querySelector('[aria-hidden="true"]');
+    const words = el.cloneNode(true) as HTMLElement;
+    words.querySelectorAll('[aria-hidden="true"]').forEach((g) => g.remove());
+    const fill = /^rgba?\(.*,\s*0\)$|^transparent$/.test(style.backgroundColor)
+      ? "outline"
+      : "filled";
+    return {
+      label: (words.textContent ?? "").trim(),
+      glyph: (glyph?.textContent ?? "").trim(),
+      border: style.borderTopStyle,
+      fill,
+    };
+  });
+}
+
+async function expectStatus(page: Page, label: string): Promise<void> {
+  const looks = Object.values(STATE_LOOKS).map((l) => JSON.stringify(l));
+  expect(new Set(looks).size, "no two statuses share glyph, border, fill").toBe(
+    looks.length,
+  );
+  await expect(stateBadge(page)).toHaveCount(1);
+  await expect(stateBadge(page)).toBeVisible();
+  await expect
+    .poll(() => badgeLook(stateBadge(page)))
+    .toEqual({ label, ...STATE_LOOKS[label] });
+}
+
+// Planning without a real solve (W4, fulfill only): the answer to "Plan the route" and to the job, held at "solving".
+async function holdPlanning(page: Page): Promise<void> {
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 202,
+          json: { job_id: "held-job", notices: [] },
+        })
+      : route.continue(),
+  );
+  await page.route(/\/api\/plan-jobs\/held-job$/, (route) =>
+    route.fulfill({
+      json: {
+        state: "solving",
+        reason: null,
+        message: null,
+        plan_run_id: null,
+        elapsed_s: 1.5,
+        stoppable: true,
+      },
+    }),
+  );
+}
+
+const FAILED_WORDS =
+  "No valid route found within the time limit - plan run #2 failed";
+
+for (const status of Object.keys(STATE_LOOKS)) {
+  test(`Every status has its own words and look: ${status}`, async ({
     page,
   }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "the desktop browser");
+    test.setTimeout(300_000);
     await serveTheBaseMap(page, testInfo);
-    // chromium. No plan yet, Route ready and Out of date: real. Loading: the run list held, then continued.
-    // Planning: held job (W4). Couldn't plan: a failed run added to the run list read once (answerWith), with its
-    // detail fulfilled. Checks: the badge reads the status; glyph, border and fill differ from every other status.
+
+    if (status === "No plan yet") {
+      await seedTrip(page, testInfo, { trail: false, place: false });
+    } else if (status === "Loading") {
+      await seedTrip(page, testInfo, { trail: false, place: false });
+      const projectUrl = page.url();
+      let release: () => void = () => {};
+      const held = new Promise<void>((done) => (release = done));
+      await page.goto("/");
+      await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, async (route) => {
+        await held;
+        await route.continue();
+      });
+      await page.goto(projectUrl);
+      await expectStatus(page, status);
+      await expect(stateBadge(page)).toHaveAttribute("aria-busy", "true");
+      release();
+      await expect(stateBadge(page)).toContainText("No plan yet");
+      return;
+    } else if (status === "Planning…") {
+      await seedTrip(page, testInfo, {});
+      await holdPlanning(page);
+      await page.getByRole("button", { name: "Plan the route" }).click();
+    } else if (status === "Route ready") {
+      await planOnTheOfflineMap(page, testInfo);
+    } else if (status === "Couldn't plan") {
+      const projectUrl = await planOnTheOfflineMap(page, testInfo);
+      const id = projectIdOf(projectUrl);
+      await answerWith<object[]>(
+        page,
+        /\/api\/projects\/[^/]+\/plan-runs$/,
+        `/api/projects/${id}/plan-runs`,
+        (runs) => [
+          ...runs,
+          { id: "failed-run-2", number: 2, status: "failed", stale: false },
+        ],
+      );
+      await page.route(/\/api\/plan-runs\/failed-run-2$/, (route) =>
+        route.fulfill({
+          json: {
+            id: "failed-run-2",
+            project_id: id,
+            number: 2,
+            status: "failed",
+            failure_reason: "timeout",
+            stops: [],
+            totals: null,
+            report: null,
+            estimate: false,
+            messages: [FAILED_WORDS],
+          },
+        }),
+      );
+      await page.reload();
+      await expect(
+        page.getByRole("alert").filter({ hasText: FAILED_WORDS }),
+      ).toBeVisible();
+    } else {
+      await planOnTheOfflineMap(page, testInfo);
+      await page.getByRole("button", { name: "Edit trip" }).click();
+      await addPlaceOnTheForm(page, "Rifugio Selleries", "45.0123", "7.0456");
+      await page.reload();
+      await expect(
+        page.getByRole("link", { name: "Export GPX" }),
+      ).toBeVisible();
+    }
+    await expectStatus(page, status);
   });
 }
 
@@ -215,13 +505,48 @@ test.fixme("Couldn't plan keeps the previous route and its export", async ({
   // "Export GPX" downloads that run's own file (the planner's name, D268); no export or "Estimate" for the failed run.
 });
 
-test.fixme("Couldn't plan without an earlier route keeps Marco on Build the trip", async ({
+test("Couldn't plan without an earlier route keeps Marco on Build the trip", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // No run; the POST answered with a job id and the job fulfilled as failed with the planner's
-  // "Routing engine unreachable - nothing was changed. Try again later." (W4). Checks: "Couldn't plan" and the words
-  // verbatim; still "Build the trip" with "Plan the route"; no "Export GPX".
+  await seedTrip(page, testInfo, { trail: false, place: false });
+  const words =
+    "Routing engine unreachable - nothing was changed. Try again later.";
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 202,
+          json: { job_id: "down-job", notices: [] },
+        })
+      : route.continue(),
+  );
+  await page.route(/\/api\/plan-jobs\/down-job$/, (route) =>
+    route.fulfill({
+      json: {
+        state: "failed",
+        reason: "routing_unavailable",
+        message: words,
+        plan_run_id: null,
+        elapsed_s: 0.2,
+        stoppable: false,
+      },
+    }),
+  );
+
+  await page.getByRole("button", { name: "Plan the route" }).click();
+
+  await expect(stateBadge(page)).toHaveText(/Couldn't plan/);
+  await expect(
+    page.getByRole("alert").filter({ hasText: words }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Build the trip" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Plan the route" }),
+  ).toBeEnabled();
+  await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
 });
 
 test.fixme("An out-of-date route asks to be planned again and can still be exported", async ({
@@ -312,7 +637,7 @@ function withSommeillerRetrace(answer: Geometry): Geometry {
 }
 
 // Marco's trip, planned on the offline road map (an estimate): his own project, the Assietta trail, Torino as Start
-// and End, "Calculate" (the page of this step; 12-03 and later change these controls).
+// and End, "Plan the route" (the old item forms stay in Build the trip until 12-04).
 async function planOnTheOfflineMap(
   page: Page,
   testInfo: TestInfo,
@@ -336,7 +661,7 @@ async function planOnTheOfflineMap(
   await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
   await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
   await page.getByRole("button", { name: "Set Start and End" }).click();
-  await page.getByRole("button", { name: "Calculate" }).click();
+  await page.getByRole("button", { name: "Plan the route" }).click();
   await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
     timeout: 120_000,
   });

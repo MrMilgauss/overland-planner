@@ -60,7 +60,7 @@ async function makeAPlan(
   await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
   await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
   await page.getByRole("button", { name: "Set Start and End" }).click();
-  await page.getByRole("button", { name: "Calculate" }).click();
+  await page.getByRole("button", { name: "Plan the route" }).click();
   await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
     timeout: 120_000,
   });

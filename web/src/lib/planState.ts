@@ -1,5 +1,6 @@
-// The one state of the Plan group (D266), chosen from what the panel knows, in this order: Loading, Planning, Failed,
-// Stale, Plan run #N, then No plan yet, or no state at all when the runs are unreadable. Pure, so that the rules are tested without a DOM.
+// The one status of the trip's plan (D266, D284 words), chosen from what the panel knows, in this order: Loading,
+// Planning…, Couldn't plan, Out of date, plan again, Route ready, then No plan yet, or no status at all when the runs are
+// unreadable. Pure, so that the rules are tested without a DOM.
 export type PlanStateName =
   'loading' | 'planning' | 'failed' | 'stale' | 'success' | 'empty' | 'unknown';
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
@@ -10,7 +11,7 @@ export interface PlanFacts {
   loading: boolean;
   /** A job of this panel is running. */
   planning: boolean;
-  /** The latest run Failed. */
+  /** The latest plan could not be made: its run Failed, or its job ended without a run. */
   failed: boolean;
   /** The ready run on show is Stale. */
   stale: boolean;
@@ -29,7 +30,7 @@ export interface PlanLook {
   glyph: string | undefined;
 }
 
-/** The label of the ready run on show, also the Plan group's success label. */
+/** The heading of the ready run on show (it moves into Details in 12-05). */
 export const planRunLabel = (number: number): string => `Plan run #${number}`;
 
 const CHECK = '✓';
@@ -39,15 +40,37 @@ export function planState(facts: PlanFacts): PlanLook {
   if (facts.loading)
     return { state: 'loading', label: 'Loading', role: 'info', fill: 'outline', glyph: undefined };
   if (facts.planning)
-    return { state: 'planning', label: 'Planning', role: 'info', fill: 'filled', glyph: undefined };
+    return {
+      state: 'planning',
+      label: 'Planning…',
+      role: 'info',
+      fill: 'filled',
+      glyph: undefined,
+    };
   if (facts.failed)
-    return { state: 'failed', label: 'Failed', role: 'danger', fill: 'filled', glyph: CROSS };
+    return {
+      state: 'failed',
+      label: "Couldn't plan",
+      role: 'danger',
+      fill: 'filled',
+      glyph: CROSS,
+    };
   if (facts.stale)
-    return { state: 'stale', label: 'Stale', role: 'warning', fill: 'filled', glyph: '!' };
-  if (facts.readyRunNumber !== undefined) {
-    const label = planRunLabel(facts.readyRunNumber);
-    return { state: 'success', label, role: 'success', fill: 'filled', glyph: CHECK };
-  }
+    return {
+      state: 'stale',
+      label: 'Out of date, plan again',
+      role: 'warning',
+      fill: 'filled',
+      glyph: '!',
+    };
+  if (facts.readyRunNumber !== undefined)
+    return {
+      state: 'success',
+      label: 'Route ready',
+      role: 'success',
+      fill: 'filled',
+      glyph: CHECK,
+    };
   if (facts.unreadable)
     return { state: 'unknown', label: '', role: 'neutral', fill: 'dashed', glyph: undefined };
   return {
