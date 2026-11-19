@@ -59,6 +59,8 @@ export function planState(facts: PlanFacts): PlanLook {
   };
 }
 
+/** The one word of the estimate marker, on the pill and on the map's chip. */
+export const ESTIMATE_LABEL = 'Estimate';
 export const ESTIMATE_NOTE = 'estimate: road legs are straight-line guesses, not real roads';
 
 export interface EstimateMarker {
@@ -73,5 +75,11 @@ export interface EstimateMarker {
 /** The marker of a run on the offline road map (D267): the browser reads `estimate` from the run detail, never the provider line. */
 export function estimateMarker(estimate: boolean | undefined): EstimateMarker | undefined {
   if (estimate !== true) return undefined;
-  return { label: 'estimate', note: ESTIMATE_NOTE, role: 'warning', fill: 'dashed', glyph: '≈' };
+  return {
+    label: ESTIMATE_LABEL,
+    note: ESTIMATE_NOTE,
+    role: 'warning',
+    fill: 'dashed',
+    glyph: '≈',
+  };
 }

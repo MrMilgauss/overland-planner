@@ -4,11 +4,15 @@
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11); the rules are pinned by
 // examples, one per style of the map; the geometry's own rules are property-tested on the server (step 10-02).
 import { expression, latest } from '@maplibre/maplibre-gl-style-spec';
+import type { StyleSpecification } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
 import {
   ARROW_IMAGE,
+  adoptBaseStyle,
   arrowImage,
   buildRunMap,
+  CREDIT_LAYER,
+  TERRAIN_LAYER,
   type LineFeature,
   type LineProperties,
   type MapConfig,
@@ -86,8 +90,8 @@ const ROAD: [number, number][] = [
   [7.0, 45.4],
 ];
 
-describe('the base map', () => {
-  it('draws the chosen tiles first and carries their credit and top zoom', () => {
+describe('the map on its own style', () => {
+  it('starts on a plain background, then the Terrain tiles hidden, then the route, so that it is never blank', () => {
     const plan = buildRunMap(collection(line(ROAD)), CONFIG);
     expect(plan.style.sources['tiles']).toMatchObject({
       type: 'raster',
@@ -96,7 +100,28 @@ describe('the base map', () => {
       maxzoom: 17,
       attribution: CONFIG.attribution,
     });
-    expect(plan.style.layers[0]).toMatchObject({ id: 'tiles', type: 'raster', source: 'tiles' });
+    const ids = plan.style.layers.map((l) => l.id);
+    expect(ids.slice(0, 3)).toEqual(['plain-background', CREDIT_LAYER, TERRAIN_LAYER]);
+    expect(ids.indexOf('track')).toBeGreaterThan(ids.indexOf(TERRAIN_LAYER));
+    expect(layer(plan, TERRAIN_LAYER)).toMatchObject({
+      type: 'raster',
+      source: 'tiles',
+      maxzoom: 18,
+      layout: { visibility: 'none' },
+    });
+    expect(layer(plan, 'plain-background')).toMatchObject({ type: 'background' });
+  });
+
+  it('shows the Terrain layer from the start when Terrain is the choice, and then no light credit', () => {
+    const plan = buildRunMap(collection(line(ROAD)), CONFIG, true);
+    expect(layer(plan, TERRAIN_LAYER)).toMatchObject({ layout: { visibility: 'visible' } });
+    expect(layer(plan, CREDIT_LAYER)).toMatchObject({ layout: { visibility: 'none' } });
+  });
+
+  it('carries the light base map credit on a source of its own, shown only on the light base map', () => {
+    const plan = buildRunMap(collection(line(ROAD)), CONFIG);
+    expect(plan.style.sources['base-credit']).toMatchObject({ attribution: 'Light credit' });
+    expect(layer(plan, CREDIT_LAYER)).toMatchObject({ source: 'base-credit' });
   });
 
   it('puts only the lines in the run source, markers being overlays', () => {
@@ -162,6 +187,131 @@ describe('line styles (ADR-003 Amendment 2)', () => {
     expect(plan.style.layers.filter((l) => l.type === 'symbol').map((l) => l.id)).toEqual([
       'track-arrows',
     ]);
+  });
+});
+
+const BASES: [string, StyleSpecification][] = [
+  ['no layers', { version: 8, sources: {}, layers: [] }],
+  ['one background', { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background' }] }],
+  [
+    'a background and symbol labels',
+    {
+      version: 8,
+      glyphs: 'https://fonts.example.test/{fontstack}/{range}.pbf',
+      sprite: 'https://sprites.example.test/light',
+      sources: {
+        osm: { type: 'vector', url: 'https://tiles.example.test/osm', attribution: 'Their credit' },
+      },
+      layers: [
+        { id: 'bg', type: 'background' },
+        { id: 'labels', type: 'symbol', source: 'osm', 'source-layer': 'place' },
+      ],
+    },
+  ],
+];
+
+describe('adopting the light base map (D287)', () => {
+  const own = buildRunMap(
+    collection(line(ROAD), line(ROAD, { kind: 'track', level: null })),
+    CONFIG,
+  ).style;
+  const routeIds = own.layers.map((l) => l.id).filter((id) => !['plain-background'].includes(id));
+
+  it.each(BASES)(
+    'puts the run layers after every base layer, in their own order, for %s',
+    (_name, base) => {
+      const adopted = adoptBaseStyle(own, base, false);
+      expect(adopted.layers.map((l) => l.id)).toEqual([
+        ...base.layers.map((l) => l.id),
+        ...routeIds,
+      ]);
+      expect(adopted.sources['run']).toBe(own.sources['run']);
+      expect(adopted.sources['tiles']).toBe(own.sources['tiles']);
+    },
+  );
+
+  it.each(BASES)(
+    'keeps the base map glyphs and sprite for %s, and drops the plain background',
+    (_n, base) => {
+      const adopted = adoptBaseStyle(own, base, false);
+      expect(adopted.glyphs).toBe(base.glyphs);
+      expect(adopted.sprite).toBe(base.sprite);
+      expect(adopted.layers.map((l) => l.id)).not.toContain('plain-background');
+    },
+  );
+
+  it("credits the light base map with the planner's words alone: its own sources say nothing", () => {
+    const [, base] = BASES[2];
+    const adopted = adoptBaseStyle(own, base, false);
+    expect(adopted.sources['osm']).not.toHaveProperty('attribution');
+    expect(adopted.layers.find((l) => l.id === CREDIT_LAYER)).toMatchObject({
+      layout: { visibility: 'visible' },
+    });
+  });
+
+  it('leaves the light credit hidden when Terrain is on', () => {
+    const adopted = adoptBaseStyle(own, BASES[1][1], true);
+    expect(adopted.layers.find((l) => l.id === CREDIT_LAYER)).toMatchObject({
+      layout: { visibility: 'none' },
+    });
+  });
+});
+
+describe('outlined lines (D287)', () => {
+  const plan = buildRunMap(collection(line(ROAD)), CONFIG);
+  const ids = plan.style.layers.map((l) => l.id);
+  const LINES = ['unavailable', 'road-confirmed', 'road-unconfirmed', 'retrace', 'track'];
+  const paintOf = (id: string) => (layer(plan, id) as { paint: Record<string, unknown> }).paint;
+  const widthAt = (id: string, zoom: number): number => {
+    const made = expression.createExpression(
+      paintOf(id)['line-width'] as never,
+      latest.paint_line['line-width'] as never,
+    );
+    if (made.result !== 'success') throw new Error(`${id} line-width is not an expression`);
+    return made.value.evaluate({ zoom } as never) as number;
+  };
+
+  it.each(LINES)('%s has a white casing with round joins directly below it', (id) => {
+    expect(ids[ids.indexOf(id) - 1]).toBe(`${id}-casing`);
+    expect(layer(plan, `${id}-casing`)).toMatchObject({
+      type: 'line',
+      source: 'run',
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': '#ffffff' },
+    });
+    expect(JSON.stringify((layer(plan, `${id}-casing`) as { filter: unknown }).filter)).toBe(
+      JSON.stringify((layer(plan, id) as { filter: unknown }).filter),
+    );
+  });
+
+  it.each(LINES)('%s is 4 px at zoom 8 to 7 px at zoom 13 and its casing 3 px wider', (id) => {
+    expect([8, 13, 10.5].map((zoom) => widthAt(id, zoom))).toEqual([4, 7, 5.5]);
+    for (const zoom of [8, 10, 13])
+      expect(widthAt(`${id}-casing`, zoom) - widthAt(id, zoom)).toBeCloseTo(3);
+  });
+
+  it('keeps the colours: road blue, unconfirmed orange, track green, retrace purple, unavailable grey', () => {
+    expect(LINES.map((id) => paintOf(id)['line-color'])).toEqual([
+      '#6b7280',
+      '#1d4ed8',
+      '#ea580c',
+      '#7e22ce',
+      '#14532d',
+    ]);
+  });
+
+  // WCAG 2.x contrast of a line colour against its white casing (the colour the eye compares it to).
+  const luminance = (hex: string): number => {
+    const channels = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+    const [r, g, b] = channels.map((c) =>
+      c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4,
+    );
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrastWithWhite = (hex: string): number => 1.05 / (luminance(hex) + 0.05);
+
+  it.each(LINES)('%s stands out from white at 3:1 or more', (id) => {
+    expect(contrastWithWhite(paintOf(id)['line-color'] as string)).toBeGreaterThanOrEqual(3);
   });
 });
 

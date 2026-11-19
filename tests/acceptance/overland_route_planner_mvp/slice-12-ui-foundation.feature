@@ -114,7 +114,7 @@ Feature: A planner that looks and feels like a product
     Then the plan area carries the label "Failed"
     And it shows "No valid route found within the time limit - plan run #5 failed" word for word
     And plan run #5 offers no "Export GPX"
-    And the Failed run carries no "estimate" marker
+    And the Failed run carries no "Estimate" marker
     And the export of the older plan run #4 stays offered, named with its number
 
   # ui-foundation.spec.ts: "A plan on the offline road map is marked as an estimate" (chromium and webkit-iphone14:
@@ -123,8 +123,8 @@ Feature: A planner that looks and feels like a product
   Scenario: A plan on the offline road map is marked as an estimate
     Given plan run #4 of "Alpi Occidentali giugno 2027" took its road legs from the offline road map
     When Marco opens the project
-    Then "estimate" is shown next to the heading "Plan run #4"
-    And the map of plan run #4 carries the same "estimate" marker
+    Then "Estimate" is shown next to the heading "Plan run #4"
+    And the map of plan run #4 carries the same "Estimate" marker
 
   # test_slice_12.py (HTTP API): the run detail of plan run #4
   @US-21 @J-01 @J-04 @driving_port
@@ -157,7 +157,7 @@ Feature: A planner that looks and feels like a product
     Given plan run #6 of "Alpi Occidentali giugno 2027" took its road legs from Valhalla
     When Marco opens the project
     Then the plan area carries the label "Plan run #6"
-    And no "estimate" marker is shown, neither by the heading nor on the map
+    And no "Estimate" marker is shown, neither by the heading nor on the map
 
   # ui-foundation.spec.ts: "A stale estimate shows both labels" (chromium; real: offline road map, then a place added)
   @US-21 @J-01 @HC-4 @ui @edge

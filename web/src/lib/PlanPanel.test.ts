@@ -1086,7 +1086,7 @@ describe('Plan panel: the estimate pill (D267)', () => {
 
     expect(pills()).toHaveLength(1);
     const pill = pills()[0];
-    expect(pill).toHaveTextContent('estimate');
+    expect(pill).toHaveTextContent('Estimate');
     expect(pill).toHaveAttribute('title', ESTIMATE);
     expect(pill.querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2248');
     expect(pill).toHaveAttribute('data-role', 'warning');

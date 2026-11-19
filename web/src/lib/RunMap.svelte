@@ -6,10 +6,15 @@
   import { addPlace, failureText, readMapConfig, readRunGeometry } from './api';
   import PoiClickForm from './PoiClickForm.svelte';
   import { estimateMarker } from './planState';
+  import { TerrainChoice } from './terrainChoice';
+  import type { StyleSpecification } from 'maplibre-gl';
   import {
+    adoptBaseStyle,
     arrowImage,
     ARROW_IMAGE,
     buildRunMap,
+    CREDIT_LAYER,
+    TERRAIN_LAYER,
     placeClicked,
     placeRetraceLabel,
     type ScreenBox,
@@ -71,7 +76,10 @@
     ]);
     if (!current()) return () => {};
     maplibre.setWorkerUrl(worker.default);
-    const plan = buildRunMap(geometry, config);
+    const choice = new TerrainChoice();
+    let terrain = choice.terrain();
+    let adopted = false; // the light base map is the map's: its credit may show
+    const plan = buildRunMap(geometry, config, terrain);
     const map = new maplibre.Map({
       container: frame,
       style: plan.style,
@@ -80,8 +88,60 @@
       dragRotate: false,
     });
     map.addControl(new maplibre.AttributionControl({ compact: false })); // always open: nothing to close
+    // Terrain and the credit of the light base map follow the choice; while a style is being replaced the layers are not
+    // there to set, and the next 'style.load' sets them again.
+    const showTerrain = (): void => {
+      try {
+        map.setLayoutProperty(TERRAIN_LAYER, 'visibility', terrain ? 'visible' : 'none');
+        const light = adopted && !terrain;
+        map.setLayoutProperty(CREDIT_LAYER, 'visibility', light ? 'visible' : 'none');
+      } catch {
+        // see above
+      }
+    };
+    const terrainButton = document.createElement('button');
+    terrainButton.type = 'button';
+    terrainButton.className = 'terrain-button';
+    terrainButton.textContent = 'Terrain';
+    terrainButton.setAttribute('aria-pressed', String(terrain));
+    terrainButton.addEventListener('click', () => {
+      terrain = !terrain;
+      choice.choose(terrain);
+      terrainButton.setAttribute('aria-pressed', String(terrain));
+      showTerrain();
+    });
+    const terrainGroup = document.createElement('div');
+    terrainGroup.className = 'maplibregl-ctrl maplibregl-ctrl-group terrain-control';
+    terrainGroup.append(terrainButton);
+    // Added before the zoom buttons, so that it stands above them in the top-right corner.
+    map.addControl(
+      { onAdd: () => terrainGroup, onRemove: () => terrainGroup.remove() },
+      'top-right',
+    );
     map.addControl(new maplibre.NavigationControl({ showCompass: false }), 'top-right');
-    map.on('load', () => map.addImage(ARROW_IMAGE, arrowImage()));
+    // A style replaced (the light base map adopted) loses the arrow image: draw it again with every style.
+    map.on('style.load', () => {
+      if (!map.hasImage(ARROW_IMAGE)) map.addImage(ARROW_IMAGE, arrowImage());
+      showTerrain();
+    });
+    // The light base map is fetched here, so that the planner's own style (never blank) stands until it has come, and
+    // for good when it does not come: the route stays on the plain background (D287).
+    void fetch(config.base_style_url)
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json() as Promise<StyleSpecification>;
+      })
+      .then((base) => {
+        if (!current()) return;
+        adopted = true;
+        map.setStyle(base, {
+          diff: false,
+          transformStyle: (_previous, next) => adoptBaseStyle(plan.style, next, terrain),
+        });
+      })
+      .catch(() => {
+        // The light base map does not load: the route stays on the plain background, nothing to tell.
+      });
     // Read-only hook of the browser tests (tests/e2e/run-map.spec.ts): the map object, only when the page's URL has
     // `?e2e=1`, so that they can ask what was rendered. Nothing in the app reads or writes it.
     const exposed = new URLSearchParams(window.location.search).get('e2e') === '1';
@@ -256,6 +316,24 @@
     font-size: var(--text-sm);
     font-weight: 600;
   }
+  /* The map keeps its light palette in both themes (D265): the control is a map overlay. */
+  :global(.maplibregl-ctrl-group .terrain-button) {
+    width: auto;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 0.75rem;
+    border: 0;
+    border-radius: 4px;
+    background: white;
+    color: black;
+    font:
+      600 0.9rem/1 system-ui,
+      sans-serif;
+  }
+  :global(.maplibregl-ctrl-group .terrain-button[aria-pressed='true']) {
+    background: rgb(29 78 216);
+    color: white;
+  }
   .map {
     width: 100%;
     height: 100%;
@@ -267,7 +345,7 @@
     font:
       600 0.8rem/1 system-ui,
       sans-serif;
-    color: #111;
+    color: black;
   }
   :global(.run-marker.numbered) {
     min-width: 1.5rem;

@@ -8,7 +8,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const maps = vi.hoisted(() => ({
-  created: [] as { style: unknown; container: HTMLElement }[],
+  created: [] as { style: { layers: { id: string }[] }; container: HTMLElement }[],
+  styled: [] as [unknown, { transformStyle: (previous: unknown, next: unknown) => never }][],
+  layout: [] as [string, string, string][],
   controls: [] as unknown[],
   markers: [] as { element: HTMLElement; lngLat: unknown }[],
   fitted: [] as unknown[],
@@ -21,12 +23,12 @@ const maps = vi.hoisted(() => ({
 vi.mock('maplibre-gl', () => {
   class FakeMap {
     readonly container: HTMLElement;
-    constructor(options: { style: unknown; container: HTMLElement }) {
+    constructor(options: { style: { layers: { id: string }[] }; container: HTMLElement }) {
       this.container = options.container;
       maps.created.push(options);
     }
     on(event: string, handler: (event?: unknown) => void) {
-      if (event === 'load') queueMicrotask(handler);
+      if (event === 'load' || event === 'style.load') queueMicrotask(handler);
       else maps.handlers[event] = handler;
       return this;
     }
@@ -44,6 +46,21 @@ vi.mock('maplibre-gl', () => {
     }
     addImage(name: string) {
       maps.images.push(name);
+    }
+    hasImage(name: string) {
+      return maps.images.includes(name);
+    }
+    setStyle(
+      style: unknown,
+      options: { transformStyle: (previous: unknown, next: unknown) => never },
+    ) {
+      maps.styled.push([style, options]);
+    }
+    getLayer(id: string) {
+      return { id };
+    }
+    setLayoutProperty(layer: string, name: string, value: string) {
+      maps.layout.push([layer, name, value]);
     }
     fitBounds(bounds: unknown) {
       maps.fitted.push(bounds);
@@ -74,6 +91,8 @@ vi.mock('maplibre-gl', () => {
 });
 
 import RunMap from './RunMap.svelte';
+import { TerrainChoice } from './terrainChoice';
+import { CREDIT_LAYER, TERRAIN_LAYER } from './runMap';
 
 const CONFIG = {
   tile_url: 'https://tiles.example.test/{z}/{x}/{y}.png',
@@ -137,6 +156,8 @@ beforeEach(() => {
     maps.images.length =
       0;
   maps.removed = 0;
+  maps.styled.length = maps.layout.length = 0;
+  window.localStorage.clear();
   maps.workerUrls.length = 0;
   maps.handlers = {};
 });
@@ -202,6 +223,78 @@ describe('RunMap', () => {
     expect(maps.created).toHaveLength(0);
   });
 
+  describe('the light base map and Terrain (D287)', () => {
+    const BASE = {
+      version: 8,
+      sources: {},
+      layers: [
+        { id: 'bg', type: 'background' },
+        { id: 'labels', type: 'symbol' },
+      ],
+    };
+
+    async function started(routes: Record<string, { status: number; body: unknown }> = {}) {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
+        ...routes,
+      });
+      render(RunMap, { planRunId: 'r1' });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+    }
+
+    const terrainControl = (): HTMLElement =>
+      (maps.controls as { onAdd?: (map: unknown) => HTMLElement }[]).find(
+        (control) => control.onAdd,
+      )!.onAdd!({});
+
+    it('starts on its own style, then adopts the fetched base map with the run layers last', async () => {
+      await started({ [CONFIG.base_style_url]: { status: 200, body: BASE } });
+      await waitFor(() => expect(maps.styled).toHaveLength(1));
+      expect(maps.created[0].style.layers.map((l) => l.id)[0]).toBe('plain-background');
+      const [base, options] = maps.styled[0];
+      expect(base).toEqual(BASE);
+      const adopted = options.transformStyle(maps.created[0].style, base) as {
+        layers: { id: string }[];
+      };
+      const ids = adopted.layers.map((l) => l.id);
+      expect(ids.slice(0, 2)).toEqual(['bg', 'labels']);
+      expect(ids.indexOf('track')).toBeGreaterThan(ids.indexOf('labels'));
+    });
+
+    it('keeps the route on the plain background when the base map cannot be had', async () => {
+      await started(); // the style address answers 404
+      await waitFor(() => expect(calls).toContain(CONFIG.base_style_url));
+      expect(maps.styled).toHaveLength(0);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('has a Terrain button that shows and hides the Terrain layer, swaps the credit, and is remembered', async () => {
+      await started();
+      const button = terrainControl().querySelector('button')!;
+      expect(button).toHaveTextContent('Terrain');
+      expect(button).toHaveAttribute('aria-pressed', 'false');
+      await fireEvent.click(button);
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      expect(maps.layout).toContainEqual([TERRAIN_LAYER, 'visibility', 'visible']);
+      expect(maps.layout).toContainEqual([CREDIT_LAYER, 'visibility', 'none']);
+      expect(new TerrainChoice().terrain()).toBe(true);
+      await fireEvent.click(button);
+      expect(button).toHaveAttribute('aria-pressed', 'false');
+      expect(maps.layout).toContainEqual([TERRAIN_LAYER, 'visibility', 'none']);
+      expect(new TerrainChoice().terrain()).toBe(false);
+    });
+
+    it('opens on Terrain when that was the last choice', async () => {
+      new TerrainChoice().choose(true);
+      await started();
+      expect(maps.created[0].style.layers.find((l) => l.id === TERRAIN_LAYER)).toMatchObject({
+        layout: { visibility: 'visible' },
+      });
+      expect(terrainControl().querySelector('button')).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
+
   describe('the estimate chip (D267)', () => {
     const NOTE = 'estimate: road legs are straight-line guesses, not real roads';
 
@@ -217,7 +310,7 @@ describe('RunMap', () => {
     it('shows a chip in the map while an estimate run is shown', async () => {
       await drawnWith({ estimate: true });
       const chip = screen.getByRole('note', { name: NOTE });
-      expect(chip).toHaveTextContent('estimate');
+      expect(chip).toHaveTextContent('Estimate');
       expect(chip).toHaveAttribute('title', NOTE);
       expect(chip.closest('.frame')).not.toBeNull();
     });

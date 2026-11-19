@@ -25,51 +25,16 @@
 // `route.fetch`, so a reload never races a pending fetch. A held answer (Loading) awaits a promise, then continues.
 // The planner's lines (run time, reuse, failure, notices) are read from its answer and checked word for word (D211);
 // run numbers and counts in the Gherkin are the owner's trip, not re-created by presses.
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { serveBlankTiles } from "./blankTile";
-
-const POSITRON = "https://tiles.openfreemap.org/styles/positron";
-
-// The light base map as the tests serve it: a pale background and an empty label layer (no glyph is ever asked for:
-// the layer has nothing to draw). The planner's route layers must come after both (D287 `transformStyle`).
-const CALM_STYLE = {
-  version: 8,
-  name: "test light base map",
-  glyphs: "https://tiles.example.test/fonts/{fontstack}/{range}.pbf",
-  sources: {
-    places: {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-    },
-  },
-  layers: [
-    {
-      id: "background",
-      type: "background",
-      paint: { "background-color": "#f2f2ef" },
-    },
-    {
-      id: "place-labels",
-      type: "symbol",
-      source: "places",
-      layout: { "text-field": ["get", "name"] },
-    },
-  ],
-};
-
-// Blank tiles for every foreign host, then the light base map's style address answered with CALM_STYLE. The address
-// is the planner's own answer (read once); before DELIVER adds `base_style_url` the default address stands in.
-async function serveTheBaseMap(page: Page, testInfo: TestInfo): Promise<void> {
-  await serveBlankTiles(
-    page,
-    testInfo.project.use.baseURL ?? "http://127.0.0.1:8080",
-  );
-  const config = (await (await page.request.get("/api/config/map")).json()) as {
-    base_style_url?: string;
-  };
-  const style = config.base_style_url ?? POSITRON;
-  await page.route(style, (route) => route.fulfill({ json: CALM_STYLE }));
-}
+import path from "node:path";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
+import { contrastRatio } from "./contrast";
+import { CALM_STYLE, serveTheBaseMap } from "./blankTile";
 
 // W4 without a race: the planner's real answer at `address` is read once now, changed, and every later request
 // matching `pattern` is fulfilled with that copy. The handler never fetches.
@@ -92,8 +57,7 @@ async function answerWith<T>(
 const onRealRoads = (detail: Record<string, unknown>) => ({
   ...detail,
   estimate: false,
-  provider_header:
-    "Provider: Valhalla (map data 2026-11-18) / profile: 4x4",
+  provider_header: "Provider: Valhalla (map data 2026-11-18) / profile: 4x4",
 });
 
 // ===================== US-23 Build the trip, plan it, see the route =====================
@@ -179,7 +143,9 @@ test.fixme("An estimate route says Estimate in the card and on the map", async (
   // Checks: "Estimate" in the card and on the map; no "Real roads"; the file is "<project>-run1-estimate.gpx" (D268).
 });
 
-test.fixme("Selecting a step moves the map to it", async ({ page }, testInfo) => {
+test.fixme("Selecting a step moves the map to it", async ({
+  page,
+}, testInfo) => {
   await serveTheBaseMap(page, testInfo);
   // Real run on real roads (W4). Checks: after a press on step 3 the map's published centre and zoom move to that
   // stop's bounds; marker 3 has the accent ring and step 3 is highlighted; the other lines dimmed.
@@ -284,61 +250,426 @@ test.fixme("The planner's notices stay in view", async ({ page }, testInfo) => {
 
 // ===================== US-26 A calm map on which the route stands out =====================
 
-test.fixme("The map opens on a calm base map with its credit", async ({
-  page,
-}, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real run. Checks: the map's style holds CALM_STYLE's layers below the route; the credit control shows the
-  // planner's `base_attribution`.
-});
+const ASSIETTA =
+  "../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx";
+const HOME = "Casa Marco, Torino";
+const ESTIMATE_NOTE =
+  "estimate: road legs are straight-line guesses, not real roads";
+const ROUTE_LAYERS = [
+  "unavailable",
+  "road-confirmed",
+  "road-unconfirmed",
+  "retrace",
+  "track",
+];
+const RETRACE_KM = 12.4;
 
-test.fixme("Terrain switches to the topographic map and back", async ({
-  page,
-}, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real run. Checks: "Terrain" (aria-pressed) makes the raster layer visible with its own credit, the route layers
-  // unchanged and still last; pressed again, hidden and the light credit back.
-});
+type Geometry = {
+  features: {
+    geometry: { type: string; coordinates: unknown };
+    properties: { kind?: string; marker?: string; stop: number };
+  }[];
+};
 
-for (const base of ["light base", "topographic"]) {
-  test.fixme(`The route stands out on both base maps: ${base}`, async ({
-    page,
-  }, testInfo) => {
-    await serveTheBaseMap(page, testInfo);
-    // Real run, the retrace added (W4). Checks: each route line has a casing layer below it and both after every
-    // base layer (labels included); line vs casing colour >= 3:1 with tests/e2e/contrast.ts.
+// The run's geometry with a 12.4 km retrace of "Colle del Sommeiller" added (W4: the packaged planner's one-track run
+// has none), read once and only fulfilled, as slice 12's withSommeillerRetrace.
+function withSommeillerRetrace(answer: Geometry): Geometry {
+  const track = answer.features.find((f) => f.properties.kind === "track")!;
+  const [lon, lat] = (track.geometry.coordinates as [number, number][])[0];
+  const degrees = RETRACE_KM / (111.32 * Math.cos((lat * Math.PI) / 180));
+  const points = [0, 1, 2, 3, 4].map((i) => [
+    lon - (degrees * i) / 4,
+    lat + (i % 2 === 0 ? 0 : 0.004),
+  ]);
+  const stop = Math.max(...answer.features.map((f) => f.properties.stop)) + 1;
+  const common = {
+    item_id: "sommeiller",
+    name: "Colle del Sommeiller",
+    stop,
+  };
+  const retrace = {
+    type: "Feature",
+    geometry: { type: "LineString", coordinates: points },
+    properties: {
+      ...common,
+      kind: "retrace",
+      level: "unconfirmed",
+      reason: null,
+      geometry: "available",
+    },
+  };
+  const end = {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: points[4] },
+    properties: { ...common, marker: "stop", end_stop: null },
+  };
+  const lines = answer.features.filter((f) => f.geometry.type === "LineString");
+  const markers = answer.features.filter((f) => f.geometry.type === "Point");
+  return {
+    ...answer,
+    features: [...lines, retrace, ...markers, end] as Geometry["features"],
+  };
+}
+
+// Marco's trip, planned on the offline road map (an estimate): his own project, the Assietta trail, Torino as Start
+// and End, "Calculate" (the page of this step; 12-03 and later change these controls).
+async function planOnTheOfflineMap(
+  page: Page,
+  testInfo: TestInfo,
+): Promise<string> {
+  const name = `Calm map (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await page
+    .getByLabel("GPX files")
+    .setInputFiles(path.join(testInfo.project.testDir, ASSIETTA));
+  await page.getByRole("button", { name: "Import" }).click();
+  const items = page.getByRole("list", { name: "Items" });
+  await expect(items.getByRole("listitem")).toHaveCount(1);
+  await page.getByLabel("Place name").fill(HOME);
+  await page.getByLabel("Latitude").fill("45.0703");
+  await page.getByLabel("Longitude").fill("7.6869");
+  await page.getByRole("button", { name: "Add place" }).click();
+  await expect(items.getByRole("listitem")).toHaveCount(2);
+  await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
+  await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
+  await page.getByRole("button", { name: "Set Start and End" }).click();
+  await page.getByRole("button", { name: "Calculate" }).click();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
+    timeout: 120_000,
+  });
+  return page.url();
+}
+
+// A real run, its map on show with the planner's hook for the map's own style (`?e2e=1`).
+async function openTheMap(
+  page: Page,
+  testInfo: TestInfo,
+  options: { retrace?: boolean } = {},
+): Promise<Locator> {
+  test.setTimeout(240_000);
+  await serveTheBaseMap(page, testInfo);
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  if (options.retrace) {
+    const geometry = /\/api\/plan-runs\/[^/]+\/geometry$/;
+    const real = (await (
+      await page.request.get(await geometryAddress(page, projectUrl))
+    ).json()) as Geometry;
+    const answer = withSommeillerRetrace(real);
+    await page.route(geometry, (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: answer })
+        : route.continue(),
+    );
+  }
+  await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  return map;
+}
+
+// The geometry address of the project's latest ready run, from the planner's own run list.
+async function geometryAddress(
+  page: Page,
+  projectUrl: string,
+): Promise<string> {
+  const id = decodeURIComponent(/#\/projects\/([^/]+)$/.exec(projectUrl)![1]);
+  const runs = (await (
+    await page.request.get(`/api/projects/${id}/plan-runs`)
+  ).json()) as { id: string; status: string }[];
+  const ready = runs.filter((run) => run.status === "ready");
+  return `/api/plan-runs/${ready[ready.length - 1].id}/geometry`;
+}
+
+type StyleLayer = {
+  id: string;
+  type: string;
+  layout?: Record<string, unknown>;
+  paint?: Record<string, unknown>;
+};
+
+// The map's own style as it stands now (its layers in drawing order); undefined while a style is being replaced.
+async function layersOf(page: Page): Promise<StyleLayer[] | undefined> {
+  return page.evaluate(() => {
+    const map = (
+      window as unknown as {
+        __overlandRunMap?: { getStyle(): { layers: unknown[] } | undefined };
+      }
+    ).__overlandRunMap;
+    try {
+      return map?.getStyle()?.layers as never;
+    } catch {
+      return undefined;
+    }
   });
 }
 
-test.fixme("Road, trail and retrace stay apart on both base maps", async ({
+// Waits until the light base map is the map's: its own layers are in the style, and the route after them.
+async function layersWithTheBaseMap(page: Page): Promise<string[]> {
+  await expect
+    .poll(
+      async () =>
+        (await layersOf(page))?.some((l) => l.id === "place-labels") ?? false,
+      { message: "the map adopts the light base map" },
+    )
+    .toBe(true);
+  return (await layersOf(page))!.map((l) => l.id);
+}
+
+const terrainButton = (map: Locator): Locator =>
+  map.getByRole("button", { name: "Terrain" });
+const credit = (map: Locator): Locator =>
+  map.locator(".maplibregl-ctrl-attrib");
+
+async function config(page: Page): Promise<{
+  tile_url: string;
+  attribution: string;
+  base_attribution: string;
+}> {
+  return (await page.request.get("/api/config/map")).json();
+}
+
+test("The map opens on a calm base map with its credit", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real run, the retrace added (W4). Checks on each base map: three different line colours; the retrace dashed.
+  const map = await openTheMap(page, testInfo);
+  const ids = await layersWithTheBaseMap(page);
+  const base = CALM_STYLE.layers.map((layer) => layer.id);
+  expect(ids.slice(0, base.length), "the base map's layers come first").toEqual(
+    base,
+  );
+  for (const route of ROUTE_LAYERS)
+    expect(ids.indexOf(route), `${route} is below the labels`).toBeGreaterThan(
+      ids.indexOf("place-labels"),
+    );
+  const light = (await config(page)).base_attribution;
+  await expect(credit(map)).toContainText(light.trim().slice(0, 20));
 });
 
-test.fixme("An estimate says so on the map on both base maps", async ({
+test("Terrain switches to the topographic map and back", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real offline-road-map run. Checks: the map's "Estimate" chip with and without "Terrain".
+  const map = await openTheMap(page, testInfo);
+  const before = await layersWithTheBaseMap(page);
+  const { attribution, base_attribution: light } = await config(page);
+  const terrainCredit = attribution.split("|")[0].trim().slice(0, 20);
+  const visibility = async (): Promise<unknown> =>
+    (await layersOf(page))?.find((l) => l.id === "terrain")?.layout?.visibility;
+  const button = terrainButton(map);
+
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  expect(await visibility()).toBe("none");
+  await expect(credit(map)).toContainText(light.trim().slice(0, 20));
+
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(visibility).toBe("visible");
+  await expect(credit(map)).toContainText(terrainCredit);
+  await expect(credit(map)).not.toContainText(light.trim().slice(0, 20));
+  const on = (await layersOf(page))!.map((l) => l.id);
+  expect(on.indexOf("terrain"), "above every base layer").toBeGreaterThan(
+    on.indexOf("place-labels"),
+  );
+  expect(
+    on.slice(on.indexOf("terrain") + 1),
+    "the route, unchanged and last",
+  ).toEqual(before.slice(before.indexOf(ROUTE_LAYERS[0]) - 1));
+
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(visibility).toBe("none");
+  await expect(credit(map)).toContainText(light.trim().slice(0, 20));
+  await expect(credit(map)).not.toContainText(terrainCredit);
 });
 
-test.fixme("On a phone the map controls fit and can be tapped", async ({
+for (const base of ["light base", "topographic"]) {
+  test(`The route stands out on both base maps: ${base}`, async ({
+    page,
+  }, testInfo) => {
+    const map = await openTheMap(page, testInfo, { retrace: true });
+    await layersWithTheBaseMap(page);
+    if (base === "topographic") await terrainButton(map).click();
+    const layers = (await layersOf(page))!;
+    const ids = layers.map((l) => l.id);
+    const lastBaseLayer =
+      ids.indexOf("terrain") > 0 ? "terrain" : "place-labels";
+    for (const route of ROUTE_LAYERS) {
+      const at = ids.indexOf(route);
+      expect(ids[at - 1], `${route} has its casing directly below`).toBe(
+        `${route}-casing`,
+      );
+      expect(
+        at - 1,
+        `${route} and its casing are after the base map`,
+      ).toBeGreaterThan(ids.indexOf(lastBaseLayer));
+      const casing = layers[at - 1].paint!["line-color"] as string;
+      const line = layers[at].paint!["line-color"] as string;
+      expect(
+        contrastRatio(line, casing),
+        `${route} stands out from its casing`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (
+                window as unknown as {
+                  __overlandRunMap: {
+                    queryRenderedFeatures(o: { layers: string[] }): unknown[];
+                  };
+                }
+              ).__overlandRunMap.queryRenderedFeatures({ layers: ["retrace"] })
+                .length,
+          ),
+        { message: "the retrace is drawn" },
+      )
+      .toBeGreaterThan(0);
+  });
+}
+
+test("Road, trail and retrace stay apart on both base maps", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // webkit-iphone14 only. Real estimate run. Checks: "Terrain", the chip and the credit boxes overlap neither each
-  // other nor a stop number; "Terrain" >= 44 x 44 px.
+  const map = await openTheMap(page, testInfo, { retrace: true });
+  await layersWithTheBaseMap(page);
+  for (const topographic of [false, true]) {
+    if (topographic) await terrainButton(map).click();
+    const layers = (await layersOf(page))!;
+    const paint = (id: string) => layers.find((l) => l.id === id)!.paint!;
+    const colours = ["road-confirmed", "track", "retrace"].map(
+      (id) => paint(id)["line-color"],
+    );
+    expect(new Set(colours).size, "three different colours").toBe(3);
+    expect(
+      paint("retrace")["line-dasharray"],
+      "the retrace is dashed",
+    ).toBeTruthy();
+    expect(paint("track")["line-dasharray"]).toBeUndefined();
+    expect(paint("road-confirmed")["line-dasharray"]).toBeUndefined();
+  }
 });
 
-test.fixme("The route still shows when the base map does not load", async ({
+test("An estimate says so on the map on both base maps", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real run; the Terrain tile host answered with route.abort() (and, a second check, the style address too).
-  // Checks: after "Terrain" the route lines, the stop numbers and the itinerary are still shown.
+  const map = await openTheMap(page, testInfo);
+  const chip = map.getByRole("note", { name: ESTIMATE_NOTE });
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveText(/Estimate/);
+  await terrainButton(map).click();
+  await expect(terrainButton(map)).toHaveAttribute("aria-pressed", "true");
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveText(/Estimate/);
 });
+
+test("On a phone the map controls fit and can be tapped", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "webkit-iphone14",
+    "the 390 px phone is checked on the phone profile",
+  );
+  const map = await openTheMap(page, testInfo);
+  await layersWithTheBaseMap(page);
+  await expect(credit(map)).toBeVisible();
+  const chip = map.getByRole("note", { name: ESTIMATE_NOTE });
+  await expect(chip).toBeVisible();
+  await expect(terrainButton(map)).toBeVisible();
+  const box = async (l: Locator) => (await l.boundingBox())!;
+  const controls = {
+    Terrain: await box(terrainButton(map)),
+    Estimate: await box(chip),
+    credit: await box(credit(map)),
+  };
+  const numbers = await map.locator(".run-marker.numbered").all();
+  expect(numbers.length).toBeGreaterThan(1);
+  const apart = (a: Box, b: Box): boolean =>
+    a.x + a.width <= b.x ||
+    b.x + b.width <= a.x ||
+    a.y + a.height <= b.y ||
+    b.y + b.height <= a.y;
+  type Box = { x: number; y: number; width: number; height: number };
+  const names = Object.keys(controls) as (keyof typeof controls)[];
+  for (const [i, one] of names.entries())
+    for (const other of names.slice(i + 1))
+      expect(apart(controls[one], controls[other]), `${one} and ${other}`).toBe(
+        true,
+      );
+  for (const number of numbers) {
+    const at = await box(number);
+    for (const name of names)
+      expect(apart(controls[name], at), `${name} and a stop number`).toBe(true);
+  }
+  expect(controls.Terrain.width).toBeGreaterThanOrEqual(44);
+  expect(controls.Terrain.height).toBeGreaterThanOrEqual(44);
+});
+
+test("The route still shows when the base map does not load", async ({
+  page,
+}, testInfo) => {
+  const map = await openTheMap(page, testInfo);
+  await layersWithTheBaseMap(page);
+  const { tile_url: tiles } = await config(page);
+  const terrainHost = new URL(tiles.split("{")[0]).origin;
+  await page.route(
+    (url) => url.origin === terrainHost,
+    (route) => route.abort(),
+  );
+  const shown = async (): Promise<void> => {
+    await expect(map.locator(".run-marker.numbered").first()).toBeVisible();
+    await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (
+                window as unknown as {
+                  __overlandRunMap: {
+                    queryRenderedFeatures(o: { layers: string[] }): unknown[];
+                  };
+                }
+              ).__overlandRunMap.queryRenderedFeatures({ layers: ["track"] })
+                .length,
+          ),
+        { message: "the route lines are drawn" },
+      )
+      .toBeGreaterThan(0);
+  };
+  // the Terrain tiles do not load: the light base map stays under them and the route over them
+  await terrainButton(map).click();
+  await expect(terrainButton(map)).toHaveAttribute("aria-pressed", "true");
+  await shown();
+  expect((await layersOf(page))!.some((l) => l.id === "place-labels")).toBe(
+    true,
+  );
+
+  // the style does not load either: the route stays on the plain background
+  const style = await styleAddress(page);
+  await page.route(style, (route) => route.abort());
+  await page.reload();
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await shown();
+  expect((await layersOf(page))!.some((l) => l.id === "place-labels")).toBe(
+    false,
+  );
+});
+
+async function styleAddress(page: Page): Promise<string> {
+  return (
+    (await (await page.request.get("/api/config/map")).json()) as {
+      base_style_url: string;
+    }
+  ).base_style_url;
+}
 
 // Used by the tests above once DELIVER writes them (kept here so the W4 rule is in one place from the start).
 export const w4 = { answerWith, onRealRoads, expect };

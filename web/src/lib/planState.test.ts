@@ -82,7 +82,7 @@ describe('planState', () => {
 describe('estimateMarker', () => {
   it('is a warning pill with the approx glyph and the road-legs note for an estimate only', () => {
     expect(estimateMarker(true)).toEqual({
-      label: 'estimate',
+      label: 'Estimate',
       note: 'estimate: road legs are straight-line guesses, not real roads',
       role: 'warning',
       fill: 'dashed',

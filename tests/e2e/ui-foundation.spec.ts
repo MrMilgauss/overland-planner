@@ -6,7 +6,7 @@
 // webkit-iphone14 (390 px) against the packaged planner on PLANNER_URL, which plans on the offline road map.
 // A test meant for one width skips itself on the other project (`test.skip(testInfo.project.name !== ...)`).
 // Seeding follows workspace.spec.ts and run-map.spec.ts: the page itself (New project, Import assietta.gpx, Add place,
-// Set Start and End, Calculate), `page.request` to the planner's own API, and blank tiles (`serveBlankTiles`).
+// Set Start and End, Calculate), `page.request` to the planner's own API, and the served base map (`serveTheBaseMap`).
 // Each test creates its own project (both projects run at once against one planner).
 // States the packaged planner cannot reach on its own are set by rewriting the planner's answer in this browser
 // (`page.route`, policy waiver W4): Loading (held answer), Planning (job held at running), Failed run #5, a Valhalla
@@ -21,7 +21,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { expression, latest } from "@maplibre/maplibre-gl-style-spec";
-import { serveBlankTiles } from "./blankTile";
+import { serveTheBaseMap } from "./blankTile";
 import { contrastRatio, parseColour, readColours } from "./contrast";
 
 const ASSIETTA =
@@ -34,10 +34,7 @@ async function makeAPlannedProject(
   page: Page,
   testInfo: TestInfo,
 ): Promise<string> {
-  await serveBlankTiles(
-    page,
-    testInfo.project.use.baseURL ?? "http://127.0.0.1:8080",
-  );
+  await serveTheBaseMap(page, testInfo);
   const name = `Alpi Occidentali giugno 2027 (${testInfo.project.name} ${Date.now()})`;
   await page.goto("/");
   await page.getByLabel("Project name").fill(name);
@@ -728,10 +725,7 @@ async function makeAnEmptyProject(
   page: Page,
   testInfo: TestInfo,
 ): Promise<void> {
-  await serveBlankTiles(
-    page,
-    testInfo.project.use.baseURL ?? "http://127.0.0.1:8080",
-  );
+  await serveTheBaseMap(page, testInfo);
   const name = `Alpi Occidentali giugno 2027 (${testInfo.project.name} ${Date.now()})`;
   await page.goto("/");
   await page.getByLabel("Project name").fill(name);
@@ -903,7 +897,7 @@ test("A plan on the offline road map is marked as an estimate", async ({
   await expect(stateBadge(page)).toContainText("Plan run #4");
   const pill = planPanel(page).getByRole("note", { name: ESTIMATE });
   await expect(pill).toBeVisible();
-  await expect(pill).toHaveText(/estimate/);
+  await expect(pill).toHaveText(/Estimate/);
   await expect(pill).toHaveAttribute("title", ESTIMATE);
   await expect(pill.locator('[aria-hidden="true"]')).toHaveText("\u2248");
   // by the heading: within a short way of the state badge, in the same panel
@@ -945,7 +939,7 @@ test("A plan on real roads shows no estimate marker", async ({
   ).toBeVisible();
   await expect(page.getByRole("note", { name: ESTIMATE })).toHaveCount(0);
   await expect(page.getByTitle(/^estimate:/)).toHaveCount(0);
-  await expect(mapArea(page).getByText("estimate")).toHaveCount(0);
+  await expect(mapArea(page).getByText("Estimate")).toHaveCount(0);
 });
 
 test("A stale estimate shows both labels", async ({ page }, testInfo) => {

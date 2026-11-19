@@ -1,7 +1,12 @@
 // The run map as data (slice 09, step 10-04, ADR-003 Amendment 2): the planner's geometry answer and the map settings
 // in, a MapLibre style (tiles, the lines, their layers), the text and marker overlays, and the bounds out. Pure: the
 // drawing itself (WebGL) is RunMap.svelte's, and the web composes no wording but the labels of the map itself.
-import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
+import type {
+  ExpressionSpecification,
+  LayerSpecification,
+  SourceSpecification,
+  StyleSpecification,
+} from 'maplibre-gl';
 
 export const ARROW_IMAGE = 'direction-arrow';
 
@@ -74,7 +79,17 @@ const UNCONFIRMED_ORANGE = '#ea580c';
 const RETRACE_PURPLE = '#7e22ce';
 const TRACK_GREEN = '#14532d';
 const UNAVAILABLE_GREY = '#6b7280';
-const LINE_WIDTH = 4;
+// Line widths follow the zoom like the arrows (D287): 4 px for the whole trip, 7 px on a trail, each on a white casing
+// 3 px wider so that the route stands out on any base map.
+const LINE_WIDTHS = [4, 7];
+const CASING_EXTRA = 3;
+const CASING_WHITE = '#ffffff';
+/** The layers the map itself adds between the base map and the route (D287). */
+export const PLAIN_BACKGROUND_LAYER = 'plain-background';
+export const CREDIT_LAYER = 'base-credit';
+export const TERRAIN_LAYER = 'terrain';
+const CREDIT_SOURCE = 'base-credit';
+const PLAIN_BACKGROUND = '#f2f2ef';
 // Arrows and their spacing follow the zoom (D269): small and far apart for the whole trip on a phone, full size and
 // close together on a trail. Zoom 8 shows a trip of some hundred km on 390 px; zoom 13 is a trail.
 const TRIP_ZOOM = 8;
@@ -103,24 +118,38 @@ const zoomed = ([trip, trail]: number[]): ExpressionSpecification => [
   trail,
 ];
 
-function lineLayer(
+function lineLayers(
   id: string,
   filter: ExpressionSpecification,
   color: string,
   dash?: number[],
-): LayerSpecification {
-  return {
-    id,
-    type: 'line',
-    source: 'run',
-    filter,
-    layout: { 'line-cap': dash ? 'butt' : 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': color,
-      'line-width': LINE_WIDTH,
-      ...(dash ? { 'line-dasharray': dash } : {}),
+): LayerSpecification[] {
+  const layout = { 'line-cap': dash ? 'butt' : 'round', 'line-join': 'round' } as const;
+  return [
+    {
+      id: `${id}-casing`,
+      type: 'line',
+      source: 'run',
+      filter,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': CASING_WHITE,
+        'line-width': zoomed(LINE_WIDTHS.map((width) => width + CASING_EXTRA)),
+      },
     },
-  };
+    {
+      id,
+      type: 'line',
+      source: 'run',
+      filter,
+      layout,
+      paint: {
+        'line-color': color,
+        'line-width': zoomed(LINE_WIDTHS),
+        ...(dash ? { 'line-dasharray': dash } : {}),
+      },
+    },
+  ];
 }
 
 const ARROW_SIZE = 24; // pixels, square
@@ -166,29 +195,42 @@ export function arrowImage(): { width: number; height: number; data: Uint8Clampe
   return { width: ARROW_SIZE, height: ARROW_SIZE, data };
 }
 
-function layersOf(config: MapConfig): LayerSpecification[] {
+function layersOf(config: MapConfig, terrain: boolean): LayerSpecification[] {
   const available = is('geometry', 'available');
   return [
+    // Until the light base map is adopted, and for good when it cannot be had, the route stands on a plain background.
     {
-      id: 'tiles',
+      id: PLAIN_BACKGROUND_LAYER,
+      type: 'background',
+      paint: { 'background-color': PLAIN_BACKGROUND },
+    },
+    {
+      id: CREDIT_LAYER,
+      type: 'line',
+      source: CREDIT_SOURCE,
+      layout: { visibility: 'none' },
+    },
+    {
+      id: TERRAIN_LAYER,
       type: 'raster',
       source: 'tiles',
       maxzoom: config.max_zoom + 1,
+      layout: { visibility: terrain ? 'visible' : 'none' },
     } as LayerSpecification,
-    lineLayer('unavailable', is('geometry', 'unavailable'), UNAVAILABLE_GREY, [2, 2]),
-    lineLayer(
+    ...lineLayers('unavailable', is('geometry', 'unavailable'), UNAVAILABLE_GREY, [2, 2]),
+    ...lineLayers(
       'road-confirmed',
       drawn(is('kind', 'road'), is('level', 'confirmed'), available),
       ROAD_BLUE,
     ),
-    lineLayer(
+    ...lineLayers(
       'road-unconfirmed',
       drawn(is('kind', 'road'), is('level', 'unconfirmed'), available),
       UNCONFIRMED_ORANGE,
       [0.5, 2],
     ),
-    lineLayer('retrace', drawn(is('kind', 'retrace'), available), RETRACE_PURPLE, [8, 4]),
-    lineLayer('track', drawn(is('kind', 'track'), available), TRACK_GREEN),
+    ...lineLayers('retrace', drawn(is('kind', 'retrace'), available), RETRACE_PURPLE, [8, 4]),
+    ...lineLayers('track', drawn(is('kind', 'track'), available), TRACK_GREEN),
     {
       id: 'track-arrows',
       type: 'symbol',
@@ -291,7 +333,8 @@ function boundsOf(points: LngLat[]): [LngLat, LngLat] | null {
   ];
 }
 
-export function buildRunMap(geometry: RunGeometry, config: MapConfig): RunMapPlan {
+/** The map's own style: a plain background, the Terrain tiles (hidden unless `terrain`) and the route; never blank. */
+export function buildRunMap(geometry: RunGeometry, config: MapConfig, terrain = false): RunMapPlan {
   const lines = geometry.features.filter(isLine);
   const overlays = geometry.features.flatMap((feature) => {
     const overlay = isLine(feature) ? labelOf(feature) : markerOf(feature);
@@ -312,11 +355,47 @@ export function buildRunMap(geometry: RunGeometry, config: MapConfig): RunMapPla
           attribution: config.attribution,
         },
         run: { type: 'geojson', data: { type: 'FeatureCollection', features: lines } as never },
+        [CREDIT_SOURCE]: {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+          attribution: config.base_attribution,
+        },
       },
-      layers: layersOf(config),
+      layers: layersOf(config, terrain),
     },
     overlays,
     bounds: boundsOf(points),
+  };
+}
+
+/** The fetched light base map with the map's own sources and layers kept after every base layer (labels included), as
+ * MapLibre's `transformStyle` hands them: the base map's glyphs and sprite stay, the plain background goes, and the
+ * credit is the planner's own words (the light base map's sources say nothing). */
+export function adoptBaseStyle(
+  own: StyleSpecification,
+  base: StyleSpecification,
+  terrain: boolean,
+): StyleSpecification {
+  const uncredited = Object.fromEntries(
+    Object.entries(base.sources).map(([name, source]) => [
+      name,
+      Object.fromEntries(
+        Object.entries(source).filter(([key]) => key !== 'attribution'),
+      ) as unknown as SourceSpecification,
+    ]),
+  );
+  const ours = own.layers
+    .filter((layer) => layer.id !== PLAIN_BACKGROUND_LAYER)
+    .map((layer) =>
+      layer.id === CREDIT_LAYER
+        ? { ...layer, layout: { visibility: terrain ? 'none' : 'visible' } }
+        : layer,
+    ) as LayerSpecification[];
+  const kept = new Set(ours.map((layer) => layer.id));
+  return {
+    ...base,
+    sources: { ...uncredited, ...own.sources },
+    layers: [...base.layers.filter((layer) => !kept.has(layer.id)), ...ours],
   };
 }
 

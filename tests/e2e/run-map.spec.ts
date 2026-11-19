@@ -2,23 +2,25 @@
 //  - on its own (`make e2e-local`, CI job 7): Marco makes a small plan in the browser and checks its map;
 //  - driven by the @ui @phone scenario "Giulia uses the map on her phone" (steps/browser.py, MapPhoneJourney): the
 //    plan run exists, the spec opens its project at 390 px and writes what the screen showed to result.json.
-// Tiles never come from the internet: every request to a host other than the planner's is answered with a blank tile.
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { expect, test, type Locator, type Page } from '@playwright/test';
-import { serveBlankTiles } from './blankTile';
+// Tiles and the base map never come from the internet: the light base map's style address is answered with the tests'
+// own small style and every other request to a host other than the planner's with a blank tile (serveTheBaseMap).
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { serveTheBaseMap } from "./blankTile";
 
-const ASSIETTA = '../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx';
-const HOME = 'Casa Marco, Torino';
+const ASSIETTA =
+  "../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx";
+const HOME = "Casa Marco, Torino";
 const projectId = process.env.MAP_PROJECT_ID;
 const resultDir = process.env.MAP_RESULT_DIR;
 const driven = Boolean(projectId && resultDir);
-const screenWidth = Number(process.env.MAP_SCREEN_WIDTH ?? '0');
+const screenWidth = Number(process.env.MAP_SCREEN_WIDTH ?? "0");
 // Step 10-05 (POI by map click): the one action a driven run does; empty = the spec makes its own plan and does them all.
-const poiAction = process.env.MAP_POI_ACTION ?? '';
+const poiAction = process.env.MAP_POI_ACTION ?? "";
 const SUSA = {
-  lat: Number(process.env.MAP_POI_LAT ?? '45.1376'),
-  lon: Number(process.env.MAP_POI_LON ?? '7.0486'),
+  lat: Number(process.env.MAP_POI_LAT ?? "45.1376"),
+  lon: Number(process.env.MAP_POI_LON ?? "7.0486"),
 };
 
 if (driven && screenWidth > 0) {
@@ -33,25 +35,33 @@ async function makeAPlan(
   page: Page,
   testDir: string,
   projectName: string,
-  query = '',
+  query = "",
 ): Promise<void> {
   await page.goto(`/${query}`);
-  await page.getByLabel('Project name').fill(projectName);
-  await page.getByRole('button', { name: 'New project' }).click();
-  await expect(page.getByRole('heading', { level: 1, name: projectName })).toBeVisible();
-  await page.getByLabel('GPX files').setInputFiles(path.join(testDir, ASSIETTA));
-  await page.getByRole('button', { name: 'Import' }).click();
-  await expect(page.getByRole('list', { name: 'Items' }).getByRole('listitem')).toHaveCount(1);
-  await page.getByLabel('Place name').fill(HOME);
-  await page.getByLabel('Latitude').fill('45.0703');
-  await page.getByLabel('Longitude').fill('7.6869');
-  await page.getByRole('button', { name: 'Add place' }).click();
-  await expect(page.getByRole('list', { name: 'Items' }).getByRole('listitem')).toHaveCount(2);
-  await page.getByLabel('Start', { exact: true }).selectOption({ label: HOME });
-  await page.getByLabel('End', { exact: true }).selectOption({ label: HOME });
-  await page.getByRole('button', { name: 'Set Start and End' }).click();
-  await page.getByRole('button', { name: 'Calculate' }).click();
-  await expect(page.getByRole('link', { name: 'Export GPX' })).toBeVisible({
+  await page.getByLabel("Project name").fill(projectName);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: projectName }),
+  ).toBeVisible();
+  await page
+    .getByLabel("GPX files")
+    .setInputFiles(path.join(testDir, ASSIETTA));
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(
+    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  await page.getByLabel("Place name").fill(HOME);
+  await page.getByLabel("Latitude").fill("45.0703");
+  await page.getByLabel("Longitude").fill("7.6869");
+  await page.getByRole("button", { name: "Add place" }).click();
+  await expect(
+    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+  ).toHaveCount(2);
+  await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
+  await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
+  await page.getByRole("button", { name: "Set Start and End" }).click();
+  await page.getByRole("button", { name: "Calculate" }).click();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
     timeout: 120_000,
   });
 }
@@ -60,7 +70,8 @@ async function centres(markers: Locator): Promise<{ x: number; y: number }[]> {
   const found = [];
   for (const marker of await markers.all()) {
     const box = await marker.boundingBox();
-    if (box) found.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    if (box)
+      found.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
   }
   return found;
 }
@@ -82,50 +93,61 @@ type SourceFeature = {
 
 // What the map RENDERED, asked of MapLibre (polled until the first frames are drawn): the track line and its direction arrows draw features, a
 // retrace (when the run has one) draws without arrows, and the track's drawn line starts at the track's entry.
-async function checkRenderedLines(page: Page, projectIdShown: string): Promise<void> {
+async function checkRenderedLines(
+  page: Page,
+  projectIdShown: string,
+): Promise<void> {
   const state = () =>
     page.evaluate(() => {
-      const map = (window as unknown as { __overlandRunMap?: RenderedMap }).__overlandRunMap;
+      const map = (window as unknown as { __overlandRunMap?: RenderedMap })
+        .__overlandRunMap;
       if (!map) return undefined;
       const count = (layer: string): number =>
         map.queryRenderedFeatures({ layers: [layer] }).length;
-      const drawn = map.getSource('run').serialize().data.features;
+      const drawn = map.getSource("run").serialize().data.features;
       return {
-        track: count('track'),
-        arrows: count('track-arrows'),
-        retrace: count('retrace'),
-        retraces: drawn.filter((feature) => feature.properties.kind === 'retrace').length,
-        arrowFilter: JSON.stringify(map.getFilter('track-arrows')),
-        trackStart: drawn.find((feature) => feature.properties.kind === 'track')?.geometry
-          .coordinates[0],
+        track: count("track"),
+        arrows: count("track-arrows"),
+        retrace: count("retrace"),
+        retraces: drawn.filter(
+          (feature) => feature.properties.kind === "retrace",
+        ).length,
+        arrowFilter: JSON.stringify(map.getFilter("track-arrows")),
+        trackStart: drawn.find((feature) => feature.properties.kind === "track")
+          ?.geometry.coordinates[0],
       };
     });
   await expect
     .poll(async () => (await state())?.track ?? 0, {
-      message: 'the track line renders',
+      message: "the track line renders",
     })
     .toBeGreaterThan(0);
   await expect
     .poll(async () => (await state())?.arrows ?? 0, {
-      message: 'the arrows render',
+      message: "the arrows render",
     })
     .toBeGreaterThan(0);
   const seen = (await state())!;
-  expect(seen.arrowFilter, 'arrows are for tracks, never retraces').toContain('track');
-  expect(seen.arrowFilter).not.toContain('retrace');
-  if (seen.retraces > 0) expect(seen.retrace, 'the retrace renders').toBeGreaterThan(0);
-  const listed = await (await page.request.get(`/api/projects/${projectIdShown}/items`)).json();
-  const track = listed.find((item: { type: string }) => item.type === 'track');
+  expect(seen.arrowFilter, "arrows are for tracks, never retraces").toContain(
+    "track",
+  );
+  expect(seen.arrowFilter).not.toContain("retrace");
+  if (seen.retraces > 0)
+    expect(seen.retrace, "the retrace renders").toBeGreaterThan(0);
+  const listed = await (
+    await page.request.get(`/api/projects/${projectIdShown}/items`)
+  ).json();
+  const track = listed.find((item: { type: string }) => item.type === "track");
   expect(seen.trackStart![1]).toBeCloseTo(track.entry.lat, 5);
   expect(seen.trackStart![0]).toBeCloseTo(track.entry.lon, 5);
 }
 
-test('the map of the run shows its roads, tracks, numbers and credit, and pans and zooms', async ({
+test("the map of the run shows its roads, tracks, numbers and credit, and pans and zooms", async ({
   page,
 }, testInfo) => {
-  test.skip(poiAction !== '', 'a POI run is driven: the map checks are not');
+  test.skip(poiAction !== "", "a POI run is driven: the map checks are not");
   test.setTimeout(180_000);
-  await serveBlankTiles(page, String(testInfo.project.use.baseURL));
+  await serveTheBaseMap(page, testInfo);
 
   // `?e2e=1` makes the page hand its MapLibre map to `window.__overlandRunMap`, to ask what was rendered.
   if (driven) await page.goto(`/?e2e=1#/projects/${projectId}`);
@@ -134,35 +156,42 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
       page,
       testInfo.project.testDir,
       `Mappa ${testInfo.project.name} ${Date.now()}`,
-      '?e2e=1',
+      "?e2e=1",
     );
 
-  const map = page.getByRole('region', { name: 'Map of the run' });
-  await expect(map.locator('canvas.maplibregl-canvas')).toBeVisible({
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
-  const config = await (await page.request.get('/api/config/map')).json();
-  const credit = map.locator('.maplibregl-ctrl-attrib');
+  const config = await (await page.request.get("/api/config/map")).json();
+  const credit = map.locator(".maplibregl-ctrl-attrib");
   await expect(credit).toBeVisible();
-  await expect(credit).toContainText(String(config.attribution).split('|')[0].trim().slice(0, 20));
-  await expect(map.getByRole('button', { name: /attribution/i })).toHaveCount(0); // always open: nothing to close
+  await expect(credit).toContainText(
+    String(config.base_attribution).trim().slice(0, 20),
+  );
+  await expect(map.getByRole("button", { name: /attribution/i })).toHaveCount(
+    0,
+  ); // always open: nothing to close
 
-  const numbered = map.locator('.run-marker.numbered');
+  const numbered = map.locator(".run-marker.numbered");
   await expect(numbered.first()).toBeVisible();
   const numbers = await numbered.allInnerTexts();
   expect(numbers.length).toBeGreaterThan(1);
   for (const text of numbers) expect(text).toMatch(/\d/);
 
-  await checkRenderedLines(page, driven ? projectId! : new URL(page.url()).hash.split('/').pop()!);
+  await checkRenderedLines(
+    page,
+    driven ? projectId! : new URL(page.url()).hash.split("/").pop()!,
+  );
 
   const screen = page.viewportSize()!.width;
   const pageWidth = await page.evaluate(() =>
     Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
   );
-  expect(pageWidth, 'no horizontal scroll').toBeLessThanOrEqual(screen);
+  expect(pageWidth, "no horizontal scroll").toBeLessThanOrEqual(screen);
 
   await map.scrollIntoViewIfNeeded();
-  const frame = (await map.locator('canvas.maplibregl-canvas').boundingBox())!;
+  const frame = (await map.locator("canvas.maplibregl-canvas").boundingBox())!;
   const middle = {
     x: frame.x + frame.width / 2,
     y: frame.y + frame.height / 2,
@@ -175,7 +204,7 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
   await page.mouse.up();
   await expect
     .poll(async () => (await centres(numbered))[0].x, {
-      message: 'the map pans',
+      message: "the map pans",
     })
     .not.toBeCloseTo(before[0].x, 0);
   const panned = await centres(numbered);
@@ -184,20 +213,20 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
   // A wheel on a desktop; on a phone profile the map's own Zoom in control (Playwright has no pinch, and mobile WebKit
   // has no wheel).
   if (testInfo.project.use.isMobile || driven)
-    await map.getByRole('button', { name: 'Zoom in' }).click();
+    await map.getByRole("button", { name: "Zoom in" }).click();
   else {
     await page.mouse.move(middle.x, middle.y);
     await page.mouse.wheel(0, -400);
   }
   await expect
     .poll(async () => spread(await centres(numbered)), {
-      message: 'the map zooms',
+      message: "the map zooms",
     })
     .toBeGreaterThan(widthBefore);
 
   if (driven) {
     await writeFile(
-      path.join(resultDir!, 'result.json'),
+      path.join(resultDir!, "result.json"),
       JSON.stringify({
         screen_width: screen,
         page_width: pageWidth,
@@ -218,9 +247,13 @@ test('the map of the run shows its roads, tracks, numbers and credit, and pans a
 const WORLD = 512;
 const CLOSE_ENOUGH_ZOOM = 13;
 
-async function viewOf(frame: Locator): Promise<{ lng: number; lat: number; zoom: number }> {
+async function viewOf(
+  frame: Locator,
+): Promise<{ lng: number; lat: number; zoom: number }> {
   return frame.evaluate((element) => {
-    const [lng, lat] = (element as HTMLElement).dataset.center!.split(',').map(Number);
+    const [lng, lat] = (element as HTMLElement).dataset
+      .center!.split(",")
+      .map(Number);
     return { lng, lat, zoom: Number((element as HTMLElement).dataset.zoom) };
   });
 }
@@ -236,13 +269,17 @@ async function settled(
         await page.waitForTimeout(250); // sampling interval of the poll, not a wait for a result
         return before === JSON.stringify(await viewOf(frame));
       },
-      { message: 'the map stands still' },
+      { message: "the map stands still" },
     )
     .toBe(true);
   return viewOf(frame);
 }
 
-const mercator = (lat: number, lon: number, zoom: number): { x: number; y: number } => {
+const mercator = (
+  lat: number,
+  lon: number,
+  zoom: number,
+): { x: number; y: number } => {
   const size = WORLD * 2 ** zoom;
   const sine = Math.sin((lat * Math.PI) / 180);
   return {
@@ -255,7 +292,7 @@ async function pixelOf(page: Page, frame: Locator, lat: number, lon: number) {
   const view = await settled(page, frame);
   const centre = mercator(view.lat, view.lng, view.zoom);
   const target = mercator(lat, lon, view.zoom);
-  const box = (await frame.locator('canvas.maplibregl-canvas').boundingBox())!;
+  const box = (await frame.locator("canvas.maplibregl-canvas").boundingBox())!;
   return {
     x: box.x + box.width / 2 + target.x - centre.x,
     y: box.y + box.height / 2 + target.y - centre.y,
@@ -264,51 +301,71 @@ async function pixelOf(page: Page, frame: Locator, lat: number, lon: number) {
   };
 }
 
-async function zoomInAbout(page: Page, frame: Locator, lat: number, lon: number): Promise<void> {
+async function zoomInAbout(
+  page: Page,
+  frame: Locator,
+  lat: number,
+  lon: number,
+): Promise<void> {
   if (test.info().project.use.isMobile) return; // mobile WebKit has no wheel: a pixel is wider there
   for (let tries = 0; tries < 20; tries += 1) {
     const spot = await pixelOf(page, frame, lat, lon);
     if (spot.zoom >= CLOSE_ENOUGH_ZOOM) return;
-    expect(spot.x, 'the place is in view').toBeGreaterThan(spot.box.x);
-    expect(spot.x, 'the place is in view').toBeLessThan(spot.box.x + spot.box.width);
-    expect(spot.y, 'the place is in view').toBeGreaterThan(spot.box.y);
-    expect(spot.y, 'the place is in view').toBeLessThan(spot.box.y + spot.box.height);
+    expect(spot.x, "the place is in view").toBeGreaterThan(spot.box.x);
+    expect(spot.x, "the place is in view").toBeLessThan(
+      spot.box.x + spot.box.width,
+    );
+    expect(spot.y, "the place is in view").toBeGreaterThan(spot.box.y);
+    expect(spot.y, "the place is in view").toBeLessThan(
+      spot.box.y + spot.box.height,
+    );
     await page.mouse.move(spot.x, spot.y);
     await page.mouse.wheel(0, -500);
   }
-  throw new Error('the map did not zoom in');
+  throw new Error("the map did not zoom in");
 }
 
-const nameForm = (page: Page): Locator => page.getByRole('form', { name: 'Add a place here' });
+const nameForm = (page: Page): Locator =>
+  page.getByRole("form", { name: "Add a place here" });
 
 async function clickModeOn(map: Locator): Promise<string> {
-  const toggle = map.getByRole('button', { name: 'Click on map' });
-  await expect(toggle, 'the map has a Click on map control').toBeVisible({
+  const toggle = map.getByRole("button", { name: "Click on map" });
+  await expect(toggle, "the map has a Click on map control").toBeVisible({
     timeout: 15_000,
   });
   await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  return (await toggle.getAttribute('aria-pressed')) ?? '';
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  return (await toggle.getAttribute("aria-pressed")) ?? "";
 }
 
-async function clickPlace(page: Page, map: Locator, lat: number, lon: number): Promise<number> {
-  const frame = map.locator('.map');
+async function clickPlace(
+  page: Page,
+  map: Locator,
+  lat: number,
+  lon: number,
+): Promise<number> {
+  const frame = map.locator(".map");
   await zoomInAbout(page, frame, lat, lon);
   const spot = await pixelOf(page, frame, lat, lon);
   await page.mouse.click(spot.x, spot.y);
   await expect(nameForm(page)).toBeVisible();
-  return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** (spot.zoom + 1); // metres a pixel stands for
+  return (
+    (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** (spot.zoom + 1)
+  ); // metres a pixel stands for
 }
 
 async function nameIt(page: Page, name: string): Promise<void> {
-  await nameForm(page).getByLabel('Name').fill(name);
-  await nameForm(page).getByRole('button', { name: 'Add' }).click();
+  await nameForm(page).getByLabel("Name").fill(name);
+  await nameForm(page).getByRole("button", { name: "Add" }).click();
 }
 
 /** Clicks next to the first entry marker and answers the name of the track it enters (its title: "Entry of NAME"). */
 async function clickEntryMarker(page: Page, map: Locator): Promise<string> {
-  const marker = map.locator('.run-marker.entry').first();
-  const entered = ((await marker.getAttribute('title')) ?? '').replace(/^Entry of /, '');
+  const marker = map.locator(".run-marker.entry").first();
+  const entered = ((await marker.getAttribute("title")) ?? "").replace(
+    /^Entry of /,
+    "",
+  );
   const box = (await marker.boundingBox())!;
   // Five pixels off the middle of the marker: the click is "next to" the entry, which is what snapping is for.
   await page.mouse.click(box.x + box.width / 2 + 5, box.y + box.height / 2);
@@ -316,24 +373,29 @@ async function clickEntryMarker(page: Page, map: Locator): Promise<string> {
   return entered;
 }
 
-test('a POI by a click on the map: named, placed, snapped to an entry, cancelled', async ({
+test("a POI by a click on the map: named, placed, snapped to an entry, cancelled", async ({
   page,
 }, testInfo) => {
-  test.skip(driven && poiAction === '', 'driven by another scenario');
+  test.skip(driven && poiAction === "", "driven by another scenario");
   test.setTimeout(150_000);
-  await serveBlankTiles(page, String(testInfo.project.use.baseURL));
+  await serveTheBaseMap(page, testInfo);
   if (driven) await page.goto(`/#/projects/${projectId}`);
   else
-    await makeAPlan(page, testInfo.project.testDir, `POI ${testInfo.project.name} ${Date.now()}`);
+    await makeAPlan(
+      page,
+      testInfo.project.testDir,
+      `POI ${testInfo.project.name} ${Date.now()}`,
+    );
 
-  const map = page.getByRole('region', { name: 'Map of the run' });
-  await expect(map.locator('canvas.maplibregl-canvas')).toBeVisible({
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
-  await expect(map.locator('.run-marker.entry').first()).toBeVisible();
-  const items = page.getByRole('list', { name: 'Items' });
+  await expect(map.locator(".run-marker.entry").first()).toBeVisible();
+  const items = page.getByRole("list", { name: "Items" });
   const mode = await clickModeOn(map);
-  const action = (name: string): boolean => poiAction === '' || poiAction === name;
+  const action = (name: string): boolean =>
+    poiAction === "" || poiAction === name;
   const seen = {
     form_shown: false,
     form_gone: false,
@@ -342,8 +404,8 @@ test('a POI by a click on the map: named, placed, snapped to an entry, cancelled
     metres_per_pixel: 0,
   };
 
-  if (action('entry')) {
-    const name = process.env.MAP_POI_NAME || 'Assietta trailhead';
+  if (action("entry")) {
+    const name = process.env.MAP_POI_NAME || "Assietta trailhead";
     const entered = await clickEntryMarker(page, map);
     seen.form_shown = true;
     await nameIt(page, name);
@@ -351,20 +413,26 @@ test('a POI by a click on the map: named, placed, snapped to an entry, cancelled
     seen.form_gone = true;
     seen.listed = true;
 
-    const id = driven ? projectId : new URL(page.url()).hash.split('/').pop();
-    const listed = await (await page.request.get(`/api/projects/${id}/items`)).json();
+    const id = driven ? projectId : new URL(page.url()).hash.split("/").pop();
+    const listed = await (
+      await page.request.get(`/api/projects/${id}/items`)
+    ).json();
     const poi = listed.find((item: { name: string }) => item.name === name);
-    const track = listed.find((item: { name: string }) => item.name === entered);
+    const track = listed.find(
+      (item: { name: string }) => item.name === entered,
+    );
     expect(track, `the track ${entered} whose entry was clicked`).toBeDefined();
-    expect(poi.location, 'the POI is at the entry, exactly').toEqual(track.entry);
+    expect(poi.location, "the POI is at the entry, exactly").toEqual(
+      track.entry,
+    );
   }
 
-  if (action('click')) {
-    const name = process.env.MAP_POI_NAME || 'Susa trailhead';
+  if (action("click")) {
+    const name = process.env.MAP_POI_NAME || "Susa trailhead";
     seen.metres_per_pixel = await clickPlace(page, map, SUSA.lat, SUSA.lon);
     seen.form_shown = true;
     const form = (await nameForm(page).boundingBox())!;
-    expect(form.x + form.width, 'the form fits the screen').toBeLessThanOrEqual(
+    expect(form.x + form.width, "the form fits the screen").toBeLessThanOrEqual(
       page.viewportSize()!.width,
     );
     await nameIt(page, name);
@@ -374,26 +442,26 @@ test('a POI by a click on the map: named, placed, snapped to an entry, cancelled
     seen.listed = true;
   }
 
-  if (action('cancel')) {
+  if (action("cancel")) {
     await clickPlace(page, map, SUSA.lat, SUSA.lon);
     seen.form_shown = true;
-    const count = await items.getByRole('listitem').count();
-    await nameForm(page).getByRole('button', { name: 'Cancel' }).click();
+    const count = await items.getByRole("listitem").count();
+    await nameForm(page).getByRole("button", { name: "Cancel" }).click();
     await expect(nameForm(page)).toHaveCount(0);
     seen.form_gone = true;
-    if (poiAction === '') {
+    if (poiAction === "") {
       await clickPlace(page, map, SUSA.lat, SUSA.lon); // Escape closes it too
-      await page.keyboard.press('Escape');
+      await page.keyboard.press("Escape");
       await expect(nameForm(page)).toHaveCount(0);
       await clickPlace(page, map, SUSA.lat, SUSA.lon); // an empty name keeps it open with the planner's message
-      await nameForm(page).getByRole('button', { name: 'Add' }).click();
-      await expect(nameForm(page).getByRole('alert')).toBeVisible();
-      await nameForm(page).getByRole('button', { name: 'Cancel' }).click();
+      await nameForm(page).getByRole("button", { name: "Add" }).click();
+      await expect(nameForm(page).getByRole("alert")).toBeVisible();
+      await nameForm(page).getByRole("button", { name: "Cancel" }).click();
     }
-    await expect(items.getByRole('listitem')).toHaveCount(count);
+    await expect(items.getByRole("listitem")).toHaveCount(count);
   }
 
   if (driven) {
-    await writeFile(path.join(resultDir!, 'result.json'), JSON.stringify(seen));
+    await writeFile(path.join(resultDir!, "result.json"), JSON.stringify(seen));
   }
 });
