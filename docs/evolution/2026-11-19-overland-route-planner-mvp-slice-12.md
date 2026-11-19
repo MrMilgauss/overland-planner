@@ -77,7 +77,7 @@ All 107 steps of the feature's roadmap have complete DES traces (`des-verify-int
 - The CI job 2 limit of 20 minutes is close: the same suite took 12 to 20 minutes on different runners.
 - "Geometry unavailable" labels pile on each other on a phone for a run planned on older map data (cosmetic).
 - From the review: a bare `mock` provider id is worded "Provider: mock" (test harness only); the K2 read is not cancelled on unmount.
-- The cold-start check of the learning hypothesis (two people, two minutes each) is the owner's, on a laptop.
+- Cold-start check: **passed** by the owner on a laptop (2026-11-19); his feedback (the page follows the engine, not the trip workflow) is D280 and drives the next UI slice.
 - Earlier carry-overs stay open (slices 03b, 06a-ops, 06a and 09 archives).
 
 ## Links
