@@ -10,6 +10,8 @@ export interface MapConfig {
   tile_url: string;
   attribution: string;
   max_zoom: number;
+  base_style_url: string;
+  base_attribution: string;
 }
 
 type LngLat = [number, number];

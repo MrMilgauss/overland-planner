@@ -429,3 +429,89 @@ def test_a_tile_address_carrying_a_private_parameter_is_refused_naming_the_param
     assert "MAP_TILE_URL" in message and f"carries the private parameter {name}" in message
     assert value not in message
     assert value not in repr(refused.value) and value not in repr(refused.value.__cause__)
+
+
+# --------------------------------------------------------------------------- light base map (ADR-004 Am. 1, D287)
+BASE_DEFAULTS = {
+    "MAP_BASE_STYLE_URL": "https://tiles.openfreemap.org/styles/positron",
+    "MAP_BASE_ATTRIBUTION": "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors",
+}
+BASE_UNIVERSE = frozenset(BASE_DEFAULTS)
+_style_path = st.sampled_from(["/styles/positron", "/s/light.json", "/style"])
+
+
+def base_view(settings: Settings) -> dict[str, Any]:
+    return {
+        "MAP_BASE_STYLE_URL": settings.map_base_style_url,
+        "MAP_BASE_ATTRIBUTION": settings.map_base_attribution,
+    }
+
+
+@given(key=st.sampled_from(sorted(BASE_DEFAULTS)), blank=st.sampled_from(["", "   ", " \t"]))
+def test_an_empty_or_blank_light_base_map_setting_is_its_default(key: str, blank: str) -> None:
+    before = base_view(Settings.from_environ({}))
+    after = base_view(Settings.from_environ({key: blank}))
+    assert before == BASE_DEFAULTS
+    assert_state_delta(before, after, universe=BASE_UNIVERSE, expected={k: unchanged() for k in BASE_UNIVERSE})
+
+
+@given(
+    scheme=st.sampled_from(["http", "https"]),
+    host=_host,
+    path=_style_path,
+    param=st.sampled_from(["", "?lang=it", "?v=2&lang=it"]),
+    attribution=st.text(min_size=1, max_size=40).filter(lambda text: text.strip() == text and text != ""),
+)
+def test_a_clean_light_base_map_address_and_credit_are_taken_as_given(
+    scheme: str, host: str, path: str, param: str, attribution: str
+) -> None:
+    url = f"{scheme}://{host}{path}{param}"
+    before = base_view(Settings.from_environ({}))
+    after = base_view(Settings.from_environ({"MAP_BASE_STYLE_URL": url, "MAP_BASE_ATTRIBUTION": attribution}))
+    expected = {"MAP_BASE_STYLE_URL": set_to(url), "MAP_BASE_ATTRIBUTION": set_to(attribution)}
+    assert_state_delta(before, after, universe=BASE_UNIVERSE, expected=expected, strict=True)
+
+
+@given(url=st.sampled_from(["ftp://styles.test/s.json", "styles.test/s.json", "https:///s.json"]))
+def test_a_light_base_map_address_that_is_not_http_with_a_host_is_refused(url: str) -> None:
+    # bypass: refusal path; the named keys are its whole observable surface.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_BASE_STYLE_URL": url})
+    assert refused.value.setting_names == frozenset({"MAP_BASE_STYLE_URL"})
+
+
+@given(host=_host, secret=_secret_value, part=st.sampled_from(["userinfo", "fragment"]))
+def test_a_light_base_map_address_with_userinfo_or_a_fragment_is_refused_naming_the_part_but_never_its_value(
+    host: str, secret: str, part: str
+) -> None:
+    userinfo = f"user:{secret}@" if part == "userinfo" else ""
+    fragment = f"#{secret}" if part == "fragment" else ""
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_BASE_STYLE_URL": f"https://{userinfo}{host}/s.json{fragment}"})
+    message = str(refused.value)
+    assert refused.value.setting_names == frozenset({"MAP_BASE_STYLE_URL"})
+    assert "MAP_BASE_STYLE_URL" in message and part in message
+    assert secret not in message
+    assert secret not in repr(refused.value) and secret not in repr(refused.value.__cause__)
+
+
+@given(
+    host=_host,
+    word=_key_words,
+    case=_case,
+    before_word=st.from_regex(r"[a-z_]{0,6}", fullmatch=True),
+    after_word=st.from_regex(r"[a-z_]{0,6}", fullmatch=True),
+    value=_secret_value,
+    other=st.sampled_from(["", "lang=it&", "v=2&"]),
+)
+def test_a_light_base_map_address_carrying_a_private_parameter_is_refused_naming_it_but_never_its_value(
+    host: str, word: str, case: Any, before_word: str, after_word: str, value: str, other: str
+) -> None:
+    name = case(f"{before_word}{word}{after_word}")
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"MAP_BASE_STYLE_URL": f"https://{host}/s.json?{other}{name}={value}"})
+    message = str(refused.value)
+    assert refused.value.setting_names == frozenset({"MAP_BASE_STYLE_URL"})
+    assert "MAP_BASE_STYLE_URL" in message and f"carries the private parameter {name}" in message
+    assert value not in message
+    assert value not in repr(refused.value) and value not in repr(refused.value.__cause__)

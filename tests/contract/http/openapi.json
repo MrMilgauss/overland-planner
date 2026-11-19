@@ -549,10 +549,18 @@
         "type": "object"
       },
       "MapConfig": {
-        "description": "What the web needs to draw its base map (ADR-004): the raster tile address, its credit and the deepest zoom.",
+        "description": "What the web needs to draw its maps (ADR-004): the Terrain raster tile address, its credit and the deepest zoom,\nand the light base map's style address and credit (Amendment 1).",
         "properties": {
           "attribution": {
             "title": "Attribution",
+            "type": "string"
+          },
+          "base_attribution": {
+            "title": "Base Attribution",
+            "type": "string"
+          },
+          "base_style_url": {
+            "title": "Base Style Url",
             "type": "string"
           },
           "max_zoom": {
@@ -567,7 +575,9 @@
         "required": [
           "tile_url",
           "attribution",
-          "max_zoom"
+          "max_zoom",
+          "base_style_url",
+          "base_attribution"
         ],
         "title": "MapConfig",
         "type": "object"

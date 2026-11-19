@@ -79,6 +79,8 @@ const CONFIG = {
   tile_url: 'https://tiles.example.test/{z}/{x}/{y}.png',
   attribution: 'Credit',
   max_zoom: 17,
+  base_style_url: 'https://styles.example.test/light.json',
+  base_attribution: 'Light credit',
 };
 const GEOMETRY = {
   type: 'FeatureCollection',

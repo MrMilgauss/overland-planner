@@ -20,6 +20,8 @@ api_key, appid, app_id, password, pwd, access or client_id refuses the start, na
 D256; a key hidden in a path segment cannot be told from a tile path and is not detected: use a provider without a
 key), MAP_TILE_ATTRIBUTION and MAP_TILE_MAX_ZOOM (1 to 22); an empty value is
 the default.
+The light base map (ADR-004 Amendment 1, D287) is MAP_BASE_STYLE_URL, a style address (http or https with a host, no
+placeholders) under the same guard as MAP_TILE_URL, and MAP_BASE_ATTRIBUTION, its credit; empty or blank is the default.
 """
 
 from __future__ import annotations
@@ -95,6 +97,12 @@ class Settings(BaseSettings):
         "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"
     )
     map_tile_max_zoom: Annotated[int, Field(validation_alias="MAP_TILE_MAX_ZOOM", ge=1, le=22)] = 17
+    map_base_style_url: Annotated[str, Field(validation_alias="MAP_BASE_STYLE_URL")] = (
+        "https://tiles.openfreemap.org/styles/positron"
+    )
+    map_base_attribution: Annotated[str, Field(validation_alias="MAP_BASE_ATTRIBUTION")] = (
+        "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors"
+    )
 
     @field_validator("map_tile_url")
     @classmethod
@@ -102,6 +110,16 @@ class Settings(BaseSettings):
         cls._http_url_with_host(value)
         if any(placeholder not in value for placeholder in _TILE_PLACEHOLDERS):
             raise ValueError("must contain {z}, {x} and {y}")
+        return cls._without_private_parts(value)
+
+    @field_validator("map_base_style_url")
+    @classmethod
+    def _style_url_without_private_parameter(cls, value: str) -> str:
+        cls._http_url_with_host(value)
+        return cls._without_private_parts(value)
+
+    @staticmethod
+    def _without_private_parts(value: str) -> str:
         parts = urlsplit(value)
         if parts.username is not None or parts.password is not None or "@" in parts.netloc:
             raise ValueError("carries userinfo")
@@ -129,6 +147,12 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("map_base_style_url", "map_base_attribution", mode="before")
+    @classmethod
+    def _blank_base_map_is_default(cls, value: object, info: ValidationInfo) -> object:
+        blank = isinstance(value, str) and value.strip() == ""
+        return cls.model_fields[str(info.field_name)].default if blank else value
 
     @field_validator(
         "max_upload_file_mb",

@@ -27,6 +27,8 @@ const CONFIG: MapConfig = {
   tile_url: 'https://tiles.example.test/{z}/{x}/{y}.png',
   attribution: 'Map data: OpenStreetMap contributors | Map style: OpenTopoMap',
   max_zoom: 17,
+  base_style_url: 'https://styles.example.test/light.json',
+  base_attribution: 'Light credit',
 };
 
 function line(

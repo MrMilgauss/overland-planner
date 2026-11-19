@@ -54,6 +54,9 @@ services:
       MAP_TILE_URL: ${MAP_TILE_URL:-}
       MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
       MAP_TILE_MAX_ZOOM: ${MAP_TILE_MAX_ZOOM:-}
+      # The light base map (ADR-004 Amendment 1): empty when unset, which the planner reads as OpenFreeMap Positron.
+      MAP_BASE_STYLE_URL: ${MAP_BASE_STYLE_URL:-}
+      MAP_BASE_ATTRIBUTION: ${MAP_BASE_ATTRIBUTION:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SOLVER_BUDGET: ${SOLVER_BUDGET:-10000}
       # Solve limits in whole seconds from pressing Calculate (ADR-014 section 2); feasibility <= optimisation.

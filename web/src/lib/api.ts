@@ -325,7 +325,7 @@ export function readPlanRun(planRunId: string): Promise<PlanRunDetail> {
   return call(`/api/plan-runs/${encodeURIComponent(planRunId)}`, {}, PLAN_READ_FAILURE);
 }
 
-/** The map's tiles, credit and top zoom, as the planner's settings choose them. */
+/** The Terrain tiles, credit and top zoom, and the light base map's style and credit, as the settings choose them. */
 export function readMapConfig(): Promise<MapConfig> {
   return call('/api/config/map', {}, 'Could not load the map settings.');
 }

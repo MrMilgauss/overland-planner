@@ -16,6 +16,10 @@ from overland_planner.bootstrap.app_factory import create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
 from tests.common.workspace import workspace_data_dir
 
+POSITRON = {
+    "base_style_url": "https://tiles.openfreemap.org/styles/positron",
+    "base_attribution": "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors",
+}
 KEYED = "https://tiles.example.test/{z}/{x}/{y}.png?access_token=not-a-real-token"
 
 
@@ -34,7 +38,18 @@ def test_the_map_settings_answer_the_chosen_tiles_with_the_default_for_what_is_l
         "tile_url": "https://tiles.example.test/{z}/{x}/{y}.png",
         "attribution": "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)",
         "max_zoom": 12,
+        **POSITRON,
     }
+
+
+def test_the_light_base_map_is_chosen_by_the_settings_and_defaults_when_empty(data_dir: Path) -> None:
+    chosen = {"MAP_BASE_STYLE_URL": "https://styles.example.test/light.json", "MAP_BASE_ATTRIBUTION": "Credit"}
+    with TestClient(create_app({"DATA_DIR": str(data_dir), **chosen})) as client:
+        answer = client.get("/api/config/map").json()
+    assert (answer["base_style_url"], answer["base_attribution"]) == tuple(chosen.values())
+    with TestClient(create_app({"DATA_DIR": str(data_dir), "MAP_BASE_STYLE_URL": ""})) as client:
+        answer = client.get("/api/config/map").json()
+    assert {k: answer[k] for k in POSITRON} == POSITRON
 
 
 def test_the_map_settings_are_behind_the_household_password(data_dir: Path) -> None:
@@ -55,3 +70,16 @@ def test_a_keyed_tile_address_refuses_the_start_and_the_log_never_shows_the_key(
     assert (line["event"], line["component"]) == ("health.startup.refused", "settings")
     assert "MAP_TILE_URL" in line["reason"] and "access_token" in line["reason"]
     assert "not-a-real-token" not in out
+
+
+def test_a_keyed_light_base_map_address_refuses_the_start_and_the_log_never_shows_the_key(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    keyed = "https://styles.example.test/light.json?api_key=not-a-real-key"
+    with pytest.raises(StartupRefusedError):
+        create_app({"DATA_DIR": str(data_dir), "MAP_BASE_STYLE_URL": keyed})
+
+    out = capsys.readouterr().out
+    (line,) = [json.loads(text) for text in out.splitlines()]
+    assert "MAP_BASE_STYLE_URL" in line["reason"] and "api_key" in line["reason"]
+    assert "not-a-real-key" not in out

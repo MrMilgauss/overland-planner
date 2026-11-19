@@ -275,7 +275,11 @@ def create_app(
     # The {code, message} envelope for every non-2xx answer under /api (brief §5, D197).
     install_error_handlers(app, event_log)
     map_config = MapConfig(
-        tile_url=settings.map_tile_url, attribution=settings.map_tile_attribution, max_zoom=settings.map_tile_max_zoom
+        tile_url=settings.map_tile_url,
+        attribution=settings.map_tile_attribution,
+        max_zoom=settings.map_tile_max_zoom,
+        base_style_url=settings.map_base_style_url,
+        base_attribution=settings.map_base_attribution,
     )
     app.include_router(platform_routes(health, map_config))
 
