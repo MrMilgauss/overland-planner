@@ -993,11 +993,11 @@ test("A project with no plan yet says so and points to Calculate", async ({
 
 // The Diagnostics answer with the K2 count rewritten (W4): the packaged planner cannot break a hard rule (W1).
 async function diagnosticsCounting(page: Page, count: number): Promise<void> {
-  await page.route(/\/api\/diagnostics$/, async (route) => {
-    const real = await (await route.fetch()).json();
-    real.k2.invariant_violations.all_time = count;
-    await route.fulfill({ json: real });
-  });
+  const real = await (await page.request.get("/api/diagnostics")).json();
+  real.k2.invariant_violations.all_time = count;
+  await page.route(/\/api\/diagnostics$/, (route) =>
+    route.fulfill({ json: real }),
+  );
 }
 
 const banner = (page: Page): Locator =>
