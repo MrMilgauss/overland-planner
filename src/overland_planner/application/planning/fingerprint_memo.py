@@ -1,11 +1,11 @@
 """The fingerprint memo (ADR-014 section 5, FR-5.6): identical solver inputs reuse the order of an earlier plan.
 
 The source is the latest ready run of the same project with the inputs' fingerprint; its order is the item ids of its
-stored itinerary. A Failed run, and a run stored before the memo (fingerprint null), is never a source. The plan job
-still judges a reused order with the guard and recomputes the totals (ADR-009, ADR-014). The source is returned whole
-(its id, number, order and run flags): a memo hit names it and inherits its `reproducible` flag and its "not fully
-optimised" label (ADR-014 section 5, D74). `solver_identity` is the `identity` of the wired `TourSolver`, passed in by
-the composition root.
+stored itinerary without its retrace rows (the assembler derives those again, as for a solved order). A Failed run, and
+a run stored before the memo (fingerprint null), is never a source. The plan job still judges a reused order with the
+guard and recomputes the totals (ADR-009, ADR-014). The source is returned whole (its id, number, order and run flags):
+a memo hit names it and inherits its `reproducible` flag and its "not fully optimised" label (ADR-014 section 5, D74).
+`solver_identity` is the `identity` of the wired `TourSolver`, passed in by the composition root.
 """
 
 from __future__ import annotations
@@ -45,5 +45,5 @@ class FingerprintMemo:
         source = uow.plan_runs.latest_ready(project_id, fingerprint.value)
         if source is None or not source.stops:
             return None
-        order = tuple(stop.item_id for stop in source.stops)
+        order = tuple(stop.item_id for stop in source.stops if stop.kind != "retrace")  # the assembler adds those
         return MemoSource(source.id, source.number, order, source.reproducible, source.not_fully_optimised)

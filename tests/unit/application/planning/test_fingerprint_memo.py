@@ -22,7 +22,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from hypothesis import example, given, settings
+from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
 
 from overland_planner.application.planning.facade import (
@@ -57,6 +57,7 @@ from tests.unit.application.planning.planning_doubles import (
     RecordingRoadMap,
     job_when_ended,
 )
+from tests.unit.domain.planning.retrace_trips import DeadEnds, dead_end_trips
 from tests.unit.domain.planning.trips import POINT_PAIRS, POINTS, PROJECT, Trip, leg_table, planned_totals, trips
 
 UNIVERSE = {"plan_runs", "solver_calls"}
@@ -295,6 +296,40 @@ def test_a_reused_order_is_judged_by_the_guard_and_a_failed_run_is_never_a_memo_
     fresh = (PROJECT, 4, "ready", None, stops, totals, False)
     expected = {"plan_runs": gained(fresh), "solver_calls": set_to(before["solver_calls"] + 1)}
     assert_state_delta(before, desk.view(), UNIVERSE, expected, strict=True)
+
+
+@settings(deadline=None, max_examples=30)
+@given(case=dead_end_trips(), data=st.data())
+def test_a_memo_reuse_of_a_plan_with_a_retrace_keeps_each_item_once_and_the_retrace_row(
+    case: DeadEnds, data: st.DataObject
+) -> None:
+    """Slice 03b with the memo (Pi gate, 2026-11-19): the reused order holds each item once, the assembler derives the
+    retrace rows again, so the second Calculate is ready with the first's stops, not Failed by the guard (HC-3)."""
+    trip = case.trip
+    desk = Desk(trip)
+    visited = tuple(data.draw(st.permutations([item.id for item in trip.items]), label="order"))
+    desk.project_as(PROJECT, "same", trip.snapshot.offroad_speed)
+    road_map = RecordingRoadMap(trip.leg_m, no_road=case.no_road)
+    job = PlanRequestJob(
+        desk.planning.unit_of_work,
+        LegResolver(road_map),
+        desk.solver,
+        BUDGET,
+        desk.clock,
+        desk.log,
+        desk.files,
+        memo=FingerprintMemo(IDENTITY),
+    )
+    desk.solver.answers = [TourFound(visited)]
+    job.run(PROJECT, _Progress())
+    first = desk.planning.runs[-1]
+    assume(first.status == "ready" and any(stop.kind == "retrace" for stop in first.stops))
+
+    job.run(PROJECT, _Progress())
+
+    again = desk.planning.runs[-1]
+    assert (again.status, again.memo_hit, desk.solver.calls) == ("ready", True, 1)
+    assert again.stops == first.stops
 
 
 SOLVE_SETTINGS = ("road map", "budget", "solver identity")
