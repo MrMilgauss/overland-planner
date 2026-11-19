@@ -5409,3 +5409,14 @@ Steps 06-06 to 06-13 (`8d621e8` .. `7a5b5f6`), refactor L1-L6 (10 commits), revi
 | Real browser | desktop and 390 px: lines, arrows and retrace render; no horizontal scroll |
 | K5 ending at the road shapes, N=10 | **pass**: slowest 124.0 s (budget 180 s), solve 25.6-27.0 s, no retried run |
 | Household projects | identical to the start of R2a |
+
+### Slice 12 gate on pi-host (2026-11-19, orchestrator-run under the owner's standing authority)
+
+| Check | Result |
+|---|---|
+| Map data | first live `make tiles-refresh`: tileset 20261118 serving after one fix (D277); `make contract-live` 55 passed, `make acceptance-pi` 3 passed |
+| Deploy | `434cf1c` (tag `slice-12`), then `8a5f95d` (D279 fix); both from a clean worktree at a CI-green SHA, exit 0 |
+| Real browser | home, `__demo` project, Diagnostics at 1440, 768 and 390 px on the Pi: no horizontal scroll, no estimate marker on Valhalla runs, Failed badge over "Plan run #4", K2 banner shown (count 1) |
+| Memo reuse with a retrace | failed on `434cf1c` (run #5, D279); two reuses in a row ready on `8a5f95d` |
+| K5, cold 60 items, N=10, new map data | **pass**: slowest 122.8 s (budget 180 s), solve 26-28 s, no retried run |
+| Household projects | 7 projects, 37 items, 12 runs: identical before and after |
