@@ -28,10 +28,11 @@ Disproves "the page now follows the trip workflow" if the owner, handed the page
 
 ## Acceptance criteria
 
-To be written as scenarios in DISTILL. Outcome checks:
+To be written as scenarios in DISTILL (stories US-23 to US-26 in feature-delta.md). Outcome checks:
 
 - [ ] Each phase shows one main action, and only the elements of that phase are open
-- [ ] No run number, provider id, timing or memo text is visible outside "Details"
+- [ ] No run number, provider id, timing or memo text is visible outside "Details", except inside the planner's own words (a failure message names its run, D211)
+- [ ] Under a "Couldn't plan", the previous ready route keeps its itinerary and its "Export GPX", and the page says it is the previous route (D208); an "Out of date" route stays exportable (A-10)
 - [ ] The summary card and the first itinerary steps are in view without scrolling on a laptop
 - [ ] Selecting an itinerary step moves the map to it, and the reverse
 - [ ] The route lines stay readable on both base maps (contrast against the base map checked)

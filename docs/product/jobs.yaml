@@ -33,7 +33,7 @@ jobs:
     importance: 10
     satisfaction: 3
     opportunity_score: 17
-    stories: [US-02a, US-02c, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16, US-20, US-21]   # primary job only (S11)
+    stories: [US-02a, US-02c, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16, US-20, US-21, US-23, US-24, US-25, US-26]   # primary job only (S11)
 
   - id: J-02
     name: trust-trail-integrity
@@ -159,3 +159,6 @@ changelog:
   - date: 2026-11-18
     feature: overland-route-planner-mvp
     change: "Slice 12 DISCUSS: US-20 and US-21 (J-01), US-22 (J-02); no new job."
+  - date: 2026-11-19
+    feature: overland-route-planner-mvp
+    change: "Slice 12b DISCUSS: US-23, US-24, US-25 and US-26 (J-01); no new job."

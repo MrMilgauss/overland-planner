@@ -22,3 +22,9 @@ Accepted (user decision, 2026-11-01).
 ## Consequences
 - Positive: topographic context for Alpine planning at zero cost; switching source is config only.
 - Negative: depends on volunteer-run servers (they can be slow or unavailable); the map is unavailable offline (offline tiles are OUT in slice 09). The itinerary and report do not depend on tiles.
+
+## Amendment 1 (slice 12b, D287) — 2026-11-19
+- **Two base maps.** The map opens on a calm light base map and a "Terrain" button switches to the raster source above and back (D281). The light map is a vector style: `MAP_BASE_STYLE_URL` (default **OpenFreeMap "Positron"**, `https://tiles.openfreemap.org/styles/positron`) and `MAP_BASE_ATTRIBUTION` (default "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors"; the style carries no credit of its own). `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` and `MAP_TILE_MAX_ZOOM` keep their meaning and are now the Terrain map. `GET /api/config/map` gains `base_style_url` and `base_attribution`.
+- **Why OpenFreeMap.** No key, no registration, no cookies, no limit on map views or requests, commercial use allowed, MIT-licensed styles, OpenStreetMap data; no SLA and it may stop without notice (as the volunteer raster servers). Only bulk or offline downloads are restricted, which the planner never does (tiles on demand only, as before). CARTO Positron was rejected: it now needs a key. OSM Standard is not a calm map.
+- **Guard.** The slice 09 start-up guard (userinfo, fragment, key-like query parameter names, refused by name only) applies to `MAP_BASE_STYLE_URL` too.
+- **Failure.** If the style or its tiles do not load, the route, stop numbers and itinerary still show on a plain background; if the Terrain tiles fail, the light map stays visible under them.

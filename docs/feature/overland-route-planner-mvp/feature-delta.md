@@ -2789,6 +2789,424 @@ Scenario: S5 The home page still works when the count cannot be read
 
 - Slice 03-ops (Diagnostics page and K2 count). Closes UI-DELIVER-7 item (2).
 
+### US-23: The page walks me through my trip: build it, plan it, see my route
+
+- job_id: J-01 | Slice: 12b | MoSCoW: Must | FR-6 (presentation), D280, D281 | Size: 0.6 d
+
+#### Problem
+
+Marco opens "Alpi Occidentali giugno 2027" and finds one long side panel: a Plan group with Calculate and "Re-optimise", an Items group with two separate forms (Import trails, Add a place), and a third form for Start and End. The page is laid out the way the planner works, not the way he plans a trip. He does not know where to start or what to press next, and he calls the page chaotic (D280).
+
+#### Who
+
+- Marco | laptop, builds the trip in the evening from forum GPX files and places he knows | Giulia | 390 px iPhone, opens the trip to see where it goes; never edits
+
+#### Solution
+
+The page has three phases, each with one main action. **Build the trip**: one list of the trip's stops and trails, one "Add" control (upload a GPX file, click on the map, or type coordinates), Start and End set on a place in the list, and the objective as a small setting; main action "Plan the route". **Planning**: progress, the best route so far and "Stop and use best so far"; the list is read-only and nothing is exported meanwhile. **Your route**: the result (US-24); main action "Export GPX"; "Edit trip" goes back to Build the trip. A project without a route opens on Build the trip; a project with a route opens on Your route.
+
+#### Elevator Pitch
+
+- Before: Marco scrolls a side panel of three groups and four forms and asks which button plans the trip.
+- After: Marco opens "Assietta weekend" (no route yet) -> sees "Build the trip" with one list ("Torino - Start and End", "Strada dell'Assietta"), one "Add" button and "Plan the route"; he presses "Plan the route" -> sees "Planning…" and "Stop and use best so far".
+- Decision enabled: Marco decides what to add or drop before he plans, and when to stop the search and take the best route so far.
+
+#### Domain Examples
+
+1. Happy: Marco creates "Assietta weekend", uploads "assietta.gpx" (Strada dell'Assietta) through "Add", types "Torino" at 45.0703, 7.6869, makes Torino the Start and the End from its row, and presses "Plan the route". The page shows "Planning…", then "Your route".
+2. Edge: while "Alpi Occidentali giugno 2027" (23 items) is being planned, Marco presses "Stop and use best so far" after 40 s. The page shows "Your route" with the planner's line "not fully optimised (stopped)".
+3. Edge: on "Your route", Marco presses "Edit trip", clicks on the map at Lago del Moncenisio and names the place. It joins the list, and the status reads "Out of date, plan again".
+4. Error: Marco presses "Plan the route" on "Assietta weekend" before choosing a Start. The planner's refusal is shown word for word and the page stays on "Build the trip".
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 A project without a route opens on Build the trip
+  Given "Assietta weekend" has the trail "Strada dell'Assietta" and the place "Torino" and has no route yet
+  When Marco opens the project
+  Then the page shows the phase "Build the trip" with one list holding "Strada dell'Assietta" and "Torino"
+  And the status reads "No plan yet"
+  And the only main action is "Plan the route"
+  And no summary card, itinerary, "Export GPX" or "Details" is shown
+
+Scenario: S2 Every way to add a stop is in one Add control and lands in the one list
+  Given Marco is building "Assietta weekend"
+  When he opens "Add"
+  Then he can upload a GPX file, click on the map, or type coordinates
+  And after he types "Lago del Moncenisio" at 45.2280, 6.9420 the place is in the same list as "Strada dell'Assietta"
+
+Scenario: S3 Start and End are set on a place in the list
+  Given the list of "Assietta weekend" holds the place "Torino" and the trail "Strada dell'Assietta"
+  When Marco makes "Torino" the Start and the End from its row
+  Then the row of "Torino" says it is the Start and the End
+  And the row of "Strada dell'Assietta" offers no Start or End
+  And no separate Start and End form is shown
+
+Scenario: S4 While planning, the trip is read-only and nothing is exported
+  Given "Alpi Occidentali giugno 2027" has a ready route on real roads
+  When Marco presses "Plan the route" after adding "Lago del Moncenisio"
+  Then the status reads "Planning…" with a progress indicator
+  And "Stop and use best so far" is the only main action
+  And the list cannot be changed and "Add" is not offered
+  And no "Export GPX" is offered, not even for the earlier route
+
+Scenario: S5 Stopping shows the best route found so far
+  Given "Alpi Occidentali giugno 2027" is being planned and "Stop and use best so far" is offered
+  When Marco presses "Stop and use best so far" and the planner ends with a ready route
+  Then the page shows "Your route" with the status "Route ready"
+  And the planner's line "not fully optimised (stopped)" is shown word for word
+
+Scenario: S6 Edit trip goes back to building and the shown route goes out of date
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Marco presses "Edit trip" and adds "Lago del Moncenisio" by clicking on the map
+  Then the page shows "Build the trip" with "Lago del Moncenisio" in the list
+  And the status reads "Out of date, plan again"
+  And the main action is "Plan the route"
+
+Scenario: S7 A refusal keeps Marco on Build the trip with the planner's own words
+  Given "Assietta weekend" has no Start chosen
+  When Marco presses "Plan the route"
+  Then the planner's refusal is shown word for word
+  And the page stays on "Build the trip" with the list unchanged
+```
+
+#### Acceptance Criteria
+
+- [ ] A project without a route opens on "Build the trip": one list, status "No plan yet", one main action "Plan the route", no result elements (S1)
+- [ ] One "Add" control offers GPX upload, a click on the map and typed coordinates; every new stop lands in the one list (S2)
+- [ ] Start and End are set from a place's row; tracks offer neither; no separate form (S3, D6)
+- [ ] While planning: "Planning…" with progress, "Stop and use best so far" the only main action, list read-only, no "Export GPX" at all (S4, D208 F2)
+- [ ] A stopped plan shows "Your route" and the planner's "not fully optimised (stopped)" verbatim (S5, US-06b)
+- [ ] "Edit trip" returns to "Build the trip"; a change makes the status "Out of date, plan again" (S6, US-05, D259)
+- [ ] A refusal of "Plan the route" is shown verbatim and the page stays on "Build the trip" (S7, D211)
+
+#### Outcome KPIs
+
+- Who: the owner, handed the page cold on a laptop | Does what: builds a trip with one GPX and two places and plans it, without asking what any element means | By how much: both in under 3 minutes together with US-24 (c); the owner no longer calls the page chaotic | Measured by: the owner's cold-start check (slice 12b learning hypothesis) | Baseline: slice 12 check passed on the steps, but the owner called the page "messy" and "chaotic" (D280).
+
+#### Technical Notes
+
+- No new planning behaviour, data or endpoint: the phases are derived in the page from what it already knows (items, the run list, the job it started). The existing calls stay: GPX import, add place, set Start and End, set objective, start and stop a plan, the map's "Click on map" mode (US-16).
+- Today the map is drawn only once a ready run exists ("The map shows the plan once one is computed"), so "click on the map" in a new project needs the map without a route: the base map and the trip's items, no plan. DESIGN confirms this needs no new endpoint (the item list already holds each place's location and each track's entry and exit); if the track shapes are needed before a plan, that is reported.
+- "Plan the route" replaces "Calculate" (supersedes D272 for these buttons); "Stop and use best so far" keeps its words. The job's step names ("Computing legs", "Solving") and "Best so far" are DESIGN's call (keep, move into Details, or reword).
+- The known limit of D208 stays: after a page reload during a job, the page does not know a job runs.
+- The slice 12 look (tokens, light and dark, 44 px targets, focus ring, 390 px, tablet and laptop layouts, K2 banner) is kept; the slice 12 checks for it keep running.
+
+#### Dependencies
+
+- US-20, US-21 (slice 12); US-02a, US-02c, US-04 (items, places, Start and End); US-06b (Stop); US-05 (Stale); US-16 (place by click).
+
+### US-24: My route is the main result: a summary card and a timeline linked to the map
+
+- job_id: J-01 | Slice: 12b | MoSCoW: Must | FR-6.1, FR-6.2, D280 | Size: 0.5 d
+
+#### Problem
+
+The itinerary is the reason for the app, but today it is a plain list below the run heading, the provider line and two buttons, and the totals come after the last stop. Marco reads "Strada dell'Assietta" in the list and has to find it on the map by himself. Giulia on her phone cannot see at a glance where the trip goes next.
+
+#### Who
+
+- Marco | laptop, checks the order of the trip against the map before he exports | Giulia | 390 px iPhone, reads where they go and how long they drive
+
+#### Solution
+
+"Your route" opens with a summary card: total distance and time, road against off-road, and "Real roads" or "Estimate". Below it, the itinerary is a numbered timeline whose numbers match the stop numbers on the map. Selecting a step zooms the map to it and highlights its marker; selecting a stop on the map highlights its step and scrolls it into view. A retrace is its own step, linked to its own line. "Export GPX" is the main action; "Edit trip" is next to it.
+
+#### Elevator Pitch
+
+- Before: Marco reads "Strada dell'Assietta" in a plain list and hunts for it on the map.
+- After: Marco opens "Alpi Occidentali giugno 2027" -> sees the card "1,184 km, 31 h 20 min | Road 862 km | Off-road 322 km | Real roads" above step "1 Torino"; he selects step "3 Strada dell'Assietta" -> the map zooms to the Assietta with marker 3 highlighted.
+- Decision enabled: Marco decides whether the order and the totals are good enough to export, or whether to edit the trip.
+
+#### Domain Examples
+
+1. Happy: the route of "Alpi Occidentali giugno 2027" on real roads (map data 2026-11-18): the card shows 1,184 km and 31 h 20 min, road 862 km, off-road 322 km, "Real roads"; steps 1 Torino, 2 Aosta, 3 Strada dell'Assietta follow below it.
+2. Edge: "Assietta weekend" was planned on the offline road map: the card and the map both say "Estimate"; "Export GPX" gives "assietta-weekend-run1-estimate.gpx", as in slice 12 (D268).
+3. Edge: the route drives Colle del Sommeiller (a dead end) and retraces it, 12.4 km off-road: the timeline shows step 7 "Colle del Sommeiller" and step 8, its retrace, with the planner's reason; selecting step 8 zooms the map to the retrace line.
+4. Boundary: Giulia on her 390 px iPhone taps step 5 "Briancon" in the timeline below the map; the map comes into view zoomed to Briancon with marker 5 highlighted.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 On a laptop the summary card and the first steps are in view
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Marco opens the project in a 1440 x 900 px window
+  Then the page shows "Your route" with a summary card holding the total distance and time, the road and off-road split, and "Real roads"
+  And the first steps of the itinerary are in view below the card without scrolling
+  And the main action is "Export GPX" and "Edit trip" is offered
+
+Scenario: S2 An estimate route says Estimate in the card and on the map
+  Given the route of "Assietta weekend" took its road legs from the offline road map
+  When Marco opens the project and presses "Export GPX"
+  Then the summary card says "Estimate" and the map says "Estimate"
+  And "Real roads" is not shown
+  And the file is "assietta-weekend-run1-estimate.gpx"
+
+Scenario: S3 Selecting a step moves the map to it
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Marco selects step 3 "Strada dell'Assietta" in the itinerary
+  Then the map zooms to "Strada dell'Assietta"
+  And marker 3 on the map and step 3 in the itinerary are highlighted
+
+Scenario: S4 Selecting a stop on the map highlights its step
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Marco selects marker 7 on the map
+  Then step 7 "Colle del Sommeiller" is highlighted and scrolled into view in the itinerary
+
+Scenario: S5 A retrace is its own step, linked to its own line
+  Given the route of "Alpi Occidentali giugno 2027" retraces "Colle del Sommeiller" for 12.4 km off-road
+  When Marco selects the retrace step
+  Then the map zooms to the retrace line
+  And the step shows the retrace's reason word for word and 12.4 km off-road
+  And "Colle del Sommeiller" appears once as a trail step and once as a retrace step
+
+Scenario: S6 On a phone the map follows the selected step
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Giulia taps step 5 "Briancon" on her 390 px wide iPhone
+  Then the map comes into view zoomed to "Briancon" with marker 5 highlighted
+  And no page scrolls sideways and every step she can tap is at least 44 px high
+```
+
+#### Acceptance Criteria
+
+- [ ] "Your route" opens with a summary card (total distance and time, road vs off-road, "Real roads"/"Estimate"); card and first steps in view at 1440 x 900 without scrolling; main action "Export GPX", "Edit trip" offered (S1)
+- [ ] An estimate says "Estimate" in the card and on the map; the GPX name is unchanged from slice 12 (S2, ADR-007, D268)
+- [ ] Step -> map: the map zooms to the step and both are highlighted (S3)
+- [ ] Map -> step: the step is highlighted and scrolled into view (S4)
+- [ ] A retrace is its own step with its reason verbatim, linked to its line; the trail and its retrace each appear once (S5, US-19, D279)
+- [ ] At 390 px a tapped step brings the map into view; no sideways scroll; steps >= 44 px (S6)
+
+#### Outcome KPIs
+
+- Who: the owner, handed the page cold on a laptop | Does what: (c) reads where the trip goes next from the result, without asking what any element means | By how much: within the 3 minutes of the cold-start check | Measured by: the owner's cold-start check (slice 12b learning hypothesis) | Baseline: "the itinerary is buried as a plain list" (D280).
+
+#### Technical Notes
+
+- The card reads what the run detail already has: `totals` (road, off-road, total km and seconds), `estimate`, `objective_label`; the timeline reads `stops`. A run stored before the totals (`totals` null) shows the timeline without the totals, as today. Anything missing is reported, not added (brief OUT).
+- Step numbers are the map's existing stop numbers; the link both ways is page state only. Checks: jsdom for the card and the link, Playwright for "in view without scrolling" at 1440 x 900 and for the phone tap.
+- Rounding and units of km and time stay as in slice 05-07 (`legKmText`, `durationText`).
+
+#### Dependencies
+
+- US-23 (the phases); US-15 (the map and its numbered stops); US-19 (retrace); US-21 (estimate flag); US-18a (export).
+
+### US-25: The status speaks my words and the engine details wait behind Details
+
+- job_id: J-01 | Slice: 12b | MoSCoW: Must | FR-6, A-4, A-10, D208, D211 | Size: 0.4 d
+
+#### Problem
+
+Marco reads "Plan run #7", a provider line, "Planned 23 items in 0.3 s" and "Reused the identical plan of run #6". None of it tells him whether his route is good. "Failed" and "Stale" are the planner's words for its runs, not his for his trip. Once a plan exists, "Calculate" next to "Re-optimise (ignore previous result)" leaves him unsure which to press (D280).
+
+#### Who
+
+- Marco | plans and exports; wants to know whether the route is ready, out of date or not plannable | Giulia | reads the plan on her phone; does not care how it was computed
+
+#### Solution
+
+One status in user words: "No plan yet", "Loading", "Planning…", "Route ready", "Couldn't plan" (with the planner's own message, word for word) and "Out of date, plan again". Each keeps its own look (slice 12 colour role plus a non-colour cue). The engine details sit behind one closed "Details": the run number, the provider and map-data date, the timings, "Reused the identical plan of run #N" and "Re-optimise (ignore previous result)". The planner's other messages (failure words, "not fully optimised (...)", notices) stay in view, verbatim. Under a "Couldn't plan", the previous ready route keeps its card, its itinerary and its export, and the card says it is the previous route (D208).
+
+#### Elevator Pitch
+
+- Before: Marco reads "Plan run #7", the provider line, "Planned 23 items in 0.3 s" and "Reused the identical plan of run #6", then sees "Calculate" next to "Re-optimise (ignore previous result)".
+- After: Marco opens "Alpi Occidentali giugno 2027" -> sees "Route ready" above the summary card and a closed "Details"; he opens "Details" -> sees "Plan run #7", the provider line with map data 2026-11-18, "Planned 23 items in 0.3 s" and "Re-optimise (ignore previous result)".
+- Decision enabled: Marco decides whether the route can be exported as it is, must be planned again, or needs the trip changed.
+
+#### Domain Examples
+
+1. Happy: run #7 of "Alpi Occidentali giugno 2027" is ready on real roads and reused run #6: the page shows "Route ready"; "Plan run #7", the provider line, "Planned 23 items in 0.3 s" and "Reused the identical plan of run #6" appear only inside "Details".
+2. Error: run #6 is ready, run #7 failed on its time limit: "Couldn't plan" and "No valid route found within the time limit - plan run #7 failed" are shown; the route of run #6 stays with its card, which says it is the previous route, and "Export GPX" gives "alpi-occidentali-giugno-2027-run6.gpx".
+3. Error: the first plan of "Assietta weekend" fails because "Valle Stretta" cannot be reached: "Couldn't plan" and "Plan run #1 failed: 'Valle Stretta' cannot be connected to any other stop at any confidence level"; the page stays on "Build the trip".
+4. Edge: Marco added "Lago del Moncenisio" since run #4, an estimate: the page shows "Out of date, plan again" and "Estimate" together; "Export GPX" still gives "alpi-occidentali-giugno-2027-run4-estimate.gpx".
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario Outline: S1 Every status has its own words and look
+  Given the plan of "Alpi Occidentali giugno 2027" is <state>
+  When Marco opens the project
+  Then the status reads "<status>"
+  And its look differs from the look of every other status
+
+  Examples:
+    | state                                 | status                   |
+    | not computed yet                      | No plan yet              |
+    | being loaded                          | Loading                  |
+    | being planned                         | Planning…                |
+    | ready, run #7                         | Route ready              |
+    | failed, run #7, after a ready run #6  | Couldn't plan            |
+    | ready, run #4, trip changed since     | Out of date, plan again  |
+
+Scenario: S2 Engine details wait behind one closed Details
+  Given run #7 of "Alpi Occidentali giugno 2027" is ready on real roads and reused the identical plan of run #6
+  When Marco opens the project
+  Then "Plan run #7", the provider line, "Planned 23 items in 0.3 s", "Reused the identical plan of run #6" and "Re-optimise (ignore previous result)" are not in view
+  And one "Details" is shown, closed
+  When Marco opens "Details"
+  Then all five are shown, the planner's lines word for word
+
+Scenario: S3 Couldn't plan keeps the previous route and its export
+  Given run #6 of "Alpi Occidentali giugno 2027" is ready on real roads and run #7 failed on its time limit
+  When Marco opens the project
+  Then the status reads "Couldn't plan" with "No valid route found within the time limit - plan run #7 failed" word for word
+  And the summary card and the itinerary of run #6 stay, and the card says it is the previous route
+  And "Export GPX" of the previous route is offered and gives "alpi-occidentali-giugno-2027-run6.gpx"
+  And the failed run offers no export and shows no "Estimate"
+
+Scenario: S4 Couldn't plan without an earlier route keeps Marco on Build the trip
+  Given "Assietta weekend" has no ready route and the routing engine does not answer
+  When Marco presses "Plan the route"
+  Then the status reads "Couldn't plan" with "Routing engine unreachable - nothing was changed. Try again later." word for word
+  And the page stays on "Build the trip" with "Plan the route" as its main action
+  And no "Export GPX" is offered
+
+Scenario: S5 An out-of-date route asks to be planned again and can still be exported
+  Given run #4 of "Alpi Occidentali giugno 2027" is an estimate and Marco added "Lago del Moncenisio" since
+  When Marco opens the project
+  Then the status reads "Out of date, plan again" and the card still says "Estimate"
+  And the route of run #4 stays on show with "Plan the route" as the main action
+  And "Export GPX" is still offered and gives "alpi-occidentali-giugno-2027-run4-estimate.gpx"
+
+Scenario: S6 Planning an unchanged trip with a retrace reuses the route and keeps each stop once
+  Given run #4 of "Alpi Occidentali giugno 2027" is ready and retraces "Colle del Sommeiller"
+  When Marco presses "Edit trip" and then "Plan the route" without changing anything
+  Then the status reads "Route ready"
+  And the itinerary shows "Colle del Sommeiller" once as a trail step and once as a retrace step
+  And "Details" shows "Reused the identical plan of run #4" and offers "Re-optimise (ignore previous result)"
+
+Scenario: S7 The planner's notices stay in view
+  Given "Alpi Occidentali giugno 2027" has 64 Included items besides its Start and End
+  When Marco presses "Plan the route"
+  Then "Large project - calculation may take longer than 3 minutes" is shown word for word outside "Details"
+```
+
+#### Acceptance Criteria
+
+- [ ] Statuses "No plan yet", "Loading", "Planning…", "Route ready", "Couldn't plan", "Out of date, plan again", each with its own look (S1)
+- [ ] Run number, provider and map-data date, timings, the memo reuse line and "Re-optimise" only inside one "Details", closed by default (S2)
+- [ ] "Couldn't plan" shows the planner's words verbatim; the previous ready route keeps its card, itinerary and "Export GPX", and the card says it is the previous route; the failed run has no export and no "Estimate" (S3, A-4, D208, D276)
+- [ ] A job failure without an earlier route: "Couldn't plan", words verbatim, stays on "Build the trip", no export (S4, ADR-013)
+- [ ] "Out of date, plan again" keeps the route, makes "Plan the route" the main action, and keeps "Export GPX" with the unchanged file name; "Estimate" shows with it (S5, A-10, D259)
+- [ ] A memo reuse of a trip with a retrace shows each stop once; the reuse line and "Re-optimise" are in "Details" (S6, D279, D73)
+- [ ] The planner's notices are shown verbatim outside "Details" (S7, D146)
+
+#### Outcome KPIs
+
+- Who: the owner, handed the page cold on a laptop | Does what: asks what an element means | By how much: 0 questions during the cold-start check; no run number, provider id, timing or memo text in view outside "Details" except inside the planner's own words | Measured by: the owner's cold-start check; S2 in CI | Baseline: four engine lines named by the owner as meaningless (D280).
+
+#### Technical Notes
+
+- The planner's messages are not reworded (D211). A failure message can name its run ("plan run #7 failed"); it stays verbatim and in view. The run number outside the planner's words moves into "Details".
+- `messages` of a run holds, in order, the run time line, the "not fully optimised (...)" label, the reuse line and the failure lines (run_messages.py). The page must put the first and the third in "Details" and keep the others in view without composing or parsing words: DESIGN decides how (for example from `memo_hit`, `not_fully_optimised` and `failure_reason`, or a small split of the existing field). If a server change is needed it is reported, not assumed (brief OUT).
+- The GPX file names and the trip name inside the file are unchanged (D268): an estimate is still "<project>-run<N>-estimate.gpx" with "Plan run #N (estimate)" inside.
+- "Export GPX" is never offered while a job of the page is active (D208 F2).
+
+#### Dependencies
+
+- US-23 (phases), US-24 (the card); US-21 (states, estimate flag); US-05 (Stale); US-08 (unreachable item); US-10a (engine failure words); US-18a (export).
+
+### US-26: The map is calm and my route stands out on it
+
+- job_id: J-01 | Slice: 12b | MoSCoW: Must | ADR-004, US-15, D281 | Size: 0.4 d
+
+#### Problem
+
+The map is good, but the route gets lost on the topographic tiles: contour lines, hill shading and place names compete with the road and trail lines. Marco has to zoom in to tell his route from the base map (D280).
+
+#### Who
+
+- Marco | laptop, reads the whole trip on the map and the shape of the trails in the mountains | Giulia | 390 px iPhone, looks at the map in daylight
+
+#### Solution
+
+The map opens on a light, low-contrast base map. A "Terrain" toggle switches to today's topographic map and back. Both base maps are credited, need no key and have terms that fit a household planner (ADR-004; DESIGN picks the light one). Route lines are thicker, with a light outline, and are drawn above the base map's labels. Road, trail and retrace keep apart by colour and line style on both base maps. The "Estimate" chip, the stop numbers and the direction arrows stay on top.
+
+#### Elevator Pitch
+
+- Before: Marco looks for the road line of "Alpi Occidentali giugno 2027" among contour lines and place names.
+- After: Marco opens the project -> sees the route drawn thick with a light outline over a pale base map with its credit line; he presses "Terrain" -> sees the topographic map under the same route, still easy to follow.
+- Decision enabled: Marco decides whether the trail order makes sense in the mountains (on "Terrain") without losing sight of the route.
+
+#### Domain Examples
+
+1. Happy: the route of "Alpi Occidentali giugno 2027" opens on the light base map; the road legs Torino - Aosta and the trail "Strada dell'Assietta" stand out at trip-wide zoom; the credit line names the base map's source.
+2. Edge: Marco presses "Terrain" to see the climbs around Colle del Sommeiller; the topographic map shows with its own credit; the dashed retrace line and the trail line are still told apart.
+3. Edge: "Assietta weekend" is an estimate: the map's "Estimate" chip shows on both base maps.
+4. Error: the topographic tiles do not answer; after "Terrain" the route lines, stop numbers and the itinerary still show.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 The map opens on a calm base map with its credit
+  Given the route of "Alpi Occidentali giugno 2027" is ready on real roads
+  When Marco opens the project
+  Then the map shows the light base map
+  And the map credits the light base map's source
+
+Scenario: S2 Terrain switches to the topographic map and back
+  Given Marco is looking at the route of "Alpi Occidentali giugno 2027" on the light base map
+  When he presses "Terrain"
+  Then the map shows the topographic map with its own credit and the same route
+  When he presses "Terrain" again
+  Then the map shows the light base map again
+
+Scenario Outline: S3 The route stands out on both base maps
+  Given the route of "Alpi Occidentali giugno 2027" is shown on the <base> map
+  When Marco views the whole trip
+  Then the road, trail and retrace lines are drawn with a light outline above the base map's labels
+  And each line has a contrast of at least 3:1 against the base map around it
+
+  Examples:
+    | base        |
+    | light base  |
+    | topographic |
+
+Scenario: S4 Road, trail and retrace stay apart on both base maps
+  Given the route of "Alpi Occidentali giugno 2027" includes "Strada dell'Assietta" and a retrace of "Colle del Sommeiller"
+  When Marco views them on the light base map and on "Terrain"
+  Then on each base map the road, the trail and the retrace differ in colour and the retrace also in line style
+
+Scenario: S5 An estimate says so on the map on both base maps
+  Given the route of "Assietta weekend" took its road legs from the offline road map
+  When Marco views it on the light base map and on "Terrain"
+  Then the map says "Estimate" on each
+
+Scenario: S6 On a phone the map controls fit and can be tapped
+  Given the route of "Assietta weekend" is an estimate
+  When Giulia opens it on her 390 px wide iPhone
+  Then "Terrain", the "Estimate" chip and the map's credit do not overlap each other or a stop number
+  And "Terrain" is at least 44 px high and 44 px wide
+
+Scenario: S7 The route still shows when the base map does not load
+  Given the topographic tiles do not answer
+  When Marco presses "Terrain" on the route of "Alpi Occidentali giugno 2027"
+  Then the route lines, the stop numbers and the itinerary are still shown
+```
+
+#### Acceptance Criteria
+
+- [ ] The map opens on a light base map, credited (S1, ADR-004)
+- [ ] "Terrain" toggles to the topographic map and back; both credited; the route is unchanged (S2)
+- [ ] Route lines outlined, above the labels, >= 3:1 against the base map on both base maps (S3)
+- [ ] Road, trail and retrace differ by colour on both base maps; retrace also by line style (S4, US-15, US-19)
+- [ ] "Estimate" on the map on both base maps (S5, D267)
+- [ ] At 390 px the map controls do not overlap; "Terrain" >= 44 x 44 px (S6)
+- [ ] Without base map tiles the route, numbers and itinerary still show (S7)
+
+#### Outcome KPIs
+
+- Who: the owner | Does what: follows the route on the map at trip-wide zoom on a laptop, without zooming in to find it | By how much: yes in the cold-start check, on both base maps | Measured by: the owner's cold-start check; S3 contrast check in CI | Baseline: "the route gets lost on the topographic tiles" (D280).
+
+#### Technical Notes
+
+- The second base map is one more tile source in the settings (ADR-004); no key, no new technology, no custom style of our own, no offline tiles (brief OUT). DESIGN picks the source and checks its terms and credit. The tile-key guard of slice 09 applies to it.
+- Remembering the toggle between visits is not required.
+- The arrow sizes (D269) and the retrace label rule (D270) stay. Contrast checked as in slice 12 (computed colours, the WCAG helper, D273); the map keeps its light palette in both themes (D265).
+
+#### Dependencies
+
+- US-15 (the map), US-20 S7 (arrows and retrace label), US-21 (estimate chip).
+
 ## Wave: DISCUSS / [REF] Coverage map (HC and acceptance tests)
 
 | Constraint / test | Stories | Scenario(s) |
@@ -3033,6 +3451,42 @@ Revision 6: DESIGN back-propagation U1-U42 (`design/upstream-changes.md` Revisio
 | 7 Technical notes | PASS | PASS (provider per run: DESIGN confirms) | PASS |
 | 8 Dependencies tracked | PASS (US-15, US-16, US-10a) | PASS (US-05, US-06b, US-10a, US-18a) | PASS (03-ops) |
 | 9 Outcome KPIs | PASS (cold-start a, b) | PASS (cold-start c) | PASS (K2 seen on next visit) |
+
+### Slice 12b DISCUSS (2026-11-19)
+
+- Stories: US-23 (three phases and their main actions; 7 scenarios), US-24 (summary card and itinerary timeline linked both ways to the map; 6 scenarios), US-25 (status in user words, engine details behind "Details", D208 kept; 7 scenarios, S1 an outline of 6 statuses), US-26 (calm base map, "Terrain" toggle, outlined route lines; 7 scenarios, S3 an outline of 2 base maps). 27 scenarios in all, 15 of them error, edge or phone paths.
+- Scope assessment: PASS. 4 stories, 1 context (the web page), no server change expected, about 1.9 d, inside the brief's "1.5 to 2 days, at risk". The owner's cold-start check is the stop rule.
+- JTBD trace: US-23, US-24, US-25, US-26 -> J-01 (the itinerary is the product; the household reads it on a phone). US-25 touches J-04 (an estimate or an older route is never taken for the current real one) and US-24 S5 / US-25 S6 touch J-02 (the retrace shown once, as its own step). No new job.
+- Feature type user-facing, brownfield, no walking skeleton, lightweight UX depth (happy path and key error paths).
+- UI words fixed by the brief and the orchestrator: main actions "Plan the route" (replaces "Calculate"), "Stop and use best so far", "Export GPX", "Edit trip"; phases "Build the trip", "Planning", "Your route"; statuses "No plan yet", "Loading", "Planning…", "Route ready", "Couldn't plan", "Out of date, plan again"; "Real roads" and "Estimate"; "Details"; "Terrain".
+- User decisions checked against every scenario (D276 lesson): D208 F2 (no export while a job of the page is active: US-23 S4), D208 F3 (under a Failed newer run the older ready route keeps its itinerary and its export; in 12b its number moves into "Details", so the card says it is the previous route: US-25 S3), A-10 (an out-of-date route stays exportable: US-25 S5), D211 (the planner's words verbatim, including a failure message that names its run: US-23 S7, US-25 S3, S4, S7), D268 (GPX names unchanged: US-24 S2, US-25 S3, S5), D259 (a change makes the route out of date at once: US-23 S6).
+- Outcome KPI: the owner's cold-start check on a laptop (brief learning hypothesis): (a) build a trip with one GPX and two places, (b) plan it, (c) read where the trip goes next, without asking what any element means, all in under 3 minutes, and the owner no longer calls the page chaotic. Disproved if any of these fails.
+- Brief refined: the outcome check "No run number ... outside Details" now exempts the planner's own words (D211), and "Out of date" keeps its export (A-10).
+- OUT (binding, brief): new planning behaviour, new data or endpoints; day-by-day split; manual reordering; offline tiles; a custom map style; branding; translations.
+- Slice-12 scenarios superseded on purpose (DISTILL changes them, it does not keep both):
+  - US-20 S4 second Then (three labelled groups "Items", "Start and end", "Plan"; D264 group order) -> US-23 S1-S3 (phases, one list, one Add, Start and End on a row). US-20 S4 first Then (shared styles) stays.
+  - US-20 S1 (stops, itinerary and totals beside the map) -> US-24 S1 (card and first steps in view at 1440 x 900); the map stays the main surface.
+  - US-21 S1 labels: "Planning" -> "Planning…", "Plan run #6" -> "Route ready", "Failed" -> "Couldn't plan", "Stale" -> "Out of date, plan again" (US-25 S1); "No plan yet" and "Loading" stay.
+  - US-21 S2 "labelled Planning" -> "Planning…" (US-23 S4); Stop stays.
+  - US-21 S3 label "Failed" -> "Couldn't plan"; the D276-corrected line "the export of plan run #4 stays, named with its number" -> the export of the previous route stays and the card says it is the previous route, its number in "Details" (US-25 S3).
+  - US-21 S4 "estimate" next to the heading of plan run #4 -> "Estimate" in the summary card and on the map (US-24 S2, US-26 S5); US-21 S6 gains "Real roads" in the card (US-24 S1). US-21 S5 (GPX names) stays.
+  - D272 button words "Calculate" -> "Plan the route"; "Export GPX of plan run #N" -> "Export GPX" (and the previous-route wording of US-25 S3); the hint "Press Calculate to plan this trip" goes. Browser-level steps of earlier slices that press "Calculate" are reworded with it.
+  - The "Plan run #N" badge and run heading (D266) move into "Details" (US-25 S2).
+  - Kept unchanged: US-20 S2, S3, S5, S6, S7; US-22 S1-S5.
+
+| DoR item | US-23 | US-24 | US-25 | US-26 |
+|----------|-------|-------|-------|-------|
+| 1 Problem in domain words | PASS | PASS | PASS | PASS |
+| 2 Persona with traits | PASS (Marco laptop, Giulia 390 px, never edits) | PASS | PASS | PASS |
+| 3 3+ real examples | PASS (4) | PASS (4) | PASS (4) | PASS (4) |
+| 4 GWT, 3-7 scenarios | PASS (7) | PASS (6) | PASS (7) | PASS (7) |
+| 5 AC from UAT | PASS | PASS | PASS | PASS |
+| 6 Right-sized | PASS (0.6 d) | PASS (0.5 d) | PASS (0.4 d) | PASS (0.4 d) |
+| 7 Technical notes | PASS (map before a route: DESIGN confirms no new endpoint) | PASS | PASS (message split: DESIGN decides) | PASS (light base map source: DESIGN picks) |
+| 8 Dependencies tracked | PASS (US-20, US-21, US-02a, US-02c, US-04, US-05, US-06b, US-16) | PASS (US-23, US-15, US-19, US-21, US-18a) | PASS (US-23, US-24, US-21, US-05, US-08, US-10a, US-18a) | PASS (US-15, US-20, US-21) |
+| 9 Outcome KPIs | PASS (cold-start a, b) | PASS (cold-start c) | PASS (0 questions; no engine text outside Details) | PASS (route followed at trip-wide zoom) |
+
+DoR: self-assessed PASS on all 9 items for US-23 to US-26; peer review not run in this pass.
 
 ## Wave: DISCUSS / [WHY] jtbd-narrative
 
@@ -4206,6 +4660,118 @@ C4Container
   Rel(spa, tiles, "Loads map tiles from")
 ```
 
+## Wave: DESIGN / [REF] Slice 12b trip workflow (2026-11-19)
+
+Propose mode, application scope, written by the orchestrator acting as architect (the screen sketches had to be built and shown to the owner before any other design work). Inputs: slice-12b brief, US-23 to US-26, the slice 12 DESIGN section above, ADR-003 (Amendments 1-3), ADR-004, ADR-007, `run_messages.py`, all of `web/src`. Decisions D282-D291 (Upstream Issues table). ADR-003 Amendment 4 and ADR-004 Amendment 1 record the durable parts.
+
+**Screen sketches, approved by the owner (D282):** a private page with the three phases at laptop and 390 px width, the other route states and the two base maps. The sketches are the reference for layout and wording; this section is the reference for behaviour.
+
+### Phases (D283)
+
+The page holds one phase at a time, derived from what it already knows; no server state.
+
+| Phase | Entered when | Main action | Shown | Not shown |
+|---|---|---|---|---|
+| Build the trip | the project has no ready route; or "Edit trip" was pressed; or a plan ended without any ready route | "Plan the route" | phase steps, "Your trip" list with "Add", Start/End tags, "Plan for" switch (objective), status line, the map with the trip's items | card, itinerary, Export GPX, Details |
+| Planning | a job of this page is active (pressing, queued ... finalising) | "Stop and use best so far" (danger outline) while stoppable | phase steps, status "Planning…", progress bar, the job's step word ("Solving") and "Best so far", notices, a read-only one-line summary of the trip | Add, list actions, Export GPX (D208 F2), Details |
+| Your route | a ready route exists and the user has not pressed "Edit trip" since the page showed it | "Export GPX" ("Plan the route" when Out of date) | phase steps, summary card, itinerary timeline, closed "Details" | the trip list, Add |
+
+Transitions: open the project -> Your route if a ready run exists, else Build the trip. "Plan the route" -> Planning. Job done with a ready run -> Your route (the new run). Job failed, cancelled, timed out or refused: with a ready route on show -> Your route with the "Couldn't plan" alert above a "Previous route" card; without one -> Build the trip with the alert. "Edit trip" -> Build the trip (the map shows the trip's items; the route returns with "Your route"). A change while building makes the route Stale by the existing revision rule; the status then reads "Out of date, plan again". A third phase step "Your route" in the steps bar is a button back to the result when a ready route exists (so Edit trip is never a dead end).
+
+Start and End: the anchors call takes both ids, so a "Set as start" or "Set as end" with the other not yet chosen is kept on the page (the row shows the tag as "not saved yet") and sent once both are chosen; a project that already has both sends the new one with the other kept.
+
+The phase is a pure function in a new `tripPhase.ts` (facts in: loading, job active, ready run present, editing, failed latest; phase out), tested in vitest like `planState.ts`.
+
+### Status words (D284)
+
+`planState.ts` keeps its priority order and looks (slice 12, D266) and changes only the labels: Loading, "Planning…", "Couldn't plan", "Out of date, plan again", "Route ready", "No plan yet". The badge sits in the card on Your route and under the steps bar on the other phases. "Previous route" is the card heading under "Couldn't plan" (with the success look and glyph of a ready route). A ready run with `not_fully_optimised` set shows a warning tag "Not fully optimised" in the card (a UI label, like the status words).
+
+### What moves into Details (D285)
+
+`Details` is one `<details>` element, closed on every render of a new run, at the end of Your route. It holds, in order: "Plan run #N"; the `provider_header` line (provider, map-data date, profile); `objective_label`; every line of the ready run's `messages`, verbatim, in the planner's order (run time, not-fully-optimised label, reuse line); and, when `memo_hit`, "Re-optimise (ignore previous result)". The web neither parses nor rewords a message (D211): the whole `messages` list of a ready run goes into Details, because picking one line out of it would mean reading its words. In view stay, verbatim: a Failed run's `messages` (its failure lines, which may name their run number), the job's ending message, the job's notices, a poll or call failure. The job's step words ("Computing legs", "Solving") and "Best so far" stay in view during Planning: they are what the wait is about. No server change.
+
+### Summary card and itinerary (D286)
+
+- Card: status badge; "Real roads" (success outline pill) or "Estimate" (the slice 12 estimate pill, now capitalised); "Not fully optimised" when flagged; total km and time large; road and off-road km and time side by side (blue and green edge marks matching the map lines); actions "Export GPX" (primary, an `<a>` to the existing export URL; hidden while a job is active, D208 F2) and "Edit trip" (secondary). Out of date: "Plan the route" becomes the primary action and "Export GPX" secondary. A run without totals (older than 0006) shows the card without numbers.
+- Itinerary: an ordered list of steps, each a button (44 px min height) with the stop's number disc, name, type word (Trail, Place; a retrace reads "Back the same way" and keeps the planner's reason verbatim), then its road leg, its trail length and off-road time, and the existing Unconfirmed warning in view. Numbers: the step's number is the map's stop number for the same stop (from the geometry's `stop` property: itinerary position + 1); Start and End discs read S and E when the run's anchor markers say so. Cumulative km and entry/exit coordinates leave the list (they stay in the GPX and in the step's `title`).
+- Selection (both ways): `WorkspacePage` holds `selectedStop: number | undefined`. A step press sets it; the map fits the bounds of every line and marker whose `stop` equals it (padding 48 px, max zoom 13) and gives the stop's number marker an accent ring; the other route lines drop to 35 % opacity. A press on a number marker on the map sets it; the itinerary scrolls the step into view (`scrollIntoView({block: 'nearest'})`) and highlights it. "Show whole route" (a map control, shown while a stop is selected) clears it and fits the whole route again. On a phone, a step press also scrolls the map into view.
+
+### Base maps and lines (D287)
+
+- Default base map: OpenFreeMap "Positron" vector style, `https://tiles.openfreemap.org/styles/positron`: no key, no registration, no request limit, commercial use allowed, MIT style, OpenStreetMap data; credit "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors" (the style carries no attribution of its own, so the planner sets it). Terrain: today's raster source from `MAP_TILE_URL` (OpenTopoMap by default), with its own credit. CARTO Positron was rejected (now needs a key); OSM Standard is not calm.
+- Settings (ADR-004 Amendment 1): `MAP_BASE_STYLE_URL` (default the Positron URL; the slice 09 guard for userinfo, fragments and key-like query parameters applies; empty means default) and `MAP_BASE_ATTRIBUTION`. `GET /api/config/map` gains `base_style_url` and `base_attribution`; its three fields keep their meaning (now the Terrain map). No new endpoint.
+- Drawing (MapLibre 6.19): the map starts on the planner's own style (a light background colour, the run source and its layers; never blank without tiles). It then fetches the base style JSON; on success it adopts it with `map.setStyle(base, { transformStyle })`, which keeps the run's sources and layers on top of every base layer, labels included, and keeps the base style's glyphs and sprite. On failure the route stays on the plain background (US-26 S7). Terrain adds the raster source as a layer above every base layer and below the route, toggled by `visibility`; if its tiles fail the Positron map stays visible under it.
+- Lines: width follows the zoom (4 px at zoom 8 to 7 px at zoom 13), each line drawn over a white casing 3 px wider (`line-gap`-free second layer below it), round joins. Colours unchanged (road #1d4ed8, unconfirmed #ea580c dotted, track #14532d with arrows, retrace #7e22ce long dash, unavailable #6b7280 dashed). Line colour against its white casing: 6.7, 3.6, 10.3, 7.1 and 4.8 to 1; so every line keeps >= 3:1 against the casing it always sits on, whatever the base map (the contrast check of US-26 S3).
+- "Terrain" is a map control button (top-right, 44 x 44 px minimum, `aria-pressed`), above the zoom buttons. The choice is kept in the browser's `localStorage` (try/catch, like the K2 acknowledgement), a per-viewer convenience.
+
+### The map before a route (D288)
+
+The map no longer waits for a run: `RunMap` becomes `TripMap` with two inputs, the ready run (optional) and the trip's items. With no run (Build the trip, Planning), it draws the items from the existing item list: a place as a dark dot (with "Start", "End" or "Start/End" tags), a track's entry as a green dot and exit as a red square (the slice 09 markers); the map fits their bounds, or a default view of the western Alps when the list is empty. "Click on map" (renamed "Click on map to add", kept compact top-left) works in this mode too, so "Add -> Click on the map" can work on a new project. Track shapes before a plan are not available from the item list; only their ends are drawn (reported, not added).
+
+### Layout per width (D289)
+
+- Laptop >= 1024 px: map main column, side panel `--panel-width`; the panel is a column whose main action sits in a footer pinned to the panel's bottom (`position: sticky; bottom: 0`), so it is always in view.
+- Tablet 600-1023 px and phone <= 599 px: map on top (phone 45dvh, tablet 50dvh), the phase panel below in one column (the slice 12 two-column panel is dropped: one phase has one column of content); the main action bar is sticky at the bottom of the viewport with the safe-area inset.
+- Unchanged: header, tokens, both themes, focus ring, 44 px targets, K2 banner, Diagnostics.
+
+### Component decomposition
+
+| Component | Action | Change |
+|---|---|---|
+| `tripPhase.ts` | CREATE NEW | The phase from the page's facts (pure, vitest) |
+| `PhaseSteps.svelte` | CREATE NEW | The three-step bar; "Your route" step returns to the result when one exists |
+| `TripList.svelte` (from `ItemList.svelte`) | EXTEND/RENAME | One list of stops and trails with Start/End tags and a row menu "Set as start", "Set as end" (places only); read-only mode |
+| `AddMenu.svelte` | CREATE NEW | One "Add" control: "Upload GPX trails", "Click on the map", "Type coordinates" (the existing import and add-place calls) |
+| `RouteCard.svelte` | CREATE NEW | Status, Real roads/Estimate, Not fully optimised, totals, Export GPX, Edit trip; "Previous route" heading |
+| `Itinerary.svelte` | EXTEND | Timeline of selectable steps; `selected` in, `onselect` out |
+| `RunDetails.svelte` | CREATE NEW | The closed Details (run number, provider, objective, messages, Re-optimise) |
+| `PlanPanel.svelte` | EXTEND | Keeps the job and run state; renders per phase; "Plan the route"; reports phase and run to the page |
+| `WorkspacePage.svelte` | EXTEND | Phase layout per width, selected stop, wiring; drops the Start and end form and the two separate forms |
+| `RunMap.svelte` -> `TripMap.svelte`, `runMap.ts` | EXTEND | Items mode, base style + Terrain, casings, zoom widths, selection fit and dimming, marker press, "Show whole route" |
+| `planState.ts` | EXTEND | New labels (D284) |
+| `api.ts` | EXTEND | `base_style_url`, `base_attribution` on `MapConfig` |
+| `settings.py`, `schemas.py` (`MapConfig`), `app_factory.py`, `.env.example`, `deploy/compose.yaml` | EXTEND | `MAP_BASE_STYLE_URL`, `MAP_BASE_ATTRIBUTION` |
+
+Reuse analysis: `tripPhase.ts` beside `planState.ts` rather than inside it (one answers "which state badge", the other "which screen"; both pure). `RouteCard` and `RunDetails` are cut out of `PlanPanel` (387 lines) rather than adding branches. `AddMenu` reuses the existing import and add-place calls and `PoiClickForm`. No new runtime dependency.
+
+### Driving ports touched
+
+- UI actions: "Plan the route" (was Calculate), "Stop and use best so far", "Export GPX", "Edit trip" (new, page state only), "Add" (Upload GPX trails, Click on the map, Type coordinates), "Set as start", "Set as end" (the existing anchors call with the other anchor kept), "Plan for" (objective), "Details", "Re-optimise (ignore previous result)", step select, map stop select, "Show whole route", "Terrain".
+- HTTP: `GET /api/config/map` gains two fields. Every other call unchanged. No new endpoint, no migration.
+
+### Testability
+
+| Story | Checks |
+|---|---|
+| US-23 | vitest: `tripPhase` table of facts -> phase; `WorkspacePage`/`PlanPanel` per phase show only that phase's elements and one main action; anchors from a row menu. Playwright: build -> plan -> route on the offline road map (CI) |
+| US-24 | vitest: card numbers and pills; itinerary selection events; `runMap` bounds of a stop. Playwright 1440 x 900: card and step 1-3 boxes inside the viewport; step press changes the map's published centre/zoom and highlights; marker press highlights the step; iPhone 14: tap brings the map into view, no sideways scroll, steps >= 44 px |
+| US-25 | vitest: six labels and looks; Details closed with the five items inside; Failed words in view; Previous route card with export; notices in view. Playwright (rewrites, W4 as D275): Couldn't plan with previous route, Out of date with export |
+| US-26 | pytest: settings default and guard for `MAP_BASE_STYLE_URL`, `/api/config/map` fields. vitest: style transform keeps run layers last; casing layers below each line; widths are zoom expressions; contrast of line vs casing >= 3:1 (WCAG helper). Playwright: Terrain toggles layer visibility and credit text; style fetch blocked -> route still drawn; phone controls do not overlap. The orchestrator checks real tiles on screenshots at the gate |
+
+### Slice-12 checks superseded on purpose (D290)
+
+US-20 S1 (replaced by US-24 S1), US-20 S4's group headings (replaced by US-23 S1-S3), US-21 S1-S4 labels and the "Plan run #N" badge and heading (now in Details), US-21 S3's export name line (now "Previous route" with "Export GPX"), D272's "Calculate" and "Export GPX of plan run #N". DISTILL edits those scenario lines and their Playwright and vitest checks in the step that changes the behaviour; every other slice-12 check keeps running unchanged.
+
+### C4 container delta
+
+```mermaid
+C4Container
+  title Container delta - slice 12b (trip workflow)
+  Person(marco, "Marco / Giulia", "Laptop, tablet width, 390 px phone")
+  Container_Boundary(browser, "Browser") {
+    Container(spa, "Planner SPA", "Svelte 5, MapLibre 6.19", "Three phases, route card, linked itinerary, base map + Terrain")
+    ContainerDb(storage, "localStorage", "Web Storage", "K2 acknowledgement, Terrain choice")
+  }
+  Container(planner, "planner", "FastAPI, Python", "JSON API; /api/config/map with the base style")
+  System_Ext(ofm, "OpenFreeMap", "Positron vector style and tiles")
+  System_Ext(tiles, "Tile server", "OpenTopoMap raster (Terrain)")
+  Rel(marco, spa, "Builds, plans and reads trips in")
+  Rel(spa, planner, "Reads and writes the trip, runs and map settings")
+  Rel(spa, storage, "Keeps the Terrain choice in")
+  Rel(spa, ofm, "Loads the light base map from")
+  Rel(spa, tiles, "Loads terrain tiles from")
+```
+
 ## Wave: SPIKE
 
 ### [REF] Outcome (2026-11-02)
@@ -5215,6 +5781,16 @@ DoD (slice 12): (1) the 3 `@driving_port` scenarios and the 26 Playwright cases 
 | D279 | 2026-11-19 | Slice 12 Pi gate, `__demo Alpi Occidentali giugno 2027 (real roads)`; `invariant.violation` log line; fingerprint memo (ADR-014 section 5); retrace (ADR-017) | After the deploy of `434cf1c` the orchestrator pressed Calculate twice in the demo project on the new map data: run #4 ready (with the Sommeiller dead-end retrace), run #5 a memo reuse of #4 that FAILED with `internal_invariant_violation` (HC-3 "not each item once: extra [the retraced track]"). Cause: the memo rebuilt the reused order from every stop, retrace rows included, so the retraced track appeared twice; the solver's order never holds retrace rows. Latent since slice 03b (no live run had pressed Calculate twice on a trip with a dead end). The guard did its job: no wrong plan was stored or shown. The K2 count on the Pi is now 1 for good (all time), so the new home-page banner shows until acknowledged in each browser. | **Orchestrator decision:** fixed under the standing authority as a bug fix, not slice 12 scope: `c7f8ee7` (the memo skips retrace rows; a property test proves a reuse keeps each item once and the retrace row); golden order unchanged (pin 5, golden_order 2); mutation 94.7 % on the file. Deployed after the slice-12 tag (the tag stays on `434cf1c`, the deployed slice). |
 | D280 | 2026-11-19 | Slice 12 learning hypothesis (cold-start check); owner feedback after the check | **Cold-start check: passed** (owner, laptop): he could tell what is selected, start a plan and tell real roads from an estimate, each in under two minutes. Owner feedback in the same message: the page is still "messy" and "chaotic". The side panel is one ungrouped scroll. "Plan run #7", the provider line, "Planned 4 items in 0.1 s" and "Reused the identical plan of run #6" mean nothing to a user. Calculate next to "Re-optimise (ignore previous result)" is unclear once a plan exists. The itinerary, the reason for the app, is buried as a plain list. Items, Import trails and Add a place are scattered. The map is good but hard to read (the route gets lost on the topographic tiles). He expects a workflow: build the trip, wait while it is planned, see the result, edit and plan again, with important and secondary elements in each phase. | **Recorded by the orchestrator;** a follow-up slice is proposed to the owner (phase-based workflow, itinerary as the main result, engine details behind a "Details" disclosure, a readable map). |
 | D281 | 2026-11-19 | D280 owner feedback; D263 order; ADR-004 (tiles from the settings) | The orchestrator proposed a follow-up UI slice built around the trip workflow and asked when, and how to make the map readable. | **User decision (2026-11-19):** slice 12b "the planner follows the trip" (`slices/slice-12b-trip-workflow.md`) comes next, before 04. New order: 12b, 04, 05, 06b, 07, 08, 10, 11. The map gets a calm, light base map by default with a "Terrain" toggle to the topographic map, plus thicker outlined route lines. |
+| D282 | 2026-11-19 | Slice 12b DESIGN; brief "DESIGN starts with screen sketches per phase and width, shown to the owner before code" | The workflow redesign needed the owner's approval before any code. | **User decision (2026-11-19):** the sketches (a private page: three phases at laptop and 390 px, the Out of date, Couldn't plan and No route states, the light base map and Terrain) are approved as shown. |
+| D283 | 2026-11-19 | Slice 12b DESIGN; US-23; DISCUSS open question 4 | The page needs one phase at a time without server state. | **Architect decision (DESIGN):** three phases derived by a pure `tripPhase.ts` from loading, job active, ready run, editing and failed latest. A project opens on "Your route" when a ready run exists, else "Build the trip". A failed plan with a ready route on show stays on "Your route" (alert above a "Previous route" card); without one it returns to "Build the trip". The steps bar's "Your route" returns from "Edit trip" to the result. |
+| D284 | 2026-11-19 | Slice 12b DESIGN; US-25 S1; D266 | Slice 12's state labels are engine words. | **Architect decision (DESIGN):** `planState.ts` keeps its order and looks; labels become "Loading", "Planning…", "Couldn't plan", "Out of date, plan again", "Route ready", "No plan yet". "Previous route" heads the older run's card under "Couldn't plan". A ready run with `not_fully_optimised` shows a "Not fully optimised" tag in the card. Supersedes D266's labels and D272's "Calculate" (now "Plan the route") and "Export GPX of plan run #N" (now "Export GPX"). |
+| D285 | 2026-11-19 | Slice 12b DESIGN; US-25 S2; US-23 S5; D211; `run_messages.py`; DISCUSS open question 2 | A ready run's `messages` mixes engine lines (run time, reuse) with the "not fully optimised (...)" label; picking lines out would mean reading the planner's words. | **Architect decision (DESIGN):** the whole `messages` list of a ready run goes into the closed "Details", verbatim and in order, with "Plan run #N", the provider line, the objective label and "Re-optimise". A Failed run's messages, the job's ending message, notices and call failures stay in view, verbatim. The job's step words and "Best so far" stay in view while planning. No server change. **Deviation from US-23 S5 as written:** "not fully optimised (stopped)" is in "Details", word for word; in view the card shows the tag "Not fully optimised". DISTILL writes S5 this way. |
+| D286 | 2026-11-19 | Slice 12b DESIGN; US-24 | The result must lead, with the itinerary linked to the map. | **Architect decision (DESIGN):** a `RouteCard` (status, Real roads or Estimate, totals, road vs off-road, Export GPX, Edit trip) above an itinerary of selectable steps numbered as the map's stops; the page holds the selected stop; a step press fits the map to that stop's lines and markers and dims the rest; a marker press highlights and scrolls to the step; "Show whole route" clears it. Cumulative km and entry/exit coordinates leave the list (kept in the GPX and the step's title). |
+| D287 | 2026-11-19 | Slice 12b DESIGN; US-26; ADR-004; D281 | The light base map must be free, keyless, credited, with household-fit terms. | **Architect decision (DESIGN):** OpenFreeMap "Positron" vector style (no key or registration, no request limit, commercial use allowed, MIT style, OSM data) by default; Terrain is today's `MAP_TILE_URL` raster (OpenTopoMap). New settings `MAP_BASE_STYLE_URL`, `MAP_BASE_ATTRIBUTION` (slice 09 key guard applies); `/api/config/map` gains `base_style_url`, `base_attribution` (ADR-004 Amendment 1). The map starts on its own style and adopts the base style with `transformStyle`, the route always on top; a failed base or Terrain load leaves the route drawn. Lines 4 to 7 px by zoom over a white casing 3 px wider; colours unchanged, each >= 3:1 against its casing. Terrain choice kept in `localStorage`. CARTO rejected (now needs a key). |
+| D288 | 2026-11-19 | Slice 12b DESIGN; US-23 S2; DISCUSS open question 3 | "Click on the map" in a new project needs a map before any route. | **Architect decision (DESIGN):** `RunMap` becomes `TripMap`: with no ready run it draws the trip's items from the existing item list (places, track entries and exits) and offers "Click on map to add". Track shapes before a plan are not in the item list; only their ends are drawn (reported, not added). |
+| D289 | 2026-11-19 | Slice 12b DESIGN; D264 | One phase has one column of content. | **Architect decision (DESIGN):** below 1024 px the phase panel is one column under the map (phone 45dvh, tablet 50dvh); the slice 12 two-column tablet panel is dropped. The main action sits in a bar pinned to the panel's bottom on a laptop and to the viewport's bottom (with the safe-area inset) below 1024 px. |
+| D290 | 2026-11-19 | Slice 12b DESIGN; D276 lesson; US-20, US-21 | Some slice-12 checks describe the screen 12b replaces. | **Architect decision (DESIGN):** US-20 S1, US-20 S4's group headings, US-21 S1-S4's labels and the "Plan run #N" badge, US-21 S3's export name line, and D272's button names are changed on purpose by DISTILL, in the step that changes the behaviour; every other slice-12 check keeps running unchanged. |
+| D291 | 2026-11-19 | Slice 12b DESIGN; process | The DESIGN wave was written by the orchestrator, not dispatched to nw-solution-architect. | **Orchestrator decision, recorded as a deviation:** the sketches had to be built and shown first and they carried most of the design; the orchestrator wrote this section from them and from the code it had read. The consolidated DISTILL review covers it. |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 
