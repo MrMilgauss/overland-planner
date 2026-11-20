@@ -1,12 +1,26 @@
 <script lang="ts">
   // The small form that names a place clicked on the map (slice 09, step 10-05). Add hands the name to the map's `add`
   // and closes when the planner took it; a refusal (an empty name, say) stays here in the planner's own words.
-  // Cancel and Escape close it and add nothing.
+  // Cancel and Escape close it and add nothing. With `coordinates` it also asks for the place's decimal degrees (the
+  // Add menu's "Type coordinates") and hands them on as the second argument; without, `add` gets the name alone.
   import { failureText } from './api';
 
-  let { add, close }: { add: (name: string) => Promise<void>; close: () => void } = $props();
+  type Coordinates = { latitude: string; longitude: string };
+  let {
+    add,
+    close,
+    coordinates = false,
+    label = 'Add a place here',
+  }: {
+    add: (name: string, coordinates?: Coordinates) => Promise<unknown>;
+    close: () => void;
+    coordinates?: boolean;
+    label?: string;
+  } = $props();
 
   let name = $state('');
+  let latitude = $state('');
+  let longitude = $state('');
   let problem = $state('');
   let busy = $state(false);
 
@@ -16,7 +30,8 @@
     busy = true;
     problem = '';
     try {
-      await add(name);
+      if (coordinates) await add(name, { latitude, longitude });
+      else await add(name);
       close();
     } catch (error) {
       problem = failureText(error);
@@ -28,12 +43,22 @@
 
 <svelte:window onkeydown={(event) => event.key === 'Escape' && close()} />
 
-<form aria-label="Add a place here" onsubmit={submit}>
+<form aria-label={label} onsubmit={submit}>
   <label>
     Name
     <!-- svelte-ignore a11y_autofocus -->
     <input bind:value={name} autocomplete="off" autofocus />
   </label>
+  {#if coordinates}
+    <label>
+      Latitude
+      <input bind:value={latitude} inputmode="decimal" placeholder="44.8990" autocomplete="off" />
+    </label>
+    <label>
+      Longitude
+      <input bind:value={longitude} inputmode="decimal" placeholder="6.6430" autocomplete="off" />
+    </label>
+  {/if}
   {#if problem}
     <p role="alert">{problem}</p>
   {/if}

@@ -1,4 +1,5 @@
-// Workspace of one project (step 03-10): import trails, add places by decimal degrees, set Start and End. The fetch
+// Workspace of one project (step 03-10, 12-04): the Add menu (import trails, type a place's decimal degrees), Start and
+// End from the list's rows. The fetch
 // stub stands in for the planner's HTTP API (the port of the page); every error envelope message is shown verbatim.
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, step 03-10); coordinate ranges and anchor rules are
 // property-tested at the domain level (steps 03-08, 03-09).
@@ -8,12 +9,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import WorkspacePage from './WorkspacePage.svelte';
 import type { Item } from './api';
 
-// The map has its own tests (RunMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing and records its props.
+// The map has its own tests (TripMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing and records its props.
 const map = vi.hoisted(() => ({
-  props: undefined as { planRunId: string; onplaceadded?: () => void } | undefined,
+  props: undefined as
+    | { planRunId?: string; items: Item[]; onplaceadded?: () => void; clickMode?: boolean }
+    | undefined,
 }));
-vi.mock('./RunMap.svelte', () => ({
-  default: (_anchor: unknown, props: { planRunId: string; onplaceadded?: () => void }) => {
+vi.mock('./TripMap.svelte', () => ({
+  default: (
+    _anchor: unknown,
+    props: { planRunId?: string; items: Item[]; onplaceadded?: () => void; clickMode?: boolean },
+  ) => {
     map.props = props;
   },
 }));
@@ -69,9 +75,27 @@ async function fill(label: string, value: string): Promise<void> {
   await fireEvent.input(screen.getByLabelText(label), { target: { value } });
 }
 
-/** The item list's entry for `name` (place names also appear in the Start and End choices). */
+async function typeAPlace(name: string, lat: string, lon: string): Promise<void> {
+  await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Type coordinates' }));
+  await fill('Name', name);
+  await fill('Latitude', lat);
+  await fill('Longitude', lon);
+  await fireEvent.click(
+    within(screen.getByRole('form', { name: 'Type coordinates' })).getByRole('button', {
+      name: 'Add',
+    }),
+  );
+}
+
+async function setFromTheRow(place: string, choice: 'Set as start' | 'Set as end'): Promise<void> {
+  await fireEvent.click(screen.getByRole('button', { name: `Actions for ${place}` }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: choice }));
+}
+
+/** The trip list's entry for `name`. */
 async function itemNamed(name: string): Promise<HTMLElement> {
-  return within(await screen.findByRole('list', { name: 'Items' })).getByText(name);
+  return within(await screen.findByRole('list', { name: 'Your trip' })).getByText(name);
 }
 
 afterEach(() => {
@@ -88,7 +112,7 @@ describe('Workspace page', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: PROJECT.name }),
     ).toBeInTheDocument();
-    const list = await screen.findByRole('list', { name: 'Items' });
+    const list = await screen.findByRole('list', { name: 'Your trip' });
     expect(within(list).getByText('Briancon')).toBeInTheDocument();
   });
 
@@ -99,12 +123,9 @@ describe('Workspace page', () => {
     render(WorkspacePage, { props: { projectId: 'p1' } });
     await screen.findByRole('heading', { level: 1, name: PROJECT.name });
 
-    await fill('Place name', 'Briancon');
-    await fill('Latitude', '44.8990');
-    await fill('Longitude', '6.6430');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add place' }));
+    await typeAPlace('Briancon', '44.8990', '6.6430');
 
-    const list = await screen.findByRole('list', { name: 'Items' });
+    const list = await screen.findByRole('list', { name: 'Your trip' });
     expect(await within(list).findByText('Briancon')).toBeInTheDocument();
     expect(writes(calls).map((c) => [c.method, c.url, JSON.parse(String(c.body))])).toEqual([
       ['POST', '/api/projects/p1/pois', { name: 'Briancon', lat: 44.899, lon: 6.643 }],
@@ -121,7 +142,6 @@ describe('Workspace page', () => {
     const file = new File(['<gpx/>'], 'assietta.gpx', { type: 'application/gpx+xml' });
 
     await fireEvent.change(screen.getByLabelText('GPX files'), { target: { files: [file] } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
 
     expect(await screen.findByText("Strada dell'Assietta")).toBeInTheDocument();
     const [upload] = writes(calls);
@@ -145,11 +165,10 @@ describe('Workspace page', () => {
     render(WorkspacePage, { props: { projectId: 'p1' } });
     await itemNamed('Aosta');
 
-    await fireEvent.change(screen.getByLabelText('Start'), { target: { value: 'i1' } });
-    await fireEvent.change(screen.getByLabelText('End'), { target: { value: 'i1' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Set Start and End' }));
+    await setFromTheRow('Casa Marco, Torino', 'Set as start');
+    await setFromTheRow('Casa Marco, Torino', 'Set as end');
 
-    expect(await screen.findByText('S/E')).toBeInTheDocument();
+    expect(await screen.findByText('End', { selector: '.tag' })).toBeInTheDocument();
     expect(writes(calls).map((c) => [c.method, c.url, JSON.parse(String(c.body))])).toEqual([
       ['PUT', '/api/projects/p1/anchors', { start_item_id: 'i1', end_item_id: 'i1' }],
     ]);
@@ -161,10 +180,7 @@ describe('Workspace page', () => {
       'POST /api/projects/p1/pois',
       'Latitude must be between -90 and 90',
       async () => {
-        await fill('Place name', 'Briancon');
-        await fill('Latitude', '144.8990');
-        await fill('Longitude', '6.6430');
-        await fireEvent.click(screen.getByRole('button', { name: 'Add place' }));
+        await typeAPlace('Briancon', '144.8990', '6.6430');
       },
     ],
     [
@@ -174,7 +190,6 @@ describe('Workspace page', () => {
       async () => {
         const notes = new File(['hello'], 'notes.gpx');
         await fireEvent.change(screen.getByLabelText('GPX files'), { target: { files: [notes] } });
-        await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       },
     ],
     [
@@ -182,9 +197,8 @@ describe('Workspace page', () => {
       'PUT /api/projects/p1/anchors',
       'Only places (POIs) can be the Start or End',
       async () => {
-        await fireEvent.change(screen.getByLabelText('Start'), { target: { value: 'i1' } });
-        await fireEvent.change(screen.getByLabelText('End'), { target: { value: 'i1' } });
-        await fireEvent.click(screen.getByRole('button', { name: 'Set Start and End' }));
+        await setFromTheRow('Casa Marco, Torino', 'Set as start');
+        await setFromTheRow('Casa Marco, Torino', 'Set as end');
       },
     ],
   ])('shows the planner message verbatim when %s is refused', async (_case, call, message, act) => {
@@ -198,7 +212,7 @@ describe('Workspace page', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
     expect(
-      within(screen.getByRole('list', { name: 'Items' })).getAllByRole('listitem'),
+      within(screen.getByRole('list', { name: 'Your trip' })).getAllByRole('listitem'),
     ).toHaveLength(1);
   });
 
@@ -216,8 +230,10 @@ describe('Workspace page', () => {
   });
 });
 
-describe('Workspace page: the objective', () => {
+describe('Workspace page: the "Plan for" switch', () => {
   const OBJECTIVE_PROJECT = { ...PROJECT, objective: 'distance' };
+  const pressed = (name: string) =>
+    screen.getByRole('button', { name }).getAttribute('aria-pressed');
 
   it('shows the project objective and changes it with a PATCH', async () => {
     const calls = stubPlanner([[]], {
@@ -228,17 +244,16 @@ describe('Workspace page: the objective', () => {
       },
     });
     render(WorkspacePage, { props: { projectId: 'p1' } });
-    const choice = (await screen.findByLabelText('Objective')) as HTMLSelectElement;
-    expect(choice.value).toBe('distance');
-    expect(screen.getByRole('option', { name: 'Minimise road distance' })).toBeInTheDocument();
+    await screen.findByRole('group', { name: 'Plan for' });
+    expect([pressed('Shortest distance'), pressed('Shortest time')]).toEqual(['true', 'false']);
 
-    await fireEvent.change(choice, { target: { value: 'time' } });
-    await screen.findByRole('option', { name: 'Minimise road time' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Shortest time' }));
+    await vi.waitFor(() => expect(pressed('Shortest time')).toBe('true'));
 
     expect(writes(calls).map((c) => [c.method, c.url, JSON.parse(String(c.body))])).toEqual([
       ['PATCH', '/api/projects/p1', { objective: 'time' }],
     ]);
-    expect((screen.getByLabelText('Objective') as HTMLSelectElement).value).toBe('time');
+    expect(pressed('Shortest distance')).toBe('false');
   });
 
   it('shows the planner message of a refused change and keeps the old value', async () => {
@@ -250,12 +265,12 @@ describe('Workspace page: the objective', () => {
       },
     });
     render(WorkspacePage, { props: { projectId: 'p1' } });
-    const choice = (await screen.findByLabelText('Objective')) as HTMLSelectElement;
+    await screen.findByRole('group', { name: 'Plan for' });
 
-    await fireEvent.change(choice, { target: { value: 'time' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Shortest time' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Unknown objective');
-    expect((screen.getByLabelText('Objective') as HTMLSelectElement).value).toBe('distance');
+    expect(pressed('Shortest distance')).toBe('true');
   });
 });
 
@@ -283,14 +298,27 @@ describe('Workspace page: the map as the main column', () => {
     expect(screen.getByRole('button', { name: 'Plan the route' })).toHaveClass('primary');
   });
 
-  it('says the map waits for a plan, and loads no map, while no run is ready', async () => {
-    stubPlanner([[]]);
+  it("draws the trip's items on the map, with no placeholder, while no run is ready", async () => {
+    stubPlanner([[place('i1', 'Susa')]]);
     render(WorkspacePage, { props: { projectId: 'p1' } });
 
+    await vi.waitFor(() => expect(map.props?.items.map((item) => item.name)).toEqual(['Susa']));
+    expect(map.props?.planRunId).toBeUndefined();
     expect(
-      await screen.findByText('The map shows the plan once one is computed.'),
-    ).toBeInTheDocument();
-    expect(map.props).toBeUndefined();
+      screen.queryByText('The map shows the plan once one is computed.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('puts the map in its click mode when the Add menu says so', async () => {
+    stubPlanner([[]]);
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await screen.findByRole('button', { name: 'Add' });
+    await vi.waitFor(() => expect(map.props?.clickMode).toBe(false));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Click on the map' }));
+
+    await vi.waitFor(() => expect(map.props?.clickMode).toBe(true));
   });
 
   it('draws the ready run the panel shows, and reads items and runs again when a place is added on the map', async () => {
@@ -310,5 +338,9 @@ describe('Workspace page: the map as the main column', () => {
 
     await itemNamed('Susa');
     await vi.waitFor(() => expect(runReads()).toBe(2));
+    expect(
+      map.props?.planRunId,
+      'the map shows the items while the trip is edited',
+    ).toBeUndefined();
   });
 });

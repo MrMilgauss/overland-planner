@@ -1,9 +1,12 @@
 <script lang="ts">
-  // The map of the plan run on show (slice 09, ADR-003 Amendment 2). Everything that can be decided without
-  // a screen is runMap.ts's; this draws it with MapLibre, loaded only when a run is shown, and tells a refusal in the
-  // planner's words. The map settings are read once; the geometry again whenever the run shown changes.
+  // The map of the trip (slice 09, ADR-003 Amendment 2; D288): the plan run on show when there is one, else the trip's
+  // own items (a place a dot with its tag, a trail its entry and exit). Everything that can be decided without a screen
+  // is runMap.ts's; this draws it with MapLibre, loaded only when there is something to show, and tells a refusal in the
+  // planner's words. The map settings are read once; the geometry again whenever the run shown changes, the items
+  // again whenever the trip changes.
   import 'maplibre-gl/dist/maplibre-gl.css';
-  import { addPlace, failureText, readMapConfig, readRunGeometry } from './api';
+  import { untrack } from 'svelte';
+  import { addPlace, failureText, readMapConfig, readRunGeometry, type Item } from './api';
   import PoiClickForm from './PoiClickForm.svelte';
   import { estimateMarker } from './planState';
   import { TerrainChoice } from './terrainChoice';
@@ -13,7 +16,9 @@
     arrowImage,
     ARROW_IMAGE,
     buildRunMap,
+    buildTripMap,
     CREDIT_LAYER,
+    DEFAULT_VIEW,
     TERRAIN_LAYER,
     placeClicked,
     placeRetraceLabel,
@@ -23,22 +28,26 @@
     type Place,
   } from './runMap';
 
-  // `projectId` turns on the "Click on map" mode; `onplaceadded` tells the workspace to list the new place.
+  // `projectId` turns on the "Click on map to add" mode (the page's Add menu may put the map in it: `clickMode`);
+  // `onplaceadded` tells the workspace to list the new place.
   let {
     planRunId,
+    items = [],
     projectId,
     estimate = false,
     onplaceadded,
+    clickMode = $bindable(false),
   }: {
-    planRunId: string;
+    planRunId?: string;
+    items?: Item[];
     projectId?: string;
     estimate?: boolean;
     onplaceadded?: () => void;
+    clickMode?: boolean;
   } = $props();
 
   let container = $state<HTMLDivElement | undefined>();
   let problem = $state('');
-  let clickMode = $state(false);
   let clicked = $state<(Place & { x: number; y: number }) | undefined>();
   let settings: Promise<MapConfig> | undefined;
 
@@ -46,6 +55,9 @@
 
   const NUMBERED = ['stop', 'start', 'end', 'start_end'];
   const FIT_PADDING = 48;
+  const ITEMS_MAX_ZOOM = 12; // one place alone is not zoomed in on to the street
+  // Without a run the map is drawn afresh whenever the trip's items change; with one, the items do not matter.
+  const itemsKey = $derived(planRunId ? '' : JSON.stringify(items));
 
   function settingsOnce(): Promise<MapConfig> {
     settings ??= readMapConfig();
@@ -56,19 +68,25 @@
   function overlayElement(overlay: MapOverlay): HTMLDivElement {
     const element = document.createElement('div');
     element.className = `run-marker ${overlay.kind}${NUMBERED.includes(overlay.kind) ? ' numbered' : ''}`;
-    element.textContent = overlay.text;
+    if (overlay.kind === 'place' && overlay.text) {
+      const tag = document.createElement('span');
+      tag.className = 'place-tag';
+      tag.textContent = overlay.text;
+      element.append(tag);
+    } else element.textContent = overlay.text;
     element.title = overlay.title;
     return element;
   }
 
   async function draw(
-    id: string,
+    id: string | undefined,
+    tripItems: Item[],
     frame: HTMLDivElement,
     current: () => boolean,
   ): Promise<() => void> {
     const [config, geometry, maplibre, worker] = await Promise.all([
       settingsOnce(),
-      readRunGeometry(id),
+      id ? readRunGeometry(id) : Promise.resolve(undefined),
       import('maplibre-gl'),
       // MapLibre finds its worker next to its own script, which the build does not copy: name it, so that it is a file
       // of the build (without it, no line is ever drawn).
@@ -79,13 +97,16 @@
     const choice = new TerrainChoice();
     let terrain = choice.terrain();
     let adopted = false; // the light base map is the map's: its credit may show
-    const plan = buildRunMap(geometry, config, terrain);
+    const plan = geometry
+      ? buildRunMap(geometry, config, terrain)
+      : buildTripMap(tripItems, config, terrain);
     const map = new maplibre.Map({
       container: frame,
       style: plan.style,
       maxZoom: config.max_zoom,
       attributionControl: false,
       dragRotate: false,
+      ...(plan.bounds ? {} : DEFAULT_VIEW),
     });
     map.addControl(new maplibre.AttributionControl({ compact: false })); // always open: nothing to close
     // Terrain and the credit of the light base map follow the choice; while a style is being replaced the layers are not
@@ -172,7 +193,12 @@
         clicked = { ...place, x: event.point.x, y: event.point.y };
       },
     );
-    if (plan.bounds) map.fitBounds(plan.bounds, { padding: FIT_PADDING, animate: false });
+    if (plan.bounds)
+      map.fitBounds(plan.bounds, {
+        padding: FIT_PADDING,
+        animate: false,
+        ...(geometry ? {} : { maxZoom: ITEMS_MAX_ZOOM }),
+      });
     publish();
     const retraces: {
       marker: { setLngLat(lngLat: [number, number]): unknown };
@@ -233,12 +259,14 @@
 
   $effect(() => {
     const id = planRunId;
+    void itemsKey; // the trip changed: draw it again
     const frame = container;
     if (!frame) return;
+    const tripItems = untrack(() => $state.snapshot(items)) as Item[];
     let active = true;
     problem = '';
     clicked = undefined;
-    const drawn = draw(id, frame, () => active).catch((error: unknown) => {
+    const drawn = draw(id, tripItems, frame, () => active).catch((error: unknown) => {
       if (active) problem = failureText(error);
       return () => {};
     });
@@ -263,7 +291,7 @@
       {/if}
       {#if projectId && !problem}
         <button type="button" class="click-mode" aria-pressed={clickMode} onclick={toggleClickMode}
-          >Click on map</button
+          >Click on map to add</button
         >
       {/if}
     </div>
@@ -330,9 +358,12 @@
       600 0.9rem/1 system-ui,
       sans-serif;
   }
-  :global(.maplibregl-ctrl-group .terrain-button[aria-pressed='true']) {
+  /* Pressed: an accent fill, white text and an underline. Named with :not(:disabled) so that it outranks MapLibre's own
+     hover and focus rule for the control group's buttons (a pale grey fill, which left white text unreadable). */
+  :global(.maplibregl-ctrl-group button.terrain-button[aria-pressed='true']:not(:disabled)) {
     background: rgb(29 78 216);
     color: white;
+    text-decoration: underline;
   }
   .map {
     width: 100%;
@@ -356,6 +387,27 @@
     color: #fff;
     text-align: center;
     box-sizing: border-box;
+  }
+  :global(.run-marker.place) {
+    position: relative;
+    width: 0.9rem;
+    height: 0.9rem;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #1f2937;
+    box-sizing: border-box;
+  }
+  :global(.run-marker.place .place-tag) {
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    margin-left: 0.2rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.3rem;
+    background: #1f2937;
+    color: #fff;
+    transform: translateY(-50%);
+    white-space: nowrap;
   }
   :global(.run-marker.entry),
   :global(.run-marker.exit) {

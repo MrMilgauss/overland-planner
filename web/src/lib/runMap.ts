@@ -1,6 +1,8 @@
-// The run map as data (slice 09, step 10-04, ADR-003 Amendment 2): the planner's geometry answer and the map settings
-// in, a MapLibre style (tiles, the lines, their layers), the text and marker overlays, and the bounds out. Pure: the
-// drawing itself (WebGL) is RunMap.svelte's, and the web composes no wording but the labels of the map itself.
+// The trip map as data (slice 09, step 10-04, ADR-003 Amendment 2; 12-04): the planner's geometry answer and the map
+// settings in, a MapLibre style (tiles, the lines, their layers), the text and marker overlays, and the bounds out; or,
+// before any route, the trip's items. Pure: the drawing itself (WebGL) is TripMap.svelte's, and the web composes no
+// wording but the labels of the map itself.
+import type { Item } from './api';
 import type {
   ExpressionSpecification,
   LayerSpecification,
@@ -59,7 +61,7 @@ export interface RunGeometry {
 
 /** Something HTML on the map: a numbered stop, an entry or exit, or a text on a line. */
 export interface MapOverlay {
-  kind: MarkerProperties['marker'] | 'unconfirmed' | 'retrace' | 'unavailable';
+  kind: MarkerProperties['marker'] | 'unconfirmed' | 'retrace' | 'unavailable' | 'place';
   text: string;
   title: string;
   lngLat: LngLat;
@@ -368,20 +370,56 @@ export function buildRunMap(geometry: RunGeometry, config: MapConfig, terrain = 
   };
 }
 
+const PLACE_TAGS = { start: 'Start', end: 'End', start_end: 'Start/End' } as const;
+/** The view of an empty trip: the western Alps. */
+export const DEFAULT_VIEW: { center: LngLat; zoom: number } = { center: [6.9, 44.9], zoom: 7 };
+
+function itemOverlays(item: Item): MapOverlay[] {
+  if (item.type === 'poi') {
+    if (!item.location) return [];
+    const lngLat: LngLat = [item.location.lon, item.location.lat];
+    const text = item.anchor ? PLACE_TAGS[item.anchor] : '';
+    return [{ kind: 'place', text, title: item.name, lngLat }];
+  }
+  const ends: MapOverlay[] = [];
+  if (item.entry)
+    ends.push({
+      kind: 'entry',
+      text: '',
+      title: `Entry of ${item.name}`,
+      lngLat: [item.entry.lon, item.entry.lat],
+    });
+  if (item.exit)
+    ends.push({
+      kind: 'exit',
+      text: '',
+      title: `Exit of ${item.name}`,
+      lngLat: [item.exit.lon, item.exit.lat],
+    });
+  return ends;
+}
+
+/** The map before any route (D288): the run map's own style with no route in it, and the trip's items as overlays: a
+ * place a dot with its Start or End tag, a trail its entry and its exit (its shape is not drawn). */
+export function buildTripMap(items: Item[], config: MapConfig, terrain = false): RunMapPlan {
+  const overlays = items.flatMap(itemOverlays);
+  const { style } = buildRunMap({ type: 'FeatureCollection', features: [] }, config, terrain);
+  return { style, overlays, bounds: boundsOf(overlays.map((overlay) => overlay.lngLat)) };
+}
+
 /** The fetched light base map with the map's own sources and layers kept after every base layer (labels included), as
  * MapLibre's `transformStyle` hands them: the base map's glyphs and sprite stay, the plain background goes, and the
- * credit is the planner's own words (the light base map's sources say nothing). */
+ * credit is the planner's own words (the light base map's sources say an empty credit). */
 export function adoptBaseStyle(
   own: StyleSpecification,
   base: StyleSpecification,
   terrain: boolean,
 ): StyleSpecification {
+  // An empty credit, not an absent one: a source given by a TileJSON address would show that file's credit beside ours.
   const uncredited = Object.fromEntries(
     Object.entries(base.sources).map(([name, source]) => [
       name,
-      Object.fromEntries(
-        Object.entries(source).filter(([key]) => key !== 'attribution'),
-      ) as unknown as SourceSpecification,
+      { ...source, attribution: '' } as unknown as SourceSpecification,
     ]),
   );
   const ours = own.layers

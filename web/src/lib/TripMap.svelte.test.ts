@@ -1,14 +1,22 @@
-// The run map component (slice 09, step 10-04): it reads the map settings once and the geometry of the run shown,
+// The trip map component (slice 09 step 10-04, 12b step 12-04): with a run it reads the map settings once and the geometry of the run shown,
 // hands the built style to MapLibre, and tells a failed answer in the planner's words. MapLibre needs WebGL, which
 // jsdom lacks, so the library (a third party, not the planner's port) is replaced here and checked in a real browser by
-// tests/e2e/run-map.spec.ts; the planner's API is a fetch stub.
+// tests/e2e/run-map.spec.ts and trip-workflow.spec.ts; the planner's API is a fetch stub. Without a run it draws the
+// trip's items (D288).
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM, steps 04-10 and 05-11).
 import '@testing-library/jest-dom/vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const maps = vi.hoisted(() => ({
-  created: [] as { style: { layers: { id: string }[] }; container: HTMLElement }[],
+  created: [] as {
+    style: { layers: { id: string }[] };
+    container: HTMLElement;
+    center?: number[];
+    zoom?: number;
+  }[],
   styled: [] as [unknown, { transformStyle: (previous: unknown, next: unknown) => never }][],
   layout: [] as [string, string, string][],
   controls: [] as unknown[],
@@ -90,7 +98,7 @@ vi.mock('maplibre-gl', () => {
   return { setWorkerUrl, Map: FakeMap, Marker: FakeMarker, AttributionControl, NavigationControl };
 });
 
-import RunMap from './RunMap.svelte';
+import TripMap from './TripMap.svelte';
 import { TerrainChoice } from './terrainChoice';
 import { CREDIT_LAYER, TERRAIN_LAYER } from './runMap';
 
@@ -163,13 +171,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe('RunMap', () => {
+describe('TripMap with a run', () => {
   it('gives MapLibre its worker as a file of the build, so that the lines are computed in the browser', async () => {
     planner({
       '/api/config/map': { status: 200, body: CONFIG },
       '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
     });
-    render(RunMap, { planRunId: 'r1' });
+    render(TripMap, { planRunId: 'r1' });
     await waitFor(() => expect(maps.created).toHaveLength(1));
     expect(maps.workerUrls).toHaveLength(1);
     expect(maps.workerUrls[0]).toMatch(/maplibre-gl-worker.*\.mjs/);
@@ -180,7 +188,7 @@ describe('RunMap', () => {
       '/api/config/map': { status: 200, body: CONFIG },
       '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
     });
-    render(RunMap, { planRunId: 'r1' });
+    render(TripMap, { planRunId: 'r1' });
     await waitFor(() => expect(maps.fitted).toHaveLength(1));
     expect(screen.getByRole('region', { name: 'Map of the run' })).toBeInTheDocument();
     expect(maps.created[0].style).toMatchObject({ sources: { tiles: { attribution: 'Credit' } } });
@@ -199,7 +207,7 @@ describe('RunMap', () => {
       '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
       '/api/plan-runs/r2/geometry': { status: 200, body: GEOMETRY },
     });
-    const { rerender } = render(RunMap, { planRunId: 'r1' });
+    const { rerender } = render(TripMap, { planRunId: 'r1' });
     await waitFor(() => expect(maps.fitted).toHaveLength(1));
     await rerender({ planRunId: 'r2' });
     await waitFor(() => expect(maps.fitted).toHaveLength(2));
@@ -216,7 +224,7 @@ describe('RunMap', () => {
         body: { code: 'run_has_no_route', message: 'This plan run has no route to draw' },
       },
     });
-    render(RunMap, { planRunId: 'r1' });
+    render(TripMap, { planRunId: 'r1' });
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This plan run has no route to draw',
     );
@@ -239,7 +247,7 @@ describe('RunMap', () => {
         '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
         ...routes,
       });
-      render(RunMap, { planRunId: 'r1' });
+      render(TripMap, { planRunId: 'r1' });
       await waitFor(() => expect(maps.fitted).toHaveLength(1));
     }
 
@@ -303,7 +311,7 @@ describe('RunMap', () => {
         '/api/config/map': { status: 200, body: CONFIG },
         '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
       });
-      render(RunMap, { planRunId: 'r1', ...props });
+      render(TripMap, { planRunId: 'r1', ...props });
       await waitFor(() => expect(maps.fitted).toHaveLength(1));
     }
 
@@ -321,13 +329,114 @@ describe('RunMap', () => {
     });
   });
 
+  describe("before any route: the trip's items (D288)", () => {
+    const SUSA = {
+      id: 'susa',
+      type: 'poi' as const,
+      name: 'Susa, piazza',
+      included: true,
+      anchor: 'start' as const,
+      location: { lat: 45.14, lon: 7.05 },
+      entry: null,
+      exit: null,
+      length_m: null,
+    };
+    const ASSIETTA = {
+      id: 'assietta',
+      type: 'track' as const,
+      name: "Strada dell'Assietta",
+      included: true,
+      anchor: null,
+      location: null,
+      entry: { lat: 45.05, lon: 7.04 },
+      exit: { lat: 44.95, lon: 6.88 },
+      length_m: 34_200,
+    };
+
+    function plannerWithoutRun(): void {
+      planner({ '/api/config/map': { status: 200, body: CONFIG } });
+    }
+
+    it('draws a place as a dot with its tag, a trail by its entry and exit, and fits them, reading no geometry', async () => {
+      plannerWithoutRun();
+      render(TripMap, { items: [SUSA, ASSIETTA] });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+
+      const drawn = maps.markers.map((m) => [
+        m.element.className,
+        m.element.title,
+        m.element.textContent,
+      ]);
+      expect(drawn).toEqual([
+        ['run-marker place', 'Susa, piazza', 'Start'],
+        ['run-marker entry', "Entry of Strada dell'Assietta", ''],
+        ['run-marker exit', "Exit of Strada dell'Assietta", ''],
+      ]);
+      expect(maps.fitted[0]).toEqual([
+        [6.88, 44.95],
+        [7.05, 45.14],
+      ]);
+      expect(calls.some((url) => url.includes('geometry'))).toBe(false);
+    });
+
+    it('opens on a default view of the western Alps when the trip is empty', async () => {
+      plannerWithoutRun();
+      render(TripMap, { items: [] });
+      await waitFor(() => expect(maps.created).toHaveLength(1));
+
+      expect(maps.fitted).toHaveLength(0);
+      expect(maps.created[0]).toMatchObject({ center: [6.9, 44.9], zoom: 7 });
+    });
+
+    it('draws the new set of items when the trip changes, and the run once there is one', async () => {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/plan-runs/r1/geometry': { status: 200, body: GEOMETRY },
+      });
+      const { rerender } = render(TripMap, { items: [SUSA] });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+      await rerender({ items: [SUSA, ASSIETTA] });
+      await waitFor(() => expect(maps.fitted).toHaveLength(2));
+      await rerender({ planRunId: 'r1', items: [SUSA, ASSIETTA] });
+      await waitFor(() => expect(maps.fitted).toHaveLength(3));
+
+      expect(maps.markers.at(-1)!.element.textContent).toBe('2'); // the run's stop number
+    });
+
+    it('adds a place by a click on the map without a run', async () => {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/projects/p1/pois': { status: 201, body: { id: 'n' } },
+      });
+      const added = vi.fn();
+      render(TripMap, { items: [SUSA], projectId: 'p1', onplaceadded: added });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map to add' }));
+      maps.handlers.click({ point: { x: 50, y: 60 }, lngLat: { lng: 7.0486001, lat: 45.1376004 } });
+      await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Lago' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+      await waitFor(() => expect(added).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  describe('the Terrain button when pressed (12-02 defect)', () => {
+    // bypass: jsdom does not run MapLibre's own stylesheet, so the cascade is checked in a browser by
+    // trip-workflow.spec.ts; here only the rule that must outrank MapLibre's hover look is held to its selector.
+    it("has a pressed rule that outranks the control group's hover rule", () => {
+      const source = readFileSync(path.join(__dirname, 'TripMap.svelte'), 'utf8');
+      expect(source).toMatch(/button\.terrain-button\[aria-pressed='true'\]:not\(:disabled\)/);
+    });
+  });
+
   describe('the "Click on map" mode (step 10-05)', () => {
     const click = (x: number, y: number, lng: number, lat: number) =>
       maps.handlers.click({ point: { x, y }, lngLat: { lng, lat } });
 
     async function drawn() {
       const added = vi.fn();
-      const view = render(RunMap, { planRunId: 'r1', projectId: 'p1', onplaceadded: added });
+      const view = render(TripMap, { planRunId: 'r1', projectId: 'p1', onplaceadded: added });
       await waitFor(() => expect(maps.fitted).toHaveLength(1));
       return { added, view };
     }
@@ -345,8 +454,8 @@ describe('RunMap', () => {
       const { added } = await drawn();
       click(50, 60, 7.0486001, 45.1376004); // not in the mode: no form
       expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument();
-      await fireEvent.click(screen.getByRole('button', { name: 'Click on map' }));
-      expect(screen.getByRole('button', { name: 'Click on map' })).toHaveAttribute(
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map to add' }));
+      expect(screen.getByRole('button', { name: 'Click on map to add' })).toHaveAttribute(
         'aria-pressed',
         'true',
       );
@@ -368,7 +477,7 @@ describe('RunMap', () => {
     it('closes the form on a click elsewhere and adds nothing', async () => {
       acceptingPlaces();
       await drawn();
-      await fireEvent.click(screen.getByRole('button', { name: 'Click on map' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map to add' }));
       click(703, 4505, 7.03, 45.05);
       expect(await screen.findByRole('form', { name: 'Add a place here' })).toBeInTheDocument();
       click(10, 10, 6.5, 44.5);
@@ -433,7 +542,7 @@ describe('RunMap', () => {
         '/api/config/map': { status: 200, body: CONFIG },
         '/api/plan-runs/r1/geometry': { status: 200, body: RETRACE },
       });
-      render(RunMap, { planRunId: 'r1' });
+      render(TripMap, { planRunId: 'r1' });
       await waitFor(() => expect(maps.fitted).toHaveLength(1));
       const placed = maps.markers.find((m) => m.element.classList.contains('retrace'))!;
       return { label: placed.element, at: () => placed.lngLat };

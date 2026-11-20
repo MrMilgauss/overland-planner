@@ -31,6 +31,43 @@ if (driven && screenWidth > 0) {
   });
 }
 
+// The page's own controls (12-04): Add -> "Upload GPX trails" opens the file chooser, Add -> "Type coordinates" opens
+// the form, the row menu of a place sets Start and End.
+async function uploadTheTrail(page: Page, testDir: string): Promise<void> {
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await (await chooser).setFiles(path.join(testDir, ASSIETTA));
+}
+
+async function typeAPlace(
+  page: Page,
+  name: string,
+  lat: string,
+  lon: string,
+): Promise<void> {
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  const form = page.getByRole("form", { name: "Type coordinates" });
+  await form.getByLabel("Name").fill(name);
+  await form.getByLabel("Latitude").fill(lat);
+  await form.getByLabel("Longitude").fill(lon);
+  await form.getByRole("button", { name: "Add" }).click();
+}
+
+async function setStartAndEnd(page: Page, place: string): Promise<void> {
+  for (const choice of ["Set as start", "Set as end"]) {
+    await page
+      .getByRole("list", { name: "Your trip" })
+      .getByRole("listitem")
+      .filter({ hasText: place })
+      .getByRole("button", { name: `Actions for ${place}` })
+      .click();
+    await page.getByRole("menuitem", { name: choice }).click();
+  }
+  await expect(page.getByText("not saved yet")).toHaveCount(0);
+}
+
 async function makeAPlan(
   page: Page,
   testDir: string,
@@ -43,23 +80,15 @@ async function makeAPlan(
   await expect(
     page.getByRole("heading", { level: 1, name: projectName }),
   ).toBeVisible();
-  await page
-    .getByLabel("GPX files")
-    .setInputFiles(path.join(testDir, ASSIETTA));
-  await page.getByRole("button", { name: "Import" }).click();
+  await uploadTheTrail(page, testDir);
   await expect(
-    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+    page.getByRole("list", { name: "Your trip" }).getByRole("listitem"),
   ).toHaveCount(1);
-  await page.getByLabel("Place name").fill(HOME);
-  await page.getByLabel("Latitude").fill("45.0703");
-  await page.getByLabel("Longitude").fill("7.6869");
-  await page.getByRole("button", { name: "Add place" }).click();
+  await typeAPlace(page, HOME, "45.0703", "7.6869");
   await expect(
-    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
+    page.getByRole("list", { name: "Your trip" }).getByRole("listitem"),
   ).toHaveCount(2);
-  await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
-  await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
-  await page.getByRole("button", { name: "Set Start and End" }).click();
+  await setStartAndEnd(page, HOME);
   await page.getByRole("button", { name: "Plan the route" }).click();
   await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
     timeout: 120_000,
@@ -329,10 +358,12 @@ const nameForm = (page: Page): Locator =>
   page.getByRole("form", { name: "Add a place here" });
 
 async function clickModeOn(map: Locator): Promise<string> {
-  const toggle = map.getByRole("button", { name: "Click on map" });
-  await expect(toggle, "the map has a Click on map control").toBeVisible({
-    timeout: 15_000,
-  });
+  const toggle = map.getByRole("button", { name: "Click on map to add" });
+  await expect(toggle, "the map has a Click on map to add control").toBeVisible(
+    {
+      timeout: 15_000,
+    },
+  );
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   return (await toggle.getAttribute("aria-pressed")) ?? "";
@@ -392,7 +423,7 @@ test("a POI by a click on the map: named, placed, snapped to an entry, cancelled
     timeout: 60_000,
   });
   await expect(map.locator(".run-marker.entry").first()).toBeVisible();
-  const items = page.getByRole("list", { name: "Items" });
+  const items = page.getByRole("list", { name: "Your trip" });
   const mode = await clickModeOn(map);
   const action = (name: string): boolean =>
     poiAction === "" || poiAction === name;

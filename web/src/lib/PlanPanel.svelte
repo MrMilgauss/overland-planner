@@ -55,7 +55,7 @@
   }: {
     projectId: string;
     objective?: Objective;
-    /** The ready run on show, for the page's map, and whether it is an estimate; undefined while there is none. */
+    /** The ready run on show (Your route), for the page's map, and whether it is an estimate; undefined otherwise. */
     onrunshown?: (planRunId: string | undefined, estimate: boolean) => void;
     /** What Build the trip holds above its main action: the trip's list and the controls that change it. */
     build?: Snippet;
@@ -252,7 +252,10 @@
   }
 
   $effect(() => {
-    onrunshown?.(readyRun?.id, readyRun?.estimate === true);
+    // The route is on the map only on Your route: while the trip is built or planned the map shows the trip's items.
+    if (firstRead) return; // the runs are not read yet: nothing to say, the page's map waits for it
+    const shown = phase === 'route' ? readyRun : undefined;
+    onrunshown?.(shown?.id, shown?.estimate === true);
   });
 
   onMount(() => {

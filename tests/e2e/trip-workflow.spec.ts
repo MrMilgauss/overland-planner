@@ -25,6 +25,7 @@
 // `route.fetch`, so a reload never races a pending fetch. A held answer (Loading) awaits a promise, then continues.
 // The planner's lines (run time, reuse, failure, notices) are read from its answer and checked word for word (D211);
 // run numbers and counts in the Gherkin are the owner's trip, not re-created by presses.
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   expect,
@@ -33,7 +34,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
-import { contrastRatio } from "./contrast";
+import { contrastRatio, parseColour } from "./contrast";
 import { CALM_STYLE, serveTheBaseMap } from "./blankTile";
 
 // W4 without a race: the planner's real answer at `address` is read once now, changed, and every later request
@@ -64,53 +65,81 @@ const ASSIETTA_FILE =
   "../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx";
 const TORINO = "Casa Marco, Torino";
 
-// A new project of this test's own; with the old item forms (they stay in Build the trip until 12-04): the Assietta
-// trail, Torino, and Torino as Start and End, each unless the options say no.
-async function seedTrip(
-  page: Page,
-  testInfo: TestInfo,
-  options: { trail?: boolean; place?: boolean; start?: boolean },
-): Promise<void> {
-  const name = `Assietta weekend (${testInfo.project.name} ${Date.now()})`;
-  await page.goto("/");
-  await page.getByLabel("Project name").fill(name);
-  await page.getByRole("button", { name: "New project" }).click();
-  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
-  const items = page.getByRole("list", { name: "Items" });
-  if (options.trail !== false) {
-    await page
-      .getByLabel("GPX files")
-      .setInputFiles(path.join(testInfo.project.testDir, ASSIETTA_FILE));
-    await page.getByRole("button", { name: "Import" }).click();
-    await expect(items.getByRole("listitem")).toHaveCount(1);
-  }
-  if (options.place !== false) {
-    await addPlaceOnTheForm(page, TORINO, "45.0703", "7.6869");
-    if (options.start !== false) {
-      await page
-        .getByLabel("Start", { exact: true })
-        .selectOption({ label: TORINO });
-      await page
-        .getByLabel("End", { exact: true })
-        .selectOption({ label: TORINO });
-      await page.getByRole("button", { name: "Set Start and End" }).click();
-    }
-  }
+const tripList = (page: Page): Locator =>
+  page.getByRole("list", { name: "Your trip" });
+const addButton = (page: Page): Locator =>
+  page.getByRole("button", { name: "Add", exact: true });
+
+// Add -> "Upload GPX trails": the file chooser the menu item opens answers with the Assietta trail.
+async function uploadTheTrail(page: Page, testInfo: TestInfo): Promise<void> {
+  const before = await tripList(page).getByRole("listitem").count();
+  const chooser = page.waitForEvent("filechooser");
+  await addButton(page).click();
+  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await (
+    await chooser
+  ).setFiles(path.join(testInfo.project.testDir, ASSIETTA_FILE));
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(before + 1);
 }
 
+// Add -> "Type coordinates": a place of this name and these decimal degrees, listed.
 async function addPlaceOnTheForm(
   page: Page,
   name: string,
   lat: string,
   lon: string,
 ): Promise<void> {
-  const items = page.getByRole("list", { name: "Items" });
-  const before = await items.getByRole("listitem").count();
-  await page.getByLabel("Place name").fill(name);
-  await page.getByLabel("Latitude").fill(lat);
-  await page.getByLabel("Longitude").fill(lon);
-  await page.getByRole("button", { name: "Add place" }).click();
-  await expect(items.getByRole("listitem")).toHaveCount(before + 1);
+  const before = await tripList(page).getByRole("listitem").count();
+  await addButton(page).click();
+  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  const form = page.getByRole("form", { name: "Type coordinates" });
+  await form.getByLabel("Name").fill(name);
+  await form.getByLabel("Latitude").fill(lat);
+  await form.getByLabel("Longitude").fill(lon);
+  await form.getByRole("button", { name: "Add" }).click();
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(before + 1);
+}
+
+// The row menu of a place: "Set as start" or "Set as end".
+async function setFromTheRow(
+  page: Page,
+  place: string,
+  choice: "Set as start" | "Set as end",
+): Promise<void> {
+  const row = tripList(page).getByRole("listitem").filter({ hasText: place });
+  await row.getByRole("button", { name: `Actions for ${place}` }).click();
+  await page.getByRole("menuitem", { name: choice }).click();
+}
+
+async function newProject(
+  page: Page,
+  testInfo: TestInfo,
+  label = "Assietta weekend",
+): Promise<void> {
+  const name = `${label} (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+}
+
+// A new project of this test's own: the Assietta trail, Torino, and Torino as Start and End, each unless the options say
+// no.
+async function seedTrip(
+  page: Page,
+  testInfo: TestInfo,
+  options: { trail?: boolean; place?: boolean; start?: boolean },
+): Promise<void> {
+  await newProject(page, testInfo);
+  if (options.trail !== false) await uploadTheTrail(page, testInfo);
+  if (options.place !== false) {
+    await addPlaceOnTheForm(page, TORINO, "45.0703", "7.6869");
+    if (options.start !== false) {
+      await setFromTheRow(page, TORINO, "Set as start");
+      await setFromTheRow(page, TORINO, "Set as end");
+      await expect(tripList(page).getByText("not saved yet")).toHaveCount(0);
+    }
+  }
 }
 
 const projectIdOf = (url: string): string =>
@@ -138,7 +167,7 @@ test("A project without a route opens on Build the trip", async ({
   await expect(page.locator('[aria-current="step"]')).toHaveText(
     /Build the trip/,
   );
-  const items = page.getByRole("list", { name: "Items" });
+  const items = tripList(page);
   await expect(items.getByRole("listitem")).toHaveCount(2);
   await expect(items).toContainText("Assietta");
   await expect(items).toContainText(HOME);
@@ -153,20 +182,76 @@ test("A project without a route opens on Build the trip", async ({
   await expect(page.getByText("Details", { exact: true })).toHaveCount(0);
 });
 
-test.fixme("Every way to add a stop is in one Add control and lands in the one list", async ({
+test("Every way to add a stop is in one Add control and lands in the one list", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // Real. Checks: "Add" offers "Upload GPX trails", "Click on the map", "Type coordinates"; Lago del Moncenisio
-  // (45.2280, 6.9420) typed lands in the same list as the trail. The map is drawn before any route (D288).
+  await newProject(page, testInfo);
+  await uploadTheTrail(page, testInfo);
+
+  await addButton(page).click();
+  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+    "Upload GPX trails",
+    "Click on the map",
+    "Type coordinates",
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+
+  await addPlaceOnTheForm(page, "Lago del Moncenisio", "45.2280", "6.9420");
+  const items = tripList(page);
+  await expect(items).toContainText("Lago del Moncenisio");
+  await expect(items).toContainText("Strada dell'Assietta");
+
+  // The map is drawn before any route (D288): the place as a dot, the trail's entry and exit.
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(map.locator(".run-marker.place")).toHaveCount(1);
+  await expect(map.locator(".run-marker.entry")).toHaveCount(1);
+  await expect(map.locator(".run-marker.exit")).toHaveCount(1);
 });
 
-test.fixme("Start and End are set on a place in the list", async ({
+test("Start and End are set on a place in the list", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // Real: the row menu of Torino, "Set as start" then "Set as end" (the anchors call once both are chosen).
-  // Checks: Torino's row tags Start and End; the trail's row offers neither; no "Set Start and End" form.
+  await seedTrip(page, testInfo, { start: false });
+  const id = projectIdOf(page.url());
+  const anchors = async (): Promise<(string | null)[]> =>
+    (
+      (await (await page.request.get(`/api/projects/${id}/items`)).json()) as {
+        name: string;
+        anchor: string | null;
+      }[]
+    ).map((item) => item.anchor);
+  const row = (name: string): Locator =>
+    tripList(page).getByRole("listitem").filter({ hasText: name });
+
+  await setFromTheRow(page, TORINO, "Set as start");
+  await expect(row(TORINO).getByText("Start", { exact: true })).toBeVisible();
+  await expect(row(TORINO).getByText("not saved yet")).toBeVisible();
+  expect(await anchors(), "nothing is sent until both are chosen").toEqual([
+    null,
+    null,
+  ]);
+
+  await setFromTheRow(page, TORINO, "Set as end");
+  await expect(row(TORINO).getByText("Start", { exact: true })).toBeVisible();
+  await expect(row(TORINO).getByText("End", { exact: true })).toBeVisible();
+  await expect(row(TORINO).getByText("not saved yet")).toHaveCount(0);
+  await expect.poll(anchors).toContain("start_end");
+
+  await expect(row("Assietta").getByRole("button")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Set Start and End" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Start", { exact: true })).toHaveCount(0);
 });
 
 test("While planning, the trip is read-only and nothing is exported", async ({
@@ -199,12 +284,12 @@ test("While planning, the trip is read-only and nothing is exported", async ({
   const stop = panel.getByRole("button");
   await expect(stop).toHaveCount(1);
   await expect(stop).toHaveText("Stop and use best so far");
-  await expect(
-    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
-  ).toHaveCount(3);
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(3);
   await expect(page.getByRole("button", { name: /^Add/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Import" })).toHaveCount(0);
-  await expect(page.getByLabel("Place name")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
 });
 
@@ -218,12 +303,42 @@ test.fixme("Stopping shows the best route found so far", async ({
   // "not fully optimised (stopped)" word for word, not in view while Details is closed (D285).
 });
 
-test.fixme("Edit trip goes back to building and the shown route goes out of date", async ({
+test("Edit trip goes back to building and the shown route goes out of date", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(240_000);
   await serveTheBaseMap(page, testInfo);
-  // Real ready run; "Edit trip", Add -> "Click on the map", a click, the name "Lago del Moncenisio", Add.
-  // Checks: "Build the trip" with the place listed; badge "Out of date, plan again"; main action "Plan the route".
+  await planOnTheOfflineMap(page, testInfo);
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(map.locator(".run-marker.place")).toHaveCount(1); // the items, not the route
+
+  await addButton(page).click();
+  await page.getByRole("menuitem", { name: "Click on the map" }).click();
+  const toggle = map.getByRole("button", { name: "Click on map to add" });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  const frame = (await map.locator("canvas.maplibregl-canvas").boundingBox())!;
+  await page.mouse.click(
+    frame.x + frame.width * 0.8,
+    frame.y + frame.height * 0.75,
+  );
+  const form = page.getByRole("form", { name: "Add a place here" });
+  await form.getByLabel("Name").fill("Lago del Moncenisio");
+  await form.getByRole("button", { name: "Add" }).click();
+
+  const panel = page.getByRole("region", { name: "Build the trip" });
+  await expect(panel).toBeVisible();
+  await expect(tripList(page)).toContainText("Lago del Moncenisio");
+  await expect(page.locator("[data-plan-state]")).toHaveText(
+    /Out of date, plan again/,
+  );
+  await expect(
+    panel.getByRole("button", { name: "Plan the route" }),
+  ).toHaveClass(/primary/);
 });
 
 test("A refusal keeps Marco on Build the trip with the planner's own words", async ({
@@ -247,9 +362,7 @@ test("A refusal keeps Marco on Build the trip with the planner's own words", asy
   await expect(
     page.getByRole("region", { name: "Build the trip" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("list", { name: "Items" }).getByRole("listitem"),
-  ).toHaveCount(2);
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Plan the route" }),
   ).toBeEnabled();
@@ -575,8 +688,6 @@ test.fixme("The planner's notices stay in view", async ({ page }, testInfo) => {
 
 // ===================== US-26 A calm map on which the route stands out =====================
 
-const ASSIETTA =
-  "../acceptance/overland_route_planner_mvp/fixtures/gpx/assietta.gpx";
 const HOME = "Casa Marco, Torino";
 const ESTIMATE_NOTE =
   "estimate: road legs are straight-line guesses, not real roads";
@@ -637,33 +748,45 @@ function withSommeillerRetrace(answer: Geometry): Geometry {
 }
 
 // Marco's trip, planned on the offline road map (an estimate): his own project, the Assietta trail, Torino as Start
-// and End, "Plan the route" (the old item forms stay in Build the trip until 12-04).
+// and End and a plan, all through the planner's own API (`page.request`), then the project's page, on Your route.
 async function planOnTheOfflineMap(
   page: Page,
   testInfo: TestInfo,
 ): Promise<string> {
   const name = `Calm map (${testInfo.project.name} ${Date.now()})`;
-  await page.goto("/");
-  await page.getByLabel("Project name").fill(name);
-  await page.getByRole("button", { name: "New project" }).click();
-  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
-  await page
-    .getByLabel("GPX files")
-    .setInputFiles(path.join(testInfo.project.testDir, ASSIETTA));
-  await page.getByRole("button", { name: "Import" }).click();
-  const items = page.getByRole("list", { name: "Items" });
-  await expect(items.getByRole("listitem")).toHaveCount(1);
-  await page.getByLabel("Place name").fill(HOME);
-  await page.getByLabel("Latitude").fill("45.0703");
-  await page.getByLabel("Longitude").fill("7.6869");
-  await page.getByRole("button", { name: "Add place" }).click();
-  await expect(items.getByRole("listitem")).toHaveCount(2);
-  await page.getByLabel("Start", { exact: true }).selectOption({ label: HOME });
-  await page.getByLabel("End", { exact: true }).selectOption({ label: HOME });
-  await page.getByRole("button", { name: "Set Start and End" }).click();
-  await page.getByRole("button", { name: "Plan the route" }).click();
+  const created = (await (
+    await page.request.post("/api/projects", { data: { name } })
+  ).json()) as { id: string };
+  const id = created.id;
+  await page.request.post(`/api/projects/${id}/tracks`, {
+    multipart: {
+      files: {
+        name: "assietta.gpx",
+        mimeType: "application/gpx+xml",
+        buffer: readFileSync(
+          path.join(testInfo.project.testDir, ASSIETTA_FILE),
+        ),
+      },
+    },
+  });
+  const torino = (await (
+    await page.request.post(`/api/projects/${id}/pois`, {
+      data: { name: HOME, lat: 45.0703, lon: 7.6869 },
+    })
+  ).json()) as { id: string };
+  await page.request.put(`/api/projects/${id}/anchors`, {
+    data: { start_item_id: torino.id, end_item_id: torino.id },
+  });
+  await page.request.post(`/api/projects/${id}/plan-runs`);
+  await expect
+    .poll(async () => (await readyRunIds(page, id)).length, {
+      timeout: 120_000,
+      message: "the planner's run is ready",
+    })
+    .toBe(1);
+  await page.goto(`/#/projects/${id}`);
   await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible({
-    timeout: 120_000,
+    timeout: 30_000,
   });
   return page.url();
 }
@@ -809,6 +932,122 @@ test("Terrain switches to the topographic map and back", async ({
   await expect.poll(visibility).toBe("none");
   await expect(credit(map)).toContainText(light.trim().slice(0, 20));
   await expect(credit(map)).not.toContainText(terrainCredit);
+});
+
+// Two defects of 12-02 found on real tiles (2026-11-20).
+// An alpha colour as the colour it shows on the map control's white.
+const onWhite = (css: string): string => {
+  const [r, g, b] = parseColour(css);
+  const alpha = Number(
+    /^rgba\(.*,\s*([\d.]+)\s*\)$/.exec(css.trim())?.[1] ?? 1,
+  );
+  const flat = [r, g, b].map((c) => Math.round(c * alpha + 255 * (1 - alpha)));
+  return `rgb(${flat.join(", ")})`;
+};
+
+test("The pressed Terrain button keeps its text readable, hovered or not", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  const map = await openTheMap(page, testInfo);
+  const button = terrainButton(map);
+  const look = () =>
+    button.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { colour: style.color, background: style.backgroundColor };
+    });
+  const resting = await look();
+
+  await button.click(); // the pointer stays on it: the hover look is the one a user sees
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  const hovered = await look();
+  expect(
+    contrastRatio(hovered.colour, onWhite(hovered.background)),
+    "pressed and hovered",
+  ).toBeGreaterThanOrEqual(4.5);
+  expect(
+    onWhite(hovered.background),
+    "a cue besides the attribute: the fill changes",
+  ).not.toBe(onWhite(resting.background));
+
+  await page.mouse.move(0, 0);
+  const away = await look();
+  expect(
+    contrastRatio(away.colour, onWhite(away.background)),
+    "pressed",
+  ).toBeGreaterThanOrEqual(4.5);
+});
+
+test("The light map's credit names OpenFreeMap once", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(240_000);
+  await serveTheBaseMap(page, testInfo);
+  // A base map like OpenFreeMap's: its vector source is a TileJSON address that carries a credit of its own.
+  const tileJson = "https://tiles.example.test/planet";
+  const style = {
+    ...CALM_STYLE,
+    sources: {
+      ...CALM_STYLE.sources,
+      openmaptiles: { type: "vector", url: tileJson },
+    },
+    layers: [
+      ...CALM_STYLE.layers,
+      {
+        id: "roads",
+        type: "line",
+        source: "openmaptiles",
+        "source-layer": "transportation",
+      },
+    ],
+  };
+  const { base_style_url: styleUrl } = (await (
+    await page.request.get("/api/config/map")
+  ).json()) as { base_style_url: string };
+  await page.route(tileJson, (route) =>
+    route.fulfill({
+      json: {
+        tilejson: "2.0.0",
+        tiles: ["https://tiles.example.test/planet/{z}/{x}/{y}.pbf"],
+        attribution:
+          '<a href="https://openfreemap.org">OpenFreeMap</a> © OpenMapTiles Data from OpenStreetMap',
+      },
+    }),
+  );
+  await page.route(styleUrl, (route) => route.fulfill({ json: style }));
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
+  const map = page.getByRole("region", { name: "Map of the run" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          (
+            window as unknown as {
+              __overlandRunMap?: { isSourceLoaded(id: string): boolean };
+            }
+          ).__overlandRunMap?.isSourceLoaded("openmaptiles"),
+        ),
+      { message: "the base map's own source, credit and all, is loaded" },
+    )
+    .toBe(true);
+  await expect(credit(map)).toContainText(
+    (await config(page)).base_attribution.trim().slice(0, 20),
+  );
+  await expect
+    .poll(
+      async () =>
+        ((await credit(map).textContent()) ?? "").split("OpenFreeMap").length -
+        1,
+      {
+        message: "the credit names OpenFreeMap once",
+      },
+    )
+    .toBe(1);
 });
 
 for (const base of ["light base", "topographic"]) {

@@ -6,11 +6,13 @@
 import { expression, latest } from '@maplibre/maplibre-gl-style-spec';
 import type { StyleSpecification } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
+import type { Item } from './api';
 import {
   ARROW_IMAGE,
   adoptBaseStyle,
   arrowImage,
   buildRunMap,
+  buildTripMap,
   CREDIT_LAYER,
   TERRAIN_LAYER,
   type LineFeature,
@@ -240,10 +242,12 @@ describe('adopting the light base map (D287)', () => {
     },
   );
 
-  it("credits the light base map with the planner's words alone: its own sources say nothing", () => {
+  it("credits the light base map once, with the planner's words alone: its own sources say an empty credit", () => {
     const [, base] = BASES[2];
     const adopted = adoptBaseStyle(own, base, false);
-    expect(adopted.sources['osm']).not.toHaveProperty('attribution');
+    // Empty, not absent: a source given by a TileJSON address would otherwise show the credit that file carries, beside
+    // the planner's own (the defect of 12-02: OpenFreeMap named twice).
+    expect(adopted.sources['osm']).toMatchObject({ attribution: '' });
     expect(adopted.layers.find((l) => l.id === CREDIT_LAYER)).toMatchObject({
       layout: { visibility: 'visible' },
     });
@@ -566,5 +570,65 @@ describe('the retrace label keeps clear of stop numbers', () => {
     }
     expect(hidden, 'the generated boxes hide it sometimes and not always').toBeGreaterThan(0);
     expect(hidden).toBeLessThan(500);
+  });
+});
+
+describe('the map before any route (D288)', () => {
+  const item = (overrides: Partial<Item>): Item => ({
+    id: 'i',
+    type: 'poi',
+    name: 'Susa',
+    included: true,
+    anchor: null,
+    location: { lat: 45.14, lon: 7.05 },
+    entry: null,
+    exit: null,
+    length_m: null,
+    ...overrides,
+  });
+  const trail = item({
+    id: 't',
+    type: 'track',
+    name: 'Assietta',
+    location: null,
+    entry: { lat: 45.05, lon: 7.04 },
+    exit: { lat: 44.95, lon: 6.88 },
+  });
+
+  it.each([
+    ['start', 'Start'],
+    ['end', 'End'],
+    ['start_end', 'Start/End'],
+    [null, ''],
+  ] as const)('draws a place saved as %s as a dot with the tag "%s"', (anchor, tag) => {
+    const { overlays } = buildTripMap([item({ anchor })], CONFIG);
+
+    expect(overlays).toEqual([{ kind: 'place', text: tag, title: 'Susa', lngLat: [7.05, 45.14] }]);
+  });
+
+  it("draws a trail by its entry and its exit alone, as the run's markers are, and fits everything", () => {
+    const plan = buildTripMap([item({}), trail], CONFIG);
+
+    expect(plan.overlays.map((o) => [o.kind, o.title, o.lngLat])).toEqual([
+      ['place', 'Susa', [7.05, 45.14]],
+      ['entry', 'Entry of Assietta', [7.04, 45.05]],
+      ['exit', 'Exit of Assietta', [6.88, 44.95]],
+    ]);
+    expect(plan.bounds).toEqual([
+      [6.88, 44.95],
+      [7.05, 45.14],
+    ]);
+  });
+
+  it('has no bounds for an empty trip, and keeps the base map, Terrain and credit layers of a run map', () => {
+    const empty = buildTripMap([], CONFIG, true);
+    const run = buildRunMap(collection(), CONFIG, true);
+
+    expect(empty.bounds).toBeNull();
+    expect(empty.overlays).toEqual([]);
+    expect(empty.style.layers.map((l) => l.id)).toEqual(run.style.layers.map((l) => l.id));
+    expect(empty.style.layers.find((l) => l.id === TERRAIN_LAYER)).toMatchObject({
+      layout: { visibility: 'visible' },
+    });
   });
 });

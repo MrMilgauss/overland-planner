@@ -3,26 +3,33 @@
 // (steps/browser.py, PhoneItineraryJourney) prepare plan run #4 on a real planner, run this spec at a 390 px wide
 // viewport (no real device) and assert on what it reports. Without their settings it is skipped, so CI job 7 and
 // `make e2e-local` do not run it. The spec only records what the screen shows; the verdict is the Python Then's.
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { expect, test } from "@playwright/test";
 
 const projectId = process.env.PHONE_PROJECT_ID;
 const resultDir = process.env.PHONE_RESULT_DIR;
-const screenWidth = Number(process.env.PHONE_SCREEN_WIDTH ?? '390');
+const screenWidth = Number(process.env.PHONE_SCREEN_WIDTH ?? "390");
 
-test.use({ viewport: { width: screenWidth, height: 844 }, isMobile: true, hasTouch: true });
+test.use({
+  viewport: { width: screenWidth, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+});
 
-test('Giulia opens the results on her phone', async ({ page }) => {
-  test.skip(!projectId || !resultDir, 'driven by the acceptance step of slice 02');
+test("Giulia opens the results on her phone", async ({ page }) => {
+  test.skip(
+    !projectId || !resultDir,
+    "driven by the acceptance step of slice 02",
+  );
   test.setTimeout(120_000);
 
   await page.goto(`/#/projects/${projectId}`);
-  const itinerary = page.getByRole('list', { name: 'Itinerary' });
+  const itinerary = page.getByRole("list", { name: "Itinerary" });
   await expect(itinerary).toBeVisible({ timeout: 30_000 });
 
   const rows = [];
-  for (const row of await itinerary.getByRole('listitem').all()) {
+  for (const row of await itinerary.getByRole("listitem").all()) {
     const box = await row.boundingBox();
     rows.push({
       text: await row.innerText(),
@@ -31,23 +38,28 @@ test('Giulia opens the results on her phone', async ({ page }) => {
       visible: await row.isVisible(),
     });
   }
-  const totals = page.getByLabel('Totals');
-  const totalsText = (await totals.count()) > 0 ? await totals.first().innerText() : null;
+  const totals = page.getByLabel("Totals");
+  const totalsText =
+    (await totals.count()) > 0 ? await totals.first().innerText() : null;
   const pageWidth = await page.evaluate(() =>
     Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
   );
 
-  const headerLine = page.locator('.provider');
-  const headerText = (await headerLine.count()) > 0 ? await headerLine.first().innerText() : null;
-  const objectiveControl = page.getByLabel('Objective');
-  await expect(objectiveControl).toBeVisible();
-  expect(pageWidth, 'no horizontal scroll with the header line and the objective control').toBeLessThanOrEqual(
-    screenWidth,
-  );
+  const headerLine = page.locator(".provider");
+  const headerText =
+    (await headerLine.count()) > 0
+      ? await headerLine.first().innerText()
+      : null;
+  // The objective is not a control on Your route (D285): its label is a line of the itinerary.
+  await expect(page.getByText("Objective", { exact: true })).toBeVisible();
+  expect(
+    pageWidth,
+    "no horizontal scroll with the header line and the objective line",
+  ).toBeLessThanOrEqual(screenWidth);
   if (headerText !== null) await expect(headerLine.first()).toBeVisible();
 
   await writeFile(
-    path.join(resultDir!, 'result.json'),
+    path.join(resultDir!, "result.json"),
     JSON.stringify({
       screen_width: screenWidth,
       page_width: pageWidth,

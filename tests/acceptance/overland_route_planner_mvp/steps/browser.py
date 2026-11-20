@@ -189,8 +189,8 @@ class PhoneMapJourney:
 @dataclass(frozen=True)
 class PoiClickView:
     """What the run map showed of a click (slice 09, step 10-05, `tests/e2e/run-map.spec.ts`): whether the click opened
-    the name form, whether the form was gone afterwards, whether the new place shows in the list of items, and what the
-    "Click on map" control looked like."""
+    the name form, whether the form was gone afterwards, whether the new place shows in the trip list
+    ("Your trip"), and what the "Click on map to add" control looked like."""
 
     form_shown: bool
     form_gone: bool

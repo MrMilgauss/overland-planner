@@ -1,9 +1,11 @@
 <script lang="ts">
-  // Workspace of one project: import trails (GPX), add places by decimal degrees, set the trip's Start and End.
-  // Every refusal of the planner is shown with its own message, verbatim.
-  import ItemList from './ItemList.svelte';
+  // Workspace of one project: the map of the trip, and the phase panel. Build the trip holds the one list of stops and
+  // trails with its Add menu (upload GPX trails, click on the map, type coordinates), Start and End from a place's row
+  // menu, and the "Plan for" switch. Every refusal of the planner is shown with its own message, verbatim.
+  import AddMenu from './AddMenu.svelte';
   import PlanPanel from './PlanPanel.svelte';
-  import RunMap from './RunMap.svelte';
+  import TripList from './TripList.svelte';
+  import TripMap from './TripMap.svelte';
   import {
     addPlace,
     failureText,
@@ -12,6 +14,7 @@
     openProject,
     setAnchors,
     setObjective,
+    type NewPlace,
     type Objective,
     type Item,
     type Project,
@@ -21,32 +24,35 @@
 
   let project = $state<Project | undefined>();
   let items = $state<Item[]>([]);
+  let itemsRead = $state(false); // the trip is known and the panel has read the runs: the map draws once, not first empty
+  let runsRead = $state(false);
   let problem = $state('');
-  let files = $state<FileList | undefined>();
-  let placeName = $state('');
-  let latitude = $state('');
-  let longitude = $state('');
-  let startId = $state('');
-  let endId = $state('');
-  let objectiveChoice = $state<Objective>('distance');
-  let shownRunId = $state<string | undefined>(); // the ready run the panel shows: the map draws it
+  let clickMode = $state(false); // the map's "Click on map to add", also put on by the Add menu
+  let shownRunId = $state<string | undefined>(); // the ready run the panel shows (Your route): the map draws it
   let shownRunIsEstimate = $state(false); // its roads are the offline road map: the map's chip says so
   let panel = $state<{ reload: () => Promise<void>; edit: () => void } | undefined>();
 
-  const places = $derived(items.filter((item) => item.type === 'poi'));
+  const objective = $derived<Objective>(project?.objective ?? 'distance');
+  const OBJECTIVES: [Objective, string][] = [
+    ['distance', 'Shortest distance'],
+    ['time', 'Shortest time'],
+  ];
 
   async function refresh(): Promise<void> {
     items = await listItems(projectId);
-    startId = items.find((i) => i.anchor === 'start' || i.anchor === 'start_end')?.id ?? startId;
-    endId = items.find((i) => i.anchor === 'end' || i.anchor === 'start_end')?.id ?? endId;
+  }
+
+  /** The trip changed: its list and the panel's runs (the shown route may be out of date now) are read again. */
+  async function changed(): Promise<void> {
+    await refresh();
+    await panel?.reload();
   }
 
   async function attempt(action: () => Promise<unknown>): Promise<boolean> {
     problem = '';
     try {
       await action();
-      await refresh();
-      await panel?.reload(); // the shown route may be out of date now
+      await changed();
       return true;
     } catch (error) {
       problem = failureText(error);
@@ -57,43 +63,32 @@
   async function open(): Promise<void> {
     try {
       project = await openProject(projectId);
-      objectiveChoice = project.objective ?? 'distance';
       await refresh();
     } catch (error) {
       problem = failureText(error);
     }
+    itemsRead = true;
   }
 
-  async function importFiles(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    if (await attempt(() => importTracks(projectId, Array.from(files ?? [])))) form.reset();
+  const upload = (files: File[]): Promise<boolean> => attempt(() => importTracks(projectId, files));
+
+  /** A refusal goes to the form that asks (AddMenu shows it), not to the page. */
+  async function typedPlace(place: NewPlace): Promise<void> {
+    await addPlace(projectId, place);
+    await changed();
   }
 
-  async function addThePlace(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    const place = { name: placeName, lat: Number(latitude), lon: Number(longitude) };
-    if (await attempt(() => addPlace(projectId, place))) {
-      placeName = '';
-      latitude = '';
-      longitude = '';
-    }
-  }
+  const chooseStartAndEnd = (startId: string, endId: string): Promise<boolean> =>
+    attempt(() => setAnchors(projectId, startId, endId));
 
-  async function chooseStartAndEnd(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    await attempt(() => setAnchors(projectId, startId, endId));
-  }
-
-  /** The choice is the project's value once the planner has taken it; a refusal shows its message and puts the old back. */
-  async function chooseObjective(): Promise<void> {
+  /** The choice is the project's value once the planner has taken it; a refusal shows its message and keeps the old. */
+  async function chooseObjective(choice: Objective): Promise<void> {
     problem = '';
     try {
-      project = await setObjective(projectId, objectiveChoice);
+      project = await setObjective(projectId, choice);
     } catch (error) {
       problem = failureText(error);
     }
-    objectiveChoice = project?.objective ?? 'distance';
   }
 
   /** A place added on the map changes the project: the item list and the panel's runs (now Stale) are read again. */
@@ -118,15 +113,15 @@
 
   {#if project}
     <div class="stage">
-      {#if shownRunId}
-        <RunMap
+      {#if itemsRead && runsRead}
+        <TripMap
           planRunId={shownRunId}
+          {items}
           {projectId}
           estimate={shownRunIsEstimate}
           onplaceadded={placeAddedOnMap}
+          bind:clickMode
         />
-      {:else}
-        <p class="placeholder">The map shows the plan once one is computed.</p>
       {/if}
     </div>
 
@@ -134,10 +129,11 @@
       <PlanPanel
         bind:this={panel}
         {projectId}
-        objective={project.objective ?? 'distance'}
+        {objective}
         onrunshown={(id, estimate) => {
           shownRunId = id;
           shownRunIsEstimate = estimate;
+          runsRead = true;
         }}
         {build}
         {trip}
@@ -148,52 +144,24 @@
 
 {#snippet trip()}
   <p class="summary">Your trip cannot be changed while it is planned.</p>
-  <ItemList {items} />
+  <TripList {items} readonly />
+  <p class="summary">Plan for: {OBJECTIVES.find(([value]) => value === objective)?.[1]}</p>
 {/snippet}
 
 {#snippet build()}
-  <form onsubmit={(event) => event.preventDefault()}>
-    <label for="objective">Objective</label>
-    <select id="objective" bind:value={objectiveChoice} onchange={chooseObjective}>
-      <option value="distance">Minimise road distance</option>
-      <option value="time">Minimise road time</option>
-    </select>
-  </form>
-  <ItemList {items} />
-  <h3 id="import-heading">Import trails</h3>
-  <form aria-labelledby="import-heading" onsubmit={importFiles}>
-    <label for="gpx-files">GPX files</label>
-    <input id="gpx-files" type="file" accept=".gpx,application/gpx+xml" multiple bind:files />
-    <button type="submit">Import</button>
-  </form>
-  <h3 id="place-heading">Add a place</h3>
-  <form aria-labelledby="place-heading" onsubmit={addThePlace}>
-    <label for="place-name">Place name</label>
-    <input id="place-name" bind:value={placeName} autocomplete="off" />
-    <label for="place-lat">Latitude</label>
-    <input id="place-lat" bind:value={latitude} inputmode="decimal" placeholder="44.8990" />
-    <label for="place-lon">Longitude</label>
-    <input id="place-lon" bind:value={longitude} inputmode="decimal" placeholder="6.6430" />
-    <button type="submit">Add place</button>
-  </form>
-  <h3 id="anchors-heading">Start and end</h3>
-  <form aria-labelledby="anchors-heading" onsubmit={chooseStartAndEnd}>
-    <label for="start-place">Start</label>
-    <select id="start-place" bind:value={startId}>
-      <option value="" disabled>Choose a place</option>
-      {#each places as place (place.id)}
-        <option value={place.id}>{place.name}</option>
-      {/each}
-    </select>
-    <label for="end-place">End</label>
-    <select id="end-place" bind:value={endId}>
-      <option value="" disabled>Choose a place</option>
-      {#each places as place (place.id)}
-        <option value={place.id}>{place.name}</option>
-      {/each}
-    </select>
-    <button type="submit">Set Start and End</button>
-  </form>
+  <TripList {items} onanchors={chooseStartAndEnd}>
+    <AddMenu onupload={upload} onplace={typedPlace} onclickmap={() => (clickMode = true)} />
+  </TripList>
+  <div class="switch" role="group" aria-label="Plan for">
+    <span class="label">Plan for</span>
+    {#each OBJECTIVES as [value, label] (value)}
+      <button
+        type="button"
+        aria-pressed={objective === value}
+        onclick={() => chooseObjective(value)}>{label}</button
+      >
+    {/each}
+  </div>
 {/snippet}
 
 <style>
@@ -210,19 +178,6 @@
     height: 45dvh;
     min-height: 16rem;
   }
-  .placeholder {
-    display: grid;
-    place-items: center;
-    box-sizing: border-box;
-    height: 100%;
-    margin: 0;
-    padding: var(--space-4);
-    border: 1px dashed var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    color: var(--color-text-muted);
-    text-align: center;
-  }
   .panel {
     min-width: 0;
   }
@@ -230,15 +185,17 @@
     margin: 0;
     color: var(--color-text-muted);
   }
-  form {
-    display: grid;
+  .switch {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-2);
   }
-  button {
-    justify-self: start;
+  .label {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
-  h1,
-  h3 {
+  h1 {
     margin: var(--space-2) 0;
   }
 
