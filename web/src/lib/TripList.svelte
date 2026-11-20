@@ -2,7 +2,7 @@
   // The trip's list (D283, D107): the places and trails of the project, a Start and an End tag on the places that are
   // one, and on a place a row menu "Set as start" / "Set as end". The anchors call takes both ids, so a choice made
   // while the other is not yet chosen is kept here with the tag "not saved yet" and sent once both are (a project that
-  // has the other saved sends the new one with it). Read-only while the trip is planned: no menu.
+  // has the other saved sends the new one with it). An item that is not included carries the muted tag "Left out". Read-only while the trip is planned: no menu.
   import type { Snippet } from 'svelte';
   import type { Item } from './api';
 
@@ -70,6 +70,7 @@
       <li>
         <span class="name">{item.name}</span>
         <span class="type">{TYPE_LABELS[item.type]}</span>
+        {#if !item.included}<span class="left-out">Left out</span>{/if}
         {#each tagsOf(item) as tag (tag.text)}
           <span class="tag">{tag.text}</span>
           {#if tag.unsaved}<span class="unsaved">not saved yet</span>{/if}
@@ -141,6 +142,10 @@
     color: var(--color-info-fg);
     font-size: var(--text-sm);
     font-weight: 700;
+  }
+  .left-out {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .unsaved {
     color: var(--color-warning-fg);

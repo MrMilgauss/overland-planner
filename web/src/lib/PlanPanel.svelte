@@ -10,13 +10,14 @@
   // While the job is stoppable (ADR-015) 'Stop and use best so far' is offered, and posted once per job; polling then
   // shows how the job ended. The run's messages (run time, label, reuse, a Failed run's failure) and the job's notices
   // are the planner's lines, shown verbatim: the web composes no wording (D211, D223 b), but for a Failed run stored
-  // before its messages, which names its reason. A reused plan (memo_hit) offers Re-optimise.
+  // before its messages, which names its reason. The engine's details (run number, provider, objective, the run's messages, Re-optimise on a reused plan) wait in RunDetails.
   import { onMount, type Snippet } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import PhaseSteps from './PhaseSteps.svelte';
   import RouteCard from './RouteCard.svelte';
+  import RunDetails from './RunDetails.svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { planRunLabel, planState } from './planState';
+  import { planState } from './planState';
   import { tripPhase } from './tripPhase';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
@@ -345,24 +346,14 @@
         {previous}
         exportUrl={planRunExportUrl(readyRun.id)}
         onedit={() => (editing = true)}
+        onplan={() => calculate()}
       />
-      <p class="run">{planRunLabel(readyRun.number)}</p>
-      {#if readyRun.provider_header}
-        <p class="provider">{readyRun.provider_header}</p>
-      {/if}
-      {#each readyRun.messages ?? [] as message, index (index)}
-        <p class="message">{message}</p>
-      {/each}
-      {#if readyRun.memo_hit}
-        <button type="button" onclick={() => calculate(true)}>
-          Re-optimise (ignore previous result)
-        </button>
-      {/if}
       <Itinerary
         stops={readyRun.stops}
         totals={readyRun.totals}
         objectiveLabel={readyRun.objective_label}
       />
+      <RunDetails run={readyRun} onreoptimise={() => calculate(true)} />
     {/if}
   </section>
 </div>
@@ -426,15 +417,6 @@
       animation: none;
     }
   }
-  .run {
-    font-weight: 600;
-  }
-  .provider :global(.badge) {
-    margin-right: var(--space-2);
-    vertical-align: middle;
-  }
-  .message,
-  .provider,
   .best,
   .notice {
     margin: var(--space-1) 0;

@@ -702,36 +702,26 @@ describe('Plan panel: labels, messages and notices', () => {
     ['optimizer_failed', 'not fully optimised (optimizer failed)'],
     ['time_limit', 'not fully optimised (time limit)'],
     ['stopped', 'not fully optimised (stopped)'],
-  ])('shows a run %s with its label and messages verbatim', async (code, label) => {
-    stubPlanner({
-      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
-      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
-        not_fully_optimised: code,
-        messages: ['Planned 5 items in 2.4 s', label],
-      }),
-    });
+  ])(
+    'tags a run %s on its card and keeps its line verbatim inside Details',
+    async (code, label) => {
+      stubPlanner({
+        [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+        'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
+          not_fully_optimised: code,
+          messages: ['Planned 5 items in 2.4 s', label],
+        }),
+      });
 
-    render(PlanPanel, { props: { projectId: 'p1' } });
-    await settled();
+      render(PlanPanel, { props: { projectId: 'p1' } });
+      await settled();
 
-    expect(screen.getByText('Planned 5 items in 2.4 s')).toBeInTheDocument();
-    expect(screen.getByText(label)).toBeInTheDocument();
-  });
-
-  it('pins the label of a run whose optimizer failed (D223 b)', async () => {
-    stubPlanner({
-      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
-      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, {
-        not_fully_optimised: 'optimizer_failed',
-        messages: ['Planned 5 items in 2.4 s', 'not fully optimised (optimizer failed)'],
-      }),
-    });
-
-    render(PlanPanel, { props: { projectId: 'p1' } });
-    await settled();
-
-    expect(screen.getByText('not fully optimised (optimizer failed)')).toBeInTheDocument();
-  });
+      expect(screen.getByText('Not fully optimised')).toBeVisible();
+      const inside = within(screen.getByText('Details').closest('details') as HTMLElement);
+      expect(inside.getByText('Planned 5 items in 2.4 s')).not.toBeVisible();
+      expect(inside.getByText(label)).not.toBeVisible();
+    },
+  );
 
   it("shows the job's notices while it runs and beside the run it made", async () => {
     const notice = 'Large project - calculation may take longer than 3 minutes';
@@ -754,9 +744,9 @@ describe('Plan panel: labels, messages and notices', () => {
     expect(screen.getByText(notice)).toBeInTheDocument();
     await tick();
 
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(screen.getByText('Plan run #1')).not.toBeVisible(); // inside the closed Details
     expect(screen.getAllByText(notice)).toHaveLength(1);
-    expect(screen.getByText('Planned 5 items in 2.4 s')).toBeInTheDocument();
+    expect(screen.getByText(notice)).toBeVisible(); // the planner's notice stays in view
   });
 });
 
@@ -775,8 +765,9 @@ describe('Plan panel: Re-optimise a reused plan', () => {
     });
     render(PlanPanel, { props: { projectId: 'p1' } });
     await settled();
-    expect(screen.getByText('Reused the identical plan of run #1')).toBeInTheDocument();
+    expect(screen.getByText('Reused the identical plan of run #1')).not.toBeVisible();
 
+    await fireEvent.click(screen.getByText('Details'));
     await fireEvent.click(screen.getByRole('button', { name: REOPTIMISE }));
     await settled();
 
@@ -784,22 +775,6 @@ describe('Plan panel: Re-optimise a reused plan', () => {
     expect(count(calls, `POST ${RUNS}`)).toBe(0);
     await tick();
     expect(screen.getByRole('status')).toHaveTextContent('Solving');
-  });
-
-  it.each([
-    ['a fresh run', { memo_hit: false, messages: ['Planned 5 items in 2.4 s'] }],
-    ['a run stored before the messages', {}],
-  ])('never offers Re-optimise on %s', async (_run, fields) => {
-    stubPlanner({
-      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
-      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', null, fields),
-    });
-
-    render(PlanPanel, { props: { projectId: 'p1' } });
-    await settled();
-
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: REOPTIMISE })).not.toBeInTheDocument();
   });
 });
 
@@ -809,7 +784,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
   const NOT_READY = 'The road map service is still loading its map';
   const OLD_RUN = readyRun('r1', 1, 'Briancon', TOTALS);
 
-  it('shows the provider header above the itinerary and the objective label with the totals', async () => {
+  it('puts the provider header and the objective label inside Details, after the itinerary, and the objective with the totals', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS, {
@@ -824,8 +799,10 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
 
     const header = screen.getByText(HEADER);
     const itinerary = screen.getByRole('list', { name: 'Itinerary' });
+    expect(header).not.toBeVisible();
+    expect(header.closest('details')).not.toBeNull();
     expect(
-      header.compareDocumentPosition(itinerary) & Node.DOCUMENT_POSITION_FOLLOWING,
+      itinerary.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       within(screen.getByLabelText('Totals')).getByText('Minimised road time'),
@@ -880,7 +857,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
       await tick();
 
       expect(screen.getByRole('alert')).toHaveTextContent(message);
-      expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+      expect(screen.getByRole('list', { name: 'Itinerary' })).toBeInTheDocument();
     },
   );
 
@@ -1047,11 +1024,12 @@ describe('Plan panel: one plan state at a time', () => {
     expect(badge()).toHaveTextContent("Couldn't plan");
     expect(badge().querySelector('[aria-hidden="true"]')).toHaveTextContent('\u2715');
     expect(screen.getByRole('alert')).toHaveTextContent(words);
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    await fireEvent.click(screen.getByText('Details'));
+    expect(screen.getByText('Plan run #1')).toBeVisible(); // the Previous route's own Details names its run
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 
-  it('is Out of date, plan again, with the run heading kept below', async () => {
+  it('is Out of date, plan again, with Plan the route as the main action and the export kept', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: {
         status: 200,
@@ -1063,7 +1041,29 @@ describe('Plan panel: one plan state at a time', () => {
     await settled();
 
     expect(badge()).toHaveTextContent('Out of date, plan again');
-    expect(screen.getByText('Plan run #1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toHaveClass('primary');
+    expect(exportLink()).not.toHaveClass('primary');
+    expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
+  });
+
+  it('plans again from the card of an out-of-date route', async () => {
+    const calls = stubPlanner({
+      [`GET ${RUNS}`]: {
+        status: 200,
+        body: [{ id: 'r1', number: 1, status: 'ready', stale: true }],
+      },
+      'GET /api/plan-runs/r1': readyRun('r1', 1),
+      [`POST ${RUNS}`]: ACCEPTED,
+      [`GET ${JOB}`]: job('solving'),
+    });
+    render(PlanPanel, { props: { projectId: 'p1' } });
+    await settled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Plan the route' }));
+    await settled();
+
+    expect(count(calls, `POST ${RUNS}`)).toBe(1);
+    expect(badge()).toHaveTextContent('Planning…');
   });
 });
 

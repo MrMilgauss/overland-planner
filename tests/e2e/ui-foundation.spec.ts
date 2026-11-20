@@ -443,7 +443,7 @@ test("Keyboard focus is always visible", async ({ page }, testInfo) => {
   const exportGpx = page.getByRole("link", { name: "Export GPX" });
   await expect(exportGpx).toBeVisible({ timeout: 30_000 });
 
-  const editTrip = page.getByRole("button", { name: "Edit trip" });
+  const detailsSummary = planPanel(page).locator("details > summary");
   await page.keyboard.press("Tab"); // keyboard use is on; from here focus() shows a focus ring as Tab does
   await page.getByRole("button", { name: "Your route" }).focus(); // the first of the phase steps
   const seen: string[] = [];
@@ -461,11 +461,13 @@ test("Keyboard focus is always visible", async ({ page }, testInfo) => {
       contrastRatio(look.outlineColour, look.background),
       `${look.element} outline against the page`,
     ).toBeGreaterThanOrEqual(3);
-    if (await editTrip.evaluate((el) => el === document.activeElement)) break;
+    if (await detailsSummary.evaluate((el) => el === document.activeElement))
+      break;
     await page.keyboard.press("Tab");
   }
-  expect(seen.at(-1)).toContain("Edit trip"); // the last control of Your route, until Details (12-05)
+  expect(seen.at(-1)).toContain("Details"); // the last control of Your route
   expect(seen.join("|")).toContain("Export GPX");
+  expect(seen.join("|")).toContain("Edit trip");
 });
 
 // The run's geometry with a 12.4 km retrace of "Colle del Sommeiller" added (W4: the packaged planner's one-track run
@@ -785,7 +787,13 @@ test("A failed plan shows Couldn't plan and the planner's own words", async ({
   ).toBeVisible();
   // the route of plan run #4 stays under "Previous route" with its own export; plan run #5 offers none (D208, D276)
   await expect(page.getByText("Previous route")).toBeVisible();
-  await expect(page.getByText("Plan run #4", { exact: true })).toBeVisible();
+  await expect(page.getByText("Plan run #4", { exact: true })).toBeHidden(); // inside the closed Details
+  await planPanel(page).locator("details > summary").click();
+  await expect(
+    planPanel(page)
+      .locator("details")
+      .getByText("Plan run #4", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(1);
   // the failed plan carries no estimate marker; run #4 is the real offline-road-map run, so its own pill shows below
   await expect(

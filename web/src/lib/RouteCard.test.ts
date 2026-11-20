@@ -10,6 +10,15 @@ import type { PlanRunDetail } from './api';
 
 afterEach(cleanup);
 
+const outOfDate = planState({
+  loading: false,
+  planning: false,
+  failed: false,
+  stale: true,
+  readyRunNumber: 7,
+  unreadable: false,
+});
+
 const ready = planState({
   loading: false,
   planning: false,
@@ -19,7 +28,7 @@ const ready = planState({
   unreadable: false,
 });
 
-function run(estimate: boolean): PlanRunDetail {
+function run(estimate: boolean, fields: Record<string, unknown> = {}): PlanRunDetail {
   return {
     id: 'r7',
     project_id: 'p',
@@ -30,6 +39,7 @@ function run(estimate: boolean): PlanRunDetail {
     totals: null,
     report: null,
     estimate,
+    ...fields,
   } as unknown as PlanRunDetail;
 }
 
@@ -81,5 +91,53 @@ describe('RouteCard', () => {
     expect(screen.getByText('Previous route')).toBeInTheDocument();
     expect(screen.queryByText('Route ready')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Export GPX' })).toHaveAttribute('href', '/old');
+  });
+
+  it.each([
+    ['stopped', true],
+    ['time_limit', true],
+    [null, false],
+    [undefined, false],
+  ])('shows the Not fully optimised tag only for a run that says %s', (code, tagged) => {
+    render(RouteCard, {
+      props: {
+        run: run(false, { not_fully_optimised: code }),
+        look: ready,
+        exportUrl: '/x',
+        onedit: () => {},
+      },
+    });
+
+    expect(screen.queryByText('Not fully optimised') !== null).toBe(tagged);
+  });
+
+  it('makes Plan the route the main action of an out-of-date route, Export GPX staying a secondary one', async () => {
+    const plan = vi.fn();
+    render(RouteCard, {
+      props: {
+        run: run(true),
+        look: outOfDate,
+        exportUrl: '/api/plan-runs/r7/export.gpx',
+        onedit: () => {},
+        onplan: plan,
+      },
+    });
+
+    const main = screen.getByRole('button', { name: 'Plan the route' });
+    expect(main).toHaveClass('primary');
+    const link = screen.getByRole('link', { name: 'Export GPX' });
+    expect(link).toHaveAttribute('href', '/api/plan-runs/r7/export.gpx');
+    expect(link).not.toHaveClass('primary');
+    await fireEvent.click(main);
+    expect(plan).toHaveBeenCalledOnce();
+  });
+
+  it('keeps Export GPX the main action, and offers no Plan the route, on a route that is up to date', () => {
+    render(RouteCard, {
+      props: { run: run(false), look: ready, exportUrl: '/x', onedit: () => {}, onplan: () => {} },
+    });
+
+    expect(screen.queryByRole('button', { name: 'Plan the route' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Export GPX' })).toHaveClass('primary');
   });
 });

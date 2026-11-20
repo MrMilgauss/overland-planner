@@ -293,14 +293,110 @@ test("While planning, the trip is read-only and nothing is exported", async ({
   await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
 });
 
-test.fixme("Stopping shows the best route found so far", async ({
+// The planner's own file name for a run's export, from its Content-Disposition header (D268).
+async function exportName(page: Page, href: string): Promise<string> {
+  const response = await page.request.get(href);
+  const header = response.headers()["content-disposition"] ?? "";
+  return /filename="?([^";]+)"?/.exec(header)![1];
+}
+
+// The panel's own Details (the map's attribution control is a <details> too).
+const detailsOf = (page: Page): Locator =>
+  page
+    .getByRole("region", { name: "Your route", exact: true })
+    .locator("details");
+const openDetails = async (page: Page): Promise<void> => {
+  await detailsOf(page).locator("summary").click();
+};
+
+// The page's own Details: one, closed, at the end of Your route.
+async function expectOneClosedDetails(page: Page): Promise<void> {
+  await expect(detailsOf(page)).toHaveCount(1);
+  await expect(detailsOf(page).locator("summary")).toHaveText("Details");
+  await expect(detailsOf(page)).not.toHaveAttribute("open", /.*/);
+}
+
+test("Stopping shows the best route found so far", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(240_000);
   await serveTheBaseMap(page, testInfo);
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const [runId] = await readyRunIds(page, projectIdOf(projectUrl));
+  const STOPPED = "not fully optimised (stopped)";
   // Held job (W4); after "Stop and use best so far" the job answers done with the real run's id, whose detail is
-  // rewritten with not_fully_optimised "stopped" and its line in `messages` (fulfill only).
-  // Checks: "Your route", badge "Route ready"; the card's tag "Not fully optimised"; Details holds
-  // "not fully optimised (stopped)" word for word, not in view while Details is closed (D285).
+  // rewritten with not_fully_optimised "stopped" and its line (fulfill only).
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${runId}$`),
+    `/api/plan-runs/${runId}`,
+    (detail) => ({
+      ...onRealRoads(detail),
+      not_fully_optimised: "stopped",
+      messages: [...((detail.messages as string[] | undefined) ?? []), STOPPED],
+    }),
+  );
+  let stopped = false;
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 202,
+          json: { job_id: "held-job", notices: [] },
+        })
+      : route.continue(),
+  );
+  await page.route(/\/api\/plan-jobs\/held-job\/stop$/, (route) => {
+    stopped = true;
+    return route.fulfill({
+      json: {
+        state: "solving",
+        reason: null,
+        message: null,
+        plan_run_id: null,
+        elapsed_s: 2,
+        stoppable: false,
+      },
+    });
+  });
+  await page.route(/\/api\/plan-jobs\/held-job$/, (route) =>
+    route.fulfill({
+      json: stopped
+        ? {
+            state: "done",
+            reason: null,
+            message: null,
+            plan_run_id: runId,
+            elapsed_s: 3,
+            stoppable: false,
+          }
+        : {
+            state: "solving",
+            reason: null,
+            message: null,
+            plan_run_id: null,
+            elapsed_s: 1.5,
+            stoppable: true,
+          },
+    }),
+  );
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  await page.getByRole("button", { name: "Plan the route" }).click();
+  await page.getByRole("button", { name: "Stop and use best so far" }).click();
+
+  await expect(
+    page.getByRole("region", { name: "Your route", exact: true }),
+  ).toBeVisible();
+  await expect(stateBadge(page)).toHaveText(/Route ready/);
+  await expect(
+    page.getByText("Not fully optimised", { exact: true }),
+  ).toBeVisible();
+  await expectOneClosedDetails(page);
+  await expect(page.getByText(STOPPED, { exact: true })).toBeHidden();
+  await openDetails(page);
+  await expect(
+    detailsOf(page).getByText(STOPPED, { exact: true }),
+  ).toBeVisible();
 });
 
 test("Edit trip goes back to building and the shown route goes out of date", async ({
@@ -599,23 +695,136 @@ for (const status of Object.keys(STATE_LOOKS)) {
   });
 }
 
-test.fixme("Engine details wait behind one closed Details", async ({
+test("Engine details wait behind one closed Details", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(300_000);
   await serveTheBaseMap(page, testInfo);
-  // Real memo reuse: the same trip planned twice; the run's `messages` and `provider_header` read with page.request.
-  // Checks: "Plan run #N", the provider line, the run time line, the reuse line and "Re-optimise (ignore previous
-  // result)" hidden; one closed Details; opened, all shown, the planner's lines verbatim and in its order.
+  // Real memo reuse: the same trip planned twice; the run's own lines are read with page.request.
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const id = projectIdOf(projectUrl);
+  await page.request.post(`/api/projects/${id}/plan-runs`);
+  await expect
+    .poll(async () => (await readyRunIds(page, id)).length, {
+      timeout: 120_000,
+    })
+    .toBe(2);
+  const runId = (await readyRunIds(page, id))[1];
+  const real = (await (
+    await page.request.get(`/api/plan-runs/${runId}`)
+  ).json()) as { number: number; messages: string[]; provider_header: string };
+  const rewritten = onRealRoads(real as unknown as Record<string, unknown>);
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${runId}$`),
+    `/api/plan-runs/${runId}`,
+    onRealRoads,
+  );
+  expect(
+    real.messages.some((line) => line.startsWith("Reused the identical plan")),
+  ).toBe(true);
+
+  await page.reload();
+
+  const heading = `Plan run #${real.number}`;
+  const REOPTIMISE = "Re-optimise (ignore previous result)";
+  const lines = [
+    heading,
+    rewritten.provider_header as string,
+    ...real.messages,
+  ];
+  await expect(stateBadge(page)).toHaveText(/Route ready/);
+  for (const line of lines)
+    await expect(page.getByText(line, { exact: true }).first()).toBeHidden();
+  await expect(page.getByRole("button", { name: REOPTIMISE })).toBeHidden();
+  await expectOneClosedDetails(page);
+
+  await openDetails(page);
+  const inside = detailsOf(page);
+  const tops: number[] = [];
+  for (const line of lines) {
+    const found = inside.getByText(line, { exact: true });
+    await expect(found).toBeVisible();
+    tops.push((await found.boundingBox())!.y);
+  }
+  const button = inside.getByRole("button", { name: REOPTIMISE });
+  await expect(button).toBeVisible();
+  tops.push((await button.boundingBox())!.y);
+  expect(tops, "the planner's order").toEqual([...tops].sort((a, b) => a - b));
 });
 
-test.fixme("Couldn't plan keeps the previous route and its export", async ({
+test("Couldn't plan keeps the previous route and its export", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(300_000);
   await serveTheBaseMap(page, testInfo);
-  // Real ready run (rewritten to real roads); the run list read once with a failed next run added, its detail
-  // fulfilled with the planner's time-limit words for that run (W4). Checks: badge "Couldn't plan" and the failure
-  // words verbatim; the card headed "Previous route" with its itinerary; its Details names that run's number;
-  // "Export GPX" downloads that run's own file (the planner's name, D268); no export or "Estimate" for the failed run.
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const id = projectIdOf(projectUrl);
+  const [runId] = await readyRunIds(page, id);
+  const real = (await (
+    await page.request.get(`/api/plan-runs/${runId}`)
+  ).json()) as { number: number };
+  const failedNumber = real.number + 1;
+  const words = `No valid route found within the time limit - plan run #${failedNumber} failed`;
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${runId}$`),
+    `/api/plan-runs/${runId}`,
+    onRealRoads,
+  );
+  await answerWith<object[]>(
+    page,
+    /\/api\/projects\/[^/]+\/plan-runs$/,
+    `/api/projects/${id}/plan-runs`,
+    (runs) => [
+      ...runs,
+      {
+        id: "failed-run",
+        number: failedNumber,
+        status: "failed",
+        stale: false,
+      },
+    ],
+  );
+  await page.route(/\/api\/plan-runs\/failed-run$/, (route) =>
+    route.fulfill({
+      json: {
+        id: "failed-run",
+        project_id: id,
+        number: failedNumber,
+        status: "failed",
+        failure_reason: "timeout",
+        stops: [],
+        totals: null,
+        report: null,
+        estimate: false,
+        messages: [words],
+      },
+    }),
+  );
+
+  await page.reload();
+
+  await expect(stateBadge(page)).toHaveText(/Couldn't plan/);
+  const failure = page.getByRole("alert").filter({ hasText: words });
+  await expect(failure).toBeVisible();
+  await expect(failure.getByTitle(/^estimate:/)).toHaveCount(0);
+  await expect(page.getByText("Previous route")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Itinerary" })).toBeVisible();
+  await expectOneClosedDetails(page);
+  await openDetails(page);
+  await expect(
+    detailsOf(page).getByText(`Plan run #${real.number}`, { exact: true }),
+  ).toBeVisible();
+  const link = page.getByRole("link", { name: "Export GPX" });
+  await expect(link).toHaveCount(1);
+  const own = await exportName(page, (await link.getAttribute("href"))!);
+  const download = page.waitForEvent("download");
+  await link.click();
+  expect((await download).suggestedFilename()).toBe(own);
+  expect(own).toMatch(new RegExp(`run${real.number}`));
 });
 
 test("Couldn't plan without an earlier route keeps Marco on Build the trip", async ({
@@ -662,28 +871,152 @@ test("Couldn't plan without an earlier route keeps Marco on Build the trip", asy
   await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
 });
 
-test.fixme("An out-of-date route asks to be planned again and can still be exported", async ({
+test("An out-of-date route asks to be planned again and can still be exported", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(300_000);
   await serveTheBaseMap(page, testInfo);
-  // Real: a plan on the offline road map, then a place added. Checks: "Out of date, plan again" and "Estimate" in
-  // the card; the route stays with "Plan the route" as the main action; "Export GPX" still offered, the planner's
-  // "-estimate.gpx" name for that run.
+  await planOnTheOfflineMap(page, testInfo);
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  await addPlaceOnTheForm(page, "Lago del Moncenisio", "45.2280", "6.9420");
+
+  await page.reload();
+
+  await expect(stateBadge(page)).toHaveText(/Out of date, plan again/);
+  const route = page.getByRole("region", { name: "Your route", exact: true });
+  await expect(route.getByRole("note", { name: /^estimate:/ })).toHaveCount(1);
+  await expect(route.getByRole("list", { name: "Itinerary" })).toBeVisible();
+  await expect(
+    route.getByRole("button", { name: "Plan the route" }),
+  ).toHaveClass(/primary/);
+  const link = route.getByRole("link", { name: "Export GPX" });
+  await expect(link).toBeVisible();
+  await expect(link).not.toHaveClass(/primary/);
+  const own = await exportName(page, (await link.getAttribute("href"))!);
+  expect(own).toMatch(/-estimate\.gpx$/);
+  const download = page.waitForEvent("download");
+  await link.click();
+  expect((await download).suggestedFilename()).toBe(own);
 });
 
-test.fixme("Planning an unchanged trip with a retrace reuses the route and keeps each stop once", async ({
+test("Planning an unchanged trip with a retrace reuses the route and keeps each stop once", async ({
   page,
 }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(300_000);
   await serveTheBaseMap(page, testInfo);
-  // Real memo reuse ("Edit trip", "Plan the route" unchanged); the retrace added to both runs' answers (W4).
-  // Checks: "Route ready"; the trail once and its retrace once; Details holds the planner's reuse line for the run
-  // it reused and offers "Re-optimise (ignore previous result)".
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const id = projectIdOf(projectUrl);
+  const [first] = await readyRunIds(page, id);
+  const COLLE = "Colle del Sommeiller";
+  // The planner's run with its trail named for the owner's trip and a retrace of it added (W4).
+  const withRetrace = (detail: Record<string, unknown>) => {
+    const stops = detail.stops as { name: string; type: string }[];
+    const at = stops.findIndex((stop) => stop.type === "track");
+    const trail = { ...stops[at], name: COLLE };
+    return {
+      ...detail,
+      stops: [
+        ...stops.slice(0, at),
+        trail,
+        {
+          ...trail,
+          type: "retrace",
+          reason: "the trail is a dead end",
+          confidence: "unconfirmed",
+          leg_km: null,
+          leg_s: null,
+        },
+        ...stops.slice(at + 1),
+      ],
+    };
+  };
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${first}$`),
+    `/api/plan-runs/${first}`,
+    (detail) => withRetrace(onRealRoads(detail)),
+  );
+  await page.reload();
+  await expect(page.getByText(COLLE).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  await page.getByRole("button", { name: "Plan the route" }).click();
+  await expect
+    .poll(async () => (await readyRunIds(page, id)).length, {
+      timeout: 120_000,
+    })
+    .toBe(2);
+  const second = (await readyRunIds(page, id))[1];
+  const real = (await (
+    await page.request.get(`/api/plan-runs/${second}`)
+  ).json()) as { messages: string[] };
+  const reuse = real.messages.find((line) =>
+    line.startsWith("Reused the identical plan of run #"),
+  )!;
+  expect(reuse).toBeTruthy();
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`/api/plan-runs/${second}$`),
+    `/api/plan-runs/${second}`,
+    (detail) => withRetrace(onRealRoads(detail)),
+  );
+  await page.reload();
+
+  await expect(stateBadge(page)).toHaveText(/Route ready/);
+  const itinerary = page.getByRole("list", { name: "Itinerary" });
+  await expect(
+    itinerary.getByRole("listitem").filter({ hasText: COLLE }),
+  ).toHaveCount(2);
+  await expect(itinerary.getByText("Retrace", { exact: true })).toHaveCount(1);
+  await expect(
+    itinerary
+      .getByRole("listitem")
+      .filter({ hasText: COLLE })
+      .getByText("Track", { exact: true }),
+  ).toHaveCount(1);
+  await expectOneClosedDetails(page);
+  await openDetails(page);
+  await expect(detailsOf(page).getByText(reuse, { exact: true })).toBeVisible();
+  await expect(
+    detailsOf(page).getByRole("button", {
+      name: "Re-optimise (ignore previous result)",
+    }),
+  ).toBeVisible();
 });
 
-test.fixme("The planner's notices stay in view", async ({ page }, testInfo) => {
+test("The planner's notices stay in view", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  // The POST answered {job_id: "held-job", notices: ["Large project - calculation may take longer than 3
-  // minutes"]} and the job held (W4). Checks: the notice word for word, outside Details.
+  await seedTrip(page, testInfo, {});
+  const NOTICE = "Large project - calculation may take longer than 3 minutes";
+  await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 202,
+          json: { job_id: "held-job", notices: [NOTICE] },
+        })
+      : route.continue(),
+  );
+  await page.route(/\/api\/plan-jobs\/held-job$/, (route) =>
+    route.fulfill({
+      json: {
+        state: "solving",
+        reason: null,
+        message: null,
+        plan_run_id: null,
+        elapsed_s: 1.5,
+        stoppable: true,
+      },
+    }),
+  );
+
+  await page.getByRole("button", { name: "Plan the route" }).click();
+
+  await expect(page.getByText(NOTICE, { exact: true })).toBeVisible();
+  await expect(detailsOf(page).getByText(NOTICE)).toHaveCount(0);
 });
 
 // ===================== US-26 A calm map on which the route stands out =====================

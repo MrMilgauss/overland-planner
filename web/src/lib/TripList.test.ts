@@ -192,4 +192,14 @@ describe('Trip list', () => {
       expect(tags(B)).toEqual(['End', 'not saved yet']);
     });
   });
+
+  it('tags an item that is left out of the plan with a muted "Left out", and no included row', () => {
+    render(TripList, {
+      props: { items: [assietta, poi('Casa Marco, Torino'), poi('Rifugio', { included: false })] },
+    });
+
+    expect(within(row("Strada dell'Assietta")).getByText('Left out')).toBeInTheDocument();
+    expect(within(row('Rifugio')).getByText('Left out')).toBeInTheDocument();
+    expect(within(row('Casa Marco, Torino')).queryByText('Left out')).not.toBeInTheDocument();
+  });
 });
