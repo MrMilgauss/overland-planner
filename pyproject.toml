@@ -12,7 +12,7 @@ dependencies = [
     "uvicorn>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
-    "sqlalchemy>=2.0,<2.1",
+    "sqlalchemy>=2.0,<2.2",
     "alembic>=1.13",
     "gpxpy>=1.6,<1.7",
     "defusedxml>=0.7,<0.8",
@@ -34,9 +34,9 @@ dev = [
     # State-delta port (Mandate 8). Re-exported by tests/common/state_delta.py.
     "nwave-ai>=3.21",
     # Tooling (DELIVER 01-01, D85): exact pins.
-    "ruff==0.17.3",
+    "ruff==0.17.5",
     "mypy==2.4.1",
-    "import-linter==2.15",
+    "import-linter==2.16",
     "pytest-cov==7.1.0",
     "pre-commit==4.7.0",
     "types-PyYAML==6.0.12.20261030",
