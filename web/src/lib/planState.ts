@@ -30,7 +30,7 @@ export interface PlanLook {
   glyph: string | undefined;
 }
 
-/** The heading of the ready run on show (it moves into Details in 12-05). */
+/** The heading of the ready run on show (shown at the top of the run's Details). */
 export const planRunLabel = (number: number): string => `Plan run #${number}`;
 
 const CHECK = '✓';

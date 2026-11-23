@@ -388,6 +388,16 @@ describe('TripMap with a run', () => {
       expect(calls.some((url) => url.includes('geometry'))).toBe(false);
     });
 
+    it('fits the items with room to the right for the widest tag (Start/End), so that no tag is cut by the map edge', async () => {
+      plannerWithoutRun();
+      render(TripMap, { items: [SUSA] });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+
+      const padding = maps.fitOptions[0].padding as Record<string, number>;
+      expect(padding.right).toBeGreaterThanOrEqual(96);
+      expect(padding.left).toBeGreaterThanOrEqual(48);
+    });
+
     it('opens on a default view of the western Alps when the trip is empty', async () => {
       plannerWithoutRun();
       render(TripMap, { items: [] });

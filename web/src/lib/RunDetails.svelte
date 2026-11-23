@@ -31,15 +31,29 @@
 
 <style>
   details {
-    border-top: 1px solid var(--color-border);
     padding-top: var(--space-2);
   }
   summary {
     display: flex;
     align-items: center;
+    gap: var(--space-2);
     min-height: var(--target-min);
-    color: var(--color-text-muted);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-accent);
     cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  /* The empty alternative text keeps the glyph out of the accessible name ("Details"). */
+  summary::before {
+    content: '\25b8' / '';
+  }
+  details[open] > summary::before {
+    content: '\25be' / '';
   }
   .body {
     display: grid;

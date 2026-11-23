@@ -65,6 +65,13 @@
 
   const NUMBERED = ['stop', 'start', 'end', 'start_end'];
   const FIT_PADDING = 48;
+  // Room on the right for the widest place tag (Start/End) beside a dot at the edge of the items' bounds.
+  const ITEMS_FIT_PADDING = {
+    top: FIT_PADDING,
+    bottom: FIT_PADDING,
+    left: FIT_PADDING,
+    right: 112,
+  };
   const STOP_MAX_ZOOM = 13; // a trail
   const ITEMS_MAX_ZOOM = 12; // one place alone is not zoomed in on to the street
   // Without a run the map is drawn afresh whenever the trip's items change; with one, the items do not matter.
@@ -206,7 +213,7 @@
     );
     if (plan.bounds)
       map.fitBounds(plan.bounds, {
-        padding: FIT_PADDING,
+        padding: geometry ? FIT_PADDING : ITEMS_FIT_PADDING,
         animate: false,
         ...(geometry ? {} : { maxZoom: ITEMS_MAX_ZOOM }),
       });

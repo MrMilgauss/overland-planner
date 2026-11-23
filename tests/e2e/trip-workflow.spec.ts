@@ -1036,8 +1036,20 @@ test("Engine details wait behind one closed Details", async ({
     await expect(page.getByText(line, { exact: true }).first()).toBeHidden();
   await expect(page.getByRole("button", { name: REOPTIMISE })).toBeHidden();
   await expectOneClosedDetails(page);
+  // The summary looks like a control: a disclosure glyph that flips with the state, and a visible border.
+  const marker = (): Promise<string> =>
+    detailsOf(page)
+      .locator("summary")
+      .evaluate((el) => getComputedStyle(el, "::before").content);
+  const closedMarker = await marker();
+  const summaryBorder = await detailsOf(page)
+    .locator("summary")
+    .evaluate((el) => getComputedStyle(el).borderTopWidth);
+  expect(summaryBorder).not.toBe("0px");
 
   await openDetails(page);
+  expect(await marker()).not.toBe(closedMarker);
+  expect(closedMarker).toContain("\u25b8");
   const inside = detailsOf(page);
   const tops: number[] = [];
   for (const line of lines) {
