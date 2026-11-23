@@ -515,3 +515,25 @@ def test_a_light_base_map_address_carrying_a_private_parameter_is_refused_naming
     assert "MAP_BASE_STYLE_URL" in message and f"carries the private parameter {name}" in message
     assert value not in message
     assert value not in repr(refused.value) and value not in repr(refused.value.__cause__)
+
+
+@given(
+    host=_host,
+    word=_key_words,
+    case=_case,
+    digits=st.from_regex(r"[0-9]{4,8}", fullmatch=True),
+    setting=st.sampled_from(["MAP_TILE_URL", "MAP_BASE_STYLE_URL"]),
+)
+def test_a_bare_query_word_with_a_private_name_is_refused_without_echoing_it(
+    host: str, word: str, case: Any, digits: str, setting: str
+) -> None:
+    # A bare `?mapkey123abcdef` may itself be the secret: the refusal says a private parameter, not which.
+    bare = case(f"{word}{digits}")
+    tail = "/{z}/{x}/{y}.png" if setting == "MAP_TILE_URL" else "/s.json"
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({setting: f"https://{host}{tail}?{bare}"})
+    message = str(refused.value)
+    assert refused.value.setting_names == frozenset({setting})
+    assert "carries a private parameter" in message
+    assert bare not in message and digits not in message
+    assert digits not in repr(refused.value) and digits not in repr(refused.value.__cause__)

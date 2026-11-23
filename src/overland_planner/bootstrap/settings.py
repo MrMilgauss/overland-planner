@@ -20,8 +20,10 @@ api_key, appid, app_id, password, pwd, access or client_id refuses the start, na
 D256; a key hidden in a path segment cannot be told from a tile path and is not detected: use a provider without a
 key), MAP_TILE_ATTRIBUTION and MAP_TILE_MAX_ZOOM (1 to 22); an empty value is
 the default.
-The light base map (ADR-004 Amendment 1, D287) is MAP_BASE_STYLE_URL, a style address (http or https with a host, no
-placeholders) under the same guard as MAP_TILE_URL, and MAP_BASE_ATTRIBUTION, its credit; empty or blank is the default.
+The light base map (ADR-004 Amendment 1, D287) is MAP_BASE_STYLE_URL, a style address (http or https with a host;
+no placeholders are required) under the same guard as MAP_TILE_URL, so a key in its path is not detected either, and
+MAP_BASE_ATTRIBUTION, its credit; empty or blank is the default. A query word without "=" that names a private
+parameter refuses the start without naming the word, since it may itself be the secret.
 """
 
 from __future__ import annotations
@@ -126,8 +128,11 @@ class Settings(BaseSettings):
         if parts.fragment or "#" in value:
             raise ValueError("carries a fragment")
         for pair in parts.query.split("&"):
-            name = unquote_plus(pair.partition("=")[0])
+            name, equals, _ = pair.partition("=")
+            name = unquote_plus(name)
             if any(word in name.lower() for word in _PRIVATE_PARAMETER_WORDS):
+                if not equals:  # a bare word may itself be the secret: refuse without naming it
+                    raise ValueError("carries a private parameter")
                 raise ValueError(f"carries the private parameter {name}")  # the name only, never the value (D256)
         return value
 
