@@ -44,17 +44,26 @@ test("Giulia opens the results on her phone", async ({ page }) => {
     .getByLabel("Totals");
   const totalsText =
     (await totals.count()) > 0 ? await totals.first().innerText() : null;
-  const pageWidth = await page.evaluate(() =>
-    Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
-  );
 
   const headerLine = page.locator(".provider");
   const headerText =
     (await headerLine.count()) > 0
       ? await headerLine.first().innerText()
       : null;
-  // The objective is not a control on Your route (D285): its label is a line of the itinerary.
-  await expect(page.getByText("Objective", { exact: true })).toBeVisible();
+  // The objective is not a control on Your route: its label (the run's objective_label) is a line inside the closed
+  // Details (D285), opened here so that the widest engine lines are on screen too when the width is measured below.
+  await page
+    .getByRole("region", { name: "Your route", exact: true })
+    .getByText("Details", { exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Your route", exact: true })
+      .locator(".objective"),
+  ).toBeVisible();
+  const pageWidth = await page.evaluate(() =>
+    Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+  );
   expect(
     pageWidth,
     "no horizontal scroll with the header line and the objective line",
