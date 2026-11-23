@@ -687,9 +687,12 @@ describe('TripMap with a stop selected (D286)', () => {
     mounted.push(mount(TripMap, { target: document.body, props }));
     flushSync();
     await waitFor(() => expect(maps.fitted).toHaveLength(1));
-    const control = (maps.controls as { onAdd?: (map: unknown) => HTMLElement }[]).filter(
-      (candidate) => candidate.onAdd,
-    )[1].onAdd!({});
+    // Not a map control: it stands in the top-left column, away from the map's credit and zoom buttons.
+    const control = {
+      get button() {
+        return screen.queryByRole('button', { name: 'Show whole route' });
+      },
+    };
     const numbered = (text: string) =>
       maps.markers.find((placed) => placed.element.textContent === text)!.element;
     const view = {
@@ -703,7 +706,7 @@ describe('TripMap with a stop selected (D286)', () => {
 
   it('fits the stop (padding 48, zoom 13 at most), rings its number, dims the other lines and offers Show whole route', async () => {
     const { view, control, numbered } = await drawn();
-    expect(control.hidden).toBe(true);
+    expect(control.button).toBeNull();
     expect(maps.paint).toEqual([]);
 
     await view.rerender({ selectedStop: 3 });
@@ -719,7 +722,7 @@ describe('TripMap with a stop selected (D286)', () => {
     expect(maps.paint).toContainEqual(['road-confirmed', 'line-opacity', stopOpacity(3)]);
     expect(maps.paint).toContainEqual(['track-arrows', 'icon-opacity', stopOpacity(3)]);
     expect(maps.created[0].container.dataset.selectedStop).toBe('3');
-    expect(control.hidden).toBe(false);
+    expect(control.button).toBeInTheDocument();
   });
 
   it('fits the whole route again and draws every line in full once the selection is cleared', async () => {
@@ -739,17 +742,17 @@ describe('TripMap with a stop selected (D286)', () => {
     expect(maps.paint.at(-1)).toEqual(['track-arrows', 'icon-opacity', 1]);
     expect(numbered('3')).not.toHaveClass('selected');
     expect(maps.created[0].container.dataset.selectedStop).toBe('');
-    expect(control.hidden).toBe(true);
+    expect(control.button).toBeNull();
   });
 
   it('tells the page the stop of a number marker pressed, and clears with the Show whole route control', async () => {
-    const { control, numbered, onselectstop } = await drawn();
+    const { view, control, numbered, onselectstop } = await drawn();
 
     await fireEvent.click(numbered('2'));
     expect(onselectstop).toHaveBeenLastCalledWith(2);
 
-    await fireEvent.click(control.querySelector('button')!);
+    await view.rerender({ selectedStop: 2 });
+    await fireEvent.click(control.button!);
     expect(onselectstop).toHaveBeenLastCalledWith(undefined);
-    expect(control.querySelector('button')).toHaveTextContent('Show whole route');
   });
 });

@@ -244,19 +244,6 @@
     }
     // The selection: the number's ring, the other lines dimmed, the fit and the way back (D286).
     let chosen: number | undefined;
-    const wholeRoute = document.createElement('button');
-    wholeRoute.type = 'button';
-    wholeRoute.className = 'whole-route-button';
-    wholeRoute.textContent = 'Show whole route';
-    wholeRoute.addEventListener('click', () => onselectstop?.(undefined));
-    const wholeRouteGroup = document.createElement('div');
-    wholeRouteGroup.className = 'maplibregl-ctrl maplibregl-ctrl-group whole-route-control';
-    wholeRouteGroup.hidden = true;
-    wholeRouteGroup.append(wholeRoute);
-    map.addControl(
-      { onAdd: () => wholeRouteGroup, onRemove: () => wholeRouteGroup.remove() },
-      'bottom-left',
-    );
     let everDimmed = false;
     const dim = (): void => {
       if (chosen === undefined && !everDimmed) return; // nothing was ever dimmed: nothing to undo
@@ -279,7 +266,6 @@
         element.classList.toggle('selected', stop !== undefined && stops.includes(stop));
       dim();
       frame.dataset.selectedStop = stop === undefined ? '' : String(stop);
-      wholeRouteGroup.hidden = stop === undefined;
       const bounds = stop === undefined || !geometry ? plan.bounds : stopBounds(geometry, stop);
       if (fit && bounds)
         map.fitBounds(bounds, {
@@ -380,6 +366,11 @@
           ><span aria-hidden="true">{marker.glyph}</span>{marker.label}</span
         >
       {/if}
+      {#if selectedStop !== undefined}
+        <button type="button" class="whole-route" onclick={() => onselectstop?.(undefined)}
+          >Show whole route</button
+        >
+      {/if}
       {#if projectId && canAdd && !problem}
         <button type="button" class="click-mode" aria-pressed={clickMode} onclick={toggleClickMode}
           >Click on map to add</button
@@ -435,6 +426,11 @@
     font-size: var(--text-sm);
     font-weight: 600;
   }
+  /* The credit keeps the map's light palette in both themes (D265, ADR-004): dark text on its light background. */
+  :global(.maplibregl-ctrl-attrib),
+  :global(.maplibregl-ctrl-attrib a) {
+    color: black;
+  }
   /* The map keeps its light palette in both themes (D265): the control is a map overlay. */
   :global(.maplibregl-ctrl-group .terrain-button) {
     width: auto;
@@ -472,19 +468,6 @@
   /* The stop selected on the itinerary or on the map: ringed in the accent colour (D286). */
   :global(.run-marker.numbered.selected) {
     box-shadow: 0 0 0 3px var(--color-accent);
-  }
-  :global(.maplibregl-ctrl-group .whole-route-button) {
-    width: auto;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0 0.75rem;
-    border: 0;
-    border-radius: 4px;
-    background: white;
-    color: black;
-    font:
-      600 0.9rem/1 system-ui,
-      sans-serif;
   }
   :global(.run-marker.numbered) {
     min-width: 1.5rem;

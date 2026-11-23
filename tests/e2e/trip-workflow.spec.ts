@@ -833,6 +833,28 @@ test("On a phone the map follows the selected step", async ({
   await expect(frame).toBeInViewport({ ratio: 0.5 });
   expect((await mapView(page)).selected).toBe(String(stop));
   await expect(numberMarker(page, stop)).toHaveClass(/selected/);
+  const frameMap = page.getByRole("region", { name: "Map of the trip" });
+  await terrainButton(frameMap).tap();
+  await expect(terrainButton(frameMap)).toHaveAttribute("aria-pressed", "true");
+  const whole = (await page
+    .getByRole("button", { name: "Show whole route" })
+    .boundingBox())!;
+  expect(whole.height).toBeGreaterThanOrEqual(44);
+  const touches = (a: typeof whole, b: typeof whole): boolean =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height;
+  for (const [name, locator] of [
+    ["the credit", credit(frameMap)],
+    ["the zoom-in button", frameMap.locator(".maplibregl-ctrl-zoom-in")],
+    ["the zoom-out button", frameMap.locator(".maplibregl-ctrl-zoom-out")],
+    ["Terrain", terrainButton(frameMap)],
+  ] as const)
+    expect(
+      touches(whole, (await locator.boundingBox())!),
+      `Show whole route and ${name}`,
+    ).toBe(false);
   expect(
     await page.evaluate(
       () =>
@@ -1627,6 +1649,23 @@ test("The pressed Terrain button keeps its text readable, hovered or not", async
     contrastRatio(away.colour, onWhite(away.background)),
     "pressed",
   ).toBeGreaterThanOrEqual(4.5);
+});
+
+test("In dark mode the map's credit stays readable on its light background", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  await page.emulateMedia({ colorScheme: "dark" });
+  const map = await openTheMap(page, testInfo);
+  await expect(credit(map)).toBeVisible();
+  const colours = await credit(map).evaluate((el) =>
+    [el, ...el.querySelectorAll("a")].map((e) => getComputedStyle(e).color),
+  );
+  for (const colour of colours)
+    expect(
+      contrastRatio(colour, "rgb(255, 255, 255)"),
+      "credit text on the map's light background",
+    ).toBeGreaterThanOrEqual(4.5);
 });
 
 test("The light map's credit names OpenFreeMap once", async ({
