@@ -1,4 +1,4 @@
-// The trip map as data (slice 09, step 10-04, ADR-003 Amendment 2; 12-04): the planner's geometry answer and the map
+// The trip map as data (ADR-003 Amendment 2): the planner's geometry answer and the map
 // settings in, a MapLibre style (tiles, the lines, their layers), the text and marker overlays, and the bounds out; or,
 // before any route, the trip's items. Pure: the drawing itself (WebGL) is TripMap.svelte's, and the web composes no
 // wording but the labels of the map itself.
@@ -86,6 +86,10 @@ const UNAVAILABLE_GREY = '#6b7280';
 // Line widths follow the zoom like the arrows (D287): 4 px for the whole trip, 7 px on a trail, each on a white casing
 // 3 px wider so that the route stands out on any base map.
 const LINE_WIDTHS = [4, 7];
+const UNAVAILABLE_DASH = [2, 2];
+const UNCONFIRMED_DASH = [0.5, 2];
+const RETRACE_DASH = [8, 4];
+const TILE_SIZE = 256;
 const CASING_EXTRA = 3;
 const CASING_WHITE = '#ffffff';
 /** The layers the map itself adds between the base map and the route (D287). */
@@ -101,6 +105,8 @@ const TRAIL_ZOOM = 13;
 const ARROW_SIZES = [0.5, 1];
 const ARROW_SPACINGS = [160, 80];
 const MIDDLE = 0.5; // half way along a line, by length
+/** Where along a retrace line its label may stand, in the order tried: the middle, then a quarter, then three quarters. */
+export const RETRACE_FRACTIONS = [MIDDLE, 0.25, 0.75];
 const DISPLAY_DECIMALS = 1e6;
 /** A click this close to an entry or exit marker (inclusive) means that marker's place. */
 export const SNAP_PIXELS = 12;
@@ -221,7 +227,7 @@ function layersOf(config: MapConfig, terrain: boolean): LayerSpecification[] {
       maxzoom: config.max_zoom + 1,
       layout: { visibility: terrain ? 'visible' : 'none' },
     } as LayerSpecification,
-    ...lineLayers('unavailable', is('geometry', 'unavailable'), UNAVAILABLE_GREY, [2, 2]),
+    ...lineLayers('unavailable', is('geometry', 'unavailable'), UNAVAILABLE_GREY, UNAVAILABLE_DASH),
     ...lineLayers(
       'road-confirmed',
       drawn(is('kind', 'road'), is('level', 'confirmed'), available),
@@ -231,9 +237,9 @@ function layersOf(config: MapConfig, terrain: boolean): LayerSpecification[] {
       'road-unconfirmed',
       drawn(is('kind', 'road'), is('level', 'unconfirmed'), available),
       UNCONFIRMED_ORANGE,
-      [0.5, 2],
+      UNCONFIRMED_DASH,
     ),
-    ...lineLayers('retrace', drawn(is('kind', 'retrace'), available), RETRACE_PURPLE, [8, 4]),
+    ...lineLayers('retrace', drawn(is('kind', 'retrace'), available), RETRACE_PURPLE, RETRACE_DASH),
     ...lineLayers('track', drawn(is('kind', 'track'), available), TRACK_COLOUR),
     {
       id: 'track-arrows',
@@ -302,6 +308,16 @@ function labelOf(line: LineFeature): MapOverlay | undefined {
   return undefined;
 }
 
+const END_TITLES = { entry: 'Entry', exit: 'Exit' } as const;
+
+/** A trail's entry or exit: a bare marker, titled with the trail's name. */
+const endOverlay = (kind: keyof typeof END_TITLES, name: string, lngLat: LngLat): MapOverlay => ({
+  kind,
+  text: '',
+  title: `${END_TITLES[kind]} of ${name}`,
+  lngLat,
+});
+
 function markerOf(feature: MarkerFeature): MapOverlay {
   const { marker, stop, end_stop: endStop, name } = feature.properties;
   const lngLat = feature.geometry.coordinates;
@@ -325,11 +341,15 @@ function markerOf(feature: MarkerFeature): MapOverlay {
     case 'stop':
       return numbered(`${stop}`, `${stop}`, [stop]);
     case 'entry':
-      return { kind: marker, text: '', title: `Entry of ${name}`, lngLat };
+      return endOverlay('entry', name, lngLat);
     case 'exit':
-      return { kind: marker, text: '', title: `Exit of ${name}`, lngLat };
+      return endOverlay('exit', name, lngLat);
   }
 }
+
+/** Every coordinate a feature draws: a line's points, or a marker's one. */
+const pointsOf = (feature: LineFeature | MarkerFeature): LngLat[] =>
+  isLine(feature) ? feature.geometry.coordinates : [feature.geometry.coordinates];
 
 function boundsOf(points: LngLat[]): [LngLat, LngLat] | null {
   if (points.length === 0) return null;
@@ -350,9 +370,7 @@ export function stopBounds(geometry: RunGeometry, stop: number): [LngLat, LngLat
         feature.properties.stop === stop ||
         ('end_stop' in feature.properties && feature.properties.end_stop === stop),
     )
-    .flatMap((feature) =>
-      isLine(feature) ? feature.geometry.coordinates : [feature.geometry.coordinates],
-    );
+    .flatMap(pointsOf);
   return boundsOf(points);
 }
 
@@ -385,9 +403,7 @@ export function buildRunMap(geometry: RunGeometry, config: MapConfig, terrain = 
     const overlay = isLine(feature) ? labelOf(feature) : markerOf(feature);
     return overlay ? [overlay] : [];
   });
-  const points = geometry.features.flatMap((feature) =>
-    isLine(feature) ? feature.geometry.coordinates : [feature.geometry.coordinates],
-  );
+  const points = geometry.features.flatMap(pointsOf);
   return {
     style: {
       version: 8,
@@ -395,7 +411,7 @@ export function buildRunMap(geometry: RunGeometry, config: MapConfig, terrain = 
         tiles: {
           type: 'raster',
           tiles: [config.tile_url],
-          tileSize: 256,
+          tileSize: TILE_SIZE,
           maxzoom: config.max_zoom,
           attribution: config.attribution,
         },
@@ -425,20 +441,8 @@ function itemOverlays(item: Item): MapOverlay[] {
     return [{ kind: 'place', text, title: item.name, lngLat }];
   }
   const ends: MapOverlay[] = [];
-  if (item.entry)
-    ends.push({
-      kind: 'entry',
-      text: '',
-      title: `Entry of ${item.name}`,
-      lngLat: [item.entry.lon, item.entry.lat],
-    });
-  if (item.exit)
-    ends.push({
-      kind: 'exit',
-      text: '',
-      title: `Exit of ${item.name}`,
-      lngLat: [item.exit.lon, item.exit.lat],
-    });
+  if (item.entry) ends.push(endOverlay('entry', item.name, [item.entry.lon, item.entry.lat]));
+  if (item.exit) ends.push(endOverlay('exit', item.name, [item.exit.lon, item.exit.lat]));
   return ends;
 }
 
@@ -513,9 +517,6 @@ export interface ScreenBox {
   right: number;
   bottom: number;
 }
-
-/** Where along a retrace line its label may stand, in the order tried: the middle, then a quarter, then three quarters. */
-export const RETRACE_FRACTIONS = [MIDDLE, 0.25, 0.75];
 
 const overlaps = (a: ScreenBox, b: ScreenBox): boolean =>
   a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;

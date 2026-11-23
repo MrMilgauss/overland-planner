@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The small form that names a place clicked on the map (slice 09, step 10-05). Add hands the name to the map's `add`
+  // The small form that names a place clicked on the map. Add hands the name to the map's `add`
   // and closes when the planner took it; a refusal (an empty name, say) stays here in the planner's own words.
   // Cancel and Escape close it and add nothing. With `coordinates` it also asks for the place's decimal degrees (the
   // Add menu's "Type coordinates") and hands them on as the second argument; without, `add` gets the name alone.

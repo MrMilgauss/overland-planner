@@ -1,6 +1,7 @@
 <script lang="ts">
   // The plan of a project, one phase at a time (D283, tripPhase): Build the trip with 'Plan the route', Planning with the
-  // running job's state (polled every 500 ms) and Stop, then Your route: the latest ready run's card (with the Totals) and its Itinerary. Every refusal shows the planner's own message, verbatim.
+  // running job's state (polled every 500 ms) and Stop, then Your route: the latest ready run's card (with the Totals)
+  // and its Itinerary. Every refusal shows the planner's own message, verbatim.
   //
   // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
   // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
@@ -9,7 +10,8 @@
   // While the job is stoppable (ADR-015) 'Stop and use best so far' is offered, and posted once per job; polling then
   // shows how the job ended. The run's messages (run time, label, reuse, a Failed run's failure) and the job's notices
   // are the planner's lines, shown verbatim: the web composes no wording (D211, D223 b), but for a Failed run stored
-  // before its messages, which names its reason. The engine's details (run number, provider, objective, the run's messages, Re-optimise on a reused plan) wait in RunDetails.
+  // before its messages, which names its reason. The engine's details (run number, provider, objective, the run's
+  // messages, Re-optimise on a reused plan) wait in RunDetails.
   import { onMount, type Snippet } from 'svelte';
   import Itinerary from './Itinerary.svelte';
   import PhaseSteps from './PhaseSteps.svelte';
@@ -45,6 +47,7 @@
     solving: 'Solving',
     finalising: 'Finalising',
   };
+  const PHASE_NAMES = { build: 'Build the trip', planning: 'Planning', route: 'Your route' };
 
   let {
     projectId,
@@ -110,7 +113,8 @@
       unreadable,
     }),
   );
-  const PHASE_NAMES = { build: 'Build the trip', planning: 'Planning', route: 'Your route' };
+  // Your route shows the badge only under a failed plan; the other phases show it whenever the state is known.
+  const showsBadge = $derived(phase === 'route' ? previous : look.state !== 'unknown');
 
   function showRoute(): void {
     editing = false;
@@ -276,7 +280,7 @@
   <PhaseSteps {phase} canShowRoute={readyRun !== undefined && !jobActive} onshowroute={showRoute} />
 
   <section class="phase" aria-label={PHASE_NAMES[phase]}>
-    {#if phase !== 'route' && look.state !== 'unknown'}
+    {#if showsBadge}
       <StatusBadge
         tone={look.role}
         fill={look.fill}
@@ -290,15 +294,6 @@
       <div class="progress" role="progressbar" aria-label="Planning" data-testid="plan-progress">
         <span></span>
       </div>
-    {/if}
-    {#if phase === 'route' && previous}
-      <StatusBadge
-        tone={look.role}
-        fill={look.fill}
-        glyph={look.glyph}
-        label={look.label}
-        data-plan-state={look.state}
-      />
     {/if}
 
     {#if watchedJobId && STATE_TEXTS[jobState]}
