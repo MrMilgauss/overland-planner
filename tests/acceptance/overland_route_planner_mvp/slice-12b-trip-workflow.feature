@@ -20,7 +20,7 @@
 # planner's own lines from its answer and check where they are shown, word for word (D211); they do not re-create
 # run #7 by seven presses. The GPX file names are the planner's, unchanged since slice 12 (D268).
 
-@slice-12b @pending
+@slice-12b
 Feature: The planner follows the trip
   As Marco and Giulia, we want the page to walk us through our trip in three phases (build it, plan it, see the route),
   so that we always know what to press next, read the route as the main result and never mistake an engine detail,

@@ -1,7 +1,7 @@
 // Slice 12b trip workflow (US-23, US-24, US-25, US-26): the @ui scenarios of
 // tests/acceptance/overland_route_planner_mvp/slice-12b-trip-workflow.feature, one test per scenario (one per row of
-// each outline), named after it. Every test is `test.fixme` until DELIVER writes it in the step that builds its
-// behaviour; the last step of the slice turns every `test.fixme` into `test` (DISTILL D292).
+// each outline), named after it. Every test was written in the DELIVER step that built its behaviour and runs in CI
+// (step 12-07, DISTILL D292).
 //
 // Runs in CI job 7 on chromium (Desktop Chrome; 1440 x 900 set per test with `page.setViewportSize`) and
 // webkit-iphone14 (390 px) against the packaged planner on PLANNER_URL, which plans on the offline road map. A test

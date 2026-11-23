@@ -27,8 +27,8 @@ env:
   # D170, user decision 2026-11-02: started empty; 02-07 added --run-pending=slice-00b, 03-10 --run-pending=slice-01a,
   # 04-11 --run-pending=slice-01b, 05-12 --run-pending=slice-02, 06-13 --run-pending=slice-03, 07-13
   # --run-pending=slice-03b, 09-11 --run-pending=slice-06a,
-  # 10-06 --run-pending=slice-09, 11-08 --run-pending=slice-12, each in the commit that turns the slice GREEN.
-  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02 --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a --run-pending=slice-09 --run-pending=slice-12"
+  # 10-06 --run-pending=slice-09, 11-08 --run-pending=slice-12, 12-07 --run-pending=slice-12b, each in the commit that turns the slice GREEN.
+  PENDING_FLAGS: "--run-pending=slice-00b --run-pending=slice-01a --run-pending=slice-01b --run-pending=slice-02 --run-pending=slice-03 --run-pending=slice-03b --run-pending=slice-06a --run-pending=slice-09 --run-pending=slice-12 --run-pending=slice-12b"
   UV_VERSION: "0.11.16"
   # Trivy as a sha256-verified binary (like the lint binaries) rather than aquasecurity/trivy-action, whose tags were
   # rewritten in the March 2026 supply-chain incident.

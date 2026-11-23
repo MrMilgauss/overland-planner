@@ -1,9 +1,7 @@
 """pytest-bdd binding: the slice 12b scenarios checked at the HTTP API and the server process (US-26, D287).
 
-The feature is `@slice-12b @pending`: skipped until the last DELIVER step of the slice adds `--run-pending=slice-12b`
-to PENDING_FLAGS (.github/workflows/ci.yml) and removes `@pending` from the feature, as slice 12 did (step 11-08).
-`uv run pytest --run-pending=slice-12b -k 12b tests/acceptance/overland_route_planner_mvp` shows both RED: the map
-settings name no light base map, and a keyed light base map address does not stop the planner yet.
+The feature is `@slice-12b`, enabled in CI by `--run-pending=slice-12b` in PENDING_FLAGS (.github/workflows/ci.yml,
+step 12-07, as slice 12 in step 11-08).
 The `@ui` scenarios are checked by tests/e2e/trip-workflow.spec.ts (Playwright, CI job 7) and are not bound here.
 
 Neither scenario plans, so neither is `solver_child`. The key guard runs the real server process (`wiring_e2e`), as its
