@@ -466,14 +466,222 @@ test("A refusal keeps Marco on Build the trip with the planner's own words", asy
 
 // ===================== US-24 The route is the main result =====================
 
-test.fixme("On a laptop the summary card and the first steps are in view", async ({
+type RunDetail = {
+  number: number;
+  totals: Record<string, number> | null;
+  stops: Record<string, unknown>[];
+};
+
+const RETRACE_REASON =
+  "retraces the trail backwards; check it is drivable in reverse";
+const SOMMEILLER = "Colle del Sommeiller";
+
+// The packaged planner's one-trail run on real roads (W4: detail rewritten with onRealRoads, fulfill only), its page
+// opened with the map's own hook (`?e2e=1`). `fillers` places before the trail make its step and its marker the
+// (fillers + 2)th, as in the owner's longer trip; `retrace` adds the 12.4 km retrace of Colle del Sommeiller to the
+// detail and the geometry, the trail itself being named after it.
+async function openARealRoadRun(
+  page: Page,
+  testInfo: TestInfo,
+  options: { fillers?: number; retrace?: boolean } = {},
+): Promise<{ detail: RunDetail; geometry: Geometry }> {
+  test.setTimeout(300_000);
+  await serveTheBaseMap(page, testInfo);
+  const projectUrl = await planOnTheOfflineMap(page, testInfo);
+  const [id] = await readyRunIds(page, projectIdOf(projectUrl));
+  const fillers = options.fillers ?? 0;
+  const detailAddress = `/api/plan-runs/${id}`;
+  const geometryAddress = `${detailAddress}/geometry`;
+  const real = (await (
+    await page.request.get(detailAddress)
+  ).json()) as RunDetail;
+  const stops = [...real.stops];
+  const filler = (i: number) => ({
+    ...stops[0],
+    name: `Place ${i}`,
+    leg_km: 10,
+    leg_s: 600,
+    leg_confidence: "confirmed",
+  });
+  stops.splice(
+    1,
+    0,
+    ...Array.from({ length: fillers }, (_, i) => filler(i + 1)),
+  );
+  if (options.retrace) {
+    const trail = stops.find((stop) => stop.type === "track")!;
+    trail.name = SOMMEILLER;
+    stops.push({
+      name: SOMMEILLER,
+      type: "retrace",
+      leg_km: null,
+      leg_s: null,
+      cumulative_km: null,
+      cumulative_s: null,
+      track_km: RETRACE_KM,
+      offroad_s: 2_700,
+      entry: null,
+      exit: null,
+      confidence: "unconfirmed",
+      reason: RETRACE_REASON,
+    });
+  }
+  await answerWith<Record<string, unknown>>(
+    page,
+    new RegExp(`${detailAddress}$`),
+    detailAddress,
+    (answer) => ({ ...onRealRoads(answer), stops }),
+  );
+  const changeGeometry = (answer: Geometry): Geometry => {
+    const shifted = {
+      ...answer,
+      features: answer.features.map((feature) => {
+        const p = feature.properties as Record<string, number | null>;
+        const move = (n: number | null) =>
+          n !== null && n >= 2 ? n + fillers : n;
+        return {
+          ...feature,
+          properties: {
+            ...feature.properties,
+            stop: move(p.stop) as number,
+            ...("end_stop" in p ? { end_stop: move(p.end_stop) } : {}),
+          },
+        };
+      }),
+    } as Geometry;
+    return options.retrace ? withSommeillerRetrace(shifted) : shifted;
+  };
+  // The rewritten answer, for the checks below (page.request is not routed: it still reads the planner's own).
+  const geometry = changeGeometry(
+    (await (await page.request.get(geometryAddress)).json()) as Geometry,
+  );
+  await answerWith<Geometry>(
+    page,
+    new RegExp(`${geometryAddress}$`),
+    geometryAddress,
+    changeGeometry,
+  );
+  await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
+  await expect(
+    page
+      .getByRole("region", { name: "Map of the run" })
+      .locator("canvas.maplibregl-canvas"),
+  ).toBeVisible({ timeout: 60_000 });
+  const detail = { ...real, stops } as RunDetail;
+  return { detail, geometry };
+}
+
+const steps = (page: Page): Locator =>
+  page.getByRole("list", { name: "Itinerary" }).getByRole("button");
+const mapFrame = (page: Page): Locator =>
+  page.getByRole("region", { name: "Map of the run" }).locator(".map");
+const numberMarker = (page: Page, stop: number): Locator =>
+  mapFrame(page)
+    .locator(".run-marker.numbered")
+    .filter({
+      hasText: new RegExp(`^(S |E )?${stop}$|^S/E \\d+ and ${stop}$`),
+    });
+
+// What the map publishes on its frame: its centre, zoom and the stop it is selected on.
+async function mapView(
+  page: Page,
+): Promise<{ centre: [number, number]; zoom: number; selected: string }> {
+  return mapFrame(page).evaluate((frame) => ({
+    centre: (frame as HTMLElement).dataset.center!.split(",").map(Number) as [
+      number,
+      number,
+    ],
+    zoom: Number((frame as HTMLElement).dataset.zoom),
+    selected: (frame as HTMLElement).dataset.selectedStop ?? "",
+  }));
+}
+
+// The middle of the box that holds every line and marker of `stop` in the planner's own geometry answer.
+function middleOf(geometry: Geometry, stop: number): [number, number] {
+  const points = geometry.features
+    .filter((f) => {
+      const p = f.properties as { stop: number; end_stop?: number | null };
+      return p.stop === stop || p.end_stop === stop;
+    })
+    .flatMap((f) =>
+      f.geometry.type === "LineString"
+        ? (f.geometry.coordinates as [number, number][])
+        : [f.geometry.coordinates as [number, number]],
+    );
+  const lons = points.map((point) => point[0]);
+  const lats = points.map((point) => point[1]);
+  return [
+    (Math.min(...lons) + Math.max(...lons)) / 2,
+    (Math.min(...lats) + Math.max(...lats)) / 2,
+  ];
+}
+
+const km = (value: number): string => `${value.toFixed(1)} km`;
+const hoursMinutes = (seconds: number): string => {
+  const minutes = Math.round(seconds / 60);
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}`;
+};
+
+const dimmed = (page: Page, layer: string): Promise<string> =>
+  page.evaluate(
+    (id) =>
+      JSON.stringify(
+        (
+          window as unknown as {
+            __overlandRunMap: {
+              getPaintProperty(layer: string, name: string): unknown;
+            };
+          }
+        ).__overlandRunMap.getPaintProperty(id, "line-opacity"),
+      ),
+    layer,
+  );
+
+test("On a laptop the summary card and the first steps are in view", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
   await page.setViewportSize({ width: 1440, height: 900 });
-  // chromium only. Real run, detail rewritten to real roads (answerWith + onRealRoads).
-  // Checks: "Your route"; the card with total km and time, road and off-road, "Real roads"; steps 1-3 boxes inside
-  // the viewport without scrolling; main action "Export GPX", "Edit trip" offered.
+  const { detail } = await openARealRoadRun(page, testInfo);
+
+  const region = page.getByRole("region", { name: "Your route", exact: true });
+  await expect(region).toBeVisible();
+  const totals = region.getByLabel("Totals");
+  for (const text of [
+    km(detail.totals!.total_km),
+    hoursMinutes(detail.totals!.total_s),
+    km(detail.totals!.road_km),
+    hoursMinutes(detail.totals!.road_s),
+    km(detail.totals!.offroad_km),
+    hoursMinutes(detail.totals!.offroad_s),
+  ])
+    await expect(totals).toContainText(text);
+  await expect(region.getByText("Real roads")).toBeVisible();
+
+  const viewport = page.viewportSize()!;
+  const map = (await page
+    .getByRole("region", { name: "Map of the run" })
+    .boundingBox())!;
+  const card = (await totals.boundingBox())!;
+  const first = steps(page);
+  await expect(first).toHaveCount(detail.stops.length);
+  for (const [index, step] of (await first.all()).slice(0, 3).entries()) {
+    const box = (await step.boundingBox())!;
+    expect(
+      box.y + box.height,
+      `step ${index + 1} is in the window without scrolling`,
+    ).toBeLessThanOrEqual(viewport.height);
+    expect(box.y, `step ${index + 1} is below the card`).toBeGreaterThan(
+      card.y + card.height - 1,
+    );
+    expect(box.x, "right of the map").toBeGreaterThanOrEqual(
+      map.x + map.width - 1,
+    );
+  }
+  const main = region.getByRole("link", { name: "Export GPX" });
+  await expect(main).toBeVisible();
+  await expect(main).toHaveClass(/primary/);
+  await expect(region.getByRole("button", { name: "Edit trip" })).toBeVisible();
 });
 
 test("An estimate route says Estimate in the card and on the map", async ({
@@ -508,37 +716,126 @@ test("An estimate route says Estimate in the card and on the map", async ({
   await expect(page.getByText("Real roads")).toHaveCount(0);
 });
 
-test.fixme("Selecting a step moves the map to it", async ({
-  page,
-}, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Real run on real roads (W4). Checks: after a press on step 3 the map's published centre and zoom move to that
-  // stop's bounds; marker 3 has the accent ring and step 3 is highlighted; the other lines dimmed.
+test("Selecting a step moves the map to it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { detail, geometry } = await openARealRoadRun(page, testInfo);
+  const stop = detail.stops.findIndex((s) => s.type === "track") + 1;
+
+  await steps(page)
+    .nth(stop - 1)
+    .click();
+
+  await expect
+    .poll(async () => (await mapView(page)).selected)
+    .toBe(String(stop));
+  const after = await mapView(page);
+  const [lon, lat] = middleOf(geometry, stop);
+  expect(after.centre[0]).toBeCloseTo(lon, 2);
+  expect(after.centre[1]).toBeCloseTo(lat, 2);
+  expect(after.zoom).toBeLessThanOrEqual(13);
+  await expect(numberMarker(page, stop)).toHaveClass(/selected/);
+  expect(
+    await numberMarker(page, stop).evaluate(
+      (el) => getComputedStyle(el).boxShadow,
+    ),
+    "the marker is ringed in the accent colour",
+  ).toContain("rgb(29, 78, 216)");
+  await expect(steps(page).nth(stop - 1)).toHaveAttribute(
+    "aria-current",
+    "step",
+  );
+  expect(await dimmed(page, "road-confirmed")).toContain("0.35");
+
+  await page.getByRole("button", { name: "Show whole route" }).click();
+  await expect.poll(async () => (await mapView(page)).selected).toBe("");
+  await expect(steps(page).nth(stop - 1)).not.toHaveAttribute(
+    "aria-current",
+    "step",
+  );
+  expect(await dimmed(page, "road-confirmed")).not.toContain("0.35");
+  await expect(
+    page.getByRole("button", { name: "Show whole route" }),
+  ).toBeHidden();
 });
 
-test.fixme("Selecting a stop on the map highlights its step", async ({
+test("Selecting a stop on the map highlights its step", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // Detail and geometry rewritten to the owner's order with Colle del Sommeiller as stop 7 (W4, fulfill only).
-  // Checks: a press on marker 7 highlights step 7 and scrolls it into view.
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // The trail is the (fillers + 2)th stop, as the owner's stop 7 is a long way down the list.
+  const { detail } = await openARealRoadRun(page, testInfo, { fillers: 5 });
+  const stop = detail.stops.findIndex((s) => s.type === "track") + 1;
+  expect(stop).toBe(7);
+  const step = steps(page).nth(stop - 1);
+  await expect(step).not.toHaveAttribute("aria-current", "step");
+
+  await numberMarker(page, stop).click();
+
+  await expect(step).toHaveAttribute("aria-current", "step");
+  await expect(step).toBeInViewport();
+  expect((await mapView(page)).selected).toBe(String(stop));
 });
 
-test.fixme("A retrace is its own step, linked to its own line", async ({
+test("A retrace is its own step, linked to its own line", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // A 12.4 km retrace of Colle del Sommeiller added to the detail and the geometry (W4, as slice 12's
-  // withSommeillerRetrace, read once). Checks: the retrace step fits the map to the retrace line; its reason word for
-  // word and 12.4 km off-road; the trail once as a trail step and once as a retrace step.
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { detail, geometry } = await openARealRoadRun(page, testInfo, {
+    retrace: true,
+  });
+  const stop = detail.stops.findIndex((s) => s.type === "retrace") + 1;
+  const step = steps(page).nth(stop - 1);
+
+  await step.click();
+
+  await expect
+    .poll(async () => (await mapView(page)).selected)
+    .toBe(String(stop));
+  const [lon, lat] = middleOf(geometry, stop);
+  const view = await mapView(page);
+  expect(view.centre[0]).toBeCloseTo(lon, 2);
+  expect(view.centre[1]).toBeCloseTo(lat, 2);
+  await expect(step).toContainText(RETRACE_REASON);
+  await expect(step).toContainText(`${RETRACE_KM} km`);
+  await expect(step).toContainText("off-road");
+  await expect(step).toContainText("Back the same way");
+  const named = steps(page).filter({ hasText: SOMMEILLER });
+  await expect(named).toHaveCount(2);
+  await expect(named.filter({ hasText: /Sommeiller\s*Trail/ })).toHaveCount(1);
+  await expect(
+    named.filter({ hasText: /Sommeiller\s*Back the same way/ }),
+  ).toHaveCount(1);
 });
 
-test.fixme("On a phone the map follows the selected step", async ({
+test("On a phone the map follows the selected step", async ({
   page,
 }, testInfo) => {
-  await serveTheBaseMap(page, testInfo);
-  // webkit-iphone14 only. Real run on real roads (W4). Checks: a tap on step 5 scrolls the map into view, zoomed
-  // to the stop with marker 5 highlighted; no sideways scroll; every step >= 44 px high.
+  test.skip(testInfo.project.name !== "webkit-iphone14", "the phone profile");
+  const { detail } = await openARealRoadRun(page, testInfo);
+  const stop = detail.stops.findIndex((s) => s.type === "track") + 1;
+  const step = steps(page).nth(stop - 1);
+  await step.scrollIntoViewIfNeeded();
+  const frame = page.getByRole("region", { name: "Map of the run" });
+  await expect(frame).not.toBeInViewport({ ratio: 0.5 });
+
+  await step.tap();
+
+  await expect(frame).toBeInViewport({ ratio: 0.5 });
+  expect((await mapView(page)).selected).toBe(String(stop));
+  await expect(numberMarker(page, stop)).toHaveClass(/selected/);
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    ),
+    "no sideways scroll",
+  ).toBe(false);
+  for (const each of await steps(page).all())
+    expect((await each.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
 });
 
 // ===================== US-25 The status in user words, engine details behind Details =====================
@@ -969,12 +1266,14 @@ test("Planning an unchanged trip with a retrace reuses the route and keeps each 
   await expect(
     itinerary.getByRole("listitem").filter({ hasText: COLLE }),
   ).toHaveCount(2);
-  await expect(itinerary.getByText("Retrace", { exact: true })).toHaveCount(1);
+  await expect(
+    itinerary.getByText("Back the same way", { exact: true }),
+  ).toHaveCount(1);
   await expect(
     itinerary
       .getByRole("listitem")
       .filter({ hasText: COLLE })
-      .getByText("Track", { exact: true }),
+      .getByText("Trail", { exact: true }),
   ).toHaveCount(1);
   await expectOneClosedDetails(page);
   await openDetails(page);

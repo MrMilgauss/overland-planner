@@ -2,13 +2,20 @@
 // Couldn't plan is headed 'Previous route' and keeps its export (D208).
 // bypass: no Hypothesis in the web stack (EXEMPT FROM PARADIGM); one example per card variant.
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import RouteCard from './RouteCard.svelte';
 import { planState } from './planState';
+import { ROAD_COLOUR, TRACK_COLOUR } from './runMap';
 import type { PlanRunDetail } from './api';
 
 afterEach(cleanup);
+
+/** jsdom reports a colour as rgb(r, g, b). */
+function hexToRgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 const outOfDate = planState({
   loading: false,
@@ -139,5 +146,58 @@ describe('RouteCard', () => {
 
     expect(screen.queryByRole('button', { name: 'Plan the route' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Export GPX' })).toHaveClass('primary');
+  });
+
+  const TOTALS = {
+    road_km: 412.25,
+    road_s: 34_800,
+    offroad_km: 98.75,
+    offroad_s: 29_400,
+    total_km: 511.0,
+    total_s: 64_200,
+  };
+
+  it('shows the total km and time large, and the road and off-road km and time side by side', () => {
+    render(RouteCard, {
+      props: {
+        run: run(false, { totals: TOTALS }),
+        look: ready,
+        exportUrl: '/x',
+        onedit: () => {},
+      },
+    });
+
+    const totals = screen.getByLabelText('Totals');
+    expect(within(totals).getByText('511.0 km')).toHaveClass('total');
+    expect(within(totals).getByText('17h50')).toHaveClass('total');
+    expect(within(totals).getByText('Road').parentElement).toHaveTextContent(/412\.2 km\s*9h40/);
+    expect(within(totals).getByText('Off-road').parentElement).toHaveTextContent(/98\.8 km\s*8h10/);
+  });
+
+  it("marks the road and off-road figures with the colours of the map's road and track lines", () => {
+    render(RouteCard, {
+      props: {
+        run: run(false, { totals: TOTALS }),
+        look: ready,
+        exportUrl: '/x',
+        onedit: () => {},
+      },
+    });
+
+    const totals = screen.getByLabelText('Totals');
+    const edge = (label: string) =>
+      (within(totals).getByText(label).parentElement as HTMLElement).style.borderLeftColor;
+    expect(edge('Road')).toBe(hexToRgb(ROAD_COLOUR));
+    expect(edge('Off-road')).toBe(hexToRgb(TRACK_COLOUR));
+  });
+
+  it('shows the card without numbers for a run stored before the totals', () => {
+    render(RouteCard, {
+      props: { run: run(false, { totals: null }), look: ready, exportUrl: '/x', onedit: () => {} },
+    });
+
+    expect(screen.queryByLabelText('Totals')).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d km/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Export GPX' })).toBeInTheDocument();
   });
 });

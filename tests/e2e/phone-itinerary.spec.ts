@@ -38,7 +38,10 @@ test("Giulia opens the results on her phone", async ({ page }) => {
       visible: await row.isVisible(),
     });
   }
-  const totals = page.getByLabel("Totals");
+  // The totals are the summary card's numbers, no longer a part of the itinerary (D286).
+  const totals = page
+    .getByRole("region", { name: "Your route", exact: true })
+    .getByLabel("Totals");
   const totalsText =
     (await totals.count()) > 0 ? await totals.first().innerText() : null;
   const pageWidth = await page.evaluate(() =>

@@ -194,10 +194,15 @@ test("On a laptop the map is the main surface", async ({ page }, testInfo) => {
     phasePanel.width,
   );
   const viewport = page.viewportSize()!;
+  const steps = page
+    .getByRole("list", { name: "Itinerary" })
+    .getByRole("button");
   const inView = [
     page.getByRole("region", { name: "Your route", exact: true }),
-    page.getByRole("list", { name: "Itinerary" }),
-    page.getByLabel("Totals"),
+    page.getByLabel("Totals"), // the summary card's numbers
+    steps.nth(0),
+    steps.nth(1),
+    steps.nth(2),
   ];
   for (const part of inView) {
     const box = await boxOf(part);
@@ -205,7 +210,10 @@ test("On a laptop the map is the main surface", async ({ page }, testInfo) => {
       map.x + map.width - 1,
     );
     expect(box.y).toBeGreaterThanOrEqual(0);
-    expect(box.y).toBeLessThan(viewport.height); // the top of the itinerary and of the totals is in the window
+    // the top of the phase and of the card, and the whole of steps 1-3, are in the window
+    expect(box.y).toBeLessThan(viewport.height);
+    if (part !== inView[0])
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
   }
 });
@@ -238,13 +246,15 @@ test("On a phone nothing scrolls sideways and every target is touch-sized", asyn
       const map = await boxOf(
         page.getByRole("region", { name: "Map of the run" }),
       );
-      const itinerary = await boxOf(
-        page.getByRole("list", { name: "Itinerary" }),
-      );
-      expect(
-        itinerary.y,
-        "the itinerary is below the map",
-      ).toBeGreaterThanOrEqual(map.y + map.height - 1);
+      for (const [what, part] of [
+        ["the summary card", page.getByLabel("Totals")],
+        ["the itinerary", page.getByRole("list", { name: "Itinerary" })],
+      ] as const) {
+        const box = await boxOf(part);
+        expect(box.y, `${what} is below the map`).toBeGreaterThanOrEqual(
+          map.y + map.height - 1,
+        );
+      }
     }
     expect(
       await smallTargets(page),

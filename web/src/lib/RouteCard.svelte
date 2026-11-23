@@ -1,11 +1,14 @@
 <script lang="ts">
   // The first route card (D286): the status, whether the roads are real, the 'Not fully optimised' tag, Export GPX (an
-  // older run's too, D208) and Edit trip. 12-06 completes it with the totals and the road and off-road split. Out of
+  // older run's too, D208) and Edit trip. The totals are large and the road and off-road split stands beside them, each with an edge mark in the map's own line colour; a run stored before the totals has a card without numbers. Out of
   // date: 'Plan the route' is the main action and Export GPX stays, secondary (D259). Under Couldn't plan the older
   // ready run's card is headed 'Previous route'.
   import StatusBadge from './StatusBadge.svelte';
   import { estimateMarker, type PlanLook } from './planState';
   import type { PlanRunDetail } from './api';
+  import { durationText } from './duration';
+  import { legKmText } from './legKm';
+  import { ROAD_COLOUR, TRACK_COLOUR } from './runMap';
 
   let {
     run,
@@ -27,6 +30,7 @@
   } = $props();
 
   const estimate = $derived(estimateMarker(run.estimate));
+  const totals = $derived(run.totals ?? null);
   const outOfDate = $derived(!previous && look.state === 'stale');
 </script>
 
@@ -60,6 +64,25 @@
       <StatusBadge tone="warning" fill="outline" label="Not fully optimised" />
     {/if}
   </div>
+  {#if totals}
+    <dl class="figures" aria-label="Totals">
+      <div class="whole">
+        <dt>Total</dt>
+        <dd class="total">{legKmText(totals.total_km)}</dd>
+        <dd class="total">{durationText(totals.total_s)}</dd>
+      </div>
+      <div class="part" style:border-left-color={ROAD_COLOUR}>
+        <dt>Road</dt>
+        <dd>{legKmText(totals.road_km)}</dd>
+        <dd>{durationText(totals.road_s)}</dd>
+      </div>
+      <div class="part" style:border-left-color={TRACK_COLOUR}>
+        <dt>Off-road</dt>
+        <dd>{legKmText(totals.offroad_km)}</dd>
+        <dd>{durationText(totals.offroad_s)}</dd>
+      </div>
+    </dl>
+  {/if}
   <div class="actions">
     {#if outOfDate}
       <button type="button" class="primary" onclick={onplan}>Plan the route</button>
@@ -86,5 +109,45 @@
     flex-wrap: wrap;
     gap: var(--space-2);
     align-items: center;
+  }
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+  }
+  .figures dd,
+  .figures dt {
+    margin: 0;
+  }
+  .whole {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    align-items: baseline;
+  }
+  .whole dt {
+    flex-basis: 100%;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .total {
+    font-size: var(--text-2xl);
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .part {
+    display: grid;
+    gap: var(--space-1);
+    padding-left: var(--space-2);
+    border-left: 4px solid;
+  }
+  .part dt {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .part dd {
+    font-weight: 600;
   }
 </style>

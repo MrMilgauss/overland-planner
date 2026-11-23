@@ -19,6 +19,9 @@
     buildTripMap,
     CREDIT_LAYER,
     DEFAULT_VIEW,
+    DIMMED_PAINTS,
+    stopBounds,
+    stopOpacity,
     TERRAIN_LAYER,
     placeClicked,
     placeRetraceLabel,
@@ -35,6 +38,8 @@
     items = [],
     projectId,
     estimate = false,
+    selectedStop = undefined,
+    onselectstop,
     onplaceadded,
     clickMode = $bindable(false),
   }: {
@@ -42,6 +47,10 @@
     items?: Item[];
     projectId?: string;
     estimate?: boolean;
+    /** The stop selected on the page (D286): the map goes to it, rings its number and dims the other lines. */
+    selectedStop?: number | undefined;
+    /** A number marker pressed, or 'Show whole route' (undefined). */
+    onselectstop?: (stop: number | undefined) => void;
     onplaceadded?: () => void;
     clickMode?: boolean;
   } = $props();
@@ -50,11 +59,13 @@
   let problem = $state('');
   let clicked = $state<(Place & { x: number; y: number }) | undefined>();
   let settings: Promise<MapConfig> | undefined;
+  let select: ((stop: number | undefined, fit: boolean) => void) | undefined; // the drawn map's, once it is drawn
 
   const marker = $derived(estimateMarker(estimate));
 
   const NUMBERED = ['stop', 'start', 'end', 'start_end'];
   const FIT_PADDING = 48;
+  const STOP_MAX_ZOOM = 13; // a trail
   const ITEMS_MAX_ZOOM = 12; // one place alone is not zoomed in on to the street
   // Without a run the map is drawn afresh whenever the trip's items change; with one, the items do not matter.
   const itemsKey = $derived(planRunId ? '' : JSON.stringify(items));
@@ -200,6 +211,7 @@
         ...(geometry ? {} : { maxZoom: ITEMS_MAX_ZOOM }),
       });
     publish();
+    const numbered: { element: HTMLElement; stops: number[] }[] = [];
     const retraces: {
       marker: { setLngLat(lngLat: [number, number]): unknown };
       element: HTMLElement;
@@ -211,7 +223,64 @@
       const placed = new maplibre.Marker({ element, anchor }).setLngLat(overlay.lngLat).addTo(map);
       if (overlay.candidates)
         retraces.push({ marker: placed, element, candidates: overlay.candidates });
+      if (overlay.stops) {
+        const stops = overlay.stops;
+        numbered.push({ element, stops });
+        element.addEventListener('click', (event) => {
+          event.stopPropagation(); // not a click on the map
+          onselectstop?.(stops[0]);
+        });
+      }
     }
+    // The selection: the number's ring, the other lines dimmed, the fit and the way back (D286).
+    let chosen: number | undefined;
+    const wholeRoute = document.createElement('button');
+    wholeRoute.type = 'button';
+    wholeRoute.className = 'whole-route-button';
+    wholeRoute.textContent = 'Show whole route';
+    wholeRoute.addEventListener('click', () => onselectstop?.(undefined));
+    const wholeRouteGroup = document.createElement('div');
+    wholeRouteGroup.className = 'maplibregl-ctrl maplibregl-ctrl-group whole-route-control';
+    wholeRouteGroup.hidden = true;
+    wholeRouteGroup.append(wholeRoute);
+    map.addControl(
+      { onAdd: () => wholeRouteGroup, onRemove: () => wholeRouteGroup.remove() },
+      'bottom-left',
+    );
+    let everDimmed = false;
+    const dim = (): void => {
+      if (chosen === undefined && !everDimmed) return; // nothing was ever dimmed: nothing to undo
+      everDimmed = true;
+      // While a style is being replaced the layers are not there to set; the next 'style.load' sets them again.
+      for (const [layer, property] of DIMMED_PAINTS) {
+        try {
+          map.setPaintProperty(layer, property as 'line-opacity', stopOpacity(chosen));
+        } catch {
+          // see above
+        }
+      }
+    };
+    map.on('style.load', () => {
+      if (chosen !== undefined) dim();
+    });
+    select = (stop, fit) => {
+      chosen = stop;
+      for (const { element, stops } of numbered)
+        element.classList.toggle('selected', stop !== undefined && stops.includes(stop));
+      dim();
+      frame.dataset.selectedStop = stop === undefined ? '' : String(stop);
+      wholeRouteGroup.hidden = stop === undefined;
+      const bounds = stop === undefined || !geometry ? plan.bounds : stopBounds(geometry, stop);
+      if (fit && bounds)
+        map.fitBounds(bounds, {
+          padding: FIT_PADDING,
+          animate: false,
+          ...(stop === undefined ? {} : { maxZoom: STOP_MAX_ZOOM }),
+        });
+      publish();
+    };
+    const first = untrack(() => selectedStop);
+    select(first, first !== undefined);
     // A "retrace" label stands at the first candidate place whose box covers no stop number, and waits (hidden) until a
     // move leaves one clear (D270). Read from the page's own boxes, after every move.
     const keepClear = (): void => {
@@ -241,6 +310,7 @@
     map.on('moveend', keepClear);
     keepClear();
     return () => {
+      select = undefined;
       if (exposed) delete (window as unknown as { __overlandRunMap?: unknown }).__overlandRunMap;
       map.remove();
     };
@@ -256,6 +326,11 @@
     clickMode = !clickMode;
     clicked = undefined;
   }
+
+  $effect(() => {
+    const stop = selectedStop;
+    select?.(stop, true);
+  });
 
   $effect(() => {
     const id = planRunId;
@@ -377,6 +452,23 @@
       600 0.8rem/1 system-ui,
       sans-serif;
     color: black;
+  }
+  /* The stop selected on the itinerary or on the map: ringed in the accent colour (D286). */
+  :global(.run-marker.numbered.selected) {
+    box-shadow: 0 0 0 3px var(--color-accent);
+  }
+  :global(.maplibregl-ctrl-group .whole-route-button) {
+    width: auto;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 0.75rem;
+    border: 0;
+    border-radius: 4px;
+    background: white;
+    color: black;
+    font:
+      600 0.9rem/1 system-ui,
+      sans-serif;
   }
   :global(.run-marker.numbered) {
     min-width: 1.5rem;

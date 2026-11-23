@@ -62,6 +62,8 @@ export interface RunGeometry {
 /** Something HTML on the map: a numbered stop, an entry or exit, or a text on a line. */
 export interface MapOverlay {
   kind: MarkerProperties['marker'] | 'unconfirmed' | 'retrace' | 'unavailable' | 'place';
+  /** The itinerary stops a numbered marker stands for: its own, and the End's too for a round trip's S/E marker. */
+  stops?: number[];
   text: string;
   title: string;
   lngLat: LngLat;
@@ -76,10 +78,10 @@ export interface RunMapPlan {
   bounds: [LngLat, LngLat] | null;
 }
 
-const ROAD_BLUE = '#1d4ed8';
+export const ROAD_COLOUR = '#1d4ed8';
 const UNCONFIRMED_ORANGE = '#ea580c';
 const RETRACE_PURPLE = '#7e22ce';
-const TRACK_GREEN = '#14532d';
+export const TRACK_COLOUR = '#14532d';
 const UNAVAILABLE_GREY = '#6b7280';
 // Line widths follow the zoom like the arrows (D287): 4 px for the whole trip, 7 px on a trail, each on a white casing
 // 3 px wider so that the route stands out on any base map.
@@ -223,7 +225,7 @@ function layersOf(config: MapConfig, terrain: boolean): LayerSpecification[] {
     ...lineLayers(
       'road-confirmed',
       drawn(is('kind', 'road'), is('level', 'confirmed'), available),
-      ROAD_BLUE,
+      ROAD_COLOUR,
     ),
     ...lineLayers(
       'road-unconfirmed',
@@ -232,7 +234,7 @@ function layersOf(config: MapConfig, terrain: boolean): LayerSpecification[] {
       [0.5, 2],
     ),
     ...lineLayers('retrace', drawn(is('kind', 'retrace'), available), RETRACE_PURPLE, [8, 4]),
-    ...lineLayers('track', drawn(is('kind', 'track'), available), TRACK_GREEN),
+    ...lineLayers('track', drawn(is('kind', 'track'), available), TRACK_COLOUR),
     {
       id: 'track-arrows',
       type: 'symbol',
@@ -303,21 +305,25 @@ function labelOf(line: LineFeature): MapOverlay | undefined {
 function markerOf(feature: MarkerFeature): MapOverlay {
   const { marker, stop, end_stop: endStop, name } = feature.properties;
   const lngLat = feature.geometry.coordinates;
-  const numbered = (text: string, numbers: string): MapOverlay => ({
+  const numbered = (text: string, numbers: string, stops: number[]): MapOverlay => ({
     kind: marker,
     text,
     title: `${numbers}. ${name}`,
     lngLat,
+    stops,
   });
   switch (marker) {
     case 'start_end':
-      return numbered(`S/E ${stop} and ${endStop}`, `${stop} and ${endStop}`);
+      return numbered(`S/E ${stop} and ${endStop}`, `${stop} and ${endStop}`, [
+        stop,
+        ...(endStop === null ? [] : [endStop]),
+      ]);
     case 'start':
-      return numbered(`S ${stop}`, `${stop}`);
+      return numbered(`S ${stop}`, `${stop}`, [stop]);
     case 'end':
-      return numbered(`E ${stop}`, `${stop}`);
+      return numbered(`E ${stop}`, `${stop}`, [stop]);
     case 'stop':
-      return numbered(`${stop}`, `${stop}`);
+      return numbered(`${stop}`, `${stop}`, [stop]);
     case 'entry':
       return { kind: marker, text: '', title: `Entry of ${name}`, lngLat };
     case 'exit':
@@ -334,6 +340,43 @@ function boundsOf(points: LngLat[]): [LngLat, LngLat] | null {
     [Math.max(...lngs), Math.max(...lats)],
   ];
 }
+
+/** The box around every line and marker of one itinerary stop (a round trip's S/E marker belongs to its End too); none
+ * when nothing is drawn for it. */
+export function stopBounds(geometry: RunGeometry, stop: number): [LngLat, LngLat] | null {
+  const points = geometry.features
+    .filter(
+      (feature) =>
+        feature.properties.stop === stop ||
+        ('end_stop' in feature.properties && feature.properties.end_stop === stop),
+    )
+    .flatMap((feature) =>
+      isLine(feature) ? feature.geometry.coordinates : [feature.geometry.coordinates],
+    );
+  return boundsOf(points);
+}
+
+/** The lines other than the selected stop's are drawn at this opacity (D286). */
+export const DIMMED_OPACITY = 0.35;
+
+/** The opacity of every route line while `stop` is selected: full for its own lines, dimmed for the rest. */
+export function stopOpacity(stop: number | undefined): number | ExpressionSpecification {
+  return stop === undefined ? 1 : ['case', ['==', ['get', 'stop'], stop], 1, DIMMED_OPACITY];
+}
+
+/** Every layer a selection dims, with the paint property that holds its opacity. */
+export const DIMMED_PAINTS: [string, string][] = [
+  'unavailable',
+  'road-confirmed',
+  'road-unconfirmed',
+  'retrace',
+  'track',
+]
+  .flatMap((id) => [
+    [id, 'line-opacity'] as [string, string],
+    [`${id}-casing`, 'line-opacity'] as [string, string],
+  ])
+  .concat([['track-arrows', 'icon-opacity']]);
 
 /** The map's own style: a plain background, the Terrain tiles (hidden unless `terrain`) and the route; never blank. */
 export function buildRunMap(geometry: RunGeometry, config: MapConfig, terrain = false): RunMapPlan {

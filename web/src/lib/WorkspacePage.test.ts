@@ -5,21 +5,25 @@
 // property-tested at the domain level (steps 03-08, 03-09).
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkspacePage from './WorkspacePage.svelte';
 import type { Item } from './api';
 
 // The map has its own tests (TripMap.svelte.test.ts, tests/e2e/run-map.spec.ts); here it draws nothing and records its props.
 const map = vi.hoisted(() => ({
   props: undefined as
-    | { planRunId?: string; items: Item[]; onplaceadded?: () => void; clickMode?: boolean }
+    | {
+        planRunId?: string;
+        items: Item[];
+        onplaceadded?: () => void;
+        clickMode?: boolean;
+        selectedStop?: number;
+        onselectstop?: (stop: number | undefined) => void;
+      }
     | undefined,
 }));
 vi.mock('./TripMap.svelte', () => ({
-  default: (
-    _anchor: unknown,
-    props: { planRunId?: string; items: Item[]; onplaceadded?: () => void; clickMode?: boolean },
-  ) => {
+  default: (_anchor: unknown, props: NonNullable<typeof map.props>) => {
     map.props = props;
   },
 }));
@@ -343,4 +347,111 @@ describe('Workspace page: the map as the main column', () => {
       'the map shows the items while the trip is edited',
     ).toBeUndefined();
   });
+});
+
+describe('Workspace page: a stop selected on the itinerary or on the map (D286)', () => {
+  const STOP = {
+    type: 'poi',
+    leg_km: 10,
+    leg_s: 600,
+    cumulative_km: null,
+    cumulative_s: null,
+    track_km: null,
+    offroad_s: null,
+    entry: null,
+    exit: null,
+  };
+  const READY: Record<string, Reply> = {
+    'GET /api/projects/p1/plan-runs': {
+      status: 200,
+      body: [{ id: 'r1', number: 1, status: 'ready' }],
+    },
+    'GET /api/plan-runs/r1': {
+      status: 200,
+      body: {
+        id: 'r1',
+        project_id: 'p1',
+        number: 1,
+        status: 'ready',
+        estimate: false,
+        totals: null,
+        stops: [
+          { ...STOP, name: 'Torino' },
+          { ...STOP, name: 'Susa' },
+          { ...STOP, name: 'Briancon' },
+        ],
+      },
+    },
+  };
+
+  const steps = () =>
+    within(screen.getByRole('list', { name: 'Itinerary' })).getAllByRole('button');
+  const current = () => steps().map((step) => step.getAttribute('aria-current'));
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn(); // jsdom has none
+  });
+
+  async function openReadyRoute(): Promise<void> {
+    stubPlanner([[]], READY);
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await vi.waitFor(() => expect(map.props?.planRunId).toBe('r1'));
+  }
+
+  function phone(matches: boolean): ReturnType<typeof vi.fn> {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches })),
+    );
+    return scrolled;
+  }
+
+  it('hands the map the stop of the step pressed, and the step the stop picked on the map', async () => {
+    await openReadyRoute();
+    expect(map.props?.selectedStop).toBeUndefined();
+
+    await fireEvent.click(steps()[2]);
+    await vi.waitFor(() => expect(map.props?.selectedStop).toBe(3));
+    expect(current()).toEqual([null, null, 'step']);
+
+    map.props?.onselectstop?.(2);
+    await vi.waitFor(() => expect(current()).toEqual([null, 'step', null]));
+    expect(map.props?.selectedStop).toBe(2);
+
+    map.props?.onselectstop?.(undefined); // Show whole route
+    await vi.waitFor(() => expect(current()).toEqual([null, null, null]));
+  });
+
+  it('forgets the selection when the route goes out of the map', async () => {
+    await openReadyRoute();
+    await fireEvent.click(steps()[1]);
+    await vi.waitFor(() => expect(map.props?.selectedStop).toBe(2));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit trip' }));
+
+    await vi.waitFor(() => expect(map.props?.planRunId).toBeUndefined());
+    expect(map.props?.selectedStop).toBeUndefined();
+  });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    'on a phone (%s) a step press brings the map into view: %i scroll(s)',
+    async (isPhone, count) => {
+      const scrolled = phone(isPhone);
+      await openReadyRoute();
+
+      await fireEvent.click(steps()[1]);
+
+      await vi.waitFor(() => expect(map.props?.selectedStop).toBe(2));
+      expect(scrolled).toHaveBeenCalledTimes(count);
+      if (isPhone) {
+        expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
+        expect(scrolled.mock.contexts[0]).toHaveClass('stage');
+      }
+    },
+  );
 });

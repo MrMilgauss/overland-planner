@@ -30,6 +30,8 @@
   let clickMode = $state(false); // the map's "Click on map to add", also put on by the Add menu
   let shownRunId = $state<string | undefined>(); // the ready run the panel shows (Your route): the map draws it
   let shownRunIsEstimate = $state(false); // its roads are the offline road map: the map's chip says so
+  let selectedStop = $state<number | undefined>(); // the itinerary step or the map's number marker picked, on the shown run
+  let stage = $state<HTMLElement | undefined>();
   let panel = $state<{ reload: () => Promise<void>; edit: () => void } | undefined>();
 
   const objective = $derived<Objective>(project?.objective ?? 'distance');
@@ -40,6 +42,13 @@
 
   async function refresh(): Promise<void> {
     items = await listItems(projectId);
+  }
+
+  /** A step pressed: the map goes to the stop and, on a phone where the map is above the list, comes into view. */
+  function stepPressed(stop: number): void {
+    selectedStop = stop;
+    if (window.matchMedia?.('(max-width: 1023px)').matches)
+      stage?.scrollIntoView({ block: 'nearest' });
   }
 
   /** The trip changed: its list and the panel's runs (the shown route may be out of date now) are read again. */
@@ -112,13 +121,15 @@
   </div>
 
   {#if project}
-    <div class="stage">
+    <div class="stage" bind:this={stage}>
       {#if itemsRead && runsRead}
         <TripMap
           planRunId={shownRunId}
           {items}
           {projectId}
           estimate={shownRunIsEstimate}
+          {selectedStop}
+          onselectstop={(stop) => (selectedStop = stop)}
           onplaceadded={placeAddedOnMap}
           bind:clickMode
         />
@@ -130,7 +141,10 @@
         bind:this={panel}
         {projectId}
         {objective}
+        {selectedStop}
+        onselectstop={stepPressed}
         onrunshown={(id, estimate) => {
+          if (id !== shownRunId) selectedStop = undefined;
           shownRunId = id;
           shownRunIsEstimate = estimate;
           runsRead = true;

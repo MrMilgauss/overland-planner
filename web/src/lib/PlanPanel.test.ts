@@ -351,7 +351,7 @@ describe('Plan panel: refusals and failures', () => {
     expect(alert).not.toHaveTextContent('invariant_violation');
   });
 
-  it('shows the Totals of the ready run under its itinerary', async () => {
+  it('shows the Totals of the ready run in its card', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS),
@@ -361,9 +361,30 @@ describe('Plan panel: refusals and failures', () => {
     await settled();
 
     const totals = screen.getByLabelText('Totals');
-    expect(totals).toHaveTextContent('Road 412.2 km, 9h40');
-    expect(totals).toHaveTextContent('Off-road 98.8 km, 8h10');
-    expect(totals).toHaveTextContent('Total 511.0 km, 17h50');
+    expect(totals).toHaveTextContent(/Road\s*412\.2 km\s*9h40/);
+    expect(totals).toHaveTextContent(/Off-road\s*98\.8 km\s*8h10/);
+    expect(totals).toHaveTextContent(/Total\s*511\.0 km\s*17h50/);
+  });
+
+  it('gives the page the selected stop, and the stop of the step pressed back to it', async () => {
+    stubPlanner({
+      [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
+      'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS),
+    });
+    const onselectstop = vi.fn();
+
+    const { rerender } = render(PlanPanel, {
+      props: { projectId: 'p1', selectedStop: undefined, onselectstop },
+    });
+    await settled();
+    const steps = within(screen.getByRole('list', { name: 'Itinerary' })).getAllByRole('button');
+    expect(steps.map((step) => step.getAttribute('aria-current'))).toEqual([null, null]);
+
+    await fireEvent.click(steps[1]);
+    expect(onselectstop).toHaveBeenCalledExactlyOnceWith(2);
+
+    await rerender({ projectId: 'p1', selectedStop: 2, onselectstop });
+    expect(steps.map((step) => step.getAttribute('aria-current'))).toEqual([null, 'step']);
   });
 
   it('keeps asking through a lost connection, with Plan the route usable, until the job answers again', async () => {
@@ -784,7 +805,7 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
   const NOT_READY = 'The road map service is still loading its map';
   const OLD_RUN = readyRun('r1', 1, 'Briancon', TOTALS);
 
-  it('puts the provider header and the objective label inside Details, after the itinerary, and the objective with the totals', async () => {
+  it('puts the provider header and the objective label inside Details, after the itinerary, and not with the totals', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: listed(['r1', 1, 'ready']),
       'GET /api/plan-runs/r1': readyRun('r1', 1, 'Briancon', TOTALS, {
@@ -805,8 +826,9 @@ describe('Plan panel: provider header, objective and the engine messages', () =>
       itinerary.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      within(screen.getByLabelText('Totals')).getByText('Minimised road time'),
+      within(header.closest('details') as HTMLElement).getByText('Minimised road time'),
     ).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Totals')).queryByText('Minimised road time')).toBeNull();
   });
 
   it('shows a run stored before the header with neither line and no "undefined"', async () => {

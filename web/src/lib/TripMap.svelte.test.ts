@@ -8,6 +8,7 @@ import '@testing-library/jest-dom/vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const maps = vi.hoisted(() => ({
@@ -22,6 +23,8 @@ const maps = vi.hoisted(() => ({
   controls: [] as unknown[],
   markers: [] as { element: HTMLElement; lngLat: unknown }[],
   fitted: [] as unknown[],
+  fitOptions: [] as Record<string, unknown>[],
+  paint: [] as [string, string, unknown][],
   handlers: {} as Record<string, (event: unknown) => void>,
   images: [] as string[],
   removed: 0,
@@ -70,8 +73,12 @@ vi.mock('maplibre-gl', () => {
     setLayoutProperty(layer: string, name: string, value: string) {
       maps.layout.push([layer, name, value]);
     }
-    fitBounds(bounds: unknown) {
+    fitBounds(bounds: unknown, options: Record<string, unknown> = {}) {
       maps.fitted.push(bounds);
+      maps.fitOptions.push(options);
+    }
+    setPaintProperty(layer: string, name: string, value: unknown) {
+      maps.paint.push([layer, name, value]);
     }
     remove() {
       maps.removed += 1;
@@ -100,7 +107,7 @@ vi.mock('maplibre-gl', () => {
 
 import TripMap from './TripMap.svelte';
 import { TerrainChoice } from './terrainChoice';
-import { CREDIT_LAYER, TERRAIN_LAYER } from './runMap';
+import { CREDIT_LAYER, stopOpacity, TERRAIN_LAYER } from './runMap';
 
 const CONFIG = {
   tile_url: 'https://tiles.example.test/{z}/{x}/{y}.png',
@@ -161,6 +168,8 @@ beforeEach(() => {
     maps.controls.length =
     maps.markers.length =
     maps.fitted.length =
+    maps.fitOptions.length =
+    maps.paint.length =
     maps.images.length =
       0;
   maps.removed = 0;
@@ -577,5 +586,119 @@ describe('TripMap with a run', () => {
       expect(label.style.display).not.toBe('none');
       expect(at()).toEqual([7.5, 45.5]);
     });
+  });
+});
+
+describe('TripMap with a stop selected (D286)', () => {
+  const marker = (stop: number, at: [number, number]) => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: at },
+    properties: { marker: 'stop', stop, item_id: 'i', name: `S${stop}`, end_stop: null },
+  });
+  const road = (stop: number, from: [number, number], to: [number, number]) => ({
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: [from, to] },
+    properties: {
+      kind: 'road',
+      stop,
+      item_id: 'i',
+      name: `S${stop}`,
+      level: 'confirmed',
+      reason: null,
+      geometry: 'available',
+    },
+  });
+  const TWO_STOPS = {
+    type: 'FeatureCollection',
+    features: [
+      road(2, [7, 45], [7.05, 45.05]),
+      road(3, [7.05, 45.05], [7.1, 45.1]),
+      marker(2, [7.05, 45.05]),
+      marker(3, [7.1, 45.1]),
+    ],
+  };
+
+  // The page's own way of changing the selection: one reactive prop of its own, so that nothing else is touched (the
+  // testing library's rerender replaces every prop at once).
+  const mounted: ReturnType<typeof mount>[] = [];
+  afterEach(() => mounted.splice(0).forEach((component) => unmount(component)));
+
+  async function drawn(onselectstop = vi.fn()) {
+    planner({
+      '/api/config/map': { status: 200, body: CONFIG },
+      '/api/plan-runs/r1/geometry': { status: 200, body: TWO_STOPS },
+    });
+    const props = $state({
+      planRunId: 'r1',
+      selectedStop: undefined as number | undefined,
+      onselectstop,
+    });
+    mounted.push(mount(TripMap, { target: document.body, props }));
+    flushSync();
+    await waitFor(() => expect(maps.fitted).toHaveLength(1));
+    const control = (maps.controls as { onAdd?: (map: unknown) => HTMLElement }[]).filter(
+      (candidate) => candidate.onAdd,
+    )[1].onAdd!({});
+    const numbered = (text: string) =>
+      maps.markers.find((placed) => placed.element.textContent === text)!.element;
+    const view = {
+      rerender: async (next: { selectedStop: number | undefined }) => {
+        props.selectedStop = next.selectedStop;
+        flushSync();
+      },
+    };
+    return { view, control, numbered, onselectstop };
+  }
+
+  it('fits the stop (padding 48, zoom 13 at most), rings its number, dims the other lines and offers Show whole route', async () => {
+    const { view, control, numbered } = await drawn();
+    expect(control.hidden).toBe(true);
+    expect(maps.paint).toEqual([]);
+
+    await view.rerender({ selectedStop: 3 });
+
+    await waitFor(() => expect(maps.fitted).toHaveLength(2));
+    expect(maps.fitted[1]).toEqual([
+      [7.05, 45.05],
+      [7.1, 45.1],
+    ]);
+    expect(maps.fitOptions[1]).toMatchObject({ padding: 48, maxZoom: 13, animate: false });
+    expect(numbered('3')).toHaveClass('selected');
+    expect(numbered('2')).not.toHaveClass('selected');
+    expect(maps.paint).toContainEqual(['road-confirmed', 'line-opacity', stopOpacity(3)]);
+    expect(maps.paint).toContainEqual(['track-arrows', 'icon-opacity', stopOpacity(3)]);
+    expect(maps.created[0].container.dataset.selectedStop).toBe('3');
+    expect(control.hidden).toBe(false);
+  });
+
+  it('fits the whole route again and draws every line in full once the selection is cleared', async () => {
+    const { view, control, numbered } = await drawn();
+    await view.rerender({ selectedStop: 3 });
+    await waitFor(() => expect(maps.fitted).toHaveLength(2));
+
+    await view.rerender({ selectedStop: undefined });
+
+    await waitFor(() => expect(maps.fitted).toHaveLength(3));
+    expect(maps.fitted[2]).toEqual([
+      [7, 45],
+      [7.1, 45.1],
+    ]);
+    expect(maps.fitOptions[2]).toMatchObject({ padding: 48 });
+    expect(maps.fitOptions[2]).not.toHaveProperty('maxZoom');
+    expect(maps.paint.at(-1)).toEqual(['track-arrows', 'icon-opacity', 1]);
+    expect(numbered('3')).not.toHaveClass('selected');
+    expect(maps.created[0].container.dataset.selectedStop).toBe('');
+    expect(control.hidden).toBe(true);
+  });
+
+  it('tells the page the stop of a number marker pressed, and clears with the Show whole route control', async () => {
+    const { control, numbered, onselectstop } = await drawn();
+
+    await fireEvent.click(numbered('2'));
+    expect(onselectstop).toHaveBeenLastCalledWith(2);
+
+    await fireEvent.click(control.querySelector('button')!);
+    expect(onselectstop).toHaveBeenLastCalledWith(undefined);
+    expect(control.querySelector('button')).toHaveTextContent('Show whole route');
   });
 });

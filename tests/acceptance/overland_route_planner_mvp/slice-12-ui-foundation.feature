@@ -26,7 +26,7 @@ Feature: A planner that looks and feels like a product
     Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
     When Marco opens the project in a 1440 px wide window
     Then the map takes more of the window's width than any other part of the page
-    And the stops, itinerary heading and totals of plan run #4 are beside the map without scrolling the page
+    And the summary card and the first steps of the itinerary are beside the map without scrolling the page
 
   # ui-foundation.spec.ts: "On a phone nothing scrolls sideways and every target is touch-sized" (webkit-iphone14)
   @US-20 @J-01 @ui @phone
@@ -34,7 +34,7 @@ Feature: A planner that looks and feels like a product
     Given plan run #4 of "Alpi Occidentali giugno 2027" has been computed
     When Giulia opens the home page, the project and the Diagnostics page on her 390 px wide iPhone
     Then no page scrolls sideways
-    And on the project page the itinerary and totals come below the map
+    And on the project page the summary card and the itinerary come below the map
     And every button, link and field she can tap is at least 44 px high and 44 px wide
 
   # ui-foundation.spec.ts: "At tablet width nothing overlaps" (chromium, 768 px)

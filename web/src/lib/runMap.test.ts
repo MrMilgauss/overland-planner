@@ -14,7 +14,13 @@ import {
   buildRunMap,
   buildTripMap,
   CREDIT_LAYER,
+  DIMMED_OPACITY,
+  DIMMED_PAINTS,
+  ROAD_COLOUR,
+  stopBounds,
+  stopOpacity,
   TERRAIN_LAYER,
+  TRACK_COLOUR,
   type LineFeature,
   type LineProperties,
   type MapConfig,
@@ -399,12 +405,18 @@ describe('markers', () => {
       CONFIG,
     );
     expect(plan.overlays).toEqual([
-      { kind: 'start_end', text: 'S/E 1 and 11', title: '1 and 11. Casa', lngLat: [7.0, 45.0] },
-      { kind: 'stop', text: '2', title: '2. Assietta', lngLat: [7.1, 45.1] },
+      {
+        kind: 'start_end',
+        text: 'S/E 1 and 11',
+        title: '1 and 11. Casa',
+        lngLat: [7.0, 45.0],
+        stops: [1, 11],
+      },
+      { kind: 'stop', text: '2', title: '2. Assietta', lngLat: [7.1, 45.1], stops: [2] },
       { kind: 'entry', text: '', title: 'Entry of Assietta', lngLat: [7.1, 45.1] },
       { kind: 'exit', text: '', title: 'Exit of Assietta', lngLat: [7.2, 45.2] },
-      { kind: 'start', text: 'S 1', title: '1. A', lngLat: [7.3, 45.3] },
-      { kind: 'end', text: 'E 5', title: '5. B', lngLat: [7.4, 45.4] },
+      { kind: 'start', text: 'S 1', title: '1. A', lngLat: [7.3, 45.3], stops: [1] },
+      { kind: 'end', text: 'E 5', title: '5. B', lngLat: [7.4, 45.4], stops: [5] },
     ]);
   });
 });
@@ -630,5 +642,101 @@ describe('the map before any route (D288)', () => {
     expect(empty.style.layers.find((l) => l.id === TERRAIN_LAYER)).toMatchObject({
       layout: { visibility: 'visible' },
     });
+  });
+});
+
+describe('selecting a stop (D286)', () => {
+  const TRAIL: [number, number][] = [
+    [7.0, 45.0],
+    [7.2, 45.1],
+  ];
+  const BACK: [number, number][] = [
+    [7.2, 45.1],
+    [6.9, 45.05],
+  ];
+  const geometry = collection(
+    line(ROAD, { kind: 'road', stop: 2 }),
+    line(TRAIL, { kind: 'track', stop: 3 }),
+    line(BACK, { kind: 'retrace', stop: 4 }),
+    marker([7.0, 45.0], { marker: 'start_end', stop: 1, end_stop: 5 }),
+    marker([7.0, 45.0], { marker: 'entry', stop: 3 }),
+    marker([6.9, 45.05], { marker: 'stop', stop: 4 }),
+  );
+
+  it.each([
+    [
+      'a road leg and what belongs to the stop',
+      2,
+      [
+        [7.0, 45.0],
+        [7.0, 45.4],
+      ],
+    ],
+    [
+      'a trail, its entry marker',
+      3,
+      [
+        [7.0, 45.0],
+        [7.2, 45.1],
+      ],
+    ],
+    [
+      "a retrace's own line and its own marker",
+      4,
+      [
+        [6.9, 45.05],
+        [7.2, 45.1],
+      ],
+    ],
+    [
+      'the End of a round trip, through the S/E marker',
+      5,
+      [
+        [7.0, 45.0],
+        [7.0, 45.0],
+      ],
+    ],
+    [
+      'the Start of a round trip, through the S/E marker',
+      1,
+      [
+        [7.0, 45.0],
+        [7.0, 45.0],
+      ],
+    ],
+    ['a stop nothing is drawn for', 9, null],
+  ])('fits %s: stop %i', (_what, stop, expected) => {
+    expect(stopBounds(geometry, stop)).toEqual(expected);
+  });
+
+  it('keeps a stop selected at full opacity and every other line at 35 %, nothing dimmed when none is selected', () => {
+    expect(DIMMED_OPACITY).toBe(0.35);
+    expect(stopOpacity(undefined)).toBe(1);
+    const expression = stopOpacity(3);
+    expect(expression).toEqual(['case', ['==', ['get', 'stop'], 3], 1, DIMMED_OPACITY]);
+  });
+
+  it('dims the lines, their casings and the track arrows, each by its own paint property', () => {
+    const plan = buildRunMap(geometry, CONFIG);
+    const ids = plan.style.layers.map((candidate) => candidate.id);
+    for (const [layerId, property] of DIMMED_PAINTS) {
+      expect(ids).toContain(layerId);
+      expect(property).toBe(layerId === 'track-arrows' ? 'icon-opacity' : 'line-opacity');
+    }
+    expect(DIMMED_PAINTS.map(([layerId]) => layerId)).toEqual(
+      expect.arrayContaining([
+        'road-confirmed',
+        'road-confirmed-casing',
+        'retrace',
+        'track-arrows',
+      ]),
+    );
+  });
+
+  it("names the road and track colours once, for the card's edge marks", () => {
+    const plan = buildRunMap(geometry, CONFIG);
+    const paint = (id: string) => (layer(plan, id)?.paint as Record<string, unknown>)['line-color'];
+    expect(paint('road-confirmed')).toBe(ROAD_COLOUR);
+    expect(paint('track')).toBe(TRACK_COLOUR);
   });
 });

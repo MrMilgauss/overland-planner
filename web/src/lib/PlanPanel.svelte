@@ -1,7 +1,6 @@
 <script lang="ts">
   // The plan of a project, one phase at a time (D283, tripPhase): Build the trip with 'Plan the route', Planning with the
-  // running job's state (polled every 500 ms) and Stop, then Your route: the latest ready run's card with its Itinerary
-  // and Totals. Every refusal shows the planner's own message, verbatim.
+  // running job's state (polled every 500 ms) and Stop, then Your route: the latest ready run's card (with the Totals) and its Itinerary. Every refusal shows the planner's own message, verbatim.
   //
   // Export GPX is not offered while a job of this panel is active; the earlier run stays on show meanwhile, and its link
   // returns when the job ends without a new ready run (D208). The limit: the panel knows only the job it started, so after
@@ -53,6 +52,8 @@
     onrunshown,
     build,
     trip,
+    selectedStop = undefined,
+    onselectstop,
   }: {
     projectId: string;
     objective?: Objective;
@@ -62,6 +63,9 @@
     build?: Snippet;
     /** What Planning shows of the trip: a read-only list, no control. */
     trip?: Snippet;
+    /** The stop selected on the itinerary or on the map (the page holds it), and what a press on a step tells. */
+    selectedStop?: number | undefined;
+    onselectstop?: (stop: number) => void;
   } = $props();
 
   let pressing = $state(false);
@@ -348,11 +352,7 @@
         onedit={() => (editing = true)}
         onplan={() => calculate()}
       />
-      <Itinerary
-        stops={readyRun.stops}
-        totals={readyRun.totals}
-        objectiveLabel={readyRun.objective_label}
-      />
+      <Itinerary stops={readyRun.stops} selected={selectedStop} onselect={onselectstop} />
       <RunDetails run={readyRun} onreoptimise={() => calculate(true)} />
     {/if}
   </section>
