@@ -17,6 +17,7 @@ const map = vi.hoisted(() => ({
         items: Item[];
         onplaceadded?: () => void;
         clickMode?: boolean;
+        canAdd?: boolean;
         selectedStop?: number;
         onselectstop?: (stop: number | undefined) => void;
       }
@@ -81,7 +82,7 @@ async function fill(label: string, value: string): Promise<void> {
 
 async function typeAPlace(name: string, lat: string, lon: string): Promise<void> {
   await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Type coordinates' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Type coordinates' }));
   await fill('Name', name);
   await fill('Latitude', lat);
   await fill('Longitude', lon);
@@ -94,7 +95,7 @@ async function typeAPlace(name: string, lat: string, lon: string): Promise<void>
 
 async function setFromTheRow(place: string, choice: 'Set as start' | 'Set as end'): Promise<void> {
   await fireEvent.click(screen.getByRole('button', { name: `Actions for ${place}` }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: choice }));
+  await fireEvent.click(screen.getByRole('button', { name: choice }));
 }
 
 /** The trip list's entry for `name`. */
@@ -126,6 +127,7 @@ describe('Workspace page', () => {
     });
     render(WorkspacePage, { props: { projectId: 'p1' } });
     await screen.findByRole('heading', { level: 1, name: PROJECT.name });
+    await screen.findByRole('button', { name: 'Plan the route' }); // Build the trip shows once the runs are read
 
     await typeAPlace('Briancon', '44.8990', '6.6430');
 
@@ -143,6 +145,7 @@ describe('Workspace page', () => {
     });
     render(WorkspacePage, { props: { projectId: 'p1' } });
     await screen.findByRole('heading', { level: 1, name: PROJECT.name });
+    await screen.findByRole('button', { name: 'Plan the route' }); // Build the trip shows once the runs are read
     const file = new File(['<gpx/>'], 'assietta.gpx', { type: 'application/gpx+xml' });
 
     await fireEvent.change(screen.getByLabelText('GPX files'), { target: { files: [file] } });
@@ -292,6 +295,7 @@ describe('Workspace page: the map as the main column', () => {
     const steps = within(await screen.findByRole('list', { name: 'Steps' })).getAllByRole(
       'listitem',
     );
+    await screen.findByRole('button', { name: 'Plan the route' });
 
     expect(steps.map((step) => step.textContent?.replace(/^\d\s*/, '').trim())).toEqual([
       'Build the trip',
@@ -320,9 +324,30 @@ describe('Workspace page: the map as the main column', () => {
     await vi.waitFor(() => expect(map.props?.clickMode).toBe(false));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Click on the map' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Click on the map' }));
 
     await vi.waitFor(() => expect(map.props?.clickMode).toBe(true));
+  });
+
+  it('lets the map add places on Build the trip and on Your route, not while the trip is planned', async () => {
+    stubPlanner([[]], {
+      'GET /api/projects/p1/plan-runs': RUN_LIST,
+      'GET /api/plan-runs/r1': RUN,
+      'POST /api/projects/p1/plan-runs': { status: 202, body: { job_id: 'j1' } },
+      'GET /api/plan-jobs/j1': {
+        status: 200,
+        body: { state: 'solving', reason: null, message: null, plan_run_id: null, elapsed_s: 1 },
+      },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await vi.waitFor(() => expect(map.props?.planRunId).toBe('r1'));
+    expect(map.props?.canAdd, 'Your route').toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit trip' }));
+    await vi.waitFor(() => expect(map.props?.canAdd, 'Build the trip').toBe(true));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Plan the route' }));
+    await vi.waitFor(() => expect(map.props?.canAdd, 'Planning').toBe(false));
   });
 
   it('draws the ready run the panel shows, and reads items and runs again when a place is added on the map', async () => {

@@ -25,6 +25,7 @@
 
   let pending = $state<{ start?: string; end?: string }>({});
   let menuOf = $state<string | undefined>();
+  let toggles: Record<string, HTMLButtonElement | undefined> = {};
 
   const saved = $derived({
     start: items.find((i) => i.anchor === 'start' || i.anchor === 'start_end')?.id,
@@ -56,7 +57,14 @@
   }
 </script>
 
-<svelte:window onkeydown={(event) => event.key === 'Escape' && (menuOf = undefined)} />
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key !== 'Escape' || menuOf === undefined) return;
+    const toggle = toggles[menuOf];
+    menuOf = undefined;
+    toggle?.focus();
+  }}
+/>
 
 <div class="bar">
   <h3 id="trip-heading">Your trip</h3>
@@ -81,20 +89,21 @@
               type="button"
               class="dots"
               aria-label={`Actions for ${item.name}`}
-              aria-haspopup="menu"
+              bind:this={toggles[item.id]}
               aria-expanded={menuOf === item.id}
+              aria-controls={`actions-${item.id}`}
               onclick={() => (menuOf = menuOf === item.id ? undefined : item.id)}
               ><span aria-hidden="true">⋯</span></button
             >
             {#if menuOf === item.id}
-              <div role="menu" aria-label={`Actions for ${item.name}`}>
-                <button type="button" role="menuitem" onclick={() => choose(item, 'start')}
-                  >Set as start</button
-                >
-                <button type="button" role="menuitem" onclick={() => choose(item, 'end')}
-                  >Set as end</button
-                >
-              </div>
+              <ul class="actions" id={`actions-${item.id}`}>
+                <li>
+                  <button type="button" onclick={() => choose(item, 'start')}>Set as start</button>
+                </li>
+                <li>
+                  <button type="button" onclick={() => choose(item, 'end')}>Set as end</button>
+                </li>
+              </ul>
             {/if}
           </span>
         {/if}
@@ -155,7 +164,10 @@
     position: relative;
     margin-left: auto; /* at the right end of its line, so that its menu opens inside the panel */
   }
-  [role='menu'] {
+  .actions {
+    margin: 0;
+    padding: 0;
+    list-style: none;
     position: absolute;
     top: 100%;
     right: 0;
@@ -167,13 +179,19 @@
     background: var(--color-bg);
     box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   }
-  [role='menu'] button {
+  .actions li {
+    display: block;
+    padding: 0;
+    border-bottom: 0;
+  }
+  .actions li + li {
+    border-top: 1px solid var(--color-border);
+  }
+  .actions button {
+    width: 100%;
     border: 0;
     border-radius: 0;
     background: transparent;
     text-align: left;
-  }
-  [role='menu'] button + button {
-    border-top: 1px solid var(--color-border);
   }
 </style>

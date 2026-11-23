@@ -192,4 +192,18 @@ describe('Itinerary', () => {
     expect(scrolled).toHaveBeenCalledExactlyOnceWith({ block: 'nearest' });
     expect(scrolled.mock.contexts[0]).toBe(steps()[2]);
   });
+
+  it('scrolls to a step the map selects again after the selected step was pressed once more', async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    const props = { stops: [casa, assietta, briancon], onselect: vi.fn() };
+    const { rerender } = render(Itinerary, { props: { ...props, selected: 2 } });
+    scrolled.mockClear();
+
+    await fireEvent.click(steps()[1]); // already selected: the page gives nothing back
+    await rerender({ ...props, selected: undefined }); // Show whole route on the map
+    await rerender({ ...props, selected: 2 }); // the map picks that stop again
+
+    expect(scrolled).toHaveBeenCalledExactlyOnceWith({ block: 'nearest' });
+  });
 });

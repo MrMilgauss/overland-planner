@@ -19,7 +19,7 @@
   import RunDetails from './RunDetails.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import { planState } from './planState';
-  import { tripPhase } from './tripPhase';
+  import { tripPhase, type TripPhase } from './tripPhase';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
   import {
@@ -47,12 +47,18 @@
     solving: 'Solving',
     finalising: 'Finalising',
   };
-  const PHASE_NAMES = { build: 'Build the trip', planning: 'Planning', route: 'Your route' };
+  const PHASE_NAMES = {
+    loading: 'Your trip',
+    build: 'Build the trip',
+    planning: 'Planning',
+    route: 'Your route',
+  };
 
   let {
     projectId,
     objective = 'distance',
     onrunshown,
+    onphase,
     build,
     trip,
     selectedStop = undefined,
@@ -62,6 +68,8 @@
     objective?: Objective;
     /** The ready run on show (Your route), for the page's map, and whether it is an estimate; undefined otherwise. */
     onrunshown?: (planRunId: string | undefined, estimate: boolean) => void;
+    /** The phase on show, for the page: the map may not add places while the trip is planned. */
+    onphase?: (phase: TripPhase) => void;
     /** What Build the trip holds above its main action: the trip's list and the controls that change it. */
     build?: Snippet;
     /** What Planning shows of the trip: a read-only list, no control. */
@@ -100,7 +108,6 @@
       jobActive,
       readyRun: readyRun !== undefined,
       editing,
-      failedLatest: previous,
     }),
   );
   const look = $derived(
@@ -267,6 +274,10 @@
     onrunshown?.(shown?.id, shown?.estimate === true);
   });
 
+  $effect(() => {
+    onphase?.(phase);
+  });
+
   onMount(() => {
     void showLatestRuns();
     return () => {
@@ -338,7 +349,7 @@
           >
         </div>
       {/if}
-    {:else if readyRun}
+    {:else if phase === 'route' && readyRun}
       <RouteCard
         run={readyRun}
         {look}

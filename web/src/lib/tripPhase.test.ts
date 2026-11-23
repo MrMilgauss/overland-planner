@@ -9,30 +9,21 @@ const NONE: TripFacts = {
   jobActive: false,
   readyRun: false,
   editing: false,
-  failedLatest: false,
 };
 
 const TRANSITIONS: [string, Partial<TripFacts>, TripPhase][] = [
   ['no ready run', {}, 'build'],
-  ['the runs being read', { loading: true }, 'build'],
+  ['the runs being read', { loading: true }, 'loading'],
+  ['the runs being read, a ready run known', { loading: true, readyRun: true }, 'loading'],
+  ['the runs being read while a job is active', { loading: true, jobActive: true }, 'planning'],
   ['a job of the page active', { jobActive: true }, 'planning'],
   [
     'a job active, whatever else holds',
-    { jobActive: true, readyRun: true, editing: true, failedLatest: true },
+    { jobActive: true, readyRun: true, editing: true },
     'planning',
   ],
   ['a ready run, not editing', { readyRun: true }, 'route'],
   ['Edit trip pressed on a ready run', { readyRun: true, editing: true }, 'build'],
-  [
-    'a failed latest run with a ready route on show',
-    { readyRun: true, failedLatest: true },
-    'route',
-  ],
-  [
-    'a failed, cancelled, timed-out or refused plan without a ready route',
-    { failedLatest: true },
-    'build',
-  ],
 ];
 
 describe('tripPhase', () => {

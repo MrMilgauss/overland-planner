@@ -31,6 +31,7 @@
   let shownRunId = $state<string | undefined>(); // the ready run the panel shows (Your route): the map draws it
   let shownRunIsEstimate = $state(false); // its roads are the offline road map: the map's chip says so
   let selectedStop = $state<number | undefined>(); // the itinerary step or the map's number marker picked, on the shown run
+  let planning = $state(false); // the panel is on Planning: the trip is read-only
   let stage = $state<HTMLElement | undefined>();
   let panel = $state<{ reload: () => Promise<void>; edit: () => void } | undefined>();
 
@@ -127,6 +128,7 @@
           planRunId={shownRunId}
           {items}
           {projectId}
+          canAdd={!planning}
           estimate={shownRunIsEstimate}
           {selectedStop}
           onselectstop={(stop) => (selectedStop = stop)}
@@ -149,6 +151,7 @@
           shownRunIsEstimate = estimate;
           runsRead = true;
         }}
+        onphase={(phase) => (planning = phase === 'planning')}
         {build}
         {trip}
       />

@@ -75,7 +75,7 @@ async function uploadTheTrail(page: Page, testInfo: TestInfo): Promise<void> {
   const before = await tripList(page).getByRole("listitem").count();
   const chooser = page.waitForEvent("filechooser");
   await addButton(page).click();
-  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await page.getByRole("button", { name: "Upload GPX trails" }).click();
   await (
     await chooser
   ).setFiles(path.join(testInfo.project.testDir, ASSIETTA_FILE));
@@ -91,7 +91,7 @@ async function addPlaceOnTheForm(
 ): Promise<void> {
   const before = await tripList(page).getByRole("listitem").count();
   await addButton(page).click();
-  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  await page.getByRole("button", { name: "Type coordinates" }).click();
   const form = page.getByRole("form", { name: "Type coordinates" });
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("Latitude").fill(lat);
@@ -108,7 +108,7 @@ async function setFromTheRow(
 ): Promise<void> {
   const row = tripList(page).getByRole("listitem").filter({ hasText: place });
   await row.getByRole("button", { name: `Actions for ${place}` }).click();
-  await page.getByRole("menuitem", { name: choice }).click();
+  await page.getByRole("button", { name: choice }).click();
 }
 
 async function newProject(
@@ -192,13 +192,16 @@ test("Every way to add a stop is in one Add control and lands in the one list", 
   await uploadTheTrail(page, testInfo);
 
   await addButton(page).click();
-  await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
+  await expect(addButton(page)).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#add-options").getByRole("button")).toHaveText([
     "Upload GPX trails",
     "Click on the map",
     "Type coordinates",
   ]);
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(addButton(page)).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#add-options")).toHaveCount(0);
+  await expect(addButton(page)).toBeFocused();
 
   await addPlaceOnTheForm(page, "Lago del Moncenisio", "45.2280", "6.9420");
   const items = tripList(page);
@@ -206,7 +209,7 @@ test("Every way to add a stop is in one Add control and lands in the one list", 
   await expect(items).toContainText("Strada dell'Assietta");
 
   // The map is drawn before any route (D288): the place as a dot, the trail's entry and exit.
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
@@ -291,6 +294,10 @@ test("While planning, the trip is read-only and nothing is exported", async ({
     page.getByRole("button", { name: "Add", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Export GPX/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Click on map to add" }),
+    "the map adds nothing while the trip is planned",
+  ).toHaveCount(0);
 });
 
 // The planner's own file name for a run's export, from its Content-Disposition header (D268).
@@ -407,14 +414,14 @@ test("Edit trip goes back to building and the shown route goes out of date", asy
   await serveTheBaseMap(page, testInfo);
   await planOnTheOfflineMap(page, testInfo);
   await page.getByRole("button", { name: "Edit trip" }).click();
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
   await expect(map.locator(".run-marker.place")).toHaveCount(1); // the items, not the route
 
   await addButton(page).click();
-  await page.getByRole("menuitem", { name: "Click on the map" }).click();
+  await page.getByRole("button", { name: "Click on the map" }).click();
   const toggle = map.getByRole("button", { name: "Click on map to add" });
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   const frame = (await map.locator("canvas.maplibregl-canvas").boundingBox())!;
@@ -564,7 +571,7 @@ async function openARealRoadRun(
   await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
   await expect(
     page
-      .getByRole("region", { name: "Map of the run" })
+      .getByRole("region", { name: "Map of the trip" })
       .locator("canvas.maplibregl-canvas"),
   ).toBeVisible({ timeout: 60_000 });
   const detail = { ...real, stops } as RunDetail;
@@ -574,7 +581,7 @@ async function openARealRoadRun(
 const steps = (page: Page): Locator =>
   page.getByRole("list", { name: "Itinerary" }).getByRole("button");
 const mapFrame = (page: Page): Locator =>
-  page.getByRole("region", { name: "Map of the run" }).locator(".map");
+  page.getByRole("region", { name: "Map of the trip" }).locator(".map");
 const numberMarker = (page: Page, stop: number): Locator =>
   mapFrame(page)
     .locator(".run-marker.numbered")
@@ -660,7 +667,7 @@ test("On a laptop the summary card and the first steps are in view", async ({
 
   const viewport = page.viewportSize()!;
   const map = (await page
-    .getByRole("region", { name: "Map of the run" })
+    .getByRole("region", { name: "Map of the trip" })
     .boundingBox())!;
   const card = (await totals.boundingBox())!;
   const first = steps(page);
@@ -710,7 +717,7 @@ test("An estimate route says Estimate in the card and on the map", async ({
   );
   await expect(
     page
-      .getByRole("region", { name: "Map of the run" })
+      .getByRole("region", { name: "Map of the trip" })
       .getByRole("note", { name: ESTIMATE_NOTE }),
   ).toHaveText(/Estimate/);
   await expect(page.getByText("Real roads")).toHaveCount(0);
@@ -818,7 +825,7 @@ test("On a phone the map follows the selected step", async ({
   const stop = detail.stops.findIndex((s) => s.type === "track") + 1;
   const step = steps(page).nth(stop - 1);
   await step.scrollIntoViewIfNeeded();
-  const frame = page.getByRole("region", { name: "Map of the run" });
+  const frame = page.getByRole("region", { name: "Map of the trip" });
   await expect(frame).not.toBeInViewport({ ratio: 0.5 });
 
   await step.tap();
@@ -1264,7 +1271,7 @@ test("Planning an unchanged trip with a retrace reuses the route and keeps each 
   const reuse = real.messages.find((line) =>
     line.startsWith("Reused the identical plan of run #"),
   )!;
-  expect(reuse).toBeTruthy();
+  expect(reuse).toMatch(/^Reused the identical plan of run #\d+/);
   await answerWith<Record<string, unknown>>(
     page,
     new RegExp(`/api/plan-runs/${second}$`),
@@ -1457,7 +1464,7 @@ async function openTheMap(
     );
   }
   await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
@@ -1662,7 +1669,7 @@ test("The light map's credit names OpenFreeMap once", async ({
   await page.route(styleUrl, (route) => route.fulfill({ json: style }));
   const projectUrl = await planOnTheOfflineMap(page, testInfo);
   await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
@@ -1878,6 +1885,3 @@ async function styleAddress(page: Page): Promise<string> {
     }
   ).base_style_url;
 }
-
-// Used by the tests above once DELIVER writes them (kept here so the W4 rule is in one place from the start).
-export const w4 = { answerWith, onRealRoads, expect };

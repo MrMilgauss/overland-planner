@@ -21,7 +21,7 @@ async function addPlace(
   lon: string,
 ): Promise<void> {
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  await page.getByRole("button", { name: "Type coordinates" }).click();
   const form = page.getByRole("form", { name: "Type coordinates" });
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("Latitude").fill(lat);
@@ -37,7 +37,7 @@ async function setFromTheRow(
   await itemRow(page, place)
     .getByRole("button", { name: `Actions for ${place}` })
     .click();
-  await page.getByRole("menuitem", { name: choice }).click();
+  await page.getByRole("button", { name: choice }).click();
 }
 
 test("Marco creates a project, imports a trail, adds a POI and sets Start and End in the browser", async ({
@@ -55,7 +55,7 @@ test("Marco creates a project, imports a trail, adds a POI and sets Start and En
 
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await page.getByRole("button", { name: "Upload GPX trails" }).click();
   await (await chooser).setFiles(path.join(testInfo.project.testDir, ASSIETTA));
   await expect(itemRow(page, "Strada dell'Assietta")).toContainText("Trail");
 

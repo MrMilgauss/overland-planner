@@ -975,6 +975,17 @@ describe('Plan panel: one plan state at a time', () => {
     expect(screen.queryByText('No plan yet')).not.toBeInTheDocument();
   });
 
+  it('offers no main action and no current step while the runs are first read (no flash of Build the trip)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    render(PlanPanel, { props: { projectId: 'p1' } });
+
+    expect(screen.queryByRole('button', { name: 'Plan the route' })).not.toBeInTheDocument();
+    expect(document.querySelector('[aria-current="step"]')).toBeNull();
+  });
+
   it('claims neither a state nor No plan yet when the run list cannot be read', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: {

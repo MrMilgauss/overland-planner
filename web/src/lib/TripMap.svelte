@@ -41,6 +41,7 @@
     selectedStop = undefined,
     onselectstop,
     onplaceadded,
+    canAdd = true,
     clickMode = $bindable(false),
   }: {
     planRunId?: string;
@@ -52,6 +53,8 @@
     /** A number marker pressed, or 'Show whole route' (undefined). */
     onselectstop?: (stop: number | undefined) => void;
     onplaceadded?: () => void;
+    /** False while the trip is planned (it is read-only then): no "Click on map to add", clicks on the map add nothing. */
+    canAdd?: boolean;
     clickMode?: boolean;
   } = $props();
 
@@ -195,7 +198,7 @@
     map.on(
       'click',
       (event: { point: { x: number; y: number }; lngLat: { lng: number; lat: number } }) => {
-        if (!clickMode) return;
+        if (!clickMode || !canAdd) return;
         if (clicked) {
           clicked = undefined; // a click elsewhere closes the form
           return;
@@ -335,6 +338,12 @@
   }
 
   $effect(() => {
+    if (canAdd) return;
+    clickMode = false; // read-only now: no mode and no name form left open
+    clicked = undefined;
+  });
+
+  $effect(() => {
     const stop = selectedStop;
     select?.(stop, true);
   });
@@ -359,7 +368,7 @@
   });
 </script>
 
-<section aria-label="Map of the run">
+<section aria-label="Map of the trip">
   {#if problem}
     <p role="alert">{problem}</p>
   {/if}
@@ -371,7 +380,7 @@
           ><span aria-hidden="true">{marker.glyph}</span>{marker.label}</span
         >
       {/if}
-      {#if projectId && !problem}
+      {#if projectId && canAdd && !problem}
         <button type="button" class="click-mode" aria-pressed={clickMode} onclick={toggleClickMode}
           >Click on map to add</button
         >

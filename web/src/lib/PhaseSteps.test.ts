@@ -28,6 +28,15 @@ describe('PhaseSteps', () => {
     expect(marked[0]).toHaveTextContent(current);
   });
 
+  it('marks no step as current while the runs are being read', () => {
+    render(PhaseSteps, {
+      props: { phase: 'loading', canShowRoute: false, onshowroute: () => {} },
+    });
+
+    expect(document.querySelector('[aria-current="step"]')).toBeNull();
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
+
   it('makes Your route a button back to the result only when a ready route exists', async () => {
     const back = vi.fn();
     const { rerender } = render(PhaseSteps, {

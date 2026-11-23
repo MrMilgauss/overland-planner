@@ -52,7 +52,7 @@
   }
 
   function press(number: number): void {
-    pressed = number;
+    pressed = number === selected ? undefined : number; // an unchanged selection runs no effect to reset it
     onselect?.(number);
   }
 

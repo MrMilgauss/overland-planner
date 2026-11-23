@@ -19,6 +19,7 @@
   let open = $state(false);
   let typing = $state(false);
   let chooser = $state<HTMLInputElement | undefined>();
+  let toggle = $state<HTMLButtonElement | undefined>();
 
   const ENTRIES = ['Upload GPX trails', 'Click on the map', 'Type coordinates'] as const;
 
@@ -50,24 +51,31 @@
   }
 </script>
 
-<svelte:window onkeydown={(event) => event.key === 'Escape' && (open = false)} />
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key !== 'Escape' || !open) return;
+    open = false;
+    toggle?.focus();
+  }}
+/>
 
 <span class="add">
   <button
     type="button"
-    aria-haspopup="menu"
+    bind:this={toggle}
     aria-expanded={open}
+    aria-controls="add-options"
     onclick={() => {
       open = !open;
       typing = false;
     }}>Add</button
   >
   {#if open}
-    <div role="menu" aria-label="Add">
+    <ul id="add-options" class="options">
       {#each ENTRIES as entry (entry)}
-        <button type="button" role="menuitem" onclick={() => pick(entry)}>{entry}</button>
+        <li><button type="button" onclick={() => pick(entry)}>{entry}</button></li>
       {/each}
-    </div>
+    </ul>
   {/if}
   <input
     bind:this={chooser}
@@ -91,7 +99,10 @@
     position: relative;
     margin-left: auto;
   }
-  [role='menu'] {
+  .options {
+    margin: 0;
+    padding: 0;
+    list-style: none;
     position: absolute;
     top: 100%;
     right: 0;
@@ -103,13 +114,13 @@
     background: var(--color-bg);
     box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   }
-  [role='menu'] button {
+  .options button {
     border: 0;
     border-radius: 0;
     background: transparent;
     text-align: left;
   }
-  [role='menu'] button + button {
+  .options li + li button {
     border-top: 1px solid var(--color-border);
   }
   .chooser {

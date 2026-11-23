@@ -199,7 +199,7 @@ describe('TripMap with a run', () => {
     });
     render(TripMap, { planRunId: 'r1' });
     await waitFor(() => expect(maps.fitted).toHaveLength(1));
-    expect(screen.getByRole('region', { name: 'Map of the run' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Map of the trip' })).toBeInTheDocument();
     expect(maps.created[0].style).toMatchObject({ sources: { tiles: { attribution: 'Credit' } } });
     expect(maps.images).toEqual(['direction-arrow']);
     expect(maps.markers.map((m) => m.element.textContent)).toEqual(['2']);
@@ -506,6 +506,47 @@ describe('TripMap with a run', () => {
       expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/projects/p1/pois')).toBe(
         false,
       );
+    });
+  });
+
+  describe('a map that may not add (the trip is being planned)', () => {
+    const SUSA = {
+      id: 'susa',
+      type: 'poi' as const,
+      name: 'Susa, piazza',
+      included: true,
+      anchor: null,
+      location: { lat: 45.14, lon: 7.05 },
+      entry: null,
+      exit: null,
+      length_m: null,
+    };
+
+    it('offers no "Click on map to add" and ignores a click', async () => {
+      planner({
+        '/api/config/map': { status: 200, body: CONFIG },
+        '/api/projects/p1/pois': { status: 201, body: { id: 'n' } },
+      });
+      render(TripMap, { items: [SUSA], projectId: 'p1', canAdd: false, clickMode: true });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+
+      expect(screen.queryByRole('button', { name: 'Click on map to add' })).not.toBeInTheDocument();
+      maps.handlers.click({ point: { x: 50, y: 60 }, lngLat: { lng: 7.0486, lat: 45.1376 } });
+      expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument();
+    });
+
+    it('closes the open name form and the mode when adding stops being allowed', async () => {
+      planner({ '/api/config/map': { status: 200, body: CONFIG } });
+      const { rerender } = render(TripMap, { items: [SUSA], projectId: 'p1' });
+      await waitFor(() => expect(maps.fitted).toHaveLength(1));
+      await fireEvent.click(screen.getByRole('button', { name: 'Click on map to add' }));
+      maps.handlers.click({ point: { x: 50, y: 60 }, lngLat: { lng: 7.0486, lat: 45.1376 } });
+      expect(await screen.findByRole('form', { name: 'Add a place here' })).toBeInTheDocument();
+
+      await rerender({ items: [SUSA], projectId: 'p1', canAdd: false });
+
+      expect(screen.queryByRole('form', { name: 'Add a place here' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Click on map to add' })).not.toBeInTheDocument();
     });
   });
 

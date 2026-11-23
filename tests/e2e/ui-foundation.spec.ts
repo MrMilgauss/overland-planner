@@ -33,7 +33,7 @@ const HOME = "Casa Marco, Torino";
 async function uploadTheTrail(page: Page, testDir: string): Promise<void> {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await page.getByRole("button", { name: "Upload GPX trails" }).click();
   await (await chooser).setFiles(path.join(testDir, ASSIETTA));
 }
 
@@ -44,7 +44,7 @@ async function typeAPlace(
   lon: string,
 ): Promise<void> {
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  await page.getByRole("button", { name: "Type coordinates" }).click();
   const form = page.getByRole("form", { name: "Type coordinates" });
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("Latitude").fill(lat);
@@ -60,7 +60,7 @@ async function setStartAndEnd(page: Page, place: string): Promise<void> {
       .filter({ hasText: place })
       .getByRole("button", { name: `Actions for ${place}` })
       .click();
-    await page.getByRole("menuitem", { name: choice }).click();
+    await page.getByRole("button", { name: choice }).click();
   }
   await expect(page.getByText("not saved yet")).toHaveCount(0);
 }
@@ -186,7 +186,9 @@ test("On a laptop the map is the main surface", async ({ page }, testInfo) => {
     timeout: 30_000,
   });
 
-  const map = await boxOf(page.getByRole("region", { name: "Map of the run" }));
+  const map = await boxOf(
+    page.getByRole("region", { name: "Map of the trip" }),
+  );
   const phasePanel = await boxOf(
     page.getByRole("region", { name: "Your route", exact: true }),
   );
@@ -244,7 +246,7 @@ test("On a phone nothing scrolls sideways and every target is touch-sized", asyn
     );
     if (where === "project") {
       const map = await boxOf(
-        page.getByRole("region", { name: "Map of the run" }),
+        page.getByRole("region", { name: "Map of the trip" }),
       );
       for (const [what, part] of [
         ["the summary card", page.getByLabel("Totals")],
@@ -277,7 +279,7 @@ test("At tablet width nothing overlaps", async ({ page }, testInfo) => {
     timeout: 30_000,
   });
   await expect(
-    page.getByRole("region", { name: "Map of the run" }),
+    page.getByRole("region", { name: "Map of the trip" }),
   ).toBeVisible();
 
   // Controls, labels, headings and panels (the map's own widgets aside); an element and its own ancestors do not count.
@@ -637,7 +639,7 @@ test("The map stays readable on a phone at trip-wide zoom", async ({
     });
   });
   await page.goto(projectUrl.replace("/#/", "/?e2e=1#/"));
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
@@ -825,7 +827,7 @@ function planPanel(page: Page): Locator {
 }
 
 function mapArea(page: Page): Locator {
-  return page.getByRole("region", { name: "Map of the run" });
+  return page.getByRole("region", { name: "Map of the trip" });
 }
 
 test("A plan on the offline road map is marked as an estimate", async ({

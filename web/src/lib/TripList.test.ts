@@ -43,7 +43,7 @@ function row(name: string): HTMLElement {
 
 async function choose(place: string, choice: 'Set as start' | 'Set as end'): Promise<void> {
   await fireEvent.click(within(row(place)).getByRole('button', { name: `Actions for ${place}` }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: choice }));
+  await fireEvent.click(screen.getByRole('button', { name: choice }));
 }
 
 function tags(place: string): string[] {
@@ -53,6 +53,29 @@ function tags(place: string): string[] {
 }
 
 describe('Trip list', () => {
+  it("opens a place's actions as a disclosure and Escape closes it, back on its button", async () => {
+    render(TripList, { props: { items: [poi('Briancon')], onanchors: async () => true } });
+    const toggle = screen.getByRole('button', { name: 'Actions for Briancon' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const options = document.getElementById(toggle.getAttribute('aria-controls') ?? '')!;
+    expect(
+      within(options)
+        .getAllByRole('button')
+        .map((b) => b.textContent?.trim()),
+    ).toEqual(['Set as start', 'Set as end']);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    within(options).getByRole('button', { name: 'Set as end' }).focus();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveFocus();
+  });
+
   it('lists every place and trail of the trip with its type', () => {
     render(TripList, { props: { items: [poi('Briancon'), assietta] } });
 

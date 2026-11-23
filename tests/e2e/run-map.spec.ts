@@ -36,7 +36,7 @@ if (driven && screenWidth > 0) {
 async function uploadTheTrail(page: Page, testDir: string): Promise<void> {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Upload GPX trails" }).click();
+  await page.getByRole("button", { name: "Upload GPX trails" }).click();
   await (await chooser).setFiles(path.join(testDir, ASSIETTA));
 }
 
@@ -47,7 +47,7 @@ async function typeAPlace(
   lon: string,
 ): Promise<void> {
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Type coordinates" }).click();
+  await page.getByRole("button", { name: "Type coordinates" }).click();
   const form = page.getByRole("form", { name: "Type coordinates" });
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("Latitude").fill(lat);
@@ -63,7 +63,7 @@ async function setStartAndEnd(page: Page, place: string): Promise<void> {
       .filter({ hasText: place })
       .getByRole("button", { name: `Actions for ${place}` })
       .click();
-    await page.getByRole("menuitem", { name: choice }).click();
+    await page.getByRole("button", { name: choice }).click();
   }
   await expect(page.getByText("not saved yet")).toHaveCount(0);
 }
@@ -188,7 +188,7 @@ test("the map of the run shows its roads, tracks, numbers and credit, and pans a
       "?e2e=1",
     );
 
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });
@@ -418,7 +418,7 @@ test("a POI by a click on the map: named, placed, snapped to an entry, cancelled
       `POI ${testInfo.project.name} ${Date.now()}`,
     );
 
-  const map = page.getByRole("region", { name: "Map of the run" });
+  const map = page.getByRole("region", { name: "Map of the trip" });
   await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
     timeout: 60_000,
   });

@@ -23,22 +23,26 @@ const addButton = (): HTMLElement => screen.getByRole('button', { name: 'Add' })
 
 async function chooseEntry(name: string): Promise<void> {
   await fireEvent.click(addButton());
-  await fireEvent.click(screen.getByRole('menuitem', { name }));
+  await fireEvent.click(screen.getByRole('button', { name }));
 }
 
 describe('Add menu', () => {
   it('offers the three ways to add, only once opened', async () => {
     open();
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(addButton()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Upload GPX trails')).not.toBeInTheDocument();
 
     await fireEvent.click(addButton());
 
+    const options = document.getElementById(addButton().getAttribute('aria-controls') ?? '')!;
     expect(
-      within(screen.getByRole('menu'))
-        .getAllByRole('menuitem')
+      within(options)
+        .getAllByRole('button')
         .map((i) => i.textContent?.trim()),
     ).toEqual(['Upload GPX trails', 'Click on the map', 'Type coordinates']);
     expect(addButton()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument(); // a disclosure, not an application menu
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
   });
 
   it('closes on Escape', async () => {
@@ -47,7 +51,18 @@ describe('Add menu', () => {
 
     await fireEvent.keyDown(window, { key: 'Escape' });
 
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(addButton()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Upload GPX trails')).not.toBeInTheDocument();
+  });
+
+  it('returns the focus to the Add button when Escape closes it', async () => {
+    open();
+    await fireEvent.click(addButton());
+    screen.getByRole('button', { name: 'Click on the map' }).focus();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(addButton()).toHaveFocus();
   });
 
   it('hands the GPX files chosen to the import', async () => {
@@ -65,7 +80,7 @@ describe('Add menu', () => {
     await chooseEntry('Click on the map');
 
     expect(onclickmap).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(addButton()).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('adds the place typed with its decimal degrees, then closes the form', async () => {
