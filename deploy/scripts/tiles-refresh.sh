@@ -7,7 +7,7 @@
 #  1 preflight, read-only: routing.env exists (make tiles-seed came first); the new tileset is named by the UTC date and
 #    is neither served (routing.env), kept for rollback (routing.env.prev) nor already in the volume; disk free >= 25 GB;
 #    MemAvailable >= build cap + 1 GiB; the planner's /api/diagnostics is asked (a note when it does not answer)
-#  2 while valhalla serves: valhalla-fetch (the only service with egress) downloads the five Geofabrik extracts into
+#  2 while valhalla serves: valhalla-fetch (the only service with egress) downloads the six Geofabrik extracts into
 #    build/src and default_speeds.json into build/ (the build has no network and would fail without it), and merges the
 #    extracts into build/alps.osm.pbf (MemAvailable >= 7 GiB checked again just before the merge); the extracts are deleted.
 #    The time-zone db is carried over from the serving tileset into build/ (the build has no network and cannot download it)
@@ -31,7 +31,7 @@ cd "$(dirname "$0")/.." || exit 1
 NEW=${TILES_DATE:-$(date -u +%Y%m%d)}
 GEOFABRIK=https://download.geofabrik.de
 SPEEDS_URL=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
-EXTRACTS=(europe/italy-latest europe/switzerland-latest europe/austria-latest europe/france/rhone-alpes-latest
+EXTRACTS=(europe/italy-latest europe/spain-latest europe/switzerland-latest europe/austria-latest europe/france/rhone-alpes-latest
   europe/france/provence-alpes-cote-d-azur-latest)
 MIN_FREE_KB=$((25 * 1024 * 1024))
 MERGE_MIN_KB=$((7 * 1024 * 1024))

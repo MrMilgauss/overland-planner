@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     # The area the planner's road map covers, in plain words for the page. It must match the extracts in
     # deploy/scripts/tiles-refresh.sh (EXTRACTS).
     road_map_area: Annotated[str, Field(validation_alias="ROAD_MAP_AREA")] = (
-        "Italy, Switzerland, Austria and the French Alps"
+        "Italy, Spain, Switzerland, Austria and the French Alps"
     )
 
     @field_validator("map_tile_url")

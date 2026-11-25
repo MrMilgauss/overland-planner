@@ -148,13 +148,20 @@ def test_a_serving_tileset_without_a_time_zone_db_fails_the_download_and_keeps_s
     assert last_log(serving)["reason"] == "refresh failed (download)"
 
 
-def test_the_services_run_with_the_overrides_mounted_and_the_extracts_of_the_five_regions(serving: FakePi) -> None:
+def test_the_services_run_with_the_overrides_mounted_and_the_extracts_of_the_six_regions(serving: FakePi) -> None:
     serving.tiles_refresh()
 
     runs = [c["argv"] for c in serving.calls("docker") if "run" in c["argv"] and c["argv"][:1] == ["compose"]]
     assert all(argv[:3] == ["compose", "-p", "overland"] and "--profile" in argv and "--rm" in argv for argv in runs)
     download = " ".join(runs[0])
-    for region in ("italy", "switzerland", "austria", "france/rhone-alpes", "france/provence-alpes-cote-d-azur"):
+    for region in (
+        "italy",
+        "spain",
+        "switzerland",
+        "austria",
+        "france/rhone-alpes",
+        "france/provence-alpes-cote-d-azur",
+    ):
         assert f"https://download.geofabrik.de/europe/{region}-latest.osm.pbf" in download
     overrides = " ".join(runs[-1])
     assert SPEEDS_URL in download and "/work/default_speeds.json" in download
