@@ -109,6 +109,27 @@ afterEach(() => {
 });
 
 describe('Workspace page', () => {
+  it('removes an item on confirm: one DELETE, then the list and the map are read again', async () => {
+    const calls = stubPlanner(
+      [[place('i1', 'Briancon'), place('i2', 'Susa')], [place('i2', 'Susa')]],
+      {
+        'DELETE /api/projects/p1/items/i1': { status: 204, body: undefined },
+      },
+    );
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await itemNamed('Briancon');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Actions for Briancon' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await vi.waitFor(() => expect(screen.queryByText('Briancon')).not.toBeInTheDocument());
+    expect(writes(calls).map((c) => `${c.method} ${c.url}`)).toEqual([
+      'DELETE /api/projects/p1/items/i1',
+    ]);
+    expect(map.props?.items.map((i) => i.name)).toEqual(['Susa']);
+  });
+
   it('shows the project name and its items', async () => {
     stubPlanner([[place('i1', 'Briancon')]]);
 

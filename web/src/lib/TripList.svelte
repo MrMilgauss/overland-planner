@@ -1,22 +1,27 @@
 <script lang="ts">
   // The trip's list (D283, D107): the places and trails of the project, a Start and an End tag on the places that are
-  // one, and on a place a row menu "Set as start" / "Set as end". The anchors call takes both ids, so a choice made
+  // one, and on every row a menu: a place "Set as start" / "Set as end" / "Remove", a trail "Remove" (which asks first,
+  // inside the menu). The menu opens in the page flow, as a block under its row, so that no scrolling panel clips it.
+  // The anchors call takes both ids, so a choice made
   // while the other is not yet chosen is kept here with the tag "not saved yet" and sent once both are (a project that
   // has the other saved sends the new one with it). An item that is not included carries the muted tag "Left out". Read-only while the trip is planned: no menu.
-  import type { Snippet } from 'svelte';
-  import type { Item } from './api';
+  import { tick, type Snippet } from 'svelte';
+  import { failureText, type Item } from './api';
 
   type Role = 'start' | 'end';
   let {
     items,
     readonly = false,
     onanchors,
+    onremove,
     children,
   }: {
     items: Item[];
     readonly?: boolean;
     /** The anchors call with both ids; true once the planner has taken it. */
     onanchors?: (startId: string, endId: string) => Promise<boolean>;
+    /** Takes the item off the trip and reads the trip again; rejects with the planner's refusal. */
+    onremove?: (item: Item) => Promise<void>;
     /** What stands beside the heading (the Add control). */
     children?: Snippet;
   } = $props();
@@ -26,6 +31,11 @@
   let pending = $state<{ start?: string; end?: string }>({});
   let menuOf = $state<string | undefined>();
   let toggles: Record<string, HTMLButtonElement | undefined> = {};
+  let confirming = $state<string | undefined>(); // the item whose removal the open menu is asking about
+  let removing = $state(false);
+  let refused = $state<{ id: string; text: string } | undefined>();
+  let heading = $state<HTMLElement | undefined>();
+  let cancel = $state<HTMLButtonElement | undefined>();
 
   const saved = $derived({
     start: items.find((i) => i.anchor === 'start' || i.anchor === 'start_end')?.id,
@@ -55,6 +65,46 @@
     pending = { ...pending, [role]: item.id };
     if (await onanchors?.(next.start, next.end)) pending = {};
   }
+
+  function toggleMenu(item: Item): void {
+    confirming = undefined;
+    refused = undefined;
+    menuOf = menuOf === item.id ? undefined : item.id;
+  }
+
+  async function askToRemove(item: Item): Promise<void> {
+    confirming = item.id;
+    await tick();
+    cancel?.focus();
+  }
+
+  async function cancelRemoval(item: Item): Promise<void> {
+    confirming = undefined;
+    await tick();
+    toggles[item.id]?.focus();
+  }
+
+  /** After a removal the focus goes to the next row's menu button, else the previous row's, else the heading. */
+  async function remove(item: Item): Promise<void> {
+    if (removing) return;
+    const at = items.findIndex((i) => i.id === item.id);
+    const neighbour = items[at + 1] ?? items[at - 1];
+    removing = true;
+    refused = undefined;
+    try {
+      await onremove?.(item);
+    } catch (error) {
+      refused = { id: item.id, text: failureText(error) };
+      removing = false;
+      return;
+    }
+    removing = false;
+    confirming = undefined;
+    menuOf = undefined;
+    await tick();
+    (neighbour ? toggles[neighbour.id] : undefined)?.focus();
+    if (!neighbour) heading?.focus();
+  }
 </script>
 
 <svelte:window
@@ -62,12 +112,13 @@
     if (event.key !== 'Escape' || menuOf === undefined) return;
     const toggle = toggles[menuOf];
     menuOf = undefined;
+    confirming = undefined;
     toggle?.focus();
   }}
 />
 
 <div class="bar">
-  <h3 id="trip-heading">Your trip</h3>
+  <h3 id="trip-heading" tabindex="-1" bind:this={heading}>Your trip</h3>
   {@render children?.()}
 </div>
 {#if items.length === 0}
@@ -83,29 +134,43 @@
           <span class="tag">{tag.text}</span>
           {#if tag.unsaved}<span class="unsaved">not saved yet</span>{/if}
         {/each}
-        {#if !readonly && item.type === 'poi'}
-          <span class="more">
-            <button
-              type="button"
-              class="dots"
-              aria-label={`Actions for ${item.name}`}
-              bind:this={toggles[item.id]}
-              aria-expanded={menuOf === item.id}
-              aria-controls={`actions-${item.id}`}
-              onclick={() => (menuOf = menuOf === item.id ? undefined : item.id)}
-              ><span aria-hidden="true">⋯</span></button
-            >
-            {#if menuOf === item.id}
-              <ul class="actions" id={`actions-${item.id}`}>
-                <li>
+        {#if !readonly}
+          <button
+            type="button"
+            class="dots"
+            aria-label={`Actions for ${item.name}`}
+            bind:this={toggles[item.id]}
+            aria-expanded={menuOf === item.id}
+            aria-controls={`actions-${item.id}`}
+            onclick={() => toggleMenu(item)}><span aria-hidden="true">⋯</span></button
+          >
+          {#if menuOf === item.id}
+            <div class="actions" id={`actions-${item.id}`}>
+              {#if confirming === item.id}
+                <p>Remove '{item.name}' from the trip?</p>
+                <div class="choices">
+                  <button type="button" disabled={removing} onclick={() => remove(item)}
+                    >Remove</button
+                  >
+                  <button
+                    type="button"
+                    bind:this={cancel}
+                    disabled={removing}
+                    onclick={() => cancelRemoval(item)}>Cancel</button
+                  >
+                </div>
+              {:else}
+                {#if item.type === 'poi'}
                   <button type="button" onclick={() => choose(item, 'start')}>Set as start</button>
-                </li>
-                <li>
                   <button type="button" onclick={() => choose(item, 'end')}>Set as end</button>
-                </li>
-              </ul>
-            {/if}
-          </span>
+                {/if}
+                <button type="button" onclick={() => askToRemove(item)}>Remove</button>
+              {/if}
+              {#if refused?.id === item.id}
+                <p role="alert">{refused.text}</p>
+              {/if}
+            </div>
+          {/if}
         {/if}
       </li>
     {/each}
@@ -160,38 +225,34 @@
     color: var(--color-warning-fg);
     font-size: var(--text-sm);
   }
-  .more {
-    position: relative;
-    margin-left: auto; /* at the right end of its line, so that its menu opens inside the panel */
+  .dots {
+    margin-left: auto; /* at the right end of its line */
   }
+  /* The menu is a block of the page flow under its row, full width: nothing is clipped or covered. */
   .actions {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 3;
+    flex: 1 0 100%;
     display: grid;
-    min-width: 11rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-bg);
-    box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   }
-  .actions li {
-    display: block;
-    padding: 0;
-    border-bottom: 0;
-  }
-  .actions li + li {
-    border-top: 1px solid var(--color-border);
-  }
-  .actions button {
-    width: 100%;
+  .actions > button {
     border: 0;
     border-radius: 0;
     background: transparent;
     text-align: left;
+  }
+  .actions > button + button {
+    border-top: 1px solid var(--color-border);
+  }
+  .actions p {
+    margin: 0;
+    padding: var(--space-2);
+  }
+  .choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: 0 var(--space-2) var(--space-2);
   }
 </style>

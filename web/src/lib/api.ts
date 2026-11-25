@@ -278,6 +278,22 @@ export function addPlace(projectId: string, place: NewPlace): Promise<Item> {
   );
 }
 
+/** Takes an item (a trail or a place) off the trip; the planner clears a Start or End that pointed at it. */
+export async function removeItem(projectId: string, itemId: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE', headers: { Accept: 'application/json' } },
+    );
+  } catch {
+    throw new PlannerError(GENERIC_WRITE_FAILURE);
+  }
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => undefined);
+  throw new PlannerError(messageFrom(body) ?? GENERIC_WRITE_FAILURE, response.status);
+}
+
 export function setAnchors(
   projectId: string,
   startItemId: string,

@@ -26,6 +26,7 @@
     failureText,
     listPlanRuns,
     PlannerError,
+    readMapConfig,
     type Incumbent,
     type Objective,
     planRunExportUrl,
@@ -40,6 +41,7 @@
   } from './api';
 
   const POLL_MS = 500;
+  const UNREACHABLE = 'unreachable'; // the failure code of a run with an item no road reaches
   const STATE_TEXTS: Partial<Record<PlanJobState, string>> = {
     queued: 'Queued',
     computing_legs: 'Computing legs',
@@ -89,6 +91,7 @@
   let readyRun = $state<PlanRunDetail | undefined>();
   let readyRunStale = $state(false); // from the run list: the project changed since the run was computed
   let failedRun = $state<PlanRunDetail | undefined>();
+  let roadMapArea = $state(''); // where the road map reaches, read when a run failed for want of a road
   let stoppable = $state(false);
   let stopPressed = $state(false);
   let notices = $state<string[]>([]);
@@ -134,6 +137,15 @@
     );
   }
 
+  /** Only to explain an unreachable item: without the answer the sentence is left out and the run lines still show. */
+  async function readRoadMapArea(): Promise<void> {
+    try {
+      roadMapArea = (await readMapConfig()).road_map_area ?? '';
+    } catch {
+      roadMapArea = '';
+    }
+  }
+
   /** The highest-numbered ready run stays on show under the failure of a later run. */
   async function showLatestRuns(): Promise<void> {
     try {
@@ -141,6 +153,7 @@
       const latest = highestNumbered(runs);
       const ready = highestNumbered(runs.filter((run) => run.status === 'ready'));
       failedRun = latest && latest !== ready ? await readPlanRun(latest.id) : undefined;
+      if (failedRun?.failure_reason === UNREACHABLE) await readRoadMapArea();
       readyRun = ready ? await readPlanRun(ready.id) : undefined;
       readyRunStale = ready?.stale === true;
       unreadable = false;
@@ -287,6 +300,15 @@
   });
 </script>
 
+{#snippet outsideTheRoadMap(run: PlanRunDetail)}
+  {#if run.failure_reason === UNREACHABLE && roadMapArea}
+    <p>
+      No road reaches these from your other stops. The planner's road map covers {roadMapArea};
+      places outside it can't be planned. Remove them or move them inside the area.
+    </p>
+  {/if}
+{/snippet}
+
 <div class="plan">
   <PhaseSteps {phase} canShowRoute={readyRun !== undefined && !jobActive} onshowroute={showRoute} />
 
@@ -330,9 +352,13 @@
         {#each failedRun.messages as message, index (index)}
           <p>{message}</p>
         {/each}
+        {@render outsideTheRoadMap(failedRun)}
       </div>
     {:else if failedRun}
-      <p role="alert">This plan run failed{failedReason(failedRun)}</p>
+      <div role="alert">
+        <p>This plan run failed{failedReason(failedRun)}</p>
+        {@render outsideTheRoadMap(failedRun)}
+      </div>
     {/if}
 
     {#if phase === 'build'}

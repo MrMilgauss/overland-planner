@@ -6,7 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import TripList from './TripList.svelte';
-import type { Item } from './api';
+import { PlannerError, type Item } from './api';
 
 function poi(name: string, overrides: Partial<Item> = {}): Item {
   return {
@@ -66,7 +66,7 @@ describe('Trip list', () => {
       within(options)
         .getAllByRole('button')
         .map((b) => b.textContent?.trim()),
-    ).toEqual(['Set as start', 'Set as end']);
+    ).toEqual(['Set as start', 'Set as end', 'Remove']);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     within(options).getByRole('button', { name: 'Set as end' }).focus();
 
@@ -103,17 +103,81 @@ describe('Trip list', () => {
     expect(tags('Torino')).toEqual(expected);
   });
 
-  it('offers the row menu on places only, and neither Start nor End on a trail', () => {
-    render(TripList, { props: { items: [poi('Torino'), assietta], onanchors: vi.fn() } });
+  it('offers a trail only Remove, and a place Set as start, Set as end and Remove', async () => {
+    render(TripList, {
+      props: { items: [poi('Torino'), assietta], onanchors: vi.fn(), onremove: vi.fn() },
+    });
 
-    expect(within(row('Torino')).getByRole('button', { name: 'Actions for Torino' })).toBeVisible();
-    expect(within(row("Strada dell'Assietta")).queryByRole('button')).not.toBeInTheDocument();
+    const menuOf = async (name: string): Promise<string[]> => {
+      await fireEvent.click(within(row(name)).getByRole('button', { name: `Actions for ${name}` }));
+      return within(row(name))
+        .getAllByRole('button')
+        .slice(1)
+        .map((b) => b.textContent?.trim() ?? '');
+    };
+
+    expect(await menuOf("Strada dell'Assietta")).toEqual(['Remove']);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(await menuOf('Torino')).toEqual(['Set as start', 'Set as end', 'Remove']);
   });
 
   it('offers no menu at all while the trip is planned (read-only)', () => {
     render(TripList, { props: { items: [poi('Torino'), assietta], readonly: true } });
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  describe('Remove', () => {
+    async function openRemove(name: string): Promise<void> {
+      await fireEvent.click(within(row(name)).getByRole('button', { name: `Actions for ${name}` }));
+      await fireEvent.click(within(row(name)).getByRole('button', { name: 'Remove' }));
+    }
+
+    it('asks first, inside the menu, and calls the planner once on confirm', async () => {
+      const onremove = vi.fn(async () => {});
+      render(TripList, { props: { items: [assietta, poi('Torino')], onremove } });
+
+      await openRemove("Strada dell'Assietta");
+
+      expect(
+        within(row("Strada dell'Assietta")).getByText(
+          "Remove 'Strada dell'Assietta' from the trip?",
+        ),
+      ).toBeInTheDocument();
+      expect(onremove).not.toHaveBeenCalled();
+      await fireEvent.click(
+        within(row("Strada dell'Assietta")).getByRole('button', { name: 'Remove' }),
+      );
+
+      await waitFor(() => expect(onremove).toHaveBeenCalledExactlyOnceWith(assietta));
+    });
+
+    it('does nothing on Cancel and goes back to the menu button', async () => {
+      const onremove = vi.fn(async () => {});
+      render(TripList, { props: { items: [poi('Torino')], onremove } });
+
+      await openRemove('Torino');
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(onremove).not.toHaveBeenCalled();
+      expect(screen.queryByText(/from the trip\?/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Actions for Torino' })).toHaveFocus();
+    });
+
+    it("shows the planner's refusal next to the row and keeps the item", async () => {
+      const onremove = vi.fn(async () => {
+        throw new PlannerError('The trip is being planned.', 409);
+      });
+      render(TripList, { props: { items: [poi('Torino')], onremove } });
+
+      await openRemove('Torino');
+      await fireEvent.click(within(row('Torino')).getByRole('button', { name: 'Remove' }));
+
+      expect(await within(row('Torino')).findByRole('alert')).toHaveTextContent(
+        'The trip is being planned.',
+      );
+      expect(row('Torino')).toBeInTheDocument();
+    });
   });
 
   describe('the anchors call waits until both are chosen', () => {

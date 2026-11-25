@@ -33,13 +33,14 @@ class ErrorEnvelope(BaseModel):
 
 class MapConfig(BaseModel):
     """What the web needs to draw its maps (ADR-004): the Terrain raster tile address, its credit and the deepest zoom,
-    and the light base map's style address and credit (Amendment 1)."""
+    the light base map's style address and credit (Amendment 1), and the area the road map covers."""
 
     tile_url: str
     attribution: str
     max_zoom: int
     base_style_url: str
     base_attribution: str
+    road_map_area: str
 
 
 class ProjectCreate(BaseModel):

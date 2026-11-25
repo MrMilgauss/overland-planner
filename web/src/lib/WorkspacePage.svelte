@@ -12,6 +12,7 @@
     importTracks,
     listItems,
     openProject,
+    removeItem,
     setAnchors,
     setObjective,
     type NewPlace,
@@ -91,6 +92,12 @@
   const chooseStartAndEnd = (startId: string, endId: string): Promise<boolean> =>
     attempt(() => setAnchors(projectId, startId, endId));
 
+  /** The row's refusal is shown beside the row by the list, so this one rejects; the list and the panel's runs follow. */
+  async function removeFromTrip(item: Item): Promise<void> {
+    await removeItem(projectId, item.id);
+    await changed();
+  }
+
   /** The choice is the project's value once the planner has taken it; a refusal shows its message and keeps the old. */
   async function chooseObjective(choice: Objective): Promise<void> {
     problem = '';
@@ -166,7 +173,7 @@
 {/snippet}
 
 {#snippet build()}
-  <TripList {items} onanchors={chooseStartAndEnd}>
+  <TripList {items} onanchors={chooseStartAndEnd} onremove={removeFromTrip}>
     <AddMenu onupload={upload} onplace={typedPlace} onclickmap={() => (clickMode = true)} />
   </TripList>
   <div class="switch" role="group" aria-label="Plan for">

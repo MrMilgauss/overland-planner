@@ -549,7 +549,7 @@
         "type": "object"
       },
       "MapConfig": {
-        "description": "What the web needs to draw its maps (ADR-004): the Terrain raster tile address, its credit and the deepest zoom,\nand the light base map's style address and credit (Amendment 1).",
+        "description": "What the web needs to draw its maps (ADR-004): the Terrain raster tile address, its credit and the deepest zoom,\nthe light base map's style address and credit (Amendment 1), and the area the road map covers.",
         "properties": {
           "attribution": {
             "title": "Attribution",
@@ -567,6 +567,10 @@
             "title": "Max Zoom",
             "type": "integer"
           },
+          "road_map_area": {
+            "title": "Road Map Area",
+            "type": "string"
+          },
           "tile_url": {
             "title": "Tile Url",
             "type": "string"
@@ -577,7 +581,8 @@
           "attribution",
           "max_zoom",
           "base_style_url",
-          "base_attribution"
+          "base_attribution",
+          "road_map_area"
         ],
         "title": "MapConfig",
         "type": "object"

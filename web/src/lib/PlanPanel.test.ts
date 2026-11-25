@@ -1062,6 +1062,51 @@ describe('Plan panel: one plan state at a time', () => {
     expect(exportLink()).toHaveAttribute('href', '/api/plan-runs/r1/export.gpx');
   });
 
+  describe('a failed run no road reaches', () => {
+    const AREA = 'Italy, Switzerland, Austria and the French Alps';
+    const SENTENCE = `No road reaches these from your other stops. The planner's road map covers ${AREA}; places outside it can't be planned. Remove them or move them inside the area.`;
+    const MAP_CONFIG: Reply = {
+      status: 200,
+      body: {
+        tile_url: 'x',
+        attribution: 'x',
+        max_zoom: 17,
+        base_style_url: 'x',
+        base_attribution: 'x',
+        road_map_area: AREA,
+      },
+    };
+
+    it('says why under the run lines, with the area the road map covers', async () => {
+      const line =
+        "Plan run #2 failed: 'Ruta' cannot be connected to any other stop at any confidence level";
+      stubPlanner({
+        [`GET ${RUNS}`]: listed(['r2', 2, 'failed']),
+        'GET /api/plan-runs/r2': failedRun('r2', 2, 'unreachable', null, [line]),
+        'GET /api/config/map': MAP_CONFIG,
+      });
+      render(PlanPanel, { props: { projectId: 'p1' } });
+      await settled();
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent(line);
+      expect(alert).toHaveTextContent(SENTENCE);
+    });
+
+    it('says nothing of the road map when the run failed for another reason', async () => {
+      stubPlanner({
+        [`GET ${RUNS}`]: listed(['r2', 2, 'failed']),
+        'GET /api/plan-runs/r2': failedRun('r2', 2, 'timeout', null, ['Plan run #2 failed']),
+        'GET /api/config/map': MAP_CONFIG,
+      });
+      render(PlanPanel, { props: { projectId: 'p1' } });
+      await settled();
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Plan run #2 failed');
+      expect(screen.queryByText(/road map covers/)).not.toBeInTheDocument();
+    });
+  });
+
   it('is Out of date, plan again, with Plan the route as the main action and the export kept', async () => {
     stubPlanner({
       [`GET ${RUNS}`]: {

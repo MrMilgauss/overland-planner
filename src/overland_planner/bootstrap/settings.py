@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     map_base_attribution: Annotated[str, Field(validation_alias="MAP_BASE_ATTRIBUTION")] = (
         "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors"
     )
+    # The area the planner's road map covers, in plain words for the page. It must match the extracts in
+    # deploy/scripts/tiles-refresh.sh (EXTRACTS).
+    road_map_area: Annotated[str, Field(validation_alias="ROAD_MAP_AREA")] = (
+        "Italy, Switzerland, Austria and the French Alps"
+    )
 
     @field_validator("map_tile_url")
     @classmethod
@@ -153,7 +158,7 @@ class Settings(BaseSettings):
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("map_base_style_url", "map_base_attribution", mode="before")
+    @field_validator("map_base_style_url", "map_base_attribution", "road_map_area", mode="before")
     @classmethod
     def _blank_base_map_is_default(cls, value: object, info: ValidationInfo) -> object:
         blank = isinstance(value, str) and value.strip() == ""

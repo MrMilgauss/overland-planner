@@ -39,6 +39,7 @@ def test_the_map_settings_answer_the_chosen_tiles_with_the_default_for_what_is_l
         "attribution": "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)",
         "max_zoom": 12,
         **POSITRON,
+        "road_map_area": "Italy, Switzerland, Austria and the French Alps",
     }
 
 
@@ -50,6 +51,14 @@ def test_the_light_base_map_is_chosen_by_the_settings_and_defaults_when_empty(da
     with TestClient(create_app({"DATA_DIR": str(data_dir), "MAP_BASE_STYLE_URL": ""})) as client:
         answer = client.get("/api/config/map").json()
     assert {k: answer[k] for k in POSITRON} == POSITRON
+
+
+def test_the_road_map_area_is_the_default_and_can_be_set(data_dir: Path) -> None:
+    with TestClient(create_app({"DATA_DIR": str(data_dir)})) as client:
+        default = client.get("/api/config/map").json()["road_map_area"]
+    with TestClient(create_app({"DATA_DIR": str(data_dir), "ROAD_MAP_AREA": "Spain"})) as client:
+        chosen = client.get("/api/config/map").json()["road_map_area"]
+    assert (default, chosen) == ("Italy, Switzerland, Austria and the French Alps", "Spain")
 
 
 def test_the_map_settings_are_behind_the_household_password(data_dir: Path) -> None:

@@ -250,11 +250,88 @@ test("Start and End are set on a place in the list", async ({
   await expect(row(TORINO).getByText("not saved yet")).toHaveCount(0);
   await expect.poll(anchors).toContain("start_end");
 
-  await expect(row("Assietta").getByRole("button")).toHaveCount(0);
+  // A trail has a menu too, with Remove alone: no Start or End.
+  await row("Assietta")
+    .getByRole("button", { name: /^Actions for/ })
+    .click();
+  await expect(page.locator("[id^='actions-']").getByRole("button")).toHaveText(
+    ["Remove"],
+  );
+  await page.keyboard.press("Escape");
   await expect(
     page.getByRole("button", { name: "Set Start and End" }),
   ).toHaveCount(0);
   await expect(page.getByLabel("Start", { exact: true })).toHaveCount(0);
+});
+
+test("The last row's menu is fully visible and leaves the Plan for switch uncovered", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await serveTheBaseMap(page, testInfo);
+  await seedTrip(page, testInfo, { start: false });
+  const lastRow = tripList(page).getByRole("listitem").last();
+  await expect(lastRow).toContainText(TORINO);
+
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await lastRow
+      .getByRole("button", { name: `Actions for ${TORINO}` })
+      .click();
+    const menu = page.locator("[id^='actions-']");
+    await expect(menu.getByRole("button")).toHaveText([
+      "Set as start",
+      "Set as end",
+      "Remove",
+    ]);
+    await menu.scrollIntoViewIfNeeded();
+    for (const button of await menu.getByRole("button").all())
+      await expect(button, `${width} px`).toBeInViewport({ ratio: 1 });
+    const menuBox = (await menu.boundingBox())!;
+    const switchBox = (await page
+      .getByRole("group", { name: "Plan for" })
+      .boundingBox())!;
+    expect(
+      menuBox.y + menuBox.height <= switchBox.y + 0.5,
+      `the menu ends above the Plan for switch at ${width} px`,
+    ).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  }
+});
+
+test("Removing a trail takes it off the list and the map", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await serveTheBaseMap(page, testInfo);
+  await seedTrip(page, testInfo, { start: false });
+  const map = page.getByRole("region", { name: "Map of the trip" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(map.locator(".run-marker.entry")).toHaveCount(1);
+  const trail = tripList(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Assietta" });
+
+  await trail.getByRole("button", { name: /^Actions for/ }).click();
+  await trail.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(trail).toContainText(
+    "Remove 'Strada dell'Assietta' from the trip?",
+  );
+  await trail.getByRole("button", { name: "Cancel" }).click();
+  await expect(trail).toHaveCount(1);
+
+  // Cancel leaves the menu open on its choices.
+  await trail.getByRole("button", { name: "Remove", exact: true }).click();
+  await trail.getByRole("button", { name: "Remove", exact: true }).click();
+
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(1);
+  await expect(tripList(page)).not.toContainText("Assietta");
+  await expect(map.locator(".run-marker.entry")).toHaveCount(0);
+  await expect(map.locator(".run-marker.exit")).toHaveCount(0);
+  await expect(map.locator(".run-marker.place")).toHaveCount(1);
 });
 
 test("While planning, the trip is read-only and nothing is exported", async ({
