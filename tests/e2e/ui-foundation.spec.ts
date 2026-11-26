@@ -718,7 +718,7 @@ async function holdPlanning(page: Page): Promise<void> {
   );
 }
 
-async function makeAnEmptyProject(
+async function makeAProjectReadyToPlan(
   page: Page,
   testInfo: TestInfo,
 ): Promise<void> {
@@ -728,6 +728,12 @@ async function makeAnEmptyProject(
   await page.getByLabel("Project name").fill(name);
   await page.getByRole("button", { name: "New project" }).click();
   await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  // Plan the route is offered once the trip has a place that is the Start.
+  await typeAPlace(page, HOME, "45.0703", "7.6869");
+  await expect(
+    page.getByRole("list", { name: "Your trip" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  await setStartAndEnd(page, HOME);
 }
 
 const FAILED_WORDS =
@@ -772,7 +778,7 @@ test("While planning, Stop is offered", async ({ page }, testInfo) => {
     "the planning state is checked on the desktop browser",
   );
   test.setTimeout(120_000);
-  await makeAnEmptyProject(page, testInfo);
+  await makeAProjectReadyToPlan(page, testInfo);
   await holdPlanning(page);
   await page.getByRole("button", { name: "Plan the route" }).click();
   await expect(stateBadge(page)).toHaveText(/Planning…/);

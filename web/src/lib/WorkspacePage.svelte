@@ -149,6 +149,7 @@
       <PlanPanel
         bind:this={panel}
         {projectId}
+        items={itemsRead ? items : undefined}
         {objective}
         {selectedStop}
         onselectstop={stepPressed}

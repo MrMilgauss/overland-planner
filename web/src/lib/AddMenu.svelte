@@ -95,24 +95,23 @@
 {/if}
 
 <style>
+  /* The wrapper adds no box: the Add button and the menu are items of the heading bar (a wrapping row), so the menu
+     wraps under the heading as a full-width block of the page flow and no scrolling panel clips or covers it. */
   .add {
-    position: relative;
+    display: contents;
+  }
+  .add > button {
     margin-left: auto;
   }
   .options {
+    flex: 1 0 100%;
     margin: 0;
     padding: 0;
     list-style: none;
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 3;
     display: grid;
-    min-width: 12rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-bg);
-    box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   }
   .options button {
     border: 0;

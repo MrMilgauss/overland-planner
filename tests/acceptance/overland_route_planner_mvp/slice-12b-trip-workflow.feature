@@ -90,10 +90,11 @@ Feature: The planner follows the trip
     And the main action is "Plan the route"
 
   # trip-workflow.spec.ts: "A refusal keeps Marco on Build the trip with the planner's own words" (chromium; real: the
-  # planner refuses a plan without a Start). D211: the planner's refusal, not reworded.
+  # planner refuses a plan without a Start). D211: the planner's refusal, not reworded. D298: the page disables "Plan
+  # the route" without a Start, so the Start is removed elsewhere after the page has read the trip.
   @US-23 @J-01 @ui @error
   Scenario: A refusal keeps Marco on Build the trip with the planner's own words
-    Given "Assietta weekend" has no Start chosen
+    Given the Start of "Assietta weekend" was removed elsewhere after the page read the trip
     When Marco presses "Plan the route"
     Then the planner's refusal "Set the Start before calculating" is shown word for word
     And the page stays on "Build the trip" with the list unchanged

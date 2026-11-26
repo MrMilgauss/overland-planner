@@ -9,6 +9,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlanPanel from './PlanPanel.svelte';
+import type { Item } from './api';
 
 type Reply = { status: number; body: unknown } | 'network down';
 type Routes = Record<string, Reply | Reply[]>;
@@ -151,6 +152,55 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+function tripItem(name: string, anchor: Item['anchor'] = null): Item {
+  return {
+    id: name,
+    type: 'poi',
+    name,
+    included: true,
+    anchor,
+    location: { lat: 45.07, lon: 7.68 },
+    entry: null,
+    exit: null,
+    length_m: null,
+  };
+}
+
+describe('Plan panel: when the trip is not ready to plan', () => {
+  it.each<[string, Item[], string]>([
+    ['the trip is empty', [], 'Add a trail or place first.'],
+    [
+      'no Start is set',
+      [tripItem('Casa Marco')],
+      'Set a Start: open \u22ef on a place and choose Set as start.',
+    ],
+  ])('disables Plan the route and says why when %s', async (_case, items, reason) => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    render(PlanPanel, { props: { projectId: 'p1', items } });
+    await settled();
+
+    const button = screen.getByRole('button', { name: 'Plan the route' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(reason);
+  });
+
+  it.each<Item['anchor']>(['start', 'start_end'])(
+    'enables Plan the route, with no reason, when the Start is set (%s)',
+    async (anchor) => {
+      stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+      render(PlanPanel, {
+        props: { projectId: 'p1', items: [tripItem('Casa Marco', anchor)] },
+      });
+      await settled();
+
+      const button = screen.getByRole('button', { name: 'Plan the route' });
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute('aria-describedby');
+      expect(screen.queryByText(/first\.|Set a Start/)).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe('Plan panel: calculating', () => {

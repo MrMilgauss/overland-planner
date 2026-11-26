@@ -69,4 +69,22 @@
     min-height: 2.75rem;
     text-align: center;
   }
+  /* The button reads as its sibling labels: no box, the label's own colour and weight; it shows it can be pressed by
+     the pointer cursor and an underline on hover, and by an outline for keyboard focus only. */
+  button {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover {
+    text-decoration: underline;
+  }
+  button:focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: -2px;
+  }
 </style>

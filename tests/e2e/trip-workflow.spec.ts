@@ -300,6 +300,96 @@ test("The last row's menu is fully visible and leaves the Plan for switch uncove
   }
 });
 
+test("On an empty trip every Add menu item is fully visible and the menu ends above the Plan for switch", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(120_000);
+  await serveTheBaseMap(page, testInfo);
+  await newProject(page, testInfo);
+
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await addButton(page).click();
+    await expect(addButton(page)).toHaveAttribute("aria-expanded", "true");
+    const menu = page.locator("#add-options");
+    await expect(menu.getByRole("button")).toHaveText([
+      "Upload GPX trails",
+      "Click on the map",
+      "Type coordinates",
+    ]);
+    await menu.scrollIntoViewIfNeeded();
+    for (const button of await menu.getByRole("button").all())
+      await expect(button, `${width} px`).toBeInViewport({ ratio: 1 });
+    const menuBox = (await menu.boundingBox())!;
+    const switchBox = (await page
+      .getByRole("group", { name: "Plan for" })
+      .boundingBox())!;
+    expect(
+      menuBox.y + menuBox.height <= switchBox.y + 0.5,
+      `the menu ends above the Plan for switch at ${width} px`,
+    ).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(addButton(page)).toBeFocused();
+  }
+});
+
+test("Plan the route is disabled on an empty trip, with the reason under it", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(120_000);
+  await serveTheBaseMap(page, testInfo);
+  await newProject(page, testInfo);
+
+  const plan = page.getByRole("button", { name: "Plan the route" });
+  await expect(plan).toBeDisabled();
+  await expect(plan).toHaveAccessibleDescription("Add a trail or place first.");
+
+  await addPlaceOnTheForm(page, TORINO, "45.0703", "7.6869");
+  await expect(plan).toBeDisabled();
+  await expect(plan).toHaveAccessibleDescription(
+    "Set a Start: open \u22ef on a place and choose Set as start.",
+  );
+
+  await setFromTheRow(page, TORINO, "Set as start");
+  await setFromTheRow(page, TORINO, "Set as end");
+  await expect(plan).toBeEnabled();
+  await expect(plan).toHaveAccessibleDescription("");
+});
+
+test("Your route on Build the trip looks like the other steps, with no box, and keeps a keyboard focus outline", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the laptop browser only");
+  test.setTimeout(300_000);
+  await serveTheBaseMap(page, testInfo);
+  await planOnTheOfflineMap(page, testInfo);
+  await page.getByRole("button", { name: "Edit trip" }).click();
+
+  const steps = page.getByRole("list", { name: "Steps" });
+  const route = steps.getByRole("button", { name: /Your route/ });
+  await expect(route).toBeVisible();
+  const resting = await route.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.borderTopStyle, width: style.borderTopWidth };
+  });
+  expect(resting.style === "none" || resting.width === "0px").toBe(true);
+  await route.hover();
+  await expect(route).toHaveCSS("text-decoration-line", "underline");
+  await expect(route).toHaveCSS("cursor", "pointer");
+
+  await page.keyboard.press("Tab"); // keyboard use, so that focus-visible applies
+  await route.focus();
+  const focused = await route.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(focused.style).not.toBe("none");
+  expect(focused.width).not.toBe("0px");
+});
+
 test("Removing a trail takes it off the list and the map", async ({
   page,
 }, testInfo) => {
@@ -526,11 +616,17 @@ test("A refusal keeps Marco on Build the trip with the planner's own words", asy
 }, testInfo) => {
   test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  await seedTrip(page, testInfo, { start: false });
+  await seedTrip(page, testInfo, {});
+  // Plan the route is offered only with a Start, so the Start goes from the planner behind the page's back (the place
+  // that was the Start is removed through the planner's own API): the page still offers the button and the planner refuses.
+  const projectId = projectIdOf(page.url());
+  const items = (await (
+    await page.request.get(`/api/projects/${projectId}/items`)
+  ).json()) as { id: string; name: string }[];
+  const torino = items.find((item) => item.name === TORINO)!;
+  await page.request.delete(`/api/projects/${projectId}/items/${torino.id}`);
   const refusal = (await (
-    await page.request.post(
-      `/api/projects/${projectIdOf(page.url())}/plan-runs`,
-    )
+    await page.request.post(`/api/projects/${projectId}/plan-runs`)
   ).json()) as { message: string };
   expect(refusal.message).toContain("Set the Start before calculating");
 
@@ -1247,7 +1343,7 @@ test("Couldn't plan without an earlier route keeps Marco on Build the trip", asy
 }, testInfo) => {
   test.setTimeout(120_000);
   await serveTheBaseMap(page, testInfo);
-  await seedTrip(page, testInfo, { trail: false, place: false });
+  await seedTrip(page, testInfo, { trail: false }); // a place that is the Start: Plan the route is offered
   const words =
     "Routing engine unreachable - nothing was changed. Try again later.";
   await page.route(/\/api\/projects\/[^/]+\/plan-runs$/, (route) =>

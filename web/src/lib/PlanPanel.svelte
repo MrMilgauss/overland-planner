@@ -28,6 +28,7 @@
     PlannerError,
     readMapConfig,
     type Incumbent,
+    type Item,
     type Objective,
     planRunExportUrl,
     readPlanJob,
@@ -58,6 +59,7 @@
 
   let {
     projectId,
+    items = undefined,
     objective = 'distance',
     onrunshown,
     onphase,
@@ -67,6 +69,8 @@
     onselectstop,
   }: {
     projectId: string;
+    /** The trip's items, to tell why Plan the route is not offered yet; left out, the button is always offered. */
+    items?: Item[];
     objective?: Objective;
     /** The ready run on show (Your route), for the page's map, and whether it is an estimate; undefined otherwise. */
     onrunshown?: (planRunId: string | undefined, estimate: boolean) => void;
@@ -102,6 +106,15 @@
 
   let nextPoll: ReturnType<typeof setTimeout> | undefined;
   let gone = false;
+
+  const NOT_READY_EMPTY = 'Add a trail or place first.';
+  const NOT_READY_NO_START = 'Set a Start: open \u22ef on a place and choose Set as start.';
+  const notReady = $derived.by((): string => {
+    if (items === undefined) return '';
+    if (items.length === 0) return NOT_READY_EMPTY;
+    const hasStart = items.some((item) => item.anchor === 'start' || item.anchor === 'start_end');
+    return hasStart ? '' : NOT_READY_NO_START;
+  });
 
   const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run
   const previous = $derived(failedRun !== undefined || jobFailed); // a ready route is on show under a failed plan
@@ -364,7 +377,16 @@
     {#if phase === 'build'}
       {@render build?.()}
       <div class="action">
-        <button type="button" class="primary" onclick={() => calculate()}>Plan the route</button>
+        <button
+          type="button"
+          class="primary"
+          disabled={notReady !== ''}
+          aria-describedby={notReady ? 'plan-not-ready' : undefined}
+          onclick={() => calculate()}>Plan the route</button
+        >
+        {#if notReady}
+          <p id="plan-not-ready" class="not-ready">{notReady}</p>
+        {/if}
       </div>
     {:else if phase === 'planning'}
       {@render trip?.()}
@@ -448,6 +470,11 @@
       width: 100%;
       animation: none;
     }
+  }
+  .not-ready {
+    margin-top: var(--space-1);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .best,
   .notice {
