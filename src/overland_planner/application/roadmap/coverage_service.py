@@ -63,13 +63,15 @@ class CoverageService:
 
     @staticmethod
     def _groups(coverage: RoadMapCoverage, items: Sequence[CatalogItem]) -> tuple[TripGroup, ...]:
+        """An item inside the map sits in the group holding its first stop (a trail: its entry); outside, in none."""
         by_name = dict(coverage.regions)
+        inside = [i for i in items if all(coverage.contains(point) for point in _stops(i))]
         held = (
-            TripGroup(regions=names, item_ids=tuple(i.id for i in items if _is_in(names, by_name, _stops(i))))
+            TripGroup(regions=names, item_ids=tuple(i.id for i in inside if _is_in(names, by_name, _stops(i)[0])))
             for names in coverage.land_groups()
         )
         return tuple(group for group in held if group.item_ids)
 
 
-def _is_in(names: tuple[str, ...], outlines: dict[str, Outline], points: tuple[Coordinate, ...]) -> bool:
-    return any(outlines[name].contains(point) for name in names for point in points)
+def _is_in(names: tuple[str, ...], outlines: dict[str, Outline], point: Coordinate) -> bool:
+    return any(outlines[name].contains(point) for name in names)

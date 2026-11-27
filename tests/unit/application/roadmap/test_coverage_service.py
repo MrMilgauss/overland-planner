@@ -70,7 +70,7 @@ def test_a_place_is_outside_by_its_point_and_the_map_names_its_regions_and_date(
 )
 def test_a_trail_is_outside_when_its_entry_or_its_exit_is(entry: tuple[int, int], exit: tuple[int, int]) -> None:
     def inside(point: tuple[int, int]) -> bool:
-        return all(0 < c < 10 or 50 < c < 60 for c in point)
+        return all(0 < c < 10 for c in point) or all(50 < c < 60 for c in point)
 
     if any(c in (0, 10, 50, 60) for c in (*entry, *exit)):
         return  # a point on a border is the domain's business (outline.py), not the trip rule
@@ -88,9 +88,44 @@ def test_an_unknown_map_judges_nothing_and_keeps_its_date() -> None:
     assert answer == TripCoverage(known=False, map_date=DATE, regions=(), outside_item_ids=(), groups=())
 
 
-def test_stops_in_regions_not_linked_by_land_fall_in_two_groups_named_with_their_stops() -> None:
+def test_stops_in_regions_not_linked_by_land_fall_in_two_groups_a_trail_in_the_group_of_its_entry() -> None:
     answer = coverage_of(KNOWN, place("a", 5, 5), trail("t", (55, 55), (5, 5)), place("out", 30, 30))
-    assert [(g.regions, g.item_ids) for g in answer.groups] == [(("Far",), ("t",)), (("Home",), ("a", "t"))]
+    assert [(g.regions, g.item_ids) for g in answer.groups] == [(("Far",), ("t",)), (("Home",), ("a",))]
+
+
+def test_a_trip_inside_one_group_answers_one_group_and_an_empty_trip_none() -> None:
+    one = coverage_of(KNOWN, place("a", 5, 5), place("b", 6, 6))
+    assert [(g.regions, g.item_ids) for g in one.groups] == [(("Home",), ("a", "b"))]
+    assert coverage_of(KNOWN).groups == ()
+
+
+def test_an_item_outside_the_map_is_in_no_group_even_when_one_end_of_a_trail_is_inside() -> None:
+    answer = coverage_of(KNOWN, trail("half", (5, 5), (30, 30)), place("out", 30, 30))
+    assert answer.groups == ()
+
+
+POINTS = st.tuples(st.integers(-5, 65), st.integers(-5, 65)).filter(lambda p: not any(c in (0, 10, 50, 60) for c in p))
+
+
+@given(
+    stops=st.lists(
+        st.one_of(
+            st.tuples(POINTS, st.none(), st.booleans()),
+            st.tuples(POINTS, POINTS, st.booleans()),
+        ),
+        max_size=8,
+    )
+)
+def test_group_item_ids_are_included_inside_the_map_and_in_one_group_only(stops: list) -> None:
+    items = [
+        place(f"i{n}", *a, included=inc) if b is None else trail(f"i{n}", a, b, included=inc)
+        for n, (a, b, inc) in enumerate(stops)
+    ]
+    answer = coverage_of(KNOWN, *items)
+    grouped = [i for g in answer.groups for i in g.item_ids]
+    included = {i.id for i in items if i.included}
+    assert len(grouped) == len(set(grouped))
+    assert set(grouped) == included - set(answer.outside_item_ids)
 
 
 def test_an_unknown_project_is_not_found() -> None:
