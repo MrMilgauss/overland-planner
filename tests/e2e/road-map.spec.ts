@@ -935,7 +935,8 @@ test("A result outside the road map is added with the warning", async ({
   await searchFor(form, "Lagos");
   const portugal = form
     .getByRole("listitem")
-    .filter({ hasText: "Lagos, Algarve, Portugal" });
+    .filter({ hasText: "Lagos" })
+    .filter({ hasText: "Algarve, Portugal" });
   await expect(portugal).toHaveCount(1);
   await portugal.getByRole("button", { name: "Add" }).click();
   // Then "Lagos" is in the list with the outside-the-map warning, at add time and as a tag on its row
