@@ -25,6 +25,7 @@ _TABLE: dict[str, tuple[str, str]] = {
     "overrides": ("the road rules could not be applied", _CHECK),
     "promote": ("the new map could not be put in place", _CHECK),
     "switch": ("the new map did not start", _CHECK),
+    "bad_request": ("the planned change could not be read by the Pi", f"plan the change again and {_AGAIN}"),
     "interrupted": ("the Pi lost power or restarted during the rebuild", _AGAIN),
 }
 FAILURE_CODES = tuple(_TABLE)

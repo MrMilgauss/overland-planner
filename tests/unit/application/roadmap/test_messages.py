@@ -23,9 +23,9 @@ def failed(code: str | None, **kwargs: int | None) -> str:
 
 
 def test_every_failure_code_is_told_in_plain_words_with_the_previous_map_and_the_kept_change() -> None:
-    assert len(FAILURE_CODES) == 14
+    assert len(FAILURE_CODES) == 15
     sentences = {code: failed(code, free_gb=18, need_gb=25, have_gb=9) for code in FAILURE_CODES}
-    assert len(set(sentences.values())) == 14
+    assert len(set(sentences.values())) == 15
     for sentence in sentences.values():
         assert not FORBIDDEN.search(sentence), sentence
         assert sentence.startswith("The rebuild didn't finish")
@@ -46,6 +46,12 @@ def test_the_memory_sentence_carries_the_gigabytes_the_pi_has(have: int) -> None
 def test_the_disk_sentence_without_numbers_still_says_the_disk_is_short() -> None:
     sentence = failed("disk")
     assert "disk" in sentence and "GB" not in sentence
+
+
+def test_a_planned_change_the_pi_could_not_read_says_so_and_asks_to_plan_it_again() -> None:
+    sentence = failure_message("bad_request", map_date=None, kept=True)
+    assert "the planned change could not be read by the Pi" in sentence
+    assert "plan the change again" in sentence and "bad_request" not in sentence
 
 
 def test_a_rebuild_that_ran_out_of_memory_says_so() -> None:
