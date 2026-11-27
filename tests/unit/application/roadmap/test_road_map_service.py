@@ -369,6 +369,7 @@ def test_a_change_with_no_start_asks_for_none() -> None:
 @pytest.mark.parametrize(
     ("keys", "code"),
     [
+        ([], "no_regions"),
         (["italy", "atlantis"], "unknown_region"),
         (["italy", "lombardy"], "overlaps_region"),
         (["italy", "spain", "portugal", "us/utah"], "too_big"),  # 2 + 1.5 + 0.4 + 1.1 = 5 GB, limit 4
@@ -380,6 +381,17 @@ def test_a_change_the_rules_refuse_writes_nothing(keys: list[str], code: str) ->
         service.plan_change(keys, START)
     assert refused.value.code == code
     assert changes.request is None
+
+
+def test_a_change_with_no_region_is_refused_in_plain_words_after_the_busy_checks() -> None:
+    service, changes, _ = queued_planner()
+    with pytest.raises(Refusal) as refused:
+        service.plan_change([], START)
+    assert refused.value.message == "Choose at least one region for the road map."
+    service.plan_change(["italy"], START)  # one waits now: the busy refusal comes first
+    with pytest.raises(Refusal) as busy:
+        service.plan_change([], START)
+    assert busy.value.code == "change_pending" and changes.request is not None
 
 
 def test_a_change_too_big_is_refused_before_any_border_is_fetched() -> None:

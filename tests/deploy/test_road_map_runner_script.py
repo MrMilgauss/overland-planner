@@ -156,6 +156,7 @@ BAD_REQUESTS = {
         "requested_at", "start_at=soon\nrequested_at", 1
     ),
     "a size that is not a number": mutated("2200", "22e2"),
+    "no region at all": request_text(regions=()),
     "a line the planner does not write": request_text() + "extra=1\n",
 }
 

@@ -3364,7 +3364,7 @@
                 }
               }
             },
-            "description": "validation_error, unknown_region, overlaps_region, too_big, bad_start or same_day"
+            "description": "validation_error, no_regions, unknown_region, overlaps_region, too_big, bad_start or same_day"
           },
           "503": {
             "content": {
@@ -3412,7 +3412,7 @@
                 }
               }
             },
-            "description": "validation_error, unknown_region or overlaps_region"
+            "description": "validation_error, no_regions, unknown_region or overlaps_region"
           },
           "503": {
             "content": {

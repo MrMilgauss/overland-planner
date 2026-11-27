@@ -187,7 +187,7 @@ validate_request() {
       *) return 1 ;;
     esac
   done <<<"$1"
-  [ "$requested" = yes ] && [ "$added" = yes ] && [ "$removed" = yes ]
+  [ "$requested" = yes ] && [ "$added" = yes ] && [ "$removed" = yes ] && [ "$regions" -ge 1 ]
 }
 
 now() { printf '%s' "${ROAD_MAP_NOW:-$(date +%s)}"; }

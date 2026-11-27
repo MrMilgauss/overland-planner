@@ -326,6 +326,17 @@ describe('Road map page', () => {
     expect(await screen.findByRole('region', { name: 'Planned rebuild' })).toBeVisible();
   });
 
+  it('does not offer the rebuild when the pending choice would leave no region', async () => {
+    plan(SERVED);
+    render(RoadMapPage);
+    await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Austria' }));
+    expect(await screen.findByRole('button', { name: 'Rebuild road map' })).toBeEnabled();
+
+    await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Italy' }));
+
+    expect(screen.getByRole('button', { name: 'Rebuild road map' })).toBeDisabled();
+  });
+
   it('refreshes the map data as the same workflow: same regions asked, same summary, no region list sent', async () => {
     const calls = plan(SERVED, {
       status: 200,

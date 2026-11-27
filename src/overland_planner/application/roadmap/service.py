@@ -291,16 +291,16 @@ class RoadMapService:
 
     def preview_change(self, region_keys: Sequence[str] | None) -> ChangeSummary:
         """The summary of making the map hold exactly these regions; writes nothing. Only the border of a region not
-        served is fetched, and only the size of a region not served is asked. Raises `Refusal` for a region unknown
-        or overlapping another, `CatalogueUnavailableError` when the list, a size or a border cannot be had."""
+        served is fetched, and only the size of a region not served is asked. Raises `Refusal` for no region, a region
+        unknown or overlapping another, `CatalogueUnavailableError` when the list, a size or a border cannot be had."""
         return self._summary(self._choose(self._keys_or_refresh(region_keys)))
 
     def plan_change(self, region_keys: Sequence[str] | None, start_at: datetime | None = None) -> ChangeSummary:
         """Keep the change ready for the helper and answer with its summary; the served map is left as it is (no keys:
         refresh the served regions). Raises `ChangesUnavailableError` when changes cannot be kept, `Refusal` for a
         change already waiting or running, a start outside two minutes to fourteen days ahead, a UTC day that already
-        has a map, a region unknown, overlapping another, one the helper would refuse to read, or a download above the
-        limit (nothing is fetched for the last), and
+        has a map, no region at all, a region unknown, overlapping another, one the helper would refuse to read, or a
+        download above the limit (nothing is fetched for the last), and
         `CatalogueUnavailableError` as `preview_change` does. Nothing is written unless every check passed."""
         changes, clock = self._open_changes()
         if not self.rebuilds_set_up():
@@ -453,6 +453,8 @@ class RoadMapService:
         return self._changes, self._clock
 
     def _choose(self, region_keys: Sequence[str]) -> _Chosen:
+        if not region_keys:
+            raise Refusal("no_regions", "Choose at least one region for the road map.")
         if self._catalogue is None:
             raise CatalogueUnavailableError("no list of regions is set up")
         by_key = {entry.key: entry for entry in self._catalogue.entries()}

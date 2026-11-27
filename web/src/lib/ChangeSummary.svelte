@@ -13,12 +13,14 @@
     serverOffsetMinutes,
     choose,
     rebuild,
+    canRebuild = true,
   }: {
     summary: ChangePreview;
     limits: RoadMapLimits;
     serverOffsetMinutes: number;
     choose: (startAt: string | null) => void;
     rebuild: () => void;
+    canRebuild?: boolean;
   } = $props();
 
   let later = $state(false);
@@ -76,8 +78,11 @@
         {/if}
       {/if}
     </fieldset>
-    <button type="button" class="primary" disabled={later && startAt === null} onclick={rebuild}
-      >Rebuild road map</button
+    <button
+      type="button"
+      class="primary"
+      disabled={!canRebuild || (later && startAt === null)}
+      onclick={rebuild}>Rebuild road map</button
     >
   {/if}
 </section>

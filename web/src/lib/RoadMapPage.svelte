@@ -114,6 +114,16 @@
   );
 
   const addedKeys = $derived(added.map((region) => region.key));
+  // a rebuild needs a region to hold: removing every region is refused by the planner, so it is not offered
+  const leavesNone = $derived(
+    served !== undefined &&
+      served.known &&
+      pendingKeys(
+        served.regions.map((region) => region.key),
+        removed,
+        addedKeys,
+      ).length === 0,
+  );
   const servedKeys = $derived(served?.regions.map((region) => region.key) ?? []);
 
   async function check(keys: string[], undo: () => void): Promise<void> {
@@ -312,6 +322,7 @@
         serverOffsetMinutes={piOffset}
         choose={(chosen) => (startAt = chosen)}
         {rebuild}
+        canRebuild={!leavesNone}
       />
     {/if}
     {#if refusal}

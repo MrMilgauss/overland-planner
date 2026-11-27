@@ -192,7 +192,10 @@ def test_a_refused_change_answers_its_code_and_writes_nothing(data_dir: Path, tm
     with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {"ROAD_MAP_MAX_GB": "0.0001"}) as client:
         unknown = client.post("/api/road-map/change", json={"region_keys": ["atlantis"]})
         big = client.post("/api/road-map/change", json={"region_keys": ["portugal"]})
+        none = client.post("/api/road-map/change", json={"region_keys": []})
     server.stop()
+    assert (none.status_code, none.json()["code"]) == (422, "no_regions")
+    assert none.json()["message"] == "Choose at least one region for the road map."
     assert (unknown.status_code, unknown.json()["code"]) == (422, "unknown_region")
     assert (big.status_code, big.json()["code"]) == (422, "too_big")
     assert "0.4 GB" in big.json()["message"] and "limit is 0.0001 GB" in big.json()["message"]

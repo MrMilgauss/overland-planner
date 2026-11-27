@@ -631,7 +631,7 @@ CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 CHANGE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {
         "model": ChangeRefusalEnvelope,
-        "description": "validation_error, unknown_region, overlaps_region, too_big, bad_start or same_day",
+        "description": "validation_error, no_regions, unknown_region, overlaps_region, too_big, bad_start or same_day",
     },
     409: {"model": ErrorEnvelope, "description": "change_pending or rebuild_running"},
     503: {"model": ErrorEnvelope, "description": "changes_unavailable or region_catalogue_unavailable"},
@@ -641,7 +641,7 @@ CANCEL_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {"model": ErrorEnvelope, "description": "changes_unavailable"},
 }
 PREVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    422: {"model": ErrorEnvelope, "description": "validation_error, unknown_region or overlaps_region"},
+    422: {"model": ErrorEnvelope, "description": "validation_error, no_regions, unknown_region or overlaps_region"},
     503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},
 }
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
