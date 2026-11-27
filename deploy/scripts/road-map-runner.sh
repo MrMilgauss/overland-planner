@@ -16,8 +16,22 @@
 #   4 start_at in the future -> left alone; else the request is taken by renaming request.txt to running.txt (the
 #     planner cancels by renaming the same file: the rename that wins decides), read again and validated again
 #   5 the regions file (mode 600, six tab-separated fields per line) is written and tiles-refresh.sh runs on it with
-#     ROAD_MAP_PROGRESS=on; a refresh that ended well leaves result.txt state=done and running.txt is removed
-# Epoch seconds only: no date is parsed.
+#     ROAD_MAP_PROGRESS=on (its own output goes to .road-map-refresh.out, never to the log); then
+#       exit 0   result.txt state=done, running.txt removed
+#       exit 75  the Pi was busy (.deploy.lock): running.txt goes back to request.txt, unchanged, and the next minute
+#                tries again; the first 75 is kept in locked-since.txt (this script's own file, epoch seconds) and after
+#                30 minutes the end is state=failed code=locked
+#       other    state=failed with the code and the numbers the refresh left in failure.txt (read line by line against
+#                fixed patterns; none or not valid: code=interrupted); the request lines are kept in result.txt
+#   6 recovery (D314): a running.txt that nobody holds (this script holds its own lock, so the refresh that wrote it is
+#     gone) while .deploy.lock is free (flock -n; held: nothing is touched, the next minute tries again): valhalla is
+#     brought up under a timeout, then routing.env's VALHALLA_TILESET is compared with new= of progress.txt. Pointers change
+#     only at the switch: equal and healthy -> state=done; different -> state=failed code=interrupted (the old map serves).
+#     Equal but the engine does not answer: nothing is decided, the next minute tries again. The refresh's restore logic
+#     never runs here. A leftover .routing.env.orig (a switch cut in half) is only named in the log, never moved (D314).
+# road-map-runner.log gets one line per state change (taken, busy, done, failed, recovered), never one for an idle minute,
+# and is cut to its last 200 lines when it passes 64 KB.
+# Epoch seconds only: no date is parsed. ROAD_MAP_NOW (epoch seconds) replaces the clock in the offline tests.
 set -uo pipefail
 
 # cron's PATH is short: the standard places come after whatever is already there
@@ -32,6 +46,8 @@ cd "$(dirname "$0")/.." || exit 1
 MAX_REGIONS=40
 MAX_LINES=50
 MAX_NOTE=4096
+LOCKED_AFTER=1800 # a Pi busy this long for the refresh is a failed rebuild (code=locked)
+LOG=road-map-runner.log
 KEY_PATTERN='^[a-z0-9-]+(/[a-z0-9-]+)?$'
 NUMBER_PATTERN='^(0|[1-9][0-9]{0,11})$' # no leading zero: never read as octal
 TAB=$(printf '\t')
@@ -43,7 +59,7 @@ SEEN_SH='cd /vol || exit 3
 [ -L helper-seen ] && rm -f helper-seen
 touch helper-seen'
 
-# MODE read | take: the first line is the state (busy, gone, none, refused, ok), then the capped bytes of the file.
+# MODE read | running | take: the first line is the state (busy, gone, none, refused, ok), then the capped bytes of the file.
 # take renames request.txt to running.txt first: the rename fails when the planner cancelled it a moment ago.
 # shellcheck disable=SC2016
 READ_SH='cd /vol || exit 3
@@ -51,6 +67,7 @@ case $1 in
   read)
     if [ -e running.txt ] || [ -L running.txt ]; then echo busy; exit 0; fi
     name=request.txt ;;
+  running) name=running.txt ;;
   take)
     mv request.txt running.txt 2>/dev/null || { echo gone; exit 0; }
     name=running.txt ;;
@@ -73,7 +90,17 @@ printf "%s\n" "$1" >.result.tmp && mv .result.tmp result.txt'
 
 # shellcheck disable=SC2016
 FINISH_SH='cd /vol || exit 3
-printf "%s\n" "$1" >.result.tmp && mv .result.tmp result.txt && rm -f running.txt'
+printf "%s\n" "$1" >.result.tmp && mv .result.tmp result.txt && rm -f running.txt failure.txt locked-since.txt'
+
+# One of the notes the refresh and this script keep (failure.txt, progress.txt, locked-since.txt): a plain file, 4 KB read at most.
+# shellcheck disable=SC2016
+NOTE_SH='cd /vol || exit 3
+[ -f "$1" ] && [ ! -L "$1" ] || exit 0
+head -c 4097 "$1"'
+
+# shellcheck disable=SC2016
+SET_NOTE_SH='cd /vol || exit 3
+printf "%s\n" "$2" >".$1.tmp" && mv ".$1.tmp" "$1"'
 
 # A request taken a moment before the planner replaced it by one that is not due: put it back (or drop it, a newer one is there).
 # shellcheck disable=SC2016
@@ -158,8 +185,66 @@ validate_request() {
   [ "$requested" = yes ] && [ "$added" = yes ] && [ "$removed" = yes ]
 }
 
+now() { printf '%s' "${ROAD_MAP_NOW:-$(date +%s)}"; }
+
 # due: no start time, or the time has come.
-due() { [ -z "$START_AT" ] || [ "$START_AT" -le "$(date +%s)" ]; }
+due() { [ -z "$START_AT" ] || [ "$START_AT" -le "$(now)" ]; }
+
+# log_state WORDS: one line per state change; past 64 KB the file is cut to its last 200 lines in place (the cron redirect
+# holds the file open in append mode, so the inode stays).
+log_state() {
+  local size
+  printf '%s %s\n' "$(now)" "$*" >>"$LOG" 2>/dev/null || return 0
+  size=$(wc -c <"$LOG")
+  if [ $((size + 0)) -gt 65536 ]; then
+    tail -n 200 "$LOG" >"$LOG.tmp" && cat "$LOG.tmp" >"$LOG"
+    rm -f "$LOG.tmp"
+  fi
+}
+
+# note NAME: the text of a note of the changes folder, empty when it is none, not plain or over 4 KB.
+note() {
+  local text
+  text=$(changes_run "$NOTE_SH" read-note "$1") || return 0
+  [ "${#text}" -le "$MAX_NOTE" ] && printf '%s' "$text"
+}
+
+# failure_note: FAIL_CODE and FAIL_FACTS (lines) from failure.txt: code= once and free_gb= need_gb= have_gb= at most once
+# each, numbers only; anything else and the whole note is ignored (code=interrupted: the refresh left no word).
+FAIL_CODE=
+FAIL_FACTS=
+failure_note() {
+  local line code='' facts='' seen=' '
+  FAIL_CODE=interrupted FAIL_FACTS=
+  while IFS= read -r line; do
+    case $line in
+      code=*)
+        [ -z "$code" ] && [[ ${line#*=} =~ ^[a-z_]{1,32}$ ]] || return 0
+        code=${line#*=} ;;
+      free_gb=* | need_gb=* | have_gb=*)
+        case $seen in *" ${line%%=*} "*) return 0 ;; esac
+        [[ ${line#*=} =~ ^[0-9]{1,6}$ ]] || return 0
+        seen="$seen${line%%=*} " facts="${facts:+$facts
+}$line" ;;
+      '') ;;
+      *) return 0 ;;
+    esac
+  done <<<"$(note failure.txt)"
+  [ -z "$code" ] || { FAIL_CODE=$code FAIL_FACTS=$facts; }
+}
+
+# finish STATE_LINES: result.txt (finished_at, the state lines, the request lines of BODY) and running.txt removed.
+finish() {
+  changes_run "$FINISH_SH" finish-request "$(printf 'finished_at=%s\n%s%s' "$(now)" "$1" "${BODY:+
+$BODY}")" >&2 ||
+    say "road-map-runner: the result could not be written"
+}
+
+finish_failed() { # CODE [FACT_LINES]
+  finish "state=failed
+code=$1${2:+
+$2}"
+}
 
 # read_request MODE: STATE (the container's first line) and BODY (the capped bytes); non-zero when the container failed.
 STATE=
@@ -173,8 +258,73 @@ read_request() {
 
 refuse() {
   say "road-map-runner: the request is not what the planner writes; refused"
-  changes_run "$REFUSE_SH" refuse-request "$(printf 'finished_at=%s\nstate=failed\ncode=bad_request' "$(date +%s)")" >&2 ||
+  changes_run "$REFUSE_SH" refuse-request "$(printf 'finished_at=%s\nstate=failed\ncode=bad_request' "$(now)")" >&2 ||
     say "road-map-runner: the refusal could not be written"
+  exit 0
+}
+
+# ---- the busy Pi and the rebuild the Pi lost ----------------------------------------------------------------------------
+
+# busy_pi: the refresh found .deploy.lock held (75): the request goes back for the next minute, until the first 75 is 30
+# minutes old.
+busy_pi() {
+  local at since
+  at=$(now)
+  since=$(note locked-since.txt)
+  since=${since%%$'\n'*}
+  if ! { [[ $since =~ $NUMBER_PATTERN ]] && [ "$since" -le "$at" ]; }; then
+    since=$at
+    changes_run "$SET_NOTE_SH" set-note locked-since.txt "$at" >&2 || say "road-map-runner: locked-since.txt could not be written"
+  fi
+  if [ $((at - since)) -ge "$LOCKED_AFTER" ]; then
+    finish_failed locked
+    log_state "failed code=locked"
+    return 0
+  fi
+  changes_run "$RETURN_SH" return-request >&2
+  log_state busy
+}
+
+# engine_healthy: /status answers, asked up to 12 times (ROAD_MAP_POLL seconds apart, default 5).
+engine_healthy() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    COMPOSE_TIMEOUT=30 valhalla_status >/dev/null 2>&1 && return 0
+    sleep "${ROAD_MAP_POLL:-5}"
+  done
+  return 1
+}
+
+# recover: running.txt is there and nobody holds this script's lock: the refresh that wrote it is gone.
+recover() {
+  local new serving line
+  exec 9>>.deploy.lock
+  flock -n 9 || exit 0 # a deploy, rollback or tiles run holds it: nothing is touched, the next minute tries again
+  read_request running || exit 0
+  case $STATE in
+    ok) validate_request "$BODY" || BODY= ;;
+    refused) BODY= ;;
+    *) exit 0 ;;
+  esac
+  if [ -e .routing.env.orig ]; then say "road-map-runner: .routing.env.orig is left by a switch cut in half; not touched"; fi
+  COMPOSE_TIMEOUT=120 planner_compose up -d valhalla >&2 || say "road-map-runner: valhalla did not start in time"
+  new=
+  while IFS= read -r line; do
+    case $line in new=*) [ -n "$new" ] || new=${line#*=} ;; esac
+  done <<<"$(note progress.txt)"
+  [[ $new =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || new=
+  serving=$(env_value routing.env VALHALLA_TILESET)
+  if [ -n "$new" ] && [ "$new" = "$serving" ]; then
+    engine_healthy || {
+      say "road-map-runner: the new map is named but the engine does not answer; the next minute tries again"
+      exit 0
+    }
+    finish state=done
+    log_state "recovered done"
+  else
+    finish_failed interrupted
+    log_state "recovered failed code=interrupted"
+  fi
   exit 0
 }
 
@@ -193,7 +343,8 @@ read_request read || {
   exit 0
 }
 case $STATE in
-  none | busy) exit 0 ;;
+  none) exit 0 ;;
+  busy) recover ;;
   refused) refuse ;;
   ok) ;;
   *) say "road-map-runner: unexpected answer '$STATE'; nothing was done"; exit 0 ;;
@@ -225,12 +376,17 @@ trap 'rm -f "$REGIONS_FILE"' EXIT
 chmod 600 "$REGIONS_FILE"
 printf '%s\n' "$REGION_LINES" >"$REGIONS_FILE"
 export REGIONS_FILE
-ROAD_MAP_PROGRESS=on bash scripts/tiles-refresh.sh >&2
+log_state taken
+ROAD_MAP_PROGRESS=on bash scripts/tiles-refresh.sh >.road-map-refresh.out 2>&1
 status=$?
-if [ "$status" -eq 0 ]; then
-  changes_run "$FINISH_SH" finish-request "$(printf 'finished_at=%s\nstate=done\n%s' "$(date +%s)" "$BODY")" >&2 ||
-    say "road-map-runner: the result could not be written"
-else
-  say "road-map-runner: the refresh ended with status $status"
-fi
+case $status in
+  0)
+    finish state=done
+    log_state "done" ;;
+  75) busy_pi ;;
+  *)
+    failure_note
+    finish_failed "$FAIL_CODE" "$FAIL_FACTS"
+    log_state "failed code=$FAIL_CODE" ;;
+esac
 exit 0

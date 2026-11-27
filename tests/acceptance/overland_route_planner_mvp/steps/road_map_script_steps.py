@@ -658,7 +658,14 @@ def then_the_second_run_leaves(world: PlannerWorld) -> None:
         world.scratch["before"],
         world.scratch["after"],
         PI,
-        {"queue.files": unchanged(), "pi.served_map": unchanged(), "pi.refresh_calls": unchanged()},
+        {
+            "queue.files": predicate(
+                "queue.files unchanged but for the heartbeat helper-seen (D315: touched before the lock is looked at)",
+                lambda old, new: set(new) - {"helper-seen"} == set(old) - {"helper-seen"},
+            ),
+            "pi.served_map": unchanged(),
+            "pi.refresh_calls": unchanged(),
+        },
     )
 
 

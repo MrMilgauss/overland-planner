@@ -1,5 +1,7 @@
-"""Step 13-20: `scripts/road-map-runner.sh`, the timed job that takes the owner's request at its time, validates it
-strictly and starts the refresh (D303, D304, D314, D315, D316). The real script runs under /bin/bash with the shims of
+"""Steps 13-20 and 13-21: `scripts/road-map-runner.sh`, the timed job that takes the owner's request at its time,
+validates it strictly, starts the refresh, retries a busy Pi, records what happened and recovers a rebuild the Pi lost
+(D303, D304, D314, D315, D316). The clock is the seam ROAD_MAP_NOW (epoch seconds): one script run per simulated
+minute. The real script runs under /bin/bash with the shims of
 tests/deploy/shims (docker, flock, timeout; never the real ones); the changes folder is a real folder of the fake volume
 `overland_road-map`. The refresh itself is replaced by a stub that records how it was called: its own behaviour is
 tested in test_tiles_refresh_*.
@@ -9,9 +11,12 @@ Assertions are on what the changes folder holds, on the stub's record and on the
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import re
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -33,6 +38,9 @@ FAR_AHEAD = 4_000_000_000
 STUB = """#!/usr/bin/env bash
 { printf 'progress=%s\\n' "${ROAD_MAP_PROGRESS:-}"; printf 'mode=%s\\n' "$(ls -l "$REGIONS_FILE" | cut -c1-10)"
   printf 'cwd=%s\\n' "$PWD"; cat "$REGIONS_FILE"; } >"$PWD/refresh-call.txt"
+volume="$SHIM_HOME/volumes/overland_road-map"
+cat "$volume/running.txt" >"$PWD/running-during.txt"
+[ -z "${STUB_FAILURE:-}" ] || printf '%b' "$STUB_FAILURE" >"$volume/failure.txt"
 exit "${STUB_EXIT:-0}"
 """
 
@@ -81,10 +89,10 @@ def test_a_due_request_is_taken_and_the_refresh_is_called_once_with_its_regions(
     stub_refresh(pi)
     put_request(pi, request_text(start_at=start_at))
 
-    result = run_runner(pi, STUB_EXIT="75")
+    result = run_runner(pi)
 
     assert result.returncode == 0, result.stderr
-    assert (folder(pi) / "running.txt").read_text() == request_text(start_at=start_at)
+    assert (pi.dir / "running-during.txt").read_text() == request_text(start_at=start_at)
     assert not (folder(pi) / "request.txt").exists()
     assert refresh_record(pi) == (
         f"progress=on\nmode=-rw-------\ncwd={pi.dir.resolve()}\n"
@@ -193,9 +201,9 @@ def test_an_address_under_a_prefix_the_pi_sets_in_its_env_is_taken(pi: FakePi) -
     mirrored = request_text().replace(PREFIX, "https://mirror.invalid/maps/")
     put_request(pi, mirrored)
 
-    run_runner(pi, STUB_EXIT="75")
+    run_runner(pi)
 
-    assert (folder(pi) / "running.txt").read_text() == mirrored
+    assert (pi.dir / "running-during.txt").read_text() == mirrored
     assert refresh_record(pi) is not None
 
 
@@ -243,12 +251,20 @@ def test_a_request_cancelled_just_before_the_helper_takes_it_is_not_started(pi: 
     assert not (folder(pi) / "result.txt").exists() and not (folder(pi) / "running.txt").exists()
 
 
+@contextlib.contextmanager
+def hold(pi: FakePi, name: str) -> Iterator[None]:
+    with (pi.dir / name).open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
 def test_a_request_is_not_taken_while_a_rebuild_is_recorded_as_running(pi: FakePi) -> None:
     stub_refresh(pi)
     put_request(pi, request_text())
     (folder(pi) / "running.txt").write_text("schema=1\n")
 
-    run_runner(pi)
+    with hold(pi, ".deploy.lock"):  # a deploy runs: the rebuild recorded as running is not looked at (step 13-21)
+        run_runner(pi)
 
     assert refresh_record(pi) is None
     assert (folder(pi) / "request.txt").read_text() == request_text()
@@ -256,8 +272,6 @@ def test_a_request_is_not_taken_while_a_rebuild_is_recorded_as_running(pi: FakeP
 
 
 def test_a_second_helper_at_the_same_time_leaves_without_reading_the_request(pi: FakePi) -> None:
-    import fcntl
-
     stub_refresh(pi)
     put_request(pi, request_text())
     with (pi.dir / ".road-map-runner.lock").open("w") as held:
@@ -267,3 +281,172 @@ def test_a_second_helper_at_the_same_time_leaves_without_reading_the_request(pi:
     assert result.returncode == 0, result.stderr
     assert refresh_record(pi) is None and (folder(pi) / "request.txt").exists()
     assert (folder(pi) / "helper-seen").exists(), "the heartbeat is touched before the lock is looked at"
+
+
+# ---- step 13-21: retries, results, recovery, the log --------------------------------------------------
+
+T0 = 1_800_000_000
+MINUTE = 60
+LOCKED_AFTER = 30 * MINUTE
+
+
+def minute(pi: FakePi, n: int, **env: str) -> subprocess.CompletedProcess[str]:
+    """One run of the helper at the n-th simulated minute (the clock is the seam ROAD_MAP_NOW)."""
+    return run_runner(pi, ROAD_MAP_NOW=str(T0 + n * MINUTE), **env)
+
+
+def result_lines(pi: FakePi) -> list[str]:
+    return (folder(pi) / "result.txt").read_text().splitlines()
+
+
+def log_lines(pi: FakePi) -> list[str]:
+    path = pi.dir / "road-map-runner.log"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def test_a_refresh_that_finds_the_pi_busy_is_retried_each_minute_for_half_an_hour_then_fails_as_locked(
+    pi: FakePi,
+) -> None:
+    stub_refresh(pi)
+    put_request(pi, request_text())
+
+    for n in range(30):  # minutes 0..29: 75 each time, the request is back, nothing is written about a failure
+        minute(pi, n, STUB_EXIT="75")
+        assert (folder(pi) / "request.txt").read_text() == request_text(), n
+        assert not (folder(pi) / "running.txt").exists() and not (folder(pi) / "result.txt").exists(), n
+    assert (folder(pi) / "locked-since.txt").read_text().strip() == str(T0)
+
+    minute(pi, 30, STUB_EXIT="75")  # the Pi was busy for 30 minutes
+
+    assert result_lines(pi)[1:] == ["state=failed", "code=locked", *request_text().splitlines()]
+    assert sorted(p.name for p in folder(pi).iterdir()) == ["helper-seen", "result.txt"]
+
+
+FAILURES = {
+    "disk with its numbers": ("code=disk\nfree_gb=12\nneed_gb=40\n", ["code=disk", "free_gb=12", "need_gb=40"]),
+    "memory with its number": ("code=memory\nhave_gb=3\n", ["code=memory", "have_gb=3"]),
+    "no failure note": ("", ["code=interrupted"]),
+    "a note that is not what the refresh writes": ("code=disk\nfree_gb=lots\n", ["code=interrupted"]),
+    "a note with a free-text line": ("code=build\nreason=$(touch pwned)\n", ["code=interrupted"]),
+}
+
+
+@pytest.mark.parametrize("note, expected", FAILURES.values(), ids=FAILURES.keys())
+def test_a_refresh_that_fails_leaves_its_code_and_numbers_and_keeps_the_request_lines(
+    pi: FakePi, note: str, expected: list[str]
+) -> None:
+    stub_refresh(pi)
+    put_request(pi, request_text())
+    (folder(pi) / "locked-since.txt").write_text(f"{T0}\n")  # an earlier busy minute is forgotten by any other end
+
+    minute(pi, 5, STUB_EXIT="1", STUB_FAILURE=note)
+
+    lines = result_lines(pi)
+    assert re.fullmatch(r"finished_at=\d{10}", lines[0]) and lines[1] == "state=failed"
+    assert lines[2:] == [*expected, *request_text().splitlines()]
+    assert sorted(p.name for p in folder(pi).iterdir()) == ["helper-seen", "result.txt"]
+    assert not (pi.root / "pwned").exists()
+
+
+def test_two_helpers_in_the_same_minute_leave_every_file_but_the_heartbeat_as_it_was(pi: FakePi) -> None:
+    stub_refresh(pi)
+    (folder(pi) / "running.txt").write_text(request_text())
+    before = {p.name: p.read_text() for p in folder(pi).iterdir()}
+
+    with hold(pi, ".road-map-runner.lock"):
+        result = minute(pi, 1)
+
+    after = {p.name: p.read_text() for p in folder(pi).iterdir() if p.name != "helper-seen"}
+    assert result.returncode == 0 and after == before
+    assert pi.calls("docker") and all(c["argv"][:1] == ["run"] for c in pi.calls("docker")), "only the heartbeat ran"
+    assert log_lines(pi) == []
+
+
+def lost_rebuild(pi: FakePi, serving: str, building: str = "20270201") -> None:
+    (folder(pi) / "running.txt").write_text(request_text())
+    (folder(pi) / "progress.txt").write_text(
+        f"step=switching\nstep_at={T0}\nserving=20261101\nnew={building}\nbuild_started_at={T0}\n"
+    )
+    (pi.dir / "routing.env").write_text(f"VALHALLA_TILESET={serving}\n")
+
+
+def compose_calls(pi: FakePi) -> list[list[str]]:
+    return [c["argv"] for c in pi.calls("docker") if c["argv"][:1] == ["compose"]]
+
+
+@pytest.mark.parametrize(
+    "serving, expected",
+    [("20270201", ["state=done"]), ("20261101", ["state=failed", "code=interrupted"])],
+    ids=["after the switch: done", "before the switch: interrupted, the old map serves"],
+)
+def test_a_rebuild_nobody_holds_is_decided_by_the_map_routing_env_names(
+    pi: FakePi, serving: str, expected: list[str]
+) -> None:
+    stub_refresh(pi)
+    lost_rebuild(pi, serving)
+
+    minute(pi, 1)
+
+    assert result_lines(pi)[1:] == [*expected, *request_text().splitlines()]
+    assert sorted(p.name for p in folder(pi).iterdir()) == ["helper-seen", "progress.txt", "result.txt"]
+    assert (pi.dir / "routing.env").read_text() == f"VALHALLA_TILESET={serving}\n", "recovery never moves a pointer"
+    up = [argv for argv in compose_calls(pi) if "up" in argv and "valhalla" in argv]
+    assert len(up) == 1 and refresh_record(pi) is None
+    assert next(c["argv"][:4] for c in pi.calls("timeout") if c["argv"][2:3] == ["compose"]) == [
+        "120",
+        "docker",
+        "compose",
+        "-p",
+    ]
+
+
+def test_a_rebuild_the_pi_lost_is_not_touched_while_a_deploy_holds_the_lock_and_is_decided_the_next_minute(
+    pi: FakePi,
+) -> None:
+    stub_refresh(pi)
+    lost_rebuild(pi, "20270201")
+    before = {p.name for p in folder(pi).iterdir()}
+
+    with hold(pi, ".deploy.lock"):
+        minute(pi, 1)
+    assert {p.name for p in folder(pi).iterdir()} == before | {"helper-seen"}
+    assert compose_calls(pi) == [] and log_lines(pi) == []
+
+    minute(pi, 2)
+    assert result_lines(pi)[1] == "state=done"
+
+
+def test_a_rebuild_whose_engine_does_not_answer_is_left_for_the_next_minute(pi: FakePi) -> None:
+    stub_refresh(pi)
+    lost_rebuild(pi, "20270201")
+    pi.rule("docker", "exec", exit=1)
+
+    minute(pi, 1, ROAD_MAP_POLL="0")
+
+    assert not (folder(pi) / "result.txt").exists() and (folder(pi) / "running.txt").exists()
+
+
+def test_the_log_gains_a_line_per_state_change_never_for_an_idle_minute_and_is_cut_to_200_lines_past_64_kb(
+    pi: FakePi,
+) -> None:
+    stub_refresh(pi)
+    minute(pi, 0)
+    assert log_lines(pi) == [], "an idle minute writes nothing"
+
+    put_request(pi, request_text())
+    minute(pi, 1, STUB_EXIT="75")
+    minute(pi, 2, STUB_EXIT="1", STUB_FAILURE="code=build\n")
+    put_request(pi, request_text())
+    minute(pi, 3)
+    assert [line.split(" ", 1)[1] for line in log_lines(pi)] == [
+        "taken", "busy", "taken", "failed code=build", "taken", "done",
+    ]  # fmt: skip
+    assert all(line.split(" ", 1)[0].isdigit() for line in log_lines(pi))
+
+    (pi.dir / "road-map-runner.log").write_text("".join(f"{T0} old line {i:04d} {'x' * 60}\n" for i in range(1000)))
+    lost_rebuild(pi, "20270201")  # one state change, so the cut leaves exactly the last 200 lines
+    minute(pi, 4)
+
+    lines = log_lines(pi)
+    assert len(lines) == 200 and lines[-1].endswith(" recovered done") and "old line 0999" in lines[-2]
+    assert (pi.dir / "road-map-runner.log").stat().st_size < 65536

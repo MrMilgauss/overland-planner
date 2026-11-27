@@ -42,11 +42,13 @@ env_value() {
 
 # docker compose for this install: always `-p overland`, .env, then routing.env (06a-ops) and release.env if present.
 # routing.env also turns the compose profile `routing` on (valhalla, D239); without it the call is the planner's alone.
+# With COMPOSE_TIMEOUT=SECONDS in the environment of the call the compose command runs under `limited` (the road-map helper).
 planner_compose() {
-  local files=(--env-file .env)
+  local files=(--env-file .env) wrap=()
   if [ -f routing.env ]; then files+=(--env-file routing.env --profile routing); fi
   if [ -f release.env ]; then files+=(--env-file release.env); fi
-  docker compose -p "$COMPOSE_PROJECT" "${files[@]}" "$@"
+  if [ -n "${COMPOSE_TIMEOUT:-}" ]; then wrap=(limited "$COMPOSE_TIMEOUT"); fi
+  ${wrap[@]+"${wrap[@]}"} docker compose -p "$COMPOSE_PROJECT" "${files[@]}" "$@"
 }
 
 planner_port() {
