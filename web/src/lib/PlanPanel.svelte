@@ -22,6 +22,7 @@
   import { tripPhase, type TripPhase } from './tripPhase';
   import { durationText } from './duration';
   import { legKmText } from './legKm';
+  import { pausedLine } from './roadMapView';
   import {
     failureText,
     listPlanRuns,
@@ -67,6 +68,8 @@
     trip,
     selectedStop = undefined,
     onselectstop,
+    planningPaused = false,
+    planningBackAt = null,
   }: {
     projectId: string;
     /** The trip's items, to tell why Plan the route is not offered yet; left out, the button is always offered. */
@@ -83,6 +86,9 @@
     /** The stop selected on the itinerary or on the map (the page holds it), and what a press on a step tells. */
     selectedStop?: number | undefined;
     onselectstop?: (stop: number) => void;
+    /** The planner is not planning (a rebuild of the road map is building or switching), and when it is back. */
+    planningPaused?: boolean;
+    planningBackAt?: string | null;
   } = $props();
 
   let pressing = $state(false);
@@ -109,11 +115,14 @@
 
   const NOT_READY_EMPTY = 'Add a trail or place first.';
   const NOT_READY_NO_START = 'Set a Start: open \u22ef on a place and choose Set as start.';
+  // One reason at a time: the trip's own first (Marco can act on it), then the pause of a rebuild (D298, D309). The
+  // planner's own refusal words (D211) stay for a race.
   const notReady = $derived.by((): string => {
-    if (items === undefined) return '';
+    if (items === undefined) return planningPaused ? pausedLine(planningBackAt) : '';
     if (items.length === 0) return NOT_READY_EMPTY;
     const hasStart = items.some((item) => item.anchor === 'start' || item.anchor === 'start_end');
-    return hasStart ? '' : NOT_READY_NO_START;
+    if (!hasStart) return NOT_READY_NO_START;
+    return planningPaused ? pausedLine(planningBackAt) : '';
   });
 
   const jobActive = $derived(pressing || watchedJobId !== undefined); // through a lost connection too: it may still run

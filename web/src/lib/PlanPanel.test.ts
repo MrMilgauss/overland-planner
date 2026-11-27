@@ -203,6 +203,58 @@ describe('Plan panel: when the trip is not ready to plan', () => {
   );
 });
 
+describe('Plan panel: while the road map is being rebuilt', () => {
+  const START = [tripItem('Casa Marco', 'start_end')];
+  const PAUSED_LINE = 'The road map is being rebuilt; planning is back at about';
+
+  it('disables Plan the route during the build and says in one line when planning is back', async () => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    render(PlanPanel, {
+      props: {
+        projectId: 'p1',
+        items: START,
+        planningPaused: true,
+        planningBackAt: '2026-11-27T21:48:00Z',
+      },
+    });
+    await settled();
+
+    const button = screen.getByRole('button', { name: 'Plan the route' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(
+      /^The road map is being rebuilt; planning is back at about \d\d:\d\d\.$/,
+    );
+  });
+
+  it('keeps Plan the route on during the download, and says nothing, as the planner does not pause', async () => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    render(PlanPanel, {
+      props: { projectId: 'p1', items: START, planningPaused: false, planningBackAt: null },
+    });
+    await settled();
+
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled();
+    expect(screen.queryByText(PAUSED_LINE, { exact: false })).not.toBeInTheDocument();
+  });
+
+  it('gives the trip\u2019s own reason first when it is not ready either', async () => {
+    stubPlanner({ [`GET ${RUNS}`]: NO_RUNS });
+    render(PlanPanel, {
+      props: {
+        projectId: 'p1',
+        items: [],
+        planningPaused: true,
+        planningBackAt: '2026-11-27T21:48:00Z',
+      },
+    });
+    await settled();
+
+    expect(screen.getByRole('button', { name: 'Plan the route' })).toHaveAccessibleDescription(
+      'Add a trail or place first.',
+    );
+  });
+});
+
 describe('Plan panel: calculating', () => {
   it.each([
     ['queued', 'Queued'],

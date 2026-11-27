@@ -45,19 +45,27 @@ function offsetMinutes(moment: Date, timeZone?: string): number {
   return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
 }
 
-/** An instant as Marco reads it, in the browser's zone: "01:00 on 28 November"; "(Pi time)" is added only when the
- * Pi's clock is on another offset than the browser's at that instant. */
-export function whenText(iso: string, piOffsetMinutes: number, timeZone?: string): string {
-  const moment = new Date(iso);
-  const time = moment.toLocaleTimeString('en-GB', {
+/** The clock time of an instant in a zone (the browser's when none is named): "01:00". */
+function clockTime(moment: Date, timeZone?: string): string {
+  return moment.toLocaleTimeString('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
     timeZone,
   });
+}
+
+/** " (Pi time)" when the Pi's clock is on another offset than the zone's at that instant, else nothing. */
+function piNote(moment: Date, piOffsetMinutes: number, timeZone?: string): string {
+  return offsetMinutes(moment, timeZone) === piOffsetMinutes ? '' : ' (Pi time)';
+}
+
+/** An instant as Marco reads it, in the browser's zone: "01:00 on 28 November"; "(Pi time)" is added only when the
+ * Pi's clock is on another offset than the browser's at that instant. */
+export function whenText(iso: string, piOffsetMinutes: number, timeZone?: string): string {
+  const moment = new Date(iso);
   const day = moment.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone });
-  const note = offsetMinutes(moment, timeZone) === piOffsetMinutes ? '' : ' (Pi time)';
-  return `${time} on ${day}${note}`;
+  return `${clockTime(moment, timeZone)} on ${day}${piNote(moment, piOffsetMinutes, timeZone)}`;
 }
 
 /** What a "datetime-local" field holds (the browser's own time) as the UTC instant the planner is sent; null if empty. */
@@ -66,8 +74,31 @@ export function startAtUtc(typed: string): string | null {
   return typed === '' || Number.isNaN(moment.getTime()) ? null : moment.toISOString();
 }
 
+const EVENING_FROM = 18; // a start from 18:00 on the same day, or before noon on the next, is "tonight"
+const NOON = 12;
+
+/** The calendar day of an instant in a zone, in days. */
+function dayNumber(moment: Date | number, timeZone?: string): number {
+  const day = new Date(moment).toLocaleDateString('sv-SE', { timeZone });
+  return Date.parse(`${day}T00:00:00Z`) / 86_400_000;
+}
+
+/** A start in Marco's words relative to now: "tonight 02:00" (later this evening, or before noon tomorrow), "today 16:00",
+ * "tomorrow 12:00"; any later day with its date ("02:00 on 29 November"). */
+function startWords(moment: Date, now: number, piOffsetMinutes: number, timeZone?: string): string {
+  const days = dayNumber(moment, timeZone) - dayNumber(now, timeZone);
+  const time = clockTime(moment, timeZone);
+  const hour = Number(time.slice(0, 2));
+  const note = piNote(moment, piOffsetMinutes, timeZone);
+  if ((days === 0 && hour >= EVENING_FROM) || (days === 1 && hour < NOON))
+    return `tonight ${time}${note}`;
+  if (days === 0) return `today ${time}${note}`;
+  if (days === 1) return `tomorrow ${time}${note}`;
+  return whenText(moment.toISOString(), piOffsetMinutes, timeZone);
+}
+
 /** What a change waiting for the helper says: a start now (or already due) waits for the helper's next look, within a
- * minute; a later one says when, in Marco's time. */
+ * minute; a later one says when, in Marco's time ("Rebuild planned for tonight 02:00"). */
 export function plannedText(
   startAt: string | null,
   piOffsetMinutes: number,
@@ -75,5 +106,47 @@ export function plannedText(
   timeZone?: string,
 ): string {
   if (startAt === null || Date.parse(startAt) <= now) return 'Waiting to start within a minute';
-  return `Rebuild planned for ${whenText(startAt, piOffsetMinutes, timeZone)}`;
+  return `Rebuild planned for ${startWords(new Date(startAt), now, piOffsetMinutes, timeZone)}`;
+}
+
+/** The planner is asked again every 10 seconds while a change is planned or running. */
+export const POLL_MS = 10_000;
+export const keepsPolling = (state: string): boolean => state === 'planned' || state === 'running';
+
+export type StepMark = 'done' | 'current' | 'next';
+
+const STEP_LABELS = [
+  'Waiting',
+  "Checking the Pi's disk and memory",
+  'Downloading',
+  'Building',
+  'Switching to the new map',
+];
+
+/** The steps of a rebuild with where it is: Waiting while the helper has reported none, otherwise the step after the
+ * `stepsDone` ones done (the planner counts from checking). */
+export function stepMarks(
+  step: string | null,
+  stepsDone: number,
+): { label: string; mark: StepMark }[] {
+  const on = step === null ? 0 : Math.min(stepsDone + 1, STEP_LABELS.length - 1);
+  return STEP_LABELS.map((label, index) => ({
+    label,
+    mark: index < on ? 'done' : index === on ? 'current' : 'next',
+  }));
+}
+
+/** From the building step: "about 31 minutes left", counted to the planner's time of planning back (never under a
+ * minute); nothing before or after it. */
+export function remainingText(step: string | null, backAt: string | null, now: number): string {
+  if (step !== 'building' || backAt === null) return '';
+  const minutes = Math.max(1, Math.ceil((Date.parse(backAt) - now) / 60_000));
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'} left`;
+}
+
+/** The one line while planning is paused (D309), in the browser's time. */
+export function pausedLine(backAt: string | null, timeZone?: string): string {
+  const back =
+    backAt === null ? 'when it ends' : `at about ${clockTime(new Date(backAt), timeZone)}`;
+  return `The road map is being rebuilt; planning is back ${back}.`;
 }

@@ -2,12 +2,14 @@
   // Workspace of one project: the map of the trip, and the phase panel. Build the trip holds the one list of stops and
   // trails with its Add menu (upload GPX trails, click on the map, type coordinates), Start and End from a place's row
   // menu, and the "Plan for" switch. Every refusal of the planner is shown with its own message, verbatim.
+  import { onDestroy } from 'svelte';
   import AddMenu from './AddMenu.svelte';
   import CoverageBox, { joinedNames } from './CoverageBox.svelte';
   import { alertTextOutside, newlyOutside } from './coverageAlerts';
   import PlanPanel from './PlanPanel.svelte';
   import TripList from './TripList.svelte';
   import TripMap from './TripMap.svelte';
+  import { keepsPolling, plannedText, POLL_MS } from './roadMapView';
   import {
     addPlace,
     failureText,
@@ -46,6 +48,11 @@
   let outsideWarned: string[] = []; // the items already known to be outside: only a new one is warned about
   let warnings = $state<{ id: string; text: string }[]>([]);
   let coverageReads = 0;
+  let plannedLine = $state(''); // a rebuild of the road map is planned: when, in Marco's time
+  let planningPaused = $state(false); // the planner says it is not planning, from the build to the end of the switch
+  let planningBackAt = $state<string | null>(null);
+  let nextRoadMapRead: ReturnType<typeof setTimeout> | undefined;
+  let gone = false;
   let stage = $state<HTMLElement | undefined>();
   let panel = $state<{ reload: () => Promise<void>; edit: () => void } | undefined>();
 
@@ -57,6 +64,22 @@
 
   async function refresh(): Promise<void> {
     items = await listItems(projectId);
+  }
+
+  /** The road map's rebuild, read on open and again every 10 seconds while a change is planned or running: the page tells
+   * what the planner says (planning_paused) and never works it out from the step. A failure leaves what was known. */
+  async function watchRoadMap(): Promise<void> {
+    clearTimeout(nextRoadMapRead);
+    const answer = await readRoadMap().catch(() => undefined);
+    if (gone || !answer) return;
+    planningPaused = answer.planning_paused;
+    planningBackAt = answer.planning_back_at;
+    plannedLine =
+      answer.change.state === 'planned'
+        ? plannedText(answer.change.start_at, answer.server_utc_offset_minutes)
+        : '';
+    if (keepsPolling(answer.change.state))
+      nextRoadMapRead = setTimeout(() => void watchRoadMap(), POLL_MS);
   }
 
   const outsideIds = $derived(coverage?.known ? coverage.outside_item_ids : []);
@@ -165,12 +188,20 @@
     .catch(() => {});
 
   open();
+  void watchRoadMap();
+  onDestroy(() => {
+    gone = true;
+    clearTimeout(nextRoadMapRead);
+  });
 </script>
 
 <div class="workspace">
   <div class="heading">
     {#if project}
       <h1>{project.name}</h1>
+    {/if}
+    {#if plannedLine}
+      <p class="summary" role="status">{plannedLine}</p>
     {/if}
     {#if problem}
       <p role="alert">{problem}</p>
@@ -209,6 +240,8 @@
           runsRead = true;
         }}
         onphase={(phase) => (planning = phase === 'planning')}
+        {planningPaused}
+        {planningBackAt}
         {build}
         {trip}
       />

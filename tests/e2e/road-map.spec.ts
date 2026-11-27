@@ -92,6 +92,11 @@ async function addPlaceOnTheForm(
   lat: string,
   lon: string,
 ): Promise<void> {
+  // The page is ready when its map is drawn: it is the last thing to mount after the trip, the coverage and the runs are
+  // read, and on webkit its start-up work can swallow a click made before.
+  await expect(
+    page.getByRole("button", { name: "Click on map to add" }),
+  ).toBeVisible();
   const before = await tripList(page).getByRole("listitem").count();
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("button", { name: "Type coordinates" }).click();
@@ -1018,34 +1023,132 @@ test("On a phone the search form fits and opens in the page flow", async ({
   }
 });
 
+// A rebuild adding Portugal is at `step` (the planner's own answer otherwise, W4: read once, only fulfilled). From the
+// build until the switch ends the planner says planning is paused and when it is back; `backAt` is that instant.
+type RebuildStep = "checking" | "downloading" | "building" | "switching";
+const STEP_NUMBER: Record<RebuildStep, number> = {
+  checking: 0,
+  downloading: 1,
+  building: 2,
+  switching: 3,
+};
+async function rebuildIsAt(
+  page: Page,
+  step: RebuildStep,
+  backAt: number | null,
+): Promise<void> {
+  await answerWith<Real>(page, /\/api\/road-map$/, "/api/road-map", (real) => ({
+    ...real,
+    change: {
+      state: "running",
+      step,
+      steps_done: STEP_NUMBER[step],
+      start_at: null,
+      added: [{ key: "europe/portugal", name: "Portugal" }],
+      removed: [],
+    },
+    planning_paused: backAt !== null,
+    planning_back_at: backAt === null ? null : new Date(backAt).toISOString(),
+  }));
+}
+
+// The time as Marco's browser says it (Milan): "21:48".
+const inMilan = (instant: number): string =>
+  new Date(instant).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Europe/Rome",
+  });
+
+// "Spagna test" holds Torino (Start and End) and Milano, planned on the offline road map as usual.
+async function planATrip(page: Page, testInfo: TestInfo): Promise<void> {
+  await serveTheBaseMap(page, testInfo);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  await addPlaceOnTheForm(page, "Torino", "45.0703", "7.6869");
+  await setFromTheRow(page, "Torino", "Set as start");
+  await setFromTheRow(page, "Torino", "Set as end");
+  await addPlaceOnTheForm(page, "Milano", "45.4642", "9.19");
+}
+
 // @US-30 @ui
-test.fixme("Progress shows the step the rebuild is in", async ({ page }) => {
+test("Progress shows the step the rebuild is in", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given a rebuild adding Portugal has started
+  // Given a rebuild adding Portugal has started and is building, 31 minutes from the end of the pause
+  const now = Date.parse("2026-11-27T20:17:00Z");
+  await page.clock.setFixedTime(now);
+  await rebuildIsAt(page, "building", now + 31 * 60_000);
   // When Marco opens "Road map"
-  // Then he sees which step it is in (Waiting, "Checking the Pi's disk and memory", Downloading, Building or "Switching to the new map")
+  await openTheRoadMap(page);
+  // Then he sees which step it is in (the earlier steps ticked, the building one marked, the switch still to come)
+  const steps = page.getByRole("region", { name: "Rebuild progress" });
+  await expect(steps.getByRole("listitem")).toHaveText([
+    "Waiting done",
+    "Checking the Pi's disk and memory done",
+    "Downloading done",
+    "Building",
+    "Switching to the new map",
+  ]);
+  await expect(steps.locator('[aria-current="step"]')).toHaveText("Building");
+  // and the time left comes from the building step's own start
+  await expect(steps).toContainText("about 31 minutes left");
   // And the loaded regions and map date are still those of the served map
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await expect(page.getByText("Map data: 27 November 2026")).toBeVisible();
 });
 
 // @US-30 @ui @edge
-test.fixme("During the download the old map keeps planning", async ({
+test("During the download the old map keeps planning", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
   // Given the rebuild is downloading
-  // When Marco plans "Alpi Occidentali giugno 2027"
+  await rebuildIsAt(page, "downloading", null);
+  // When Marco plans his trip
+  await planATrip(page, testInfo);
+  const plan = page.getByRole("button", { name: "Plan the route" });
+  await expect(plan).toBeEnabled();
+  await expect(page.getByText("The road map is being rebuilt;")).toHaveCount(0);
+  await plan.click();
   // Then the route is planned on the old map as usual
+  await expect(
+    page.getByRole("region", { name: "Your route", exact: true }),
+  ).toBeVisible({ timeout: 90_000 });
 });
 
 // @US-30 @ui @edge
-test.fixme("During the build planning is disabled and the page says until when", async ({
+test("During the build planning is disabled and the page says until when", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
-  // Given the rebuild is building
-  // When Marco opens "Assietta weekend" on Build the trip
-  // Then "Plan the route" is disabled with the line "The road map is being rebuilt; planning is back at about 22:20."
+  // Given a route was planned before the rebuild reached its build
+  await planATrip(page, testInfo);
+  await page.getByRole("button", { name: "Plan the route" }).click();
+  await expect(
+    page.getByRole("region", { name: "Your route", exact: true }),
+  ).toBeVisible({ timeout: 90_000 });
+  // and the rebuild is building, planning back in 31 minutes
+  const back = Date.now() + 31 * 60_000;
+  await rebuildIsAt(page, "building", back);
+  // When Marco opens the project again on Build the trip
+  await page.reload();
+  await expect(page.getByRole("link", { name: "Export GPX" })).toBeVisible();
+  await page.getByRole("button", { name: "Edit trip" }).click();
+  // Then "Plan the route" is disabled with the line
+  await expect(
+    page.getByRole("button", { name: "Plan the route" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText(
+      `The road map is being rebuilt; planning is back at about ${inMilan(back)}.`,
+    ),
+  ).toBeVisible();
   // And the trip and the exports of earlier routes stay readable
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByText("Torino")).toBeVisible();
 });
 
 // @US-30 @ui
@@ -1118,10 +1221,11 @@ test("Marco picks a start time", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
   // The planner's clock is on UTC while Marco's browser is on Milan time
   const sent = await planOnPaper(page, 0);
+  await page.clock.setFixedTime(Date.parse("2030-12-01T20:00:00Z"));
   // Given a pending change adds Portugal
   await openTheRoadMap(page);
   await addRegion(page, "Portugal", "Portugal");
-  // When he chooses tonight 02:00 (here 2 December 2030, 02:00 in Milan)
+  // When he chooses tonight 02:00 (here 2 December 2030, 02:00 in Milan; the browser's clock says it is 21:00 the evening before)
   const summary = page.getByRole("region", { name: "Size and time" });
   await summary.getByRole("radio", { name: "Start at a time" }).check();
   await summary.getByLabel("Start time").fill("2030-12-02T02:00");
@@ -1132,20 +1236,30 @@ test("Marco picks a start time", async ({ page }) => {
   await summary.getByRole("button", { name: "Rebuild road map" }).click();
   // And, once planned, says "Rebuild planned for" that time; the planner got it as UTC
   await expect(planned(page)).toContainText(
-    "Rebuild planned for 02:00 on 2 December (Pi time)",
+    "Rebuild planned for tonight 02:00 (Pi time)",
   );
   expect(sent.map((p) => p.start_at)).toEqual(["2030-12-02T01:00:00.000Z"]);
 });
 
 // @US-31 @ui @edge
-test("A planned rebuild can be cancelled until it starts", async ({ page }) => {
+test("A planned rebuild can be cancelled until it starts", async ({
+  page,
+}, testInfo) => {
+  needsTheFolder(testInfo);
   await page.setViewportSize(AT_LAPTOP);
   await dayHasNoMap(page);
-  // Given a rebuild is planned for tonight 02:00 (here five days ahead, so the real planner takes it on any date)
+  // Given a rebuild is planned for tonight 02:00 (here five days ahead for the real planner, so it takes it on any date;
+  // the browser's clock says it is 21:00 the evening before)
+  const start = fiveDaysAhead();
+  await page.clock.setFixedTime(
+    Date.parse(`${start}:00+01:00`) - 5 * 3_600_000,
+  );
   await openTheRoadMap(page);
   await addRegion(page, "Portugal", "Portugal");
-  await rebuildAt(page, fiveDaysAhead());
-  await expect(planned(page)).toContainText("Rebuild planned for 02:00");
+  await rebuildAt(page, start);
+  await expect(planned(page)).toContainText(
+    "Rebuild planned for tonight 02:00",
+  );
   // When Marco cancels it at 22:00
   await planned(page).getByRole("button", { name: "Cancel" }).click();
   // Then nothing is pending and the loaded regions and map date are unchanged

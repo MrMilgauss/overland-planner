@@ -16,8 +16,18 @@
     type ServedRoadMap,
   } from './api';
   import ChangeSummary from './ChangeSummary.svelte';
+  import RebuildProgress from './RebuildProgress.svelte';
   import RegionSearch from './RegionSearch.svelte';
-  import { mapDateText, pendingKeys, plannedText, sizeText, tooBigText } from './roadMapView';
+  import { onDestroy } from 'svelte';
+  import {
+    keepsPolling,
+    mapDateText,
+    pendingKeys,
+    plannedText,
+    POLL_MS,
+    sizeText,
+    tooBigText,
+  } from './roadMapView';
 
   let served = $state<ServedRoadMap['served'] | undefined>();
   let failure = $state('');
@@ -28,18 +38,32 @@
   let piOffset = $state(0);
   let refusal = $state('');
   let planned = $state<RoadMapChange | undefined>();
+  let backAt = $state<string | null>(null);
+  let now = $state(Date.now());
   let cancelRefusal = $state('');
   let refreshing = $state(false);
   let startAt: string | null = null;
   let asked = 0;
 
+  // The planner is asked once on open, and again every 10 seconds while a change is planned or running.
+  let nextRead: ReturnType<typeof setTimeout> | undefined;
+  let gone = false;
+  onDestroy(() => {
+    gone = true;
+    clearTimeout(nextRead);
+  });
+
   function read(): Promise<void> {
+    clearTimeout(nextRead);
     return readRoadMap().then(
       (answer) => {
+        now = Date.now();
+        backAt = answer.planning_back_at;
         served = answer.served;
         limits = answer.limits;
         piOffset = answer.server_utc_offset_minutes;
-        planned = ['planned', 'running'].includes(answer.change.state) ? answer.change : undefined;
+        planned = keepsPolling(answer.change.state) ? answer.change : undefined;
+        if (planned && !gone) nextRead = setTimeout(() => void read(), POLL_MS);
       },
       (error: unknown) => {
         failure = failureText(error);
@@ -211,6 +235,12 @@
     <section aria-label="Planned rebuild">
       {#if planned.state === 'running'}
         <p>The rebuild has started</p>
+        <RebuildProgress
+          step={planned.step ?? null}
+          stepsDone={planned.steps_done ?? 0}
+          {backAt}
+          {now}
+        />
       {:else}
         <p>{plannedText(planned.start_at, piOffset)}</p>
         <button type="button" onclick={cancel}>Cancel</button>

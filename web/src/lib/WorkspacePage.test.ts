@@ -535,6 +535,7 @@ describe('Workspace page: coverage', () => {
         status: 200,
         body: {
           served: { known: true, map_date: null, regions: [{ name: 'Italy' }, { name: 'Spain' }] },
+          change: { state: 'none', start_at: null, added: [], removed: [] },
         },
       },
     });
@@ -705,5 +706,96 @@ describe('Workspace page: search for a place (US-29)', () => {
       { name: 'Gorges du Verdon', lat: 43.7686, lon: 6.3322 },
     ]);
     expect(screen.getByRole('form', { name: 'Search for a place' })).toBeVisible();
+  });
+});
+
+describe('Workspace page while the road map changes', () => {
+  const SERVED = { known: true, map_date: '2026-11-27T12:00:00Z', regions: [], total_bytes: 0 };
+  const LIMITS = {
+    max_gb: 8,
+    max_bytes: 8_000_000_000,
+    next_rebuild_from: null,
+    changes_available: true,
+    rebuilds_set_up: true,
+    helper_seen_at: null,
+  };
+  const roadMap = (change: unknown, back: string | null): Record<string, Reply> => ({
+    'GET /api/road-map': {
+      status: 200,
+      body: {
+        served: SERVED,
+        change,
+        limits: LIMITS,
+        planning_paused: back !== null,
+        planning_back_at: back,
+        server_utc_offset_minutes: 0,
+      },
+    },
+  });
+  const TRIP = [place('i1', 'Torino', 'start_end')];
+
+  it('tells a planned rebuild on the project and keeps Plan the route on', async () => {
+    stubPlanner(
+      [TRIP],
+      roadMap({ state: 'planned', start_at: '2030-12-02T01:00:00Z', added: [], removed: [] }, null),
+    );
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    expect(await screen.findByText(/^Rebuild planned for /)).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Plan the route' })).toBeEnabled();
+  });
+
+  it('disables Plan the route from the build to the switch, with the line', async () => {
+    stubPlanner(
+      [TRIP],
+      roadMap(
+        {
+          state: 'running',
+          step: 'building',
+          steps_done: 2,
+          start_at: null,
+          added: [],
+          removed: [],
+        },
+        '2026-11-27T21:48:00Z',
+      ),
+    );
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    const line = await screen.findAllByText(
+      /^The road map is being rebuilt; planning is back at about \d\d:\d\d\.$/,
+    );
+    expect(line.length).toBeGreaterThan(0);
+    expect(await screen.findByRole('button', { name: 'Plan the route' })).toBeDisabled();
+    expect(await itemNamed('Torino')).toBeVisible();
+  });
+
+  it('asks the planner again every 10 seconds while a change runs, and enables planning when it ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const building = {
+        state: 'running',
+        step: 'building',
+        steps_done: 2,
+        start_at: null,
+        added: [],
+        removed: [],
+      };
+      const replies = roadMap(building, '2026-11-27T21:48:00Z');
+      stubPlanner([TRIP], replies);
+      render(WorkspacePage, { props: { projectId: 'p1' } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Plan the route' })).toBeDisabled(),
+      );
+
+      stubPlanner([TRIP], roadMap({ state: 'none', start_at: null, added: [], removed: [] }, null));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

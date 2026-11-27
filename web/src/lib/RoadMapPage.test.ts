@@ -48,7 +48,17 @@ interface World {
   limits?: unknown;
   posted?: Answer;
   cancelled?: Answer;
+  back?: string | null;
 }
+const RUNNING_AT = (step: string | null, stepsDone: number, back: string | null) => ({
+  state: 'running',
+  step,
+  steps_done: stepsDone,
+  start_at: null,
+  added: [{ key: 'us/utah', name: 'Utah' }],
+  removed: [],
+  back,
+});
 const SUMMARY = {
   added: [{ key: 'us/utah', name: 'Utah' }],
   removed: [],
@@ -67,7 +77,7 @@ function plan(
   world: World = {},
 ) {
   const calls: { url: string; method?: string; body?: string }[] = [];
-  let change = world.change ?? NO_CHANGE;
+  world.change ??= NO_CHANGE;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -76,23 +86,25 @@ function plan(
         return new Response(
           JSON.stringify({
             served,
-            change,
+            change: world.change,
             limits: world.limits ?? LIMITS,
             server_utc_offset_minutes: 60,
+            planning_paused: world.back !== undefined && world.back !== null,
+            planning_back_at: world.back ?? null,
           }),
         );
       if (url.startsWith('/api/road-map/catalogue'))
         return new Response(JSON.stringify({ results: [UTAH] }));
       if (url === '/api/road-map/change' && init?.method === 'DELETE') {
         const answer = world.cancelled ?? { status: 204 };
-        if (answer.status === 204) change = NO_CHANGE;
+        if (answer.status === 204) world.change = NO_CHANGE;
         return new Response(answer.status === 204 ? null : JSON.stringify(answer.body), {
           status: answer.status,
         });
       }
       if (url === '/api/road-map/change') {
         const answer = world.posted ?? { status: 201, body: { ...SUMMARY, not_linked_note: null } };
-        if (answer.status === 201) change = PLANNED;
+        if (answer.status === 201) world.change = PLANNED;
         return new Response(JSON.stringify(answer.body), { status: answer.status });
       }
       return new Response(JSON.stringify(preview.body), { status: preview.status });
@@ -349,5 +361,91 @@ describe('Road map page', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Rebuild road map' }));
 
     expect(await screen.findByText(/A change is already planned/)).toBeVisible();
+  });
+
+  it('shows the step a running rebuild is in, with the time left from the building step', async () => {
+    plan(SERVED, undefined, {
+      change: RUNNING_AT('building', 2, null),
+      back: new Date(Date.now() + 31 * 60_000).toISOString(),
+    });
+    render(RoadMapPage);
+    await loaded();
+
+    const steps = screen.getByRole('region', { name: 'Rebuild progress' });
+    expect(within(steps).getByRole('listitem', { current: 'step' })).toHaveTextContent('Building');
+    expect(steps).toHaveTextContent(/about 3[01] minutes left/);
+    expect(screen.getByText('The rebuild has started')).toBeVisible();
+  });
+
+  it('shows no progress for a change that is only planned', async () => {
+    plan(SERVED, undefined, { change: PLANNED });
+    render(RoadMapPage);
+    await loaded();
+
+    expect(screen.queryByRole('region', { name: 'Rebuild progress' })).not.toBeInTheDocument();
+  });
+
+  describe('asking the planner again', () => {
+    const readsOf = (calls: { url: string; method?: string }[]) =>
+      calls.filter((call) => call.url === '/api/road-map' && call.method === undefined).length;
+
+    afterEach(() => vi.useRealTimers());
+
+    it('every 10 seconds while a change is running, and moves the step on', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const world: World = { change: RUNNING_AT('downloading', 1, null) };
+      const calls = plan(SERVED, undefined, world);
+      render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readsOf(calls)).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(readsOf(calls)).toBe(1);
+      world.change = RUNNING_AT('building', 2, null);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(readsOf(calls)).toBe(2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('Building');
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(readsOf(calls)).toBe(3);
+    });
+
+    it('every 10 seconds while a change is planned', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const calls = plan(SERVED, undefined, { change: PLANNED });
+      render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(readsOf(calls)).toBe(2);
+    });
+
+    it('once on open, and no more, when no change is waiting or running', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const calls = plan(SERVED);
+      render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(readsOf(calls)).toBe(1);
+    });
+
+    it('stops when the change ends', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const world: World = { change: RUNNING_AT('switching', 3, null) };
+      const calls = plan(SERVED, undefined, world);
+      render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(0);
+      world.change = NO_CHANGE;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(readsOf(calls)).toBe(2);
+    });
+
+    it('stops when the page is left', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const calls = plan(SERVED, undefined, { change: RUNNING_AT('building', 2, null) });
+      const { unmount } = render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(0);
+      unmount();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(readsOf(calls)).toBe(1);
+    });
   });
 });

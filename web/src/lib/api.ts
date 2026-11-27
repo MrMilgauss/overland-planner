@@ -396,12 +396,19 @@ export interface ServedRoadMap {
   change: RoadMapChange;
   limits: RoadMapLimits;
   server_utc_offset_minutes: number;
+  /** From the build to the end of the switch the planner does not plan; `planning_back_at` is when it is back. */
+  planning_paused: boolean;
+  planning_back_at: string | null;
 }
 
 /** The change that waits for the helper or is being built: `state` is none, planned, running, done, failed or
  * cancelled; `start_at` is null for "now". */
 export interface RoadMapChange {
   state: string;
+  /** Of a running rebuild: the step it is in (checking, downloading, building or switching; null before the first) and
+   * how many steps are done. */
+  step?: string | null;
+  steps_done?: number;
   start_at: string | null;
   added: { key: string; name: string }[];
   removed: { key: string; name: string }[];

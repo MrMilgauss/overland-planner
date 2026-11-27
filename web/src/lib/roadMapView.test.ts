@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest';
 import {
   estimateText,
   mapDateText,
+  keepsPolling,
+  pausedLine,
   pendingKeys,
   plannedText,
+  remainingText,
   sizeText,
   startAtUtc,
+  stepMarks,
   tooBigText,
   whenText,
 } from './roadMapView';
@@ -96,5 +100,64 @@ describe('road map view words', () => {
   ])('says a rebuild planned at %s as %s', (startAt, words) => {
     const now = Date.parse('2026-11-27T13:00:00Z');
     expect(plannedText(startAt, 60, now, 'Europe/Rome')).toBe(words);
+  });
+
+  // Marco is in Milan (Europe/Rome, UTC+1 in winter); it is Friday 27 November 21:00 there unless said otherwise.
+  const EVENING = '2026-11-27T20:00:00Z';
+  it.each([
+    ['2026-11-27T22:30:00Z', EVENING, 60, 'Rebuild planned for tonight 23:30'],
+    ['2026-11-28T01:00:00Z', EVENING, 60, 'Rebuild planned for tonight 02:00'],
+    ['2026-11-28T01:00:00Z', EVENING, 0, 'Rebuild planned for tonight 02:00 (Pi time)'],
+    ['2026-11-28T10:59:00Z', EVENING, 60, 'Rebuild planned for tonight 11:59'],
+    ['2026-11-28T11:00:00Z', EVENING, 60, 'Rebuild planned for tomorrow 12:00'],
+    ['2026-11-28T17:30:00Z', EVENING, 60, 'Rebuild planned for tomorrow 18:30'],
+    ['2026-11-29T01:00:00Z', EVENING, 60, 'Rebuild planned for 02:00 on 29 November'],
+    ['2026-11-27T15:00:00Z', '2026-11-27T08:00:00Z', 60, 'Rebuild planned for today 16:00'],
+    ['2026-11-27T17:00:00Z', '2026-11-27T08:00:00Z', 60, 'Rebuild planned for tonight 18:00'],
+  ])('words a rebuild planned at %s, seen at %s, as: %s', (startAt, seen, piOffset, words) => {
+    expect(plannedText(startAt, piOffset, Date.parse(seen), 'Europe/Rome')).toBe(words);
+  });
+
+  it.each([
+    [null, 0, ['current', 'next', 'next', 'next', 'next']],
+    ['checking', 0, ['done', 'current', 'next', 'next', 'next']],
+    ['downloading', 1, ['done', 'done', 'current', 'next', 'next']],
+    ['building', 2, ['done', 'done', 'done', 'current', 'next']],
+    ['switching', 3, ['done', 'done', 'done', 'done', 'current']],
+  ])('ticks the steps of a rebuild at %s (%s done)', (step, stepsDone, marks) => {
+    const shown = stepMarks(step, stepsDone);
+    expect(shown.map((entry) => entry.label)).toEqual([
+      'Waiting',
+      "Checking the Pi's disk and memory",
+      'Downloading',
+      'Building',
+      'Switching to the new map',
+    ]);
+    expect(shown.map((entry) => entry.mark)).toEqual(marks);
+  });
+
+  it.each([
+    ['building', '2026-11-27T20:48:00Z', 'about 31 minutes left'],
+    ['building', '2026-11-27T20:17:20Z', 'about 1 minute left'],
+    ['building', '2026-11-27T20:00:00Z', 'about 1 minute left'],
+    ['building', '2026-11-27T20:16:00Z', 'about 1 minute left'],
+    ['downloading', '2026-11-27T20:48:00Z', ''],
+    ['switching', '2026-11-27T20:48:00Z', ''],
+    [null, '2026-11-27T20:48:00Z', ''],
+    ['building', null, ''],
+  ])('says the time left of the %s step with planning back at %s: "%s"', (step, back, words) => {
+    expect(remainingText(step, back, Date.parse('2026-11-27T20:17:00Z'))).toBe(words);
+  });
+
+  it('keeps asking the planner only while a change is planned or running', () => {
+    const states = ['none', 'planned', 'running', 'done', 'failed', 'cancelled'];
+    expect(states.filter(keepsPolling)).toEqual(['planned', 'running']);
+  });
+
+  it.each([
+    ['2026-11-27T21:48:00Z', 'The road map is being rebuilt; planning is back at about 22:48.'],
+    [null, 'The road map is being rebuilt; planning is back when it ends.'],
+  ])('says planning is paused until %s', (back, words) => {
+    expect(pausedLine(back, 'Europe/Rome')).toBe(words);
   });
 });
