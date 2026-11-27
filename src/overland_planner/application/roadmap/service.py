@@ -8,11 +8,12 @@ memory, and a restarted planner falls back to the tileset the rebuild's progress
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tileset_store import TilesetListing, TilesetStore
+from overland_planner.domain.roadmap.coverage import RoadMapCoverage
 from overland_planner.domain.roadmap.served_map import ServedId, select_served
 
 
@@ -30,6 +31,8 @@ class ServedMapView:
     map_date: datetime | None
     regions: tuple[ServedRegionView, ...]
     total_bytes: int
+    # The real outlines, for judging a trip; not part of what the served map says about itself.
+    coverage: RoadMapCoverage = field(default=RoadMapCoverage(()), compare=False)
 
 
 def _date(epoch: int | None) -> datetime | None:
@@ -67,4 +70,5 @@ class RoadMapService:
             map_date=_date(listing.built_at[entry.name]),
             regions=regions,
             total_bytes=sum(region.bytes for region in regions),
+            coverage=RoadMapCoverage(tuple((region.name, region.outline) for region in listing.regions[entry.name])),
         )

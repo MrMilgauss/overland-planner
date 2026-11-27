@@ -87,7 +87,7 @@ from overland_planner.application.ports.host import MountTable
 from overland_planner.application.ports.routing_provider import RoutingProvider, RoutingProviderError
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
-from overland_planner.application.roadmap.facade import RoadMapService
+from overland_planner.application.roadmap.facade import CoverageService, RoadMapService
 from overland_planner.application.routing.facade import LegResolver, ShapeStore
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
@@ -234,7 +234,9 @@ class _Wiring:
     def road_map_router(self) -> APIRouter:
         provider = self._routing_provider
         served_map = provider if isinstance(provider, ServedMap) else None
-        return road_map_routes(RoadMapService(served_map, self._tileset_store))
+        road_map = RoadMapService(served_map, self._tileset_store)
+        projects = ProjectService(self._catalog_unit_of_work, self._clock)
+        return road_map_routes(road_map, CoverageService(projects.items, road_map.served))
 
     def diagnostics_router(self) -> APIRouter:
         service = DiagnosticsService(

@@ -16,7 +16,7 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
-from overland_planner.application.roadmap.facade import ServedMapView
+from overland_planner.application.roadmap.facade import ServedMapView, TripCoverage
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
@@ -67,6 +67,31 @@ class ServedMapBody(BaseModel):
             map_date=served.map_date,
             regions=[ServedRegionBody(**vars(region)) for region in served.regions],
             total_bytes=served.total_bytes,
+        )
+
+
+class TripGroupBody(BaseModel):
+    regions: list[str]
+    item_ids: list[str]
+
+
+class CoverageBody(BaseModel):
+    """A trip judged against the served borders (D302, D308): what lies outside, and the groups not linked by land."""
+
+    known: bool
+    map_date: datetime | None
+    regions: list[str]
+    outside_item_ids: list[str]
+    groups: list[TripGroupBody]
+
+    @classmethod
+    def of(cls, coverage: TripCoverage) -> CoverageBody:
+        return cls(
+            known=coverage.known,
+            map_date=coverage.map_date,
+            regions=list(coverage.regions),
+            outside_item_ids=list(coverage.outside_item_ids),
+            groups=[TripGroupBody(regions=list(g.regions), item_ids=list(g.item_ids)) for g in coverage.groups],
         )
 
 

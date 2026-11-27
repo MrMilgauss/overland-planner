@@ -34,6 +34,57 @@
         "title": "AnchorsChoice",
         "type": "object"
       },
+      "CoverageBody": {
+        "description": "A trip judged against the served borders (D302, D308): what lies outside, and the groups not linked by land.",
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/TripGroupBody"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "known": {
+            "title": "Known",
+            "type": "boolean"
+          },
+          "map_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Date"
+          },
+          "outside_item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Outside Item Ids",
+            "type": "array"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "known",
+          "map_date",
+          "regions",
+          "outside_item_ids",
+          "groups"
+        ],
+        "title": "CoverageBody",
+        "type": "object"
+      },
       "DiagnosticsResource": {
         "description": "`GET /api/diagnostics` (DV-3, kpi-contracts `diagnostics_endpoint`) over the last `days` days. `k1`, `k4`,\n`g1`, `g2` and `cache_hit_rate_30d` stay null until the slices that own their sources.",
         "properties": {
@@ -1598,6 +1649,30 @@
         ],
         "title": "TotalsResource",
         "type": "object"
+      },
+      "TripGroupBody": {
+        "properties": {
+          "item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Item Ids",
+            "type": "array"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "regions",
+          "item_ids"
+        ],
+        "title": "TripGroupBody",
+        "type": "object"
       }
     }
   },
@@ -2213,6 +2288,55 @@
           }
         },
         "summary": "Set Anchors"
+      }
+    },
+    "/api/projects/{project_id}/coverage": {
+      "get": {
+        "operationId": "trip_coverage_api_projects__project_id__coverage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error"
+          }
+        },
+        "summary": "Trip Coverage"
       }
     },
     "/api/projects/{project_id}/items": {

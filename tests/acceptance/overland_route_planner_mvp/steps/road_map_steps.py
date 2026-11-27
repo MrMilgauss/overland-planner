@@ -35,6 +35,7 @@ from pytest_bdd import given, parsers, then, when
 from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import (
     EIGHT,
     GB,
+    SIZES_GB,
     RecordingServer,
     build_volume,
     catalogue_features,
@@ -515,13 +516,30 @@ def plan_change(world: PlannerWorld, added: str, removed: str | None, when_text:
     rm.view_after = rm_view(world)
 
 
+def write_pending_request(world: PlannerWorld, added: str, removed: str | None, when_text: str | None) -> None:
+    """The test seam of a planned change: the request file of D303/D315 placed in the changes folder, as the planner
+    writes it (tmp file, then rename), so a Given never depends on the change route."""
+    rm = planner(world)
+    keys = change_body(world, added, removed, when_text)["region_keys"]
+    start_at = start_at_of(world, when_text)
+    lines = ["schema=1", f"requested_at={int(world.clock.now().timestamp())}"]
+    if start_at is not None:
+        lines.append(f"start_at={int(datetime.fromisoformat(start_at).timestamp())}")
+    for key in keys:
+        props = feature_by_key(key)["properties"]
+        parent = next((f for f in catalogue_features() if key_of(f) == props["parent"]), None)
+        fields = [key, props["name"], parent["properties"]["name"] if parent else ""]
+        fields += [props["urls"]["pbf"], props["urls"]["poly"], str(int(SIZES_GB[key] * GB))]
+        lines.append("region=" + "\t".join(fields))
+    lines += [f"added={added}", f"removed={removed or ''}"]
+    changes = rm.root / "changes"
+    (changes / "request.tmp").write_text("\n".join(lines) + "\n")
+    (changes / "request.tmp").rename(changes / "request.txt")
+
+
 @given(parsers.re(CHANGE))
 def given_the_owner_has_planned(world: PlannerWorld, added: str, removed: str | None, when: str | None) -> None:
-    plan_change(world, added, removed, when)
-    response = state(world).response
-    assert response is not None and response.status_code == 201, (
-        f"precondition failed: the change was not planned: {response and response.text[:200]}"
-    )
+    write_pending_request(world, added, removed, when)
 
 
 @when(parsers.re(CHANGE))
