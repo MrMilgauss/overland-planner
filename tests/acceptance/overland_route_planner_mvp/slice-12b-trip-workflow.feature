@@ -46,7 +46,7 @@ Feature: The planner follows the trip
   Scenario: Every way to add a stop is in one Add control and lands in the one list
     Given Marco is building "Assietta weekend"
     When he opens "Add"
-    Then he can upload a GPX file, click on the map, or type coordinates
+    Then he can upload a GPX file, click on the map, type coordinates, or search for a place
     And after he types "Lago del Moncenisio" at 45.2280, 6.9420 the place is in the same list as "Strada dell'Assietta"
 
   # trip-workflow.spec.ts: "Start and End are set on a place in the list" (chromium; real: the anchors call).

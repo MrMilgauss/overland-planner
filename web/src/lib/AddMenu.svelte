@@ -1,33 +1,50 @@
 <script lang="ts">
   // The one Add control of Build the trip (D283): "Upload GPX trails" (the import call, through a file chooser), "Click
   // on the map" (the map's click mode) and "Type coordinates" (the add-place call, through the name form with its
-  // latitude and longitude). The page does the calls; a refusal of a typed place shows in the form in the planner's
+  // latitude and longitude) and, when the map settings offer it, "Search for a place" (the place search form, whose
+  // results are added by the same add-place call). The page does the calls; a refusal of a typed place shows in the form in the planner's
   // words, one of an import on the page.
   import type { NewPlace } from './api';
+  import PlaceSearchForm from './PlaceSearchForm.svelte';
   import PoiClickForm from './PoiClickForm.svelte';
 
   let {
     onupload,
     onplace,
     onclickmap,
+    placeSearch = false,
   }: {
     onupload: (files: File[]) => Promise<unknown>;
     onplace: (place: NewPlace) => Promise<unknown>;
     onclickmap: () => void;
+    /** The map settings offer "Search for a place" (a fourth way to add). */
+    placeSearch?: boolean;
   } = $props();
 
   let open = $state(false);
   let typing = $state(false);
+  let searching = $state(false);
   let chooser = $state<HTMLInputElement | undefined>();
   let toggle = $state<HTMLButtonElement | undefined>();
 
-  const ENTRIES = ['Upload GPX trails', 'Click on the map', 'Type coordinates'] as const;
+  const ENTRIES = $derived([
+    'Upload GPX trails',
+    'Click on the map',
+    'Type coordinates',
+    ...(placeSearch ? ['Search for a place'] : []),
+  ]);
 
-  function pick(entry: (typeof ENTRIES)[number]): void {
+  function pick(entry: string): void {
     open = false;
     if (entry === 'Upload GPX trails') chooser?.click();
     else if (entry === 'Click on the map') onclickmap();
-    else typing = true;
+    else if (entry === 'Type coordinates') {
+      searching = false;
+      typing = true;
+    } else {
+      typing = false;
+      searching = true;
+    }
   }
 
   async function uploaded(): Promise<void> {
@@ -68,6 +85,7 @@
     onclick={() => {
       open = !open;
       typing = false;
+      searching = false;
     }}>Add</button
   >
   {#if open}
@@ -91,6 +109,11 @@
 {#if typing}
   <div class="typing">
     <PoiClickForm coordinates label="Type coordinates" add={typed} close={() => (typing = false)} />
+  </div>
+{/if}
+{#if searching}
+  <div class="typing">
+    <PlaceSearchForm add={onplace} close={() => (searching = false)} />
   </div>
 {/if}
 

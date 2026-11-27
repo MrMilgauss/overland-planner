@@ -14,8 +14,12 @@ services:
     pull_policy: never
     ports: !override
       - "127.0.0.1:8080:8080"
+    # The place search is the fake of .github/scripts/fake-place-search.py, started by job 7 on the runner (slice 12c).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ROAD_MAP_SERVED_TILESET: "20261127"
+      PLACE_SEARCH_URL: "http://host.docker.internal:8765/search"
     volumes: !override
       - planner-data:/data
       - ${ROAD_MAP_FIXTURE_DIR:?run .github/scripts/build-road-map-fixture.py and set ROAD_MAP_FIXTURE_DIR}/volume:/valhalla-data:ro

@@ -15,6 +15,7 @@
     listItems,
     openProject,
     readCoverage,
+    readMapConfig,
     readRoadMap,
     removeItem,
     setAnchors,
@@ -41,6 +42,7 @@
   let coverage = $state<TripCoverage | undefined>(); // undefined until read; unreadable counts as unknown, never as a guess
   let servedNames = $state<string[]>([]); // the loaded regions in the road map's own order (the coverage lists them by name)
   let coverageRead = $state(false);
+  let placeSearch = $state(false); // the map settings offer "Search for a place"; unreadable counts as not offered
   let outsideWarned: string[] = []; // the items already known to be outside: only a new one is warned about
   let warnings = $state<{ id: string; text: string }[]>([]);
   let coverageReads = 0;
@@ -158,6 +160,10 @@
     await panel?.reload();
   }
 
+  readMapConfig()
+    .then((config) => (placeSearch = config.place_search === true))
+    .catch(() => {});
+
   open();
 </script>
 
@@ -234,7 +240,12 @@
     />
   {/if}
   <TripList {items} {outsideIds} onanchors={chooseStartAndEnd} onremove={removeFromTrip}>
-    <AddMenu onupload={upload} onplace={typedPlace} onclickmap={() => (clickMode = true)} />
+    <AddMenu
+      onupload={upload}
+      onplace={typedPlace}
+      onclickmap={() => (clickMode = true)}
+      {placeSearch}
+    />
   </TripList>
   <div class="switch" role="group" aria-label="Plan for">
     <span class="label">Plan for</span>

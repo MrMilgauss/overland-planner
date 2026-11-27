@@ -195,7 +195,13 @@ test("Build the trip shows the regions and the map date", async ({
   await expect(panel).toContainText(`Roads loaded for: ${regions}`);
   await expect(panel).toContainText("Map data: 27 November 2026");
   // And neither is inside "Details"
-  await expect(page.locator("details")).toHaveCount(0);
+  // (a <details> may exist on the page, such as the map's compact credit on a phone: none holds these lines)
+  await expect(
+    page.locator("details", { hasText: "Roads loaded for" }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator("details", { hasText: "Map data: 27 November" }),
+  ).toHaveCount(0);
   // And on a 390 px wide iPhone both are shown in full width text with no horizontal scroll
   await page.setViewportSize(AT_PHONE);
   await expect(panel).toContainText(`Roads loaded for: ${regions}`);
@@ -470,75 +476,249 @@ test("Stops in areas not linked by land are warned on Build the trip", async ({
   ).toBeEnabled();
 });
 
+// The local stand-in for Nominatim (.github/scripts/fake-place-search.py): the planner's PLACE_SEARCH_URL points at it and
+// its request log says what was sent. Words that carry a stamp are asked once only, so the planner's 24 h memory of
+// answers (13-14) never hides a request from the log.
+const FAKE_SEARCH =
+  process.env.FAKE_PLACE_SEARCH_URL ?? "http://127.0.0.1:8765";
+const UNAVAILABLE =
+  "The place search isn't answering. Try again in a minute, or add the place another way.";
+
+const stamped = (words: string, testInfo: TestInfo): string =>
+  `${words} ${testInfo.project.name}-${Date.now()}`;
+
+async function sentWords(page: Page): Promise<string[]> {
+  return (await (
+    await page.request.get(`${FAKE_SEARCH}/__requests`)
+  ).json()) as string[];
+}
+
+async function openTheSearch(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Search for a place" }).click();
+  const form = page.getByRole("form", { name: "Search for a place" });
+  await expect(form).toBeVisible();
+  return form;
+}
+
+async function searchFor(form: Locator, words: string): Promise<void> {
+  await form.getByLabel("Place name").fill(words);
+  await form.getByRole("button", { name: "Search", exact: true }).click();
+}
+
+const FINE_PRINT =
+  "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors.";
+
 // @US-29 @ui
-test.fixme("A place is found by name and joins the trip", async ({ page }) => {
+test("A place is found by name and joins the trip", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given Marco is building "Assietta weekend" and has chosen "Search for a place" in "Add"
+  await newProject(page, testInfo, "Assietta weekend");
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  const form = await openTheSearch(page);
   // When he types "Gorges du Verdon" and presses "Search"
+  await searchFor(form, "Gorges du Verdon");
   // Then he sees results with their region names
-  // And after he picks "Gorges du Verdon, Provence-Alpes-Côte d'Azur, France" it is in the list as a place, with no warning when the road map was rebuilt from the app and covers it
+  const result = form.getByRole("listitem").filter({
+    hasText: "Gorges du Verdon, Provence-Alpes-Côte d'Azur, France",
+  });
+  await expect(result).toHaveCount(1);
+  // And after he picks it, it is in the list as a place, with no warning (the map covers it); the form stays open
+  await result.getByRole("button", { name: "Add" }).click();
+  await expect(
+    tripList(page)
+      .getByRole("listitem")
+      .filter({ hasText: "Gorges du Verdon" }),
+  ).toHaveCount(1);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(form).toBeVisible();
 });
 
 // @US-29 @ui @edge
-test.fixme("Nothing is sent until Marco presses Search, and the screen says what leaves the house", async ({
+test("Nothing is sent until Marco presses Search, and the screen says what leaves the house", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the search form of "Add" is open
+  await newProject(page, testInfo, "Assietta weekend");
+  const form = await openTheSearch(page);
   // When Marco types "Gorges du Verdon" without pressing Search
-  // Then no search is made
-  // And the form says "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors."
+  const words = stamped("Gorges du Verdon", testInfo);
+  await form.getByLabel("Place name").pressSequentially(words);
+  await expect(form.getByLabel("Place name")).toHaveValue(words);
+  // Then no search is made (read from the request log of the local search server)
+  expect((await sentWords(page)).filter((q) => q === words)).toEqual([]);
+  // And the form says what leaves the house
+  await expect(form).toContainText(FINE_PRINT);
+  // Enter is the same as the button: now one search is made
+  await form.getByLabel("Place name").press("Enter");
+  await expect(form.getByRole("listitem")).toHaveCount(1);
+  expect((await sentWords(page)).filter((q) => q === words)).toEqual([words]);
 });
 
 // @US-29 @ui @error
-test.fixme("No result gives a clear message", async ({ page }) => {
+test("No result gives a clear message", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the search form is open
+  await newProject(page, testInfo, "Assietta weekend");
+  const form = await openTheSearch(page);
   // When Marco searches "Zxqvbn" and nothing is found
+  await searchFor(form, "Zxqvbn");
   // Then he reads that nothing was found with a hint to add the place on the map
+  await expect(form).toContainText(
+    "No place found for 'Zxqvbn'. Try another spelling or add it by clicking on the map.",
+  );
   // And the trip is unchanged
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(0);
 });
 
 // @US-29 @ui @error @infrastructure-failure
-test.fixme("An unreachable or busy search service leaves the trip unchanged", async ({
+test("An unreachable or busy search service leaves the trip unchanged", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the search service does not answer, or answers that it is busy
-  // When Marco searches "Gorges du Verdon"
-  // Then he reads that the place search isn't answering and to try again later or add the place another way
-  // And the other three ways to add still work and the trip is unchanged
+  // (W4: the handler only fulfils with the planner's 503 envelope, or aborts; it never fetches)
+  await newProject(page, testInfo, "Assietta weekend");
+  let mode: "busy" | "unreachable" = "busy";
+  await page.route(/\/api\/places\/search/, (route) =>
+    mode === "busy"
+      ? route.fulfill({
+          status: 503,
+          json: {
+            code: "place_search_unavailable",
+            message: "Place search is not available right now",
+          },
+        })
+      : route.abort(),
+  );
+  const form = await openTheSearch(page);
+  for (mode of ["busy", "unreachable"] as const) {
+    // When Marco searches "Gorges du Verdon"
+    await searchFor(form, "Gorges du Verdon");
+    // Then he reads that the place search isn't answering and to try again later or add the place another way
+    await expect(form.getByRole("alert")).toHaveText(UNAVAILABLE);
+    await expect(form.getByRole("listitem")).toHaveCount(0);
+  }
+  // And the trip is unchanged, and the other ways to add still work
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(0);
+  await addPlaceOnTheForm(page, "Lago del Moncenisio", "45.2280", "6.9420");
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(1);
 });
 
 // @US-29 @ui @edge
-test.fixme("A result outside the road map is added with the warning", async ({
+test("A result outside the road map is added with the warning", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
-  // Given after a rebuild from the app the loaded regions are the eight of the served map
+  await serveTheBaseMap(page, testInfo);
+  // Given the loaded regions are the eight of the served map
+  const regions = await servedRegions(page);
+  await newProject(page, testInfo, "Assietta weekend");
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  const form = await openTheSearch(page);
   // When Marco searches "Lagos" and picks the result in Portugal
-  // Then "Lagos" is in the list with the outside-the-map warning of US-28, at add time and as an "Outside road map" tag on its row
+  await searchFor(form, "Lagos");
+  const portugal = form
+    .getByRole("listitem")
+    .filter({ hasText: "Lagos, Algarve, Portugal" });
+  await expect(portugal).toHaveCount(1);
+  await portugal.getByRole("button", { name: "Add" }).click();
+  // Then "Lagos" is in the list with the outside-the-map warning, at add time and as a tag on its row
+  await expect(page.getByRole("alert")).toContainText(
+    `Lagos is outside the planner's road map (${regions})`,
+  );
+  const row = tripList(page).getByRole("listitem").filter({ hasText: "Lagos" });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Outside road map");
 });
 
 // @US-29 @ui @edge
-test.fixme("Pressing Search twice quickly sends one search", async ({
+test("Pressing Search twice quickly sends one search", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
+  await newProject(page, testInfo, "Assietta weekend");
+  const form = await openTheSearch(page);
   // Given Marco has typed "Gorges du Verdon"
+  const words = stamped("Gorges du Verdon", testInfo);
+  await form.getByLabel("Place name").fill(words);
   // When he presses "Search" twice within a second
+  await form.getByRole("button", { name: "Search", exact: true }).dblclick();
   // Then one search is made and the results are shown once
+  await expect(form.getByRole("listitem")).toHaveCount(1);
+  expect((await sentWords(page)).filter((q) => q === words)).toEqual([words]);
 });
 
 // @US-29 @ui @phone @edge
-test.fixme("On a phone the search form fits and opens in the page flow", async ({
+test("On a phone the search form fits and opens in the page flow", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "webkit-iphone14", "the phone only");
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_PHONE);
+  await serveTheBaseMap(page, testInfo);
   // Given Marco opens "Add" on his 390 px wide iPhone
+  await newProject(page, testInfo, "Assietta weekend");
+  const add = page.getByRole("button", { name: "Add", exact: true }).first(); // the menu's own, before any result
   // When he chooses "Search for a place"
-  // Then the form and results open under the heading bar in the page flow, not covering "Plan the route" or any other control
+  const form = await openTheSearch(page);
+  await searchFor(form, "Gorges du Verdon");
+  await expect(form.getByRole("listitem")).toHaveCount(1);
+  // Then the form and results open under the heading bar in the page flow, not covering "Plan the route"
+  const positions = await form.evaluate((node) => {
+    const found: string[] = [];
+    for (let at: Element | null = node; at; at = at.parentElement)
+      found.push(getComputedStyle(at).position);
+    return found;
+  });
+  expect(positions.filter((p) => p === "absolute" || p === "fixed")).toEqual(
+    [],
+  );
+  const formBox = (await form.boundingBox())!;
+  const addBox = (await add.boundingBox())!;
+  expect(formBox.y).toBeGreaterThanOrEqual(addBox.y + addBox.height - 0.5);
+  // "Plan the route" is pinned to the bottom of the screen: nothing of the form is above it in the stacking order, so
+  // the button is still the element under its own centre
+  const plan = page.getByRole("button", { name: "Plan the route" });
+  await expect(plan).toBeVisible();
+  expect(
+    await plan.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const top = document.elementFromPoint(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+      );
+      return top === node || node.contains(top);
+    }),
+    "the form does not cover Plan the route",
+  ).toBe(true);
+  // the form fits: no sideways scroll, and it ends inside the screen's width
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(formBox.x + formBox.width).toBeLessThanOrEqual(AT_PHONE.width + 0.5);
   // And every control is at least 44 px high and wide
+  for (const control of await form.locator("button, input").all()) {
+    const box = (await control.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(43.5);
+    expect(box.width).toBeGreaterThanOrEqual(43.5);
+  }
 });
 
 // @US-30 @ui

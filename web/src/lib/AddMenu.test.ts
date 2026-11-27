@@ -39,10 +39,27 @@ describe('Add menu', () => {
       within(options)
         .getAllByRole('button')
         .map((i) => i.textContent?.trim()),
-    ).toEqual(['Upload GPX trails', 'Click on the map', 'Type coordinates']);
+    ).toEqual(['Upload GPX trails', 'Click on the map', 'Type coordinates']); // place search is off unless offered
     expect(addButton()).toHaveAttribute('aria-expanded', 'true');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument(); // a disclosure, not an application menu
     expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+  });
+
+  it('offers a fourth way, "Search for a place", when the map settings offer place search', async () => {
+    open({ placeSearch: true });
+    await fireEvent.click(addButton());
+
+    const options = document.getElementById(addButton().getAttribute('aria-controls') ?? '')!;
+    expect(
+      within(options)
+        .getAllByRole('button')
+        .map((i) => i.textContent?.trim()),
+    ).toEqual(['Upload GPX trails', 'Click on the map', 'Type coordinates', 'Search for a place']);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Search for a place' }));
+
+    expect(screen.getByRole('form', { name: 'Search for a place' })).toBeVisible();
+    expect(addButton()).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('closes on Escape', async () => {

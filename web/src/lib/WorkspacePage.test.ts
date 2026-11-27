@@ -633,3 +633,77 @@ describe('Workspace page: coverage', () => {
     expect(screen.queryByText(/not linked by land/) !== null).toBe(warned);
   });
 });
+
+describe('Workspace page: search for a place (US-29)', () => {
+  const settings = (place_search: boolean): Reply => ({
+    status: 200,
+    body: {
+      tile_url: 'x',
+      attribution: 'x',
+      max_zoom: 17,
+      base_style_url: 'x',
+      base_attribution: 'x',
+      place_search,
+    },
+  });
+  const entries = async (): Promise<(string | null)[]> => {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add' }));
+    return within(document.getElementById('add-options')!)
+      .getAllByRole('button')
+      .map((b) => b.textContent);
+  };
+
+  it('offers four ways to add when the map settings say place search is on', async () => {
+    stubPlanner([[]], { 'GET /api/config/map': settings(true) });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    expect(await entries()).toEqual([
+      'Upload GPX trails',
+      'Click on the map',
+      'Type coordinates',
+      'Search for a place',
+    ]);
+  });
+
+  it('offers the three ways to add when the map settings say place search is off', async () => {
+    stubPlanner([[]], { 'GET /api/config/map': settings(false) });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    expect(await entries()).toEqual(['Upload GPX trails', 'Click on the map', 'Type coordinates']);
+  });
+
+  it('adds a found place through the add-place call, the form staying open', async () => {
+    const calls = stubPlanner([[], [place('i1', 'Gorges du Verdon')]], {
+      'GET /api/config/map': settings(true),
+      'GET /api/places/search?q=Gorges%20du%20Verdon': {
+        status: 200,
+        body: [
+          {
+            name: 'Gorges du Verdon',
+            region: 'PACA',
+            country: 'France',
+            lat: 43.7686,
+            lon: 6.3322,
+          },
+        ],
+      },
+      'POST /api/projects/p1/pois': { status: 201, body: place('i1', 'Gorges du Verdon') },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await entries();
+    await fireEvent.click(screen.getByRole('button', { name: 'Search for a place' }));
+    await fireEvent.input(screen.getByLabelText('Place name'), {
+      target: { value: 'Gorges du Verdon' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const row = await screen.findByText('Gorges du Verdon, PACA, France');
+
+    await fireEvent.click(within(row.closest('li')!).getByRole('button', { name: 'Add' }));
+
+    expect(await itemNamed('Gorges du Verdon')).toBeInTheDocument();
+    expect(writes(calls).map((c) => JSON.parse(c.body as string))).toEqual([
+      { name: 'Gorges du Verdon', lat: 43.7686, lon: 6.3322 },
+    ]);
+    expect(screen.getByRole('form', { name: 'Search for a place' })).toBeVisible();
+  });
+});

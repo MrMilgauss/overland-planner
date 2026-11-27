@@ -278,6 +278,37 @@ export function addPlace(projectId: string, place: NewPlace): Promise<Item> {
   );
 }
 
+/** One place of a search (GET /api/places/search): its region and country say which one it is. */
+export interface PlaceHit extends NewPlace {
+  region: string;
+  country: string;
+}
+
+const SEARCH_UNAVAILABLE =
+  "The place search isn't answering. Try again in a minute, or add the place another way.";
+
+/** Up to five places for the typed words. A refusal of the words (422) keeps the planner's message; a search that is
+ * busy, down or unreachable is one message of the page's own. */
+export async function searchPlaces(words: string): Promise<PlaceHit[]> {
+  let body: unknown;
+  try {
+    body = await call<unknown>(
+      `/api/places/search?q=${encodeURIComponent(words)}`,
+      {},
+      SEARCH_UNAVAILABLE,
+    );
+  } catch (error) {
+    if (error instanceof PlannerError && error.status !== undefined && error.status < 500)
+      throw error;
+    throw new PlannerError(
+      SEARCH_UNAVAILABLE,
+      error instanceof PlannerError ? error.status : undefined,
+    );
+  }
+  if (!Array.isArray(body)) throw new PlannerError(SEARCH_UNAVAILABLE);
+  return body as PlaceHit[];
+}
+
 /** Takes an item (a trail or a place) off the trip; the planner clears a Start or End that pointed at it. */
 export async function removeItem(projectId: string, itemId: string): Promise<void> {
   let response: Response;

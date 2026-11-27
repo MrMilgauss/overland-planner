@@ -441,6 +441,27 @@ def test_e2e_serves_the_fixture_road_map_to_the_planner_and_the_specs() -> None:
     )
 
 
+def test_e2e_points_the_planner_at_a_local_place_search_never_the_real_one() -> None:
+    """Slice 12c (13-24): the place search of the specs is a tracked fake Nominatim started by the job before compose;
+    the planner container reaches it on the runner through the host gateway; the real service is never asked."""
+    job = _job(_workflow(), "e2e")
+    script = ".github/scripts/fake-place-search.py"
+    assert (REPO_ROOT / script).is_file()
+    started = _index(job, script)
+    assert _index(job, "uv sync --frozen") < started < _index(job, f"{COMPOSE_CI_STACK} up -d --wait")
+    assert "0.0.0.0" in _runs(job)[started], "bound where the container's host gateway reaches it"  # noqa: S104
+    assert job["env"]["FAKE_PLACE_SEARCH_URL"] == "http://127.0.0.1:8765", "where the specs read its request log"
+
+    class ComposeLoader(yaml.SafeLoader):
+        """compose.ci.yaml carries the `!override` tag of Compose."""
+
+    ComposeLoader.add_constructor("!override", lambda loader, node: loader.construct_sequence(node, deep=True))
+    compose = yaml.load((REPO_ROOT / "deploy" / "compose.ci.yaml").read_text(), Loader=ComposeLoader)  # noqa: S506
+    planner = compose["services"]["planner"]
+    assert planner["environment"]["PLACE_SEARCH_URL"] == "http://host.docker.internal:8765/search"
+    assert "host.docker.internal:host-gateway" in planner["extra_hosts"]
+
+
 def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     job = _job(_workflow(), "e2e")
     selection = job["steps"][_index(job, "pytest-selection.sh")]

@@ -201,6 +201,7 @@ test("Every way to add a stop is in one Add control and lands in the one list", 
     "Upload GPX trails",
     "Click on the map",
     "Type coordinates",
+    "Search for a place", // the fourth way, offered when PLACE_SEARCH is on (the default; three when it is off)
   ]);
   await page.keyboard.press("Escape");
   await expect(addButton(page)).toHaveAttribute("aria-expanded", "false");
