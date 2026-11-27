@@ -341,39 +341,36 @@ recover() {
   exit 0
 }
 
-# ---- one run ------------------------------------------------------------------------------------------------------------
-
-changes_run "$SEEN_SH" helper-seen >&2 || {
-  say "road-map-runner: the changes folder cannot be reached; nothing was done"
+# nothing_done WHY: the run stops without touching anything; the next minute tries again.
+nothing_done() {
+  say "road-map-runner: $1; nothing was done"
   exit 0
 }
+
+# ---- one run ------------------------------------------------------------------------------------------------------------
+
+changes_run "$SEEN_SH" helper-seen >&2 || nothing_done "the changes folder cannot be reached"
 
 exec 8>>.road-map-runner.lock
 flock -n 8 || exit 0
 
-read_request read || {
-  say "road-map-runner: the request could not be read; nothing was done"
-  exit 0
-}
+read_request read || nothing_done "the request could not be read"
 case $STATE in
   none) exit 0 ;;
   busy) recover ;;
   refused) refuse ;;
   ok) ;;
-  *) say "road-map-runner: unexpected answer '$STATE'; nothing was done"; exit 0 ;;
+  *) nothing_done "unexpected answer '$STATE'" ;;
 esac
 validate_request "$BODY" || refuse
 due || exit 0
 
-read_request take || {
-  say "road-map-runner: the request could not be taken; nothing was done"
-  exit 0
-}
+read_request take || nothing_done "the request could not be taken"
 case $STATE in
   gone | none) exit 0 ;; # the planner cancelled it a moment ago: the rename lost
   refused) refuse ;;
   ok) ;;
-  *) say "road-map-runner: unexpected answer '$STATE'; nothing was done"; exit 0 ;;
+  *) nothing_done "unexpected answer '$STATE'" ;;
 esac
 validate_request "$BODY" || refuse
 if ! due; then
@@ -381,10 +378,7 @@ if ! due; then
   exit 0
 fi
 
-REGIONS_FILE=$(mktemp "$PWD/.road-map-regions.XXXXXX") || {
-  say "road-map-runner: no temporary file; nothing was done"
-  exit 0
-}
+REGIONS_FILE=$(mktemp "$PWD/.road-map-regions.XXXXXX") || nothing_done "no temporary file"
 trap 'rm -f "$REGIONS_FILE"' EXIT
 chmod 600 "$REGIONS_FILE"
 printf '%s\n' "$REGION_LINES" >"$REGIONS_FILE"
