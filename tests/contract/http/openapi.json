@@ -956,6 +956,39 @@
         "title": "MarkerPropertiesResource",
         "type": "object"
       },
+      "PlaceBody": {
+        "properties": {
+          "country": {
+            "title": "Country",
+            "type": "string"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "region",
+          "country",
+          "lat",
+          "lon"
+        ],
+        "title": "PlaceBody",
+        "type": "object"
+      },
       "PlanJobAccepted": {
         "description": "Calculate's answer: the job to poll and the notices of the project planned, such as \"Large project -\ncalculation may take longer than 3 minutes\" above 60 Included items (D146).",
         "properties": {
@@ -2192,6 +2225,60 @@
           }
         },
         "summary": "Api Health"
+      }
+    },
+    "/api/places/search": {
+      "get": {
+        "operationId": "search_api_places_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceBody"
+                  },
+                  "title": "Response Search Api Places Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error (fewer than two letters)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "place_search_unavailable"
+          }
+        },
+        "summary": "Search"
       }
     },
     "/api/plan-jobs/{job_id}": {

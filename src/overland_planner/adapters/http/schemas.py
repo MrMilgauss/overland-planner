@@ -19,6 +19,7 @@ from overland_planner.application.ports.plan_run_repository import PlanRunDetail
 from overland_planner.application.roadmap.facade import (
     CatalogueHit,
     ChangeSummary,
+    PlaceHit,
     PlannedChange,
     ServedMapView,
     TripCoverage,
@@ -99,6 +100,18 @@ class CatalogueBody(BaseModel):
     @classmethod
     def of(cls, hits: tuple[CatalogueHit, ...]) -> CatalogueBody:
         return cls(results=[CatalogueRegionBody(**vars(hit)) for hit in hits])
+
+
+class PlaceBody(BaseModel):
+    name: str
+    region: str
+    country: str
+    lat: float
+    lon: float
+
+    @classmethod
+    def of(cls, hit: PlaceHit) -> PlaceBody:
+        return cls(**vars(hit))
 
 
 class TripGroupBody(BaseModel):
@@ -607,6 +620,10 @@ class DiagnosticsResource(BaseModel):
         )
 
 
+PLACE_SEARCH_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    422: {"model": ErrorEnvelope, "description": "validation_error (fewer than two letters)"},
+    503: {"model": ErrorEnvelope, "description": "place_search_unavailable"},
+}
 CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorEnvelope, "description": "validation_error (fewer than two letters)"},
     503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},

@@ -35,6 +35,7 @@ from fastapi import APIRouter, FastAPI
 from overland_planner.adapters.clock.system_clock import SystemClock
 from overland_planner.adapters.files.local_file_store import LocalFileStore
 from overland_planner.adapters.files.proc_mount_table import ProcMountTable
+from overland_planner.adapters.geocoding.nominatim_place_search import NominatimPlaceSearch, SwitchedOffPlaceSearch
 from overland_planner.adapters.gpx.gpxpy_parser import GpxpyParser
 from overland_planner.adapters.gpx.gpxpy_writer import GpxpyWriter
 from overland_planner.adapters.http.basic_auth import BasicAuthCredentials, BasicAuthMiddleware
@@ -42,6 +43,7 @@ from overland_planner.adapters.http.catalog_routes import CatalogUseCases, catal
 from overland_planner.adapters.http.diagnostics_routes import diagnostics_routes
 from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.export_routes import export_routes
+from overland_planner.adapters.http.place_routes import place_routes
 from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
 from overland_planner.adapters.http.platform_routes import platform_routes
 from overland_planner.adapters.http.road_map_routes import road_map_routes
@@ -89,7 +91,7 @@ from overland_planner.application.ports.host import MountTable
 from overland_planner.application.ports.routing_provider import RoutingProvider, RoutingProviderError
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
-from overland_planner.application.roadmap.facade import CoverageService, RoadMapService
+from overland_planner.application.roadmap.facade import CoverageService, PlaceSearchService, RoadMapService
 from overland_planner.application.routing.facade import LegResolver, ShapeStore
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
@@ -142,6 +144,7 @@ class _Wiring:
         self._tileset_store = TilesetDirReader(
             settings.road_map_dir, progress_file=None if changes_dir is None else changes_dir / "progress.txt"
         )
+        self._place_search = _place_search(settings)
         self._catalogue = _region_catalogue(settings, clock, ports.catalogue_min_features)
         self._change_queue = None if changes_dir is None else ChangeQueueDir(changes_dir)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
@@ -183,6 +186,7 @@ class _Wiring:
         registry.register("tileset_store", self._tileset_store)  # degraded, never fatal: the map is then unknown
         if self._catalogue is not None:
             registry.register("region_catalogue", self._catalogue)  # degraded, never fatal: no region search then
+        registry.register("place_search", self._place_search)  # degraded, never fatal: no place search then
         if self._change_queue is not None:
             registry.register("road_map_changes", self._change_queue)  # degraded, never fatal: no change is offered
         registry.register("tour_solver", self._tour_solver)
@@ -256,6 +260,9 @@ class _Wiring:
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return road_map_routes(road_map, CoverageService(projects.items, road_map.served))
 
+    def place_router(self) -> APIRouter:
+        return place_routes(PlaceSearchService(self._place_search))
+
     def diagnostics_router(self) -> APIRouter:
         service = DiagnosticsService(
             self._diagnostics_reader,
@@ -269,6 +276,15 @@ class _Wiring:
         runs = PlanRunQueries(self._planning_unit_of_work)
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return export_routes(GpxExportService(runs, projects, self._file_store, self._gpx_writer, self._event_log))
+
+
+def _place_search(settings: Settings) -> NominatimPlaceSearch | SwitchedOffPlaceSearch:
+    """Place search: Nominatim (nothing is sent before a search is asked for), or nothing when switched off."""
+    if settings.place_search == "off":
+        return SwitchedOffPlaceSearch()
+    return NominatimPlaceSearch(
+        settings.place_search_url, user_agent=f"overland-planner/{settings.planner_git_sha} {_USER_AGENT_WHO}"
+    )
 
 
 def _region_catalogue(settings: Settings, clock: Clock, min_features: int) -> GeofabrikCatalogue | None:
@@ -335,6 +351,7 @@ def create_app(
     app.include_router(wiring.planning_router(health))
     app.include_router(wiring.export_router())
     app.include_router(wiring.road_map_router())
+    app.include_router(wiring.place_router())
     app.include_router(wiring.diagnostics_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)
