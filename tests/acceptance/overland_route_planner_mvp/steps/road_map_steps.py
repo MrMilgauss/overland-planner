@@ -32,6 +32,8 @@ from typing import Any
 import httpx
 from pytest_bdd import given, parsers, then, when
 
+from overland_planner.bootstrap.app_factory import ExternalPorts
+from tests.acceptance.overland_route_planner_mvp.steps.planner import InProcessPlanner
 from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import (
     EIGHT,
     GB,
@@ -188,9 +190,27 @@ def arm(world: PlannerWorld) -> RoadMapState:
     return rm
 
 
+def ensure_planner(world: PlannerWorld) -> None:
+    """`world.ensure_planner()` with the one change these scenarios need: the probe of the region list expects the
+    fixture's 19 regions, not the real index's 100 or more (world.py is not this slice's to change)."""
+    if world.planner is None:
+        world.planner = InProcessPlanner(
+            world.environ,
+            ExternalPorts(
+                clock=world.clock,
+                mount_table=world.mount_table,
+                tour_solver=world.tour_solver,
+                routing_provider=world.routing_provider,
+                routing_transport=world.routing_transport,
+                catalogue_min_features=len(catalogue_features()),
+            ),
+        )
+        world.planner.start()
+
+
 def planner(world: PlannerWorld) -> RoadMapState:
     rm = arm(world)
-    world.ensure_planner()
+    ensure_planner(world)
     return rm
 
 
@@ -432,7 +452,7 @@ def given_the_catalogue_was_fetched_days_ago(world: PlannerWorld, days: str) -> 
     rm = arm(world)
     now = world.clock.now()
     world.clock = FakeClock(now - timedelta(days=int(days)))
-    world.ensure_planner()
+    ensure_planner(world)
     call(world, "GET", "/api/road-map/catalogue", params={"q": "Utah"})
     assert rm.response is not None and rm.response.status_code == 200, "precondition: the first search did not work"
     assert world.planner is not None

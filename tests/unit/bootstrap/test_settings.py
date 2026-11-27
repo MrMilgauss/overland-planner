@@ -602,3 +602,24 @@ def test_a_place_search_value_other_than_on_or_off_is_refused_naming_the_key_but
     with pytest.raises(InvalidSettingsError) as reference:
         Settings.from_environ({"PLACE_SEARCH": "~"})
     assert str(refused.value) == str(reference.value)
+
+
+# ------------------------------------------------------------------ the region list (slice 12c, D306, D313 O3)
+GEOFABRIK_DEFAULT = "https://download.geofabrik.de/index-v1-nogeom.json"
+
+
+@pytest.mark.parametrize("environ", [{}, {"GEOFABRIK_INDEX_URL": ""}])
+def test_an_empty_or_absent_region_list_address_is_the_public_default(environ: dict[str, str]) -> None:
+    assert Settings.from_environ(environ).geofabrik_index_url == GEOFABRIK_DEFAULT
+
+
+@given(address=_host.map(lambda host: f"http://{host}:8123/index-v1-nogeom.json"))
+def test_the_region_list_address_is_taken_as_given(address: str) -> None:
+    assert Settings.from_environ({"GEOFABRIK_INDEX_URL": address}).geofabrik_index_url == address
+
+
+@pytest.mark.parametrize("value", ["download.geofabrik.de/index.json", "ftp://example.org/index.json", "https:///x"])
+def test_a_region_list_address_that_is_not_http_with_a_host_is_refused_naming_the_key(value: str) -> None:
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"GEOFABRIK_INDEX_URL": value})
+    assert refused.value.setting_names == frozenset({"GEOFABRIK_INDEX_URL"})

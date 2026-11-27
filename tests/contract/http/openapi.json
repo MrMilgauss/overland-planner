@@ -34,6 +34,65 @@
         "title": "AnchorsChoice",
         "type": "object"
       },
+      "CatalogueBody": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueRegionBody"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "CatalogueBody",
+        "type": "object"
+      },
+      "CatalogueRegionBody": {
+        "description": "One region of the free list (D306): its key is the list's own id; the size is what its map data weighs, null\nwhile the region service cannot say.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "parent_name",
+          "bytes"
+        ],
+        "title": "CatalogueRegionBody",
+        "type": "object"
+      },
       "CoverageBody": {
         "description": "A trip judged against the served borders (D302, D308): what lies outside, and the groups not linked by land.",
         "properties": {
@@ -2749,6 +2808,56 @@
           }
         },
         "summary": "Road Map"
+      }
+    },
+    "/api/road-map/catalogue": {
+      "get": {
+        "operationId": "catalogue_api_road_map_catalogue_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error (fewer than two letters)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "region_catalogue_unavailable"
+          }
+        },
+        "summary": "Catalogue"
       }
     },
     "/healthz": {

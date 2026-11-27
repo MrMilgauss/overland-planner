@@ -56,6 +56,7 @@ from overland_planner.adapters.persistence.migrator import AlembicMigrator, Data
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
 from overland_planner.adapters.persistence.plan_refusal_repository import SqlAlchemyPlanRefusalLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from overland_planner.adapters.roadmap.geofabrik_catalogue import DEFAULT_MIN_FEATURES, GeofabrikCatalogue
 from overland_planner.adapters.roadmap.tileset_dir_reader import TilesetDirReader
 from overland_planner.adapters.routing.mock_routing_provider import (
     InvalidRoadMapError,
@@ -93,6 +94,8 @@ from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
 from overland_planner.bootstrap.startup import StartupGate
 
+_USER_AGENT_WHO = "(household trip planner; +https://github.com/MrMilgauss/overland-planner)"  # D307: no contact detail
+
 
 @dataclass(frozen=True)
 class ExternalPorts:
@@ -106,6 +109,7 @@ class ExternalPorts:
     tour_solver: TourSolver | None = None
     routing_transport: httpx.BaseTransport | None = None  # the scripted engine of ROUTING_PROVIDER=valhalla
     routing_provider: RoutingProvider | None = None  # a road map the test holds, to arm its faults while it runs
+    catalogue_min_features: int = DEFAULT_MIN_FEATURES  # the probe's size check of the region list; tests trim the list
 
 
 class _Wiring:
@@ -137,6 +141,7 @@ class _Wiring:
         self._tileset_store = TilesetDirReader(
             settings.road_map_dir, progress_file=None if changes_dir is None else changes_dir / "progress.txt"
         )
+        self._catalogue = _region_catalogue(settings, clock, ports.catalogue_min_features)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
@@ -174,6 +179,8 @@ class _Wiring:
         registry.register("gpx_writer", self._gpx_writer)
         registry.register("routing_provider", self._routing_provider)
         registry.register("tileset_store", self._tileset_store)  # degraded, never fatal: the map is then unknown
+        if self._catalogue is not None:
+            registry.register("region_catalogue", self._catalogue)  # degraded, never fatal: no region search then
         registry.register("tour_solver", self._tour_solver)
         return registry
 
@@ -234,7 +241,7 @@ class _Wiring:
     def road_map_router(self) -> APIRouter:
         provider = self._routing_provider
         served_map = provider if isinstance(provider, ServedMap) else None
-        road_map = RoadMapService(served_map, self._tileset_store)
+        road_map = RoadMapService(served_map, self._tileset_store, self._catalogue)
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return road_map_routes(road_map, CoverageService(projects.items, road_map.served))
 
@@ -251,6 +258,19 @@ class _Wiring:
         runs = PlanRunQueries(self._planning_unit_of_work)
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return export_routes(GpxExportService(runs, projects, self._file_store, self._gpx_writer, self._event_log))
+
+
+def _region_catalogue(settings: Settings, clock: Clock, min_features: int) -> GeofabrikCatalogue | None:
+    """The free list of regions, only where the road map can be changed: both road-map folders are set (the Pi)."""
+    if settings.road_map_dir is None or settings.road_map_changes_dir is None:
+        return None
+    return GeofabrikCatalogue(
+        settings.geofabrik_index_url,
+        settings.data_dir / "road-map",
+        clock,
+        user_agent=f"overland-planner/{settings.planner_git_sha} {_USER_AGENT_WHO}",
+        min_features=min_features,
+    )
 
 
 def _routing_provider_for(settings: Settings, ports: ExternalPorts, road_map: RoadMapScript | None) -> RoutingProvider:

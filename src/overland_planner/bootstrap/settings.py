@@ -27,6 +27,8 @@ parameter refuses the start without naming the word, since it may itself be the 
 The served road map (slice 12c, D301, D314): ROAD_MAP_DIR is the tileset folder of the volume the planner mounts read-
 only, ROAD_MAP_CHANGES_DIR the folder of the rebuild's notes (`progress.txt`); empty or absent means unknown. With the
 offline road map, ROAD_MAP_SERVED_TILESET names the tileset folder it serves; with `valhalla` a value refuses the start.
+GEOFABRIK_INDEX_URL (an http or https address with a host; empty means the public Geofabrik index) is the free list of
+regions the owner searches; its origin is the only one region downloads may come from (D306, D313).
 """
 
 from __future__ import annotations
@@ -115,6 +117,12 @@ class Settings(BaseSettings):
         "https://nominatim.openstreetmap.org/search"
     )
 
+    # The free list of regions the road map is built from (slice 12c, D306): Geofabrik's index, normally left unset. The
+    # downloads the planner may ask about are under this address's own origin, so tests run against a local server.
+    geofabrik_index_url: Annotated[str, Field(validation_alias="GEOFABRIK_INDEX_URL")] = (
+        "https://download.geofabrik.de/index-v1-nogeom.json"
+    )
+
     road_map_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_DIR")] = None
     road_map_changes_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_CHANGES_DIR")] = None
     road_map_served_tileset: Annotated[str | None, Field(validation_alias="ROAD_MAP_SERVED_TILESET")] = None
@@ -149,7 +157,7 @@ class Settings(BaseSettings):
                 raise ValueError(f"carries the private parameter {name}")  # the name only, never the value (D256)
         return value
 
-    @field_validator("valhalla_url")
+    @field_validator("valhalla_url", "geofabrik_index_url")
     @classmethod
     def _http_url_with_host(cls, value: str) -> str:
         try:
@@ -194,6 +202,7 @@ class Settings(BaseSettings):
         "map_tile_max_zoom",
         "place_search",
         "place_search_url",
+        "geofabrik_index_url",
         mode="before",
     )
     @classmethod

@@ -16,7 +16,7 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
-from overland_planner.application.roadmap.facade import ServedMapView, TripCoverage
+from overland_planner.application.roadmap.facade import CatalogueHit, ServedMapView, TripCoverage
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
@@ -68,6 +68,24 @@ class ServedMapBody(BaseModel):
             regions=[ServedRegionBody(**vars(region)) for region in served.regions],
             total_bytes=served.total_bytes,
         )
+
+
+class CatalogueRegionBody(BaseModel):
+    """One region of the free list (D306): its key is the list's own id; the size is what its map data weighs, null
+    while the region service cannot say."""
+
+    key: str
+    name: str
+    parent_name: str | None
+    bytes: int | None
+
+
+class CatalogueBody(BaseModel):
+    results: list[CatalogueRegionBody]
+
+    @classmethod
+    def of(cls, hits: tuple[CatalogueHit, ...]) -> CatalogueBody:
+        return cls(results=[CatalogueRegionBody(**vars(hit)) for hit in hits])
 
 
 class TripGroupBody(BaseModel):
@@ -487,6 +505,10 @@ class DiagnosticsResource(BaseModel):
         )
 
 
+CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    422: {"model": ErrorEnvelope, "description": "validation_error (fewer than two letters)"},
+    503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},
+}
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorEnvelope, "description": "not_found"},
     422: {"model": ErrorEnvelope, "description": "validation_error"},
