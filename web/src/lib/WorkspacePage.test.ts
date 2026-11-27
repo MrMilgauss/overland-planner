@@ -568,6 +568,33 @@ describe('Workspace page: coverage', () => {
     expect(screen.getByText('Outside road map')).toBeInTheDocument();
   });
 
+  it('keeps a dismissed warning dismissed when a later reading fails and the next one still has the item outside', async () => {
+    const chefchaouen = place('i1', 'Chefchaouen');
+    const calls = stubPlanner([[], [chefchaouen], [chefchaouen], [chefchaouen]], {
+      'GET /api/projects/p1/coverage': [
+        covered([]),
+        covered(['i1']),
+        { status: 500, body: { code: 'x', message: 'no' } },
+        covered(['i1']),
+      ],
+      'POST /api/projects/p1/pois': { status: 201, body: chefchaouen },
+      'PUT /api/projects/p1/anchors': { status: 200, body: { ...PROJECT, revision: 2 } },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await screen.findByText('Roads loaded for: Italy and Spain');
+    await typeAPlace('Chefchaouen', '35.1688', '-5.2636');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+    await setFromTheRow('Chefchaouen', 'Set as start');
+    await setFromTheRow('Chefchaouen', 'Set as end'); // this reading fails
+    await vi.waitFor(() => expect(coverageReads(calls)).toBe(3));
+    await setFromTheRow('Chefchaouen', 'Set as start');
+    await setFromTheRow('Chefchaouen', 'Set as end'); // the next one has the item outside again
+    await vi.waitFor(() => expect(coverageReads(calls)).toBe(4));
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it.each([
     { case: 'a map without a record', reply: covered(['i1'], false) },
     {

@@ -120,8 +120,9 @@
     servedDate = served?.served.map_date ?? null;
     servedNames = served?.served.known ? served.served.regions.map((r) => r.name) : [];
     coverageRead = true;
-    const outside = read?.known ? read.outside_item_ids : [];
-    if (warn && read?.known) {
+    if (!read?.known) return; // a map the page cannot read changes nothing of what was warned
+    const outside = read.outside_item_ids;
+    if (warn) {
       warnings = [
         ...warnings,
         ...outsideWarnings(
