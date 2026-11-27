@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tests.deploy.conftest import FakePi
+from tests.deploy.conftest import FakePi, shim_env
 
 CURRENT_SET = "20261101"
 PREVIOUS_SET = "20260901"
@@ -80,6 +80,21 @@ def test_the_modified_value_of_the_served_tileset_is_read_back_from_the_last_ok_
     )
 
     assert (served, other) == ("1793560782", "")  # the rollback line counts; a tileset never proven has none
+
+
+@pytest.mark.parametrize("mode", ["", "RO", "rw ", "ro,rw", "x"])
+def test_the_volume_helper_takes_only_ro_or_rw_and_never_falls_back_to_writable(pi: FakePi, mode: str) -> None:
+    result = subprocess.run(
+        ["bash", "-c", f". {pi.dir}/scripts/lib.sh && volume_sh '{mode}' 'true'"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=shim_env(pi.shim_home, HOME=str(pi.root)),
+    )
+
+    assert result.returncode != 0
+    assert result.stderr.strip().count("\n") == 0 and "ro" in result.stderr and "rw" in result.stderr
+    assert not pi.calls("docker")
 
 
 @pytest.mark.parametrize(

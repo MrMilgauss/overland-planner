@@ -307,7 +307,11 @@ VALHALLA_MODIFIED=
 # running SCRIPT with sh -c (ARGS become $0, $1, ...).
 volume_sh() {
   local suffix='' script=$2
-  [ "$1" = ro ] && suffix=:ro
+  case $1 in
+    ro) suffix=:ro ;;
+    rw) ;;
+    *) echo "volume_sh: the mode is ro or rw, not '$1'" >&2; return 2 ;;
+  esac
   shift 2
   docker run --rm --network none -v "$VALHALLA_VOLUME:/vol$suffix" "$SNAPSHOT_IMAGE" sh -c "$script" "$@"
 }
