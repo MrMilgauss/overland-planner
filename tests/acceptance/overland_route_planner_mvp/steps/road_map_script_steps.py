@@ -410,7 +410,7 @@ def write_request(
         regions[0][3] = regions[0][3].replace(GOOD_ADDRESS, "https://example.invalid/", 1)
     elif fault == "a region address that belongs to another region":
         regions[0][3] = regions[1][3]
-    elif fault == "a region name with a path going up a folder":
+    elif fault == "a region name that goes up a level":
         regions[0][0] = "italy/../etc"
     elif fault == "a size that is not a number":
         regions[0][5] = "12abc"
@@ -433,6 +433,14 @@ def given_a_request_due(world: PlannerWorld) -> None:
     pi = make_pi(world)
     serve(pi)
     write_request(pi)
+    # valhalla-fetch leaves the borders it downloaded in the meta folder of the volume (D314); the shim stands for it
+    pi.rule(
+        "docker",
+        "valhalla-fetch",
+        write={f"road-map-meta/outlines/{key.replace('/', '-')}.poly": f"{key}\n" for key in (*EIGHT, "portugal")},
+        passthrough=True,
+        times=1,
+    )
 
 
 @given("a Pi serving the map of 1 November and a request adding Portugal to start in 3 hours")

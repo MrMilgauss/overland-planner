@@ -1,5 +1,5 @@
 """Shared engine of the fake external commands for the offline deploy tests (docker, curl, df, flock, gh, ssh, rsync,
-ss, crontab).
+ss, crontab, timeout).
 
 Each shim appends one JSON record per invocation to `$SHIM_HOME/calls.jsonl` (tool, argv, cwd, PLANNER_BIND from the
 environment, curl's stdin config, the PLANNER_IMAGE of the release.env compose would read) and then answers:
@@ -161,10 +161,24 @@ def _answer(tool: str, argv: list[str], rule: dict[str, Any]) -> None:
 
 
 def _default(tool: str, argv: list[str], record: dict[str, Any]) -> None:
-    handler = {"docker": _docker, "curl": _curl, "df": _df, "flock": _flock, "ssh": _ssh, "crontab": _crontab}.get(tool)
+    handler = {
+        "docker": _docker,
+        "curl": _curl,
+        "df": _df,
+        "flock": _flock,
+        "ssh": _ssh,
+        "crontab": _crontab,
+        "timeout": _timeout,
+    }.get(tool)
     if handler is not None:
         handler(argv, record)
     sys.exit(0)
+
+
+def _timeout(argv: list[str], record: dict[str, Any]) -> None:
+    """`timeout SECONDS COMMAND...`: the call is recorded (the limit is part of the argv) and the command runs at once,
+    with no clock: the offline tests check that the limit is asked for, not that it fires."""
+    os.execvp(argv[1], argv[1:])  # noqa: S606 - the shim runs the shim of the next command
 
 
 def _crontab(argv: list[str], record: dict[str, Any]) -> None:
