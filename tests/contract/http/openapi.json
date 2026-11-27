@@ -958,6 +958,11 @@
       },
       "PlaceBody": {
         "properties": {
+          "area": {
+            "default": "",
+            "title": "Area",
+            "type": "string"
+          },
           "country": {
             "title": "Country",
             "type": "string"

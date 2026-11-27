@@ -31,10 +31,23 @@ _REMEMBERED = 200
 _REMEMBERED_FOR_S = 24 * 3600.0
 _BUSY_CODES = (429, 503)
 _REGION_KEYS = ("state", "region", "province", "state_district", "county")
+_LOCALITY_KEYS = ("city", "town", "village", "hamlet", "suburb", "municipality")
 
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _street_name(address: dict[str, Any], display_name: str) -> str:
+    """A street address has no `name`: "<road> <number>, <locality>", else the first two parts of `display_name`."""
+    road, number = _text(address.get("road")), _text(address.get("house_number"))
+    locality = next((text for key in _LOCALITY_KEYS if (text := _text(address.get(key)))), "")
+    street = " ".join(part for part in (road, number) if part) if road else ""
+    named = ", ".join(part for part in (street, locality) if part)
+    if named:
+        return named
+    parts = [part.strip() for part in display_name.split(",")]
+    return ", ".join([part for part in parts if part and not part.isdigit()][:2])
 
 
 def _hit_of(row: object) -> PlaceHit | None:
@@ -46,11 +59,20 @@ def _hit_of(row: object) -> PlaceHit | None:
         lat, lon = float(row["lat"]), float(row["lon"])
     except (KeyError, TypeError, ValueError):
         return None
-    name = _text(row.get("name")) or _text(row.get("display_name")).split(",")[0].strip()
+    name = _text(row.get("name"))
+    if not name or name.isdigit():
+        name = _street_name(address, _text(row.get("display_name")))
     if not name:
         return None
     region = next((text for key in _REGION_KEYS if (text := _text(address.get(key)))), "")
-    return PlaceHit(name=name, region=region, country=_text(address.get("country")), lat=lat, lon=lon)
+    return PlaceHit(
+        name=name,
+        region=region,
+        country=_text(address.get("country")),
+        lat=lat,
+        lon=lon,
+        area=_text(address.get("county")),
+    )
 
 
 class _Pacing:

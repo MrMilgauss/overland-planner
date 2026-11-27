@@ -8,7 +8,7 @@
   let { add, close }: { add: (place: NewPlace) => Promise<unknown>; close: () => void } = $props();
 
   const FINE_PRINT =
-    "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors.";
+    "What you type is sent to OpenStreetMap's public place search (Nominatim) from your home connection. Your trip and files stay at home. Search © OpenStreetMap contributors.";
   const QUICK_MS = 1000;
 
   let words = $state('');
@@ -18,8 +18,11 @@
   let busy = $state(false);
   let lastSent = { words: '', at: 0 };
 
-  const label = (hit: PlaceHit): string =>
-    [hit.name, hit.region, hit.country].filter((part) => part !== '').join(', ');
+  // The second line: county, region, country; an empty or repeated part is left out.
+  const where = (hit: PlaceHit): string =>
+    [...new Set([hit.area ?? '', hit.region, hit.country])]
+      .filter((part) => part !== '')
+      .join(', ');
 
   async function search(event: SubmitEvent): Promise<void> {
     event.preventDefault();
@@ -72,10 +75,14 @@
     </p>
   {/if}
   {#if results && results.length > 0}
+    <p role="status">{results.length === 1 ? '1 place found' : `${results.length} places found`}</p>
     <ul aria-label="Search results">
       {#each results as hit (`${hit.lat},${hit.lon},${hit.name}`)}
         <li>
-          <span class="where">{label(hit)}</span>
+          <span class="where">
+            <span class="name">{hit.name}</span>
+            <span class="detail">{where(hit)}</span>
+          </span>
           <button type="button" onclick={() => addHit(hit)}>Add</button>
         </li>
       {/each}
@@ -119,9 +126,14 @@
     gap: var(--space-2);
   }
   .where {
+    display: grid;
     flex: 1 1 10rem;
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .detail {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   p {
     margin: 0;

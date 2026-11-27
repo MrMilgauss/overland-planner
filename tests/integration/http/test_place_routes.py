@@ -33,7 +33,7 @@ class RecordingPlaces:
         self.asked.append(words)
         if self._down:
             raise PlaceSearchUnavailableError
-        return (PlaceHit("Lagos", "Algarve", "Portugal", 37.1, -8.67),)
+        return (PlaceHit("Lagos", "Algarve", "Portugal", 37.1, -8.67, "Faro"),)
 
     def probe(self) -> ProbeResult:
         return ProbeResult(outcome="ok")
@@ -64,7 +64,9 @@ def test_a_name_is_asked_once_as_typed_and_answered_with_its_places(words: str) 
     answer = client(places).get("/api/places/search", params={"q": f"  {words}  "})
 
     assert answer.status_code == 200
-    assert answer.json() == [{"name": "Lagos", "region": "Algarve", "country": "Portugal", "lat": 37.1, "lon": -8.67}]
+    assert answer.json() == [
+        {"name": "Lagos", "region": "Algarve", "country": "Portugal", "lat": 37.1, "lon": -8.67, "area": "Faro"}
+    ]
     assert places.asked == [words]
 
 

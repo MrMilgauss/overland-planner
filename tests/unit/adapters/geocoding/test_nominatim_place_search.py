@@ -170,7 +170,41 @@ def test_a_recorded_real_answer_reads_as_places_with_a_region_falling_back_when_
         ("Newman Lake", "Washington", "United States"),
         ("Moab", "Davao Region", "Philippines"),
     ]
-    assert hits[0] == PlaceHit("Moab", "Utah", "United States", 38.5738096, -109.546214)
+    assert hits[0] == PlaceHit("Moab", "Utah", "United States", 38.5738096, -109.546214, "Grand County")
+
+
+STREET = (Path(__file__).parent / "fixtures" / "nominatim-street-address-jsonv2.json").read_text(encoding="utf-8")
+
+
+def test_a_street_address_is_named_by_its_street_number_and_town_with_its_county_kept() -> None:
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, text=STREET))
+        hits = adapter().search("Via Esempio 12")
+
+    assert hits == (PlaceHit("Via Esempio 12, Paese Esempio", "Lombardia", "Italia", 45.464, 9.19, "Milano"),)
+
+
+_WORDS = st.text(alphabet=st.characters(whitelist_categories=("L", "N", "Zs")), max_size=12)
+_ADDRESS_KEYS = ("house_number", "road", "city", "town", "village", "hamlet", "suburb", "municipality", "county")
+
+
+@given(
+    address=st.dictionaries(st.sampled_from(_ADDRESS_KEYS), st.one_of(_WORDS, st.none(), st.integers()), max_size=9),
+    name=st.one_of(st.just(""), st.none(), _WORDS),
+    display=st.one_of(st.just(""), st.none(), st.lists(_WORDS, max_size=4).map(", ".join)),
+)
+@settings(max_examples=150, deadline=None)
+def test_a_place_is_never_named_by_a_bare_number_or_nothing_whatever_the_address_lacks(
+    address: dict[str, object], name: object, display: object
+) -> None:
+    row = {"lat": "1", "lon": "2", "name": name, "display_name": display, "address": address}
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, json=[row]))
+        hits = adapter().search("anything")
+
+    for hit in hits:
+        assert hit.name.strip() != ""
+        assert not hit.name.strip().isdigit()
 
 
 @given(words=st.text(min_size=2, max_size=40).filter(lambda text: text.strip() != ""))
@@ -228,7 +262,7 @@ def test_rows_without_a_point_or_a_name_are_left_out_and_a_missing_address_gives
         respx.get(URL).mock(return_value=httpx.Response(200, text=json.dumps(rows)))
         hits = adapter().search("Lagos")
 
-    assert hits == (PlaceHit("Lagos", "", "", 3.0, 4.0),)
+    assert hits == (PlaceHit("Lagos, Faro", "", "", 3.0, 4.0),)
 
 
 @pytest.mark.parametrize(

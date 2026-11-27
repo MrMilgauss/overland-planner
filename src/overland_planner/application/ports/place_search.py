@@ -26,6 +26,7 @@ class PlaceHit:
     country: str
     lat: float
     lon: float
+    area: str = ""  # the county or the like, empty when the service names none
 
 
 class PlaceSearch(Probeable, Protocol):

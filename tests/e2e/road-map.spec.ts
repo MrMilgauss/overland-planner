@@ -809,7 +809,7 @@ async function searchFor(form: Locator, words: string): Promise<void> {
 }
 
 const FINE_PRINT =
-  "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors.";
+  "What you type is sent to OpenStreetMap's public place search (Nominatim) from your home connection. Your trip and files stay at home. Search © OpenStreetMap contributors.";
 
 // @US-29 @ui
 test("A place is found by name and joins the trip", async ({
@@ -825,8 +825,9 @@ test("A place is found by name and joins the trip", async ({
   // When he types "Gorges du Verdon" and presses "Search"
   await searchFor(form, "Gorges du Verdon");
   // Then he sees results with their region names
+  await expect(form).toContainText("1 place found");
   const result = form.getByRole("listitem").filter({
-    hasText: "Gorges du Verdon, Provence-Alpes-Côte d'Azur, France",
+    hasText: "Gorges du Verdon Provence-Alpes-Côte d'Azur, France",
   });
   await expect(result).toHaveCount(1);
   // And after he picks it, it is in the list as a place, with no warning (the map covers it); the form stays open

@@ -724,7 +724,7 @@ describe('Workspace page: search for a place (US-29)', () => {
       target: { value: 'Gorges du Verdon' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    const row = await screen.findByText('Gorges du Verdon, PACA, France');
+    const row = await screen.findByText('PACA, France');
 
     await fireEvent.click(within(row.closest('li')!).getByRole('button', { name: 'Add' }));
 

@@ -108,6 +108,7 @@ class PlaceBody(BaseModel):
     country: str
     lat: float
     lon: float
+    area: str = ""
 
     @classmethod
     def of(cls, hit: PlaceHit) -> PlaceBody:

@@ -52,7 +52,7 @@ describe('Place search form', () => {
 
     expect(urls).toEqual([]);
     expect(screen.getByRole('form', { name: 'Search for a place' })).toHaveTextContent(
-      "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors.",
+      "What you type is sent to OpenStreetMap's public place search (Nominatim) from your home connection. Your trip and files stay at home. Search © OpenStreetMap contributors.",
     );
   });
 
@@ -63,14 +63,34 @@ describe('Place search form', () => {
 
     await fireEvent.click(searchButton());
 
-    expect(
-      await screen.findByText("Gorges du Verdon, Provence-Alpes-Côte d'Azur, France"),
-    ).toBeVisible();
+    expect(await screen.findByText('Gorges du Verdon')).toBeVisible();
+    expect(screen.getByText("Provence-Alpes-Côte d'Azur, France")).toBeVisible();
+    expect(screen.getByText('1 place found')).toBeVisible();
     expect(urls).toEqual(['/api/places/search?q=Gorges%20du%20Verdon']);
 
     await type('Lagos');
     await fireEvent.submit(screen.getByRole('form', { name: 'Search for a place' }));
     await waitFor(() => expect(urls).toHaveLength(2));
+  });
+
+  it('counts the places found and shows the county, region and country under the name, skipping repeats', async () => {
+    const street = {
+      name: 'Via Esempio 12, Paese Esempio',
+      region: 'Lombardia',
+      country: 'Italia',
+      area: 'Milano',
+      lat: 45.464,
+      lon: 9.19,
+    };
+    stubSearch({ status: 200, body: [street, { ...VERDON, area: "Provence-Alpes-Côte d'Azur" }] });
+    open();
+    await type('Via Esempio 12');
+
+    await fireEvent.click(searchButton());
+
+    expect(await screen.findByText('2 places found')).toBeVisible();
+    expect(screen.getByText('Milano, Lombardia, Italia')).toBeVisible();
+    expect(screen.getByText("Provence-Alpes-Côte d'Azur, France")).toBeVisible();
   });
 
   it('sends one search when Search is pressed twice quickly', async () => {

@@ -413,7 +413,7 @@ Feature: The planner knows its map
     Given the search form of "Add" is open
     When Marco types "Gorges du Verdon" without pressing Search
     Then no search is made
-    And the form says "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors."
+    And the form says "What you type is sent to OpenStreetMap's public place search (Nominatim) from your home connection. Your trip and files stay at home. Search © OpenStreetMap contributors."
 
   @US-29 @ui @error
   Scenario: No result gives a clear message

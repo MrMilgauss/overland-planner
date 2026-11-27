@@ -282,6 +282,8 @@ export function addPlace(projectId: string, place: NewPlace): Promise<Item> {
 export interface PlaceHit extends NewPlace {
   region: string;
   country: string;
+  /** The county or the like; empty or missing when the service names none. */
+  area?: string;
 }
 
 const SEARCH_UNAVAILABLE =
