@@ -255,11 +255,13 @@ volume_present_sums() {
     sh -c 'cd "/vol/$1" && shift && for f in "$@"; do if [ -f "$f" ]; then sha256sum "$f"; fi; done' "$1" "$2" "${TILES_FILES[@]}"
 }
 
-# volume_stored_sums SUBDIR: the SHA256SUMS file written at seed time.
+# volume_stored_sums SUBDIR: the lines of the five tileset files in the SHA256SUMS written at seed time (a refresh adds
+# the record and the borders: the list may be longer, only the five names are compared).
 volume_stored_sums() {
   # shellcheck disable=SC2016 # $1 is expanded by the container's sh
   docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-    sh -c 'cat "/vol/$1/SHA256SUMS"' stored-sums "$1"
+    sh -c 'cd "/vol/$1" && shift && sums=$(cat SHA256SUMS) && for f in "$@"; do printf "%s\n" "$sums" | awk -v n="$f" "\$2 == n"; done' \
+    stored-sums "$1" "${TILES_FILES[@]}"
 }
 
 # sums_diff A B: the file names whose "<sha256>  <name>" line is not the same in both listings.

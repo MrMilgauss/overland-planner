@@ -39,6 +39,7 @@ EXTRACTS=(europe/italy-latest europe/spain-latest europe/switzerland-latest euro
   europe/france/provence-alpes-cote-d-azur-latest europe/france/languedoc-roussillon-latest europe/france/midi-pyrenees-latest)
 MIN_FREE_KB=$((25 * 1024 * 1024))
 REGIONS=()    # key, pbf address, poly address per region (REGIONS_FILE only)
+REGION_FIELDS=()    # name, parent name, bytes per region, in the same order (the record's)
 DOWNLOAD_BYTES=0
 NEED_GB=25
 MERGE_MIN_KB=$((7 * 1024 * 1024))
@@ -121,7 +122,7 @@ usable_address() {
 
 # read_regions: REGIONS_FILE line by line (never sourced or evaluated) into REGIONS and DOWNLOAD_BYTES.
 read_regions() {
-  local line key pbf poly bytes
+  local line key pbf poly bytes name parent
   [ -f "$REGIONS_FILE" ] || refuse "REGIONS_FILE $REGIONS_FILE is not a file"
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -129,14 +130,34 @@ read_regions() {
     pbf=$(printf '%s' "$line" | cut -f4)
     poly=$(printf '%s' "$line" | cut -f5)
     bytes=$(printf '%s' "$line" | cut -f6)
+    name=$(printf '%s' "$line" | cut -f2)
+    parent=$(printf '%s' "$line" | cut -f3)
     case $key in '' | *[!a-z0-9/-]* | /* | */ | *..*) refuse "the regions file names a region key '$key' that is not a key" ;; esac
     usable_address "$pbf" || refuse "region $key: the .osm.pbf address is not usable"
     usable_address "$poly" || refuse "region $key: the .poly address is not usable"
     case $bytes in '' | *[!0-9]*) refuse "region $key: the download size is not a number of bytes" ;; esac
     REGIONS+=("$key" "$pbf" "$poly")
+    REGION_FIELDS+=("$name" "$parent" "$bytes")
     DOWNLOAD_BYTES=$((DOWNLOAD_BYTES + bytes))
   done <"$REGIONS_FILE"
   [ "${#REGIONS[@]}" -gt 0 ] || refuse "the regions file lists no region"
+}
+
+# region_record: the record of the map's regions (schema 1, what the planner reads), one region per REGIONS_FILE line.
+region_record() {
+  local i key parent sep=
+  printf '{"schema":1,"regions":['
+  for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do
+    key=${REGIONS[i]}
+    # per region REGION_FIELDS holds the name, the parent name (empty: none) and the bytes
+    parent=null
+    [ -z "${REGION_FIELDS[i + 1]}" ] || parent="\"$(json_text "${REGION_FIELDS[i + 1]}")\""
+    printf '%s{"key":"%s","name":"%s","parent_name":%s,"pbf_url":"%s","outline":"%s.poly","bytes":%s}' "$sep" \
+      "$(json_text "$key")" "$(json_text "${REGION_FIELDS[i]}")" "$parent" "$(json_text "${REGIONS[i + 1]}")" \
+      "$(json_text "${key//\//-}")" "${REGION_FIELDS[i + 2]}"
+    sep=,
+  done
+  printf ']}'
 }
 
 # 1. Preflight.
@@ -192,8 +213,8 @@ OLD_MODIFIED=$VALHALLA_MODIFIED
 # 2. Download and merge while valhalla serves.
 GUARD=on
 say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset serves"
-PREPARE_SH='rm -rf /vol/build && mkdir -p /vol/build/src'
-[ -z "${REGIONS_FILE:-}" ] || PREPARE_SH='rm -rf /vol/build /vol/road-map-meta && mkdir -p /vol/build/src /vol/road-map-meta/outlines'
+# road-map-meta/ is emptied on every run: a leftover of a failed run never reaches the record
+PREPARE_SH='rm -rf /vol/build /vol/road-map-meta && mkdir -p /vol/build/src /vol/road-map-meta/outlines'
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c "$PREPARE_SH" prepare-build >&2 ||
@@ -240,6 +261,18 @@ if [ "$fetch_status" -ne 0 ]; then
   fail_stage download "the download failed"
 fi
 rm -f "$fetch_err"
+if [ -n "${REGIONS_FILE:-}" ]; then
+  # the record of the regions: written by this refresh only, from the list, once the borders it names are there
+  outlines=()
+  for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do outlines+=("${REGIONS[i]//\//-}.poly"); done
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c 'set -e; record=$1; shift
+      for f in "$@"; do [ -s "/vol/road-map-meta/outlines/$f" ] || { echo "tiles-refresh: border not saved: $f" >&2; exit 1; }; done
+      printf "%s\n" "$record" >/vol/road-map-meta/road-map.json.partial
+      mv /vol/road-map-meta/road-map.json.partial /vol/road-map-meta/road-map.json' write-record "$(region_record)" "${outlines[@]}" >&2 ||
+    fail_stage download "the record of the regions could not be written (a border file is missing)"
+fi
 available_kb=$(mem_available_kb)
 if [ "${available_kb:-0}" -lt "$MERGE_MIN_KB" ]; then
   fail_stage merge "MemAvailable $((${available_kb:-0} / 1024 / 1024)) GB, need 7 GB before the merge"
@@ -271,6 +304,11 @@ docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
     [ ! -e "/vol/tilesets/$name" ] || exit 1
     rm -rf "$part"; mkdir -p "$part"
     for f in "$@"; do mv "/vol/build/$f" "$part/$f"; done
+    if [ -f /vol/road-map-meta/road-map.json ]; then
+      mv /vol/road-map-meta/road-map.json "$part/road-map.json"; mv /vol/road-map-meta/outlines "$part/outlines"
+      set -- "$@" road-map.json
+      for o in "$part"/outlines/*.poly; do set -- "$@" "outlines/${o##*/}"; done
+    fi
     (cd "$part" && sha256sum "$@" >SHA256SUMS)
     mv "$part" "/vol/tilesets/$name"; rm -rf /vol/build' promote "$NEW" "${TILES_FILES[@]}" >&2 ||
   fail_stage promote "could not move the built files to tilesets/$NEW"

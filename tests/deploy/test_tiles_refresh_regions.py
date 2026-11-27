@@ -6,21 +6,34 @@ Same offline setup as test_tiles_refresh_script.py: the real script, the docker/
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
-from tests.deploy.conftest import FakePi
+from tests.deploy.conftest import REFRESH_DATE, TILES_FILES, FakePi
 from tests.deploy.test_tiles_refresh_script import serving  # noqa: F401 - the fixture
 
 GB = 1_000_000_000
 HOST = "https://download.example.invalid"
 
 
+def outline_name(key: str) -> str:
+    return key.replace("/", "-") + ".poly"
+
+
 def regions_file(pi: FakePi, rows: list[tuple[str, int]]) -> dict[str, str]:
     lines = [f"{key}\t{key.title()}\t\t{HOST}/{key}-latest.osm.pbf\t{HOST}/{key}.poly\t{size}" for key, size in rows]
+    return regions_lines(pi, lines, [key for key, _ in rows])
+
+
+def regions_lines(pi: FakePi, lines: list[str], keys: list[str]) -> dict[str, str]:
     path = pi.root / "regions.tsv"
     path.write_text("\n".join(lines) + "\n")
+    # valhalla-fetch leaves the borders it downloaded in the meta folder of the volume; the shim stands for it
+    borders = {f"road-map-meta/outlines/{outline_name(key)}": f"border of {key}\n" for key in keys}
+    pi.rule("docker", "valhalla-fetch", write=borders, passthrough=True, times=1)
     return {"REGIONS_FILE": str(path)}
 
 
@@ -63,10 +76,10 @@ def test_each_region_is_downloaded_on_its_own_with_its_border_fetched_first(serv
 def test_a_missing_border_stops_the_refresh_before_anything_is_stopped_and_names_the_region(
     serving: FakePi,  # noqa: F811
 ) -> None:
-    env = regions_file(serving, [("italy", GB), ("portugal", GB)])
     serving.rule(
         "docker", "valhalla-fetch", exit=22, stderr="tiles-refresh: not fetched: /meta/outlines/portugal.poly\n"
     )
+    env = regions_file(serving, [("italy", GB), ("portugal", GB)])
     tilesets = sorted(p.name for p in (serving.volume / "tilesets").iterdir())
 
     result = serving.tiles_refresh(env=env)
@@ -120,3 +133,106 @@ def test_a_list_that_cannot_be_read_is_refused_before_anything_runs(serving: Fak
     result = serving.tiles_refresh(env={"REGIONS_FILE": str(path)})
 
     assert result.returncode == 1 and not [c for c in serving.calls("docker") if c["argv"][:1] == ["compose"]]
+
+
+def new_map(pi: FakePi) -> Path:
+    return pi.volume / "tilesets" / REFRESH_DATE
+
+
+def sum_lines(folder: Path) -> dict[str, str]:
+    return {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in (folder / "SHA256SUMS").read_text().splitlines()}
+
+
+def test_the_record_matches_the_list_line_for_line_and_travels_with_its_borders_under_the_integrity_check(
+    serving: FakePi,  # noqa: F811
+) -> None:
+    rows = [
+        "italy\tItaly\t\thttps://h.invalid/italy.osm.pbf\thttps://h.invalid/italy.poly\t1500",
+        'us/utah\tUtah "Beehive" \\ Zürich\tUnited States\thttps://h.invalid/utah.osm.pbf\thttps://h.invalid/utah.poly\t7',
+    ]
+    env = regions_lines(serving, rows, ["italy", "us/utah"])
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 0, result.stderr[-400:]
+    folder = new_map(serving)
+    assert json.loads((folder / "road-map.json").read_text(encoding="utf-8")) == {
+        "schema": 1,
+        "regions": [
+            {
+                "key": "italy",
+                "name": "Italy",
+                "parent_name": None,
+                "pbf_url": "https://h.invalid/italy.osm.pbf",
+                "outline": "italy.poly",
+                "bytes": 1500,
+            },
+            {
+                "key": "us/utah",
+                "name": 'Utah "Beehive" \\ Zürich',
+                "parent_name": "United States",
+                "pbf_url": "https://h.invalid/utah.osm.pbf",
+                "outline": "us-utah.poly",
+                "bytes": 7,
+            },
+        ],
+    }
+    assert sorted(p.name for p in (folder / "outlines").iterdir()) == ["italy.poly", "us-utah.poly"]
+    sums = sum_lines(folder)
+    assert sorted(sums) == sorted([*TILES_FILES, "road-map.json", "outlines/italy.poly", "outlines/us-utah.poly"])
+    assert all(hashlib.sha256((folder / name).read_bytes()).hexdigest() == digest for name, digest in sums.items())
+    assert not (serving.volume / "road-map-meta" / "road-map.json").exists()  # it moved, it was not copied
+
+
+def test_a_run_without_a_list_writes_no_record_and_a_leftover_of_an_earlier_run_never_reaches_one(
+    serving: FakePi,  # noqa: F811
+) -> None:
+    leftover = serving.volume / "road-map-meta"
+    (leftover / "outlines").mkdir(parents=True)
+    (leftover / "road-map.json").write_text("{}")
+    (leftover / "outlines" / "old.poly").write_text("old\n")
+
+    result = serving.tiles_refresh()
+
+    assert result.returncode == 0, result.stderr[-400:]
+    assert sorted(p.name for p in new_map(serving).iterdir()) == sorted([*TILES_FILES, "SHA256SUMS"])
+    assert sorted(sum_lines(new_map(serving))) == sorted(TILES_FILES)
+
+
+def test_prepare_build_empties_the_meta_folder_so_a_leftover_never_reaches_the_record(
+    serving: FakePi,  # noqa: F811
+) -> None:
+    leftover = serving.volume / "road-map-meta"
+    (leftover / "outlines").mkdir(parents=True)
+    (leftover / "outlines" / "old.poly").write_text("old\n")
+    (leftover / "road-map.json").write_text("{}")
+
+    result = serving.tiles_refresh(env=regions_file(serving, [("portugal", GB)]))
+
+    assert result.returncode == 0, result.stderr[-400:]
+    assert sorted(p.name for p in (new_map(serving) / "outlines").iterdir()) == ["portugal.poly"]
+    assert json.loads((new_map(serving) / "road-map.json").read_text())["regions"][0]["key"] == "portugal"
+
+
+def test_a_failed_run_leaves_no_meta_in_the_new_tileset(serving: FakePi) -> None:  # noqa: F811
+    env = regions_file(serving, [("portugal", GB)])
+    serving.rule("docker", "valhalla-build", exit=1)
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 1
+    assert REFRESH_DATE not in sorted(p.name for p in (serving.volume / "tilesets").iterdir())
+    assert not list((serving.volume / "tilesets").glob("*/road-map.json"))
+
+
+def test_a_border_the_record_names_but_the_download_did_not_leave_fails_before_anything_is_stopped(
+    serving: FakePi,  # noqa: F811
+) -> None:
+    env = regions_file(serving, [("portugal", GB)])
+    (serving.shim_home / "rules.json").write_text("[]")  # the shim leaves no border behind
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 1 and "portugal" in result.stderr
+    assert not any("stop" in c["argv"] for c in serving.calls("docker") if c["argv"][:1] == ["compose"])
+    assert serving.tiles_log()[-1]["result"] == "failed"

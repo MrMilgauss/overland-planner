@@ -48,6 +48,25 @@ def test_rollback_swaps_the_pointers_starts_valhalla_checks_status_and_logs_one_
     assert (line["action"], line["tileset"], line["result"]) == ("rollback", PREVIOUS_SET, "ok")
 
 
+@pytest.mark.parametrize("with_record", [False, True])
+def test_rollback_works_on_a_directory_with_and_without_a_record_and_changes_no_file(
+    pi: FakePi, with_record: bool
+) -> None:
+    two_tilesets(pi)
+    previous = pi.volume / "tilesets" / PREVIOUS_SET
+    if with_record:
+        (previous / "outlines").mkdir()
+        (previous / "road-map.json").write_text('{"schema":1,"regions":[]}')
+        (previous / "outlines" / "portugal.poly").write_text("portugal\n")
+    before = sorted(str(p.relative_to(pi.volume)) for p in pi.volume.rglob("*"))
+
+    result = pi.tiles_rollback()
+
+    assert result.returncode == 0, result.stderr
+    assert (pi.dir / "routing.env").read_text() == PREVIOUS_ROUTING
+    assert sorted(str(p.relative_to(pi.volume)) for p in pi.volume.rglob("*")) == before
+
+
 def test_the_modified_value_of_the_served_tileset_is_read_back_from_the_last_ok_line(pi: FakePi) -> None:
     two_tilesets(pi)
     assert pi.tiles_rollback().returncode == 0

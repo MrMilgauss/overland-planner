@@ -125,6 +125,27 @@ def test_a_second_run_with_the_same_tileset_copies_nothing_and_says_unchanged(
     assert "unchanged" in result.stderr
 
 
+def test_a_tileset_whose_integrity_check_also_covers_a_record_and_borders_is_still_unchanged(
+    pi: FakePi, source: dict[str, bytes]
+) -> None:
+    assert pi.tiles_seed().returncode == 0
+    folder = tileset_dir(pi)
+    (folder / "outlines").mkdir()
+    (folder / "road-map.json").write_text('{"schema":1,"regions":[]}')
+    (folder / "outlines" / "portugal.poly").write_text("portugal\n")
+    extra = [
+        f"{hashlib.sha256((folder / name).read_bytes()).hexdigest()}  {name}"
+        for name in ("road-map.json", "outlines/portugal.poly")
+    ]
+    (folder / "SHA256SUMS").write_text(checksums(source) + "\n" + "\n".join(extra) + "\n")
+
+    result = pi.tiles_seed()
+
+    assert result.returncode == 0, result.stderr
+    assert "unchanged" in result.stderr and [line["result"] for line in pi.tiles_log()] == ["ok", "unchanged"]
+    assert (folder / "road-map.json").is_file()  # nothing was rewritten
+
+
 def test_an_existing_tileset_with_other_content_is_refused_not_overwritten(
     pi: FakePi, source: dict[str, bytes]
 ) -> None:
