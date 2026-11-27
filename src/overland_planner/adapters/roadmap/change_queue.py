@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import secrets
 import stat
 import tempfile
@@ -23,6 +24,7 @@ from overland_planner.application.ports.road_map_changes import (
     ChangeRequest,
     ChangesUnavailableError,
     RebuildProgress,
+    RebuildResult,
     RequestedRegion,
 )
 
@@ -37,6 +39,12 @@ UNAVAILABLE = ProbeResult(outcome="degraded-healthy", reason="road_map_changes_u
 _MAX_BYTES = 1_000_000
 _MAX_NOTE_BYTES = 4096  # the helper's notes are a few short lines
 _PROGRESS_KEYS = frozenset({"step", "step_at", "serving", "new"})
+_REQUEST_KEYS = frozenset({"schema", "requested_at", "start_at", "added", "removed"})  # and `region`, which repeats
+_RESULT_KEYS = frozenset({"finished_at", "state", "code", "free_gb", "need_gb", "have_gb", "tileset"})
+_CODE = re.compile(r"[a-z_]{1,32}")
+_TILESET = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+_NUMBER = re.compile(r"\d{1,6}")
+_EPOCH = re.compile(r"\d{1,12}")
 _FIELDS = 6  # key, name, parent name, pbf address, poly address, bytes
 
 
@@ -103,6 +111,15 @@ class ChangeQueueDir:
         except (KeyError, ValueError, OverflowError, OSError):
             return None
 
+    def result(self) -> RebuildResult | None:
+        raw = _read_note(self._directory / RESULT)
+        if raw is None:
+            return None
+        try:
+            return _result_of(raw)
+        except (ValueError, OverflowError, OSError):
+            return None
+
     def helper_seen_at(self) -> datetime | None:
         try:
             found = (self._directory / HELPER_SEEN).lstat()
@@ -145,19 +162,69 @@ class ChangeQueueDir:
                     os.unlink(leftover)
 
 
+def _read_note(path: Path) -> str | None:
+    """The text of a helper's note: a plain file of at most 4 KB, else None."""
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return None
+        with path.open("rb") as note:
+            raw = note.read(_MAX_NOTE_BYTES + 1)
+        return None if len(raw) > _MAX_NOTE_BYTES else raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _result_of(text: str) -> RebuildResult | None:
+    """The result as the request lines the helper copied plus its own known keys, each once; anything else: None."""
+    lines = [line for line in text.splitlines() if line]
+    if not all("=" in line for line in lines):
+        return None
+    keys = [line.split("=", 1)[0] for line in lines]
+    singles = [key for key in keys if key != "region"]
+    known = _REQUEST_KEYS | _RESULT_KEYS
+    if len(set(singles)) != len(singles) or not set(singles) <= known:
+        return None
+    values = {key: value for key, value in (line.split("=", 1) for line in lines) if key != "region"}
+    state, code, tileset = values.get("state"), values.get("code"), values.get("tileset")
+    numbers = {key: values.get(key) for key in ("free_gb", "need_gb", "have_gb")}
+    if (
+        state not in ("done", "failed")
+        or not _EPOCH.fullmatch(values.get("finished_at", ""))
+        or (code is not None and not _CODE.fullmatch(code))
+        or (tileset is not None and not _TILESET.fullmatch(tileset))
+        or any(number is not None and not _NUMBER.fullmatch(number) for number in numbers.values())
+    ):
+        return None
+    request_text = "\n".join(line for line in lines if line.split("=", 1)[0] in {*_REQUEST_KEYS, "region"})
+    try:
+        request: ChangeRequest | None = _request_of(request_text + "\n")
+    except (ValueError, KeyError):
+        request = None
+    return RebuildResult(
+        state=state,
+        finished_at=datetime.fromtimestamp(int(values["finished_at"]), UTC),
+        code=code,
+        free_gb=None if numbers["free_gb"] is None else int(numbers["free_gb"]),
+        need_gb=None if numbers["need_gb"] is None else int(numbers["need_gb"]),
+        have_gb=None if numbers["have_gb"] is None else int(numbers["have_gb"]),
+        tileset=tileset,
+        request=request,
+        added=_names_of(values.get("added")),
+        removed=_names_of(values.get("removed")),
+    )
+
+
+def _names_of(line: str | None) -> tuple[str, ...]:
+    return tuple(name for name in (line or "").split(", ") if name)
+
+
 def _note_of(path: Path, keys: frozenset[str]) -> dict[str, str]:
     """The helper's note as `key=value` lines. A file that is not a plain file, is over 4 KB, repeats a key or holds a
     key not in `keys` says nothing at all ({}): the planner never trusts half of it."""
-    try:
-        if not stat.S_ISREG(path.lstat().st_mode):
-            return {}
-        with path.open("rb") as note:
-            raw = note.read(_MAX_NOTE_BYTES + 1)
-        if len(raw) > _MAX_NOTE_BYTES:
-            return {}
-        pairs = [line.split("=", 1) for line in raw.decode("utf-8").splitlines() if line]
-    except (OSError, UnicodeDecodeError):
+    text = _read_note(path)
+    if text is None:
         return {}
+    pairs = [line.split("=", 1) for line in text.splitlines() if line]
     values = dict(pairs) if all(len(pair) == 2 for pair in pairs) else {}
     return values if len(values) == len(pairs) and values.keys() <= keys else {}
 

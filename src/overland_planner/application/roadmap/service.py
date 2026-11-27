@@ -23,11 +23,13 @@ from overland_planner.application.ports.road_map_changes import (
     STEPS,
     ChangeRequest,
     ChangesUnavailableError,
+    RebuildResult,
     RequestedRegion,
     RoadMapChanges,
 )
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tileset_store import TilesetListing, TilesetStore
+from overland_planner.application.roadmap.messages import FAILURE_CODES, failure_message, success_message
 from overland_planner.domain.roadmap.coverage import RoadMapCoverage
 from overland_planner.domain.roadmap.estimate import estimate
 from overland_planner.domain.roadmap.outline import Outline
@@ -55,6 +57,7 @@ class ServedMapView:
     map_date: datetime | None
     regions: tuple[ServedRegionView, ...]
     total_bytes: int
+    name: str | None = field(default=None, compare=False)  # the tileset directory the engine serves, when matched
     # The real outlines, for judging a trip; not part of what the served map says about itself.
     coverage: RoadMapCoverage = field(default=RoadMapCoverage(()), compare=False)
     outlines: Mapping[str, Outline] = field(default_factory=dict, compare=False)
@@ -114,6 +117,15 @@ class ChangeSummary:
 
 
 @dataclass(frozen=True)
+class ChangeResult:
+    """How a rebuild ended, in the planner's words; `code` is a known failure code, None for success or a stranger."""
+
+    code: str | None
+    message: str
+    finished_at: datetime
+
+
+@dataclass(frozen=True)
 class PlannedChange:
     """The change waiting for the helper, against the map served now."""
 
@@ -126,6 +138,7 @@ class PlannedChange:
     steps_done: int = 0
     planning_paused: bool = False
     planning_back_at: datetime | None = None
+    result: ChangeResult | None = None
 
 
 def _date(epoch: int | None) -> datetime | None:
@@ -312,15 +325,8 @@ class RoadMapService:
         if request is None and self._changes.running():
             request, progress = self._changes.running_request(), self._changes.progress()
         if request is None:
-            return None
-        served = {region.key: region.name for region in self.served().regions}
-        kept = {region.key for region in request.regions}
-        planned = PlannedChange(
-            requested_at=request.requested_at,
-            start_at=request.start_at,
-            added=tuple(RegionRef(region.key, region.name) for region in request.regions if region.key not in served),
-            removed=tuple(RegionRef(key, name) for key, name in sorted(served.items()) if key not in kept),
-        )
+            return self._ended_change()
+        planned = self._told_against_served(request)
         if not self._changes.running():
             return planned
         paused = progress is not None and progress.step in PAUSED_STEPS
@@ -336,6 +342,63 @@ class RoadMapService:
             planning_paused=paused,
             planning_back_at=back,
         )
+
+    def _told_against_served(self, request: ChangeRequest) -> PlannedChange:
+        served = {region.key: region.name for region in self.served().regions}
+        kept = {region.key for region in request.regions}
+        return PlannedChange(
+            requested_at=request.requested_at,
+            start_at=request.start_at,
+            added=tuple(RegionRef(region.key, region.name) for region in request.regions if region.key not in served),
+            removed=tuple(RegionRef(key, name) for key, name in sorted(served.items()) if key not in kept),
+        )
+
+    def _ended_change(self) -> PlannedChange | None:
+        """The last rebuild's end: a failure always; a success only once the engine serves the map it made."""
+        ended = None if self._changes is None else self._changes.result()
+        if ended is None:
+            return None
+        served = self.served()
+        if ended.state == "done":
+            if served.name is None or served.name != ended.tileset:
+                return None
+            return self._success_of(ended, served)
+        planned = (
+            self._told_against_served(ended.request)
+            if ended.request is not None
+            else PlannedChange(self._now(), None, (), ())
+        )
+        code = ended.code if ended.code in FAILURE_CODES else None
+        message = failure_message(
+            code,
+            map_date=served.map_date,
+            kept=ended.request is not None,
+            free_gb=ended.free_gb,
+            need_gb=ended.need_gb,
+            have_gb=ended.have_gb,
+        )
+        return replace(planned, state="failed", result=ChangeResult(code, message, ended.finished_at))
+
+    def _success_of(self, ended: RebuildResult, served: ServedMapView) -> PlannedChange:
+        message = success_message(
+            finished_at=ended.finished_at.astimezone(),
+            added=ended.added,
+            removed=ended.removed,
+            region_count=len(served.regions),
+            map_date=served.map_date,
+        )
+        requested = ended.request.requested_at if ended.request is not None else ended.finished_at
+        return PlannedChange(
+            requested_at=requested,
+            start_at=None,
+            added=(),
+            removed=(),
+            state="done",
+            result=ChangeResult(None, message, ended.finished_at),
+        )
+
+    def _now(self) -> datetime:
+        return datetime.now(UTC) if self._clock is None else self._clock.now()
 
     def helper_seen_at(self) -> datetime | None:
         """When the helper last looked, None when it never did."""
@@ -448,6 +511,7 @@ class RoadMapService:
             map_date=_date(listing.built_at[entry.name]),
             regions=regions,
             total_bytes=sum(region.bytes for region in regions),
+            name=entry.name,
             coverage=RoadMapCoverage(tuple((region.name, region.outline) for region in listing.regions[entry.name])),
             outlines={region.key: region.outline for region in listing.regions[entry.name]},
         )

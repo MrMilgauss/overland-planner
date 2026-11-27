@@ -79,7 +79,7 @@ FAILURES = {  # what the owner is told a rebuild stopped for -> the failure code
     "a map was already built that day": "date",
     "the disk was too small": "disk",
     "the memory was too small": "memory",
-    "the routing engine did not answer": "routing_status",
+    "the road service of the Pi did not answer": "routing_status",
     "a download failed": "download",
     "a region's border file was not found": "region_missing",
     "the regions could not be merged": "merge",
@@ -791,6 +791,12 @@ def then_the_regions_are_still_the_eight(world: PlannerWorld) -> None:
     assert names_of(served_of(world)["regions"]) == EIGHT_NAMES
 
 
+@then(parsers.re(r"the regions served are still the eight and the map data is still dated (?P<date>\d+ \w+ \d{4})"))
+def then_the_eight_and_the_date_stay(world: PlannerWorld, date: str) -> None:
+    then_the_regions_are_still_the_eight(world)
+    then_the_map_is_still_dated(world, date)
+
+
 @then(
     parsers.re(
         r"the summary says (?P<gb>[\d.]+) GB to download, planning paused about (?P<pause>\d+) minutes and the rebuild about (?P<total>\d+) minutes"  # noqa: E501
@@ -1084,7 +1090,9 @@ def then_the_change_failed_in_plain_words(world: PlannerWorld) -> None:
     message = str(change["result"]["message"])
     code = str(change["result"]["code"])
     assert change["state"] == "failed" and message.strip(), change
-    assert code not in message and "_" not in message, f"the words show a code: {message!r}"
+    # a plain-word code ("disk", "build") is a word of the sentence; a code name shows as `code=...`, quoted or with "_"
+    shown = ("_", f"code={code}", f"'{code}'", f'"{code}"')
+    assert not any(mark in message for mark in shown), f"the words show a code: {message!r}"
 
 
 @then("the change is done")

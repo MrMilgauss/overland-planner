@@ -171,6 +171,15 @@ class ChangeSummaryBody(BaseModel):
         )
 
 
+class ChangeResultBody(BaseModel):
+    """How a rebuild ended, in the planner's words: `code` names a known failure (None for success), `message` is
+    the sentence to show."""
+
+    code: str | None
+    message: str
+    finished_at: datetime
+
+
 class RoadMapChangeBody(BaseModel):
     """The change the helper waits for or works on; `start_at` and the regions are those of a planned change."""
 
@@ -180,6 +189,7 @@ class RoadMapChangeBody(BaseModel):
     start_at: datetime | None = None
     added: list[RegionRefBody] = []
     removed: list[RegionRefBody] = []
+    result: ChangeResultBody | None = None
 
     @classmethod
     def of(cls, planned: PlannedChange | None) -> RoadMapChangeBody:
@@ -192,6 +202,7 @@ class RoadMapChangeBody(BaseModel):
             start_at=planned.start_at,
             added=[RegionRefBody(**vars(r)) for r in planned.added],
             removed=[RegionRefBody(**vars(r)) for r in planned.removed],
+            result=None if planned.result is None else ChangeResultBody(**vars(planned.result)),
         )
 
 

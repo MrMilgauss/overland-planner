@@ -66,7 +66,15 @@ def test_the_served_map_is_named_with_its_regions_and_its_date(data_dir: Path, t
             "regions": [{"key": "italy", "name": "Italy", "parent_name": None, "bytes": 5}],
             "total_bytes": 5,
         },
-        "change": {"state": "none", "step": None, "steps_done": 0, "start_at": None, "added": [], "removed": []},
+        "change": {
+            "state": "none",
+            "step": None,
+            "steps_done": 0,
+            "start_at": None,
+            "added": [],
+            "removed": [],
+            "result": None,
+        },
         "limits": {
             "changes_available": False,
             "max_gb": 8.0,
@@ -278,3 +286,22 @@ def test_a_running_rebuild_shows_its_step_the_pause_and_when_planning_is_back(da
         None,
         False,
     )
+
+
+def test_a_rebuild_that_stopped_for_lack_of_space_answers_failed_with_the_numbers_and_the_map_stays(
+    data_dir: Path, tmp_path: Path
+) -> None:
+    server = region_service()
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+        changes = tmp_path / "changes"
+        ended = (changes / "request.txt").read_text() + "finished_at=1795950000\nstate=failed\ncode=disk\n"
+        (changes / "request.txt").unlink()
+        (changes / "result.txt").write_text(ended + "free_gb=18\nneed_gb=25\n")
+        body = client.get("/api/road-map").json()
+    server.stop()
+    change = body["change"]
+    assert change["state"] == "failed" and [r["name"] for r in change["added"]] == ["Portugal"]
+    assert change["result"]["code"] == "disk"
+    assert "the Pi has 18 GB of free disk and needs 25 GB" in change["result"]["message"]
+    assert [r["name"] for r in body["served"]["regions"]] == ["Italy"]

@@ -162,6 +162,38 @@
         "title": "ChangeRefusalEnvelope",
         "type": "object"
       },
+      "ChangeResultBody": {
+        "description": "How a rebuild ended, in the planner's words: `code` names a known failure (None for success), `message` is\nthe sentence to show.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "finished_at"
+        ],
+        "title": "ChangeResultBody",
+        "type": "object"
+      },
       "ChangeSummaryBody": {
         "description": "What a change would cost and alter, before it is written (D305, D308); a region far from the others is a\n`not_linked_note`, never a refusal.",
         "properties": {
@@ -1731,6 +1763,16 @@
             },
             "title": "Removed",
             "type": "array"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeResultBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "start_at": {
             "anyOf": [

@@ -249,3 +249,75 @@ def test_a_note_that_is_not_plain_and_strict_says_nothing_and_never_fails(tmp_pa
 def test_a_mark_that_is_not_a_plain_file_says_nothing(tmp_path: Path) -> None:
     (tmp_path / "helper-seen").mkdir()
     assert ChangeQueueDir(tmp_path).helper_seen_at() is None
+
+
+# ------------------------------------------------------------------------------ the helper's result (D303, D304)
+FINISHED = int(datetime(2026, 11, 29, 2, 56, tzinfo=UTC).timestamp())
+
+
+def write_result(folder: Path, *lines: str, with_request: bool = True) -> None:
+    queue = ChangeQueueDir(folder)
+    queue.queue(request(ITALY, UTAH), added=["Utah"], removed=["Spain"])
+    text = (folder / "request.txt").read_text() if with_request else ""
+    (folder / "request.txt").unlink()
+    (folder / "result.txt").write_text(text + "\n".join(lines) + "\n")
+
+
+def test_no_result_says_nothing(tmp_path: Path) -> None:
+    assert ChangeQueueDir(tmp_path).result() is None
+
+
+def test_a_failed_result_gives_its_code_numbers_and_the_request_it_kept(tmp_path: Path) -> None:
+    write_result(tmp_path, f"finished_at={FINISHED}", "state=failed", "code=disk", "free_gb=18", "need_gb=25")
+    found = ChangeQueueDir(tmp_path).result()
+    assert found is not None
+    assert (found.state, found.code, found.free_gb, found.need_gb, found.have_gb, found.tileset) == (
+        "failed",
+        "disk",
+        18,
+        25,
+        None,
+        None,
+    )
+    assert found.finished_at == datetime.fromtimestamp(FINISHED, UTC)
+    assert found.request == request(ITALY, UTAH)
+    assert (found.added, found.removed) == (("Utah",), ("Spain",))
+
+
+def test_a_done_result_gives_the_tileset(tmp_path: Path) -> None:
+    write_result(tmp_path, f"finished_at={FINISHED}", "state=done", "tileset=20261129")
+    found = ChangeQueueDir(tmp_path).result()
+    assert found is not None and (found.state, found.tileset, found.code) == ("done", "20261129", None)
+
+
+def test_a_result_without_the_request_lines_still_says_how_it_ended(tmp_path: Path) -> None:
+    write_result(tmp_path, f"finished_at={FINISHED}", "state=failed", "code=build", with_request=False)
+    found = ChangeQueueDir(tmp_path).result()
+    assert found is not None and (found.code, found.request, found.added) == ("build", None, ())
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["state=done", "tileset=20261129"],  # no finished_at
+        [f"finished_at={FINISHED}", "state=maybe"],
+        [f"finished_at={FINISHED}", "state=failed", "code=disk", "free_gb=lots"],
+        [f"finished_at={FINISHED}", "state=failed", "code=Disk Full!"],
+        [f"finished_at={FINISHED}", "state=failed", "message=free text from the helper"],
+        [f"finished_at={FINISHED}", "state=failed", "state=done"],
+        [f"finished_at={FINISHED}", "state=done", "tileset=../etc"],
+        [f"finished_at={FINISHED}", "state=failed", "free text without a key"],
+    ],
+)
+def test_a_result_that_is_not_strictly_the_known_keys_says_nothing(tmp_path: Path, lines: list[str]) -> None:
+    write_result(tmp_path, *lines)
+    assert ChangeQueueDir(tmp_path).result() is None
+
+
+def test_a_result_over_four_kilobytes_or_not_a_plain_file_says_nothing(tmp_path: Path) -> None:
+    (tmp_path / "result.txt").write_text(f"finished_at={FINISHED}\nstate=failed\ncode=disk\n" + "x" * 5000)
+    assert ChangeQueueDir(tmp_path).result() is None
+    (tmp_path / "result.txt").unlink()
+    (tmp_path / "elsewhere.txt").write_text(f"finished_at={FINISHED}\nstate=failed\ncode=disk\n")
+    (tmp_path / "result.txt").symlink_to(tmp_path / "elsewhere.txt")
+    assert ChangeQueueDir(tmp_path).result() is None

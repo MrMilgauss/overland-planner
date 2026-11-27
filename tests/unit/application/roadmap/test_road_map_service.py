@@ -19,6 +19,7 @@ from overland_planner.application.ports.road_map_changes import (
     STEPS,
     ChangeRequest,
     RebuildProgress,
+    RebuildResult,
     RequestedRegion,
 )
 from overland_planner.application.ports.tileset_store import ServedRegion, TilesetListing
@@ -287,6 +288,7 @@ class FakeChanges:
         self.request: ChangeRequest | None = None
         self.report: tuple[list[str], list[str]] | None = None
         self.taken = False
+        self.ended: RebuildResult | None = None
 
     def waiting(self) -> bool:
         return self.request is not None
@@ -305,6 +307,9 @@ class FakeChanges:
 
     def helper_seen_at(self) -> datetime | None:
         return self.seen
+
+    def result(self) -> RebuildResult | None:
+        return self.ended
 
     def queue(self, request: ChangeRequest, added: object, removed: object) -> None:
         assert self.open, "the folder cannot be written"
@@ -653,3 +658,80 @@ def test_a_rebuild_that_says_nothing_about_its_step_is_running_and_pauses_nothin
         False,
         None,
     )
+
+
+# ------------------------------------------------------------------------------ how a rebuild ended (D303, D304)
+ENDED = datetime(2026, 11, 29, 2, 56, tzinfo=UTC)
+ASKED = ChangeRequest(
+    requested_at=CLOCK.now(),
+    start_at=None,
+    regions=(
+        RequestedRegion("italy", "Italy", "Europe", "u", "p", 2 * GB),
+        RequestedRegion("spain", "Spain", "Europe", "u", "p", int(1.5 * GB)),
+        RequestedRegion("portugal", "Portugal", "Europe", "u", "p", 3 * GB),
+    ),
+)
+NOV_29 = NOV_27 + 2 * 86_400
+
+
+def ended_planner(result: RebuildResult | None, engine: ServedId = NOV_27) -> RoadMapService:
+    changes = FakeChanges()
+    changes.ended = result
+    portugal = ServedRegion("portugal", "Portugal", "Europe", 3 * GB, square(2, 0, 3, 1))
+    two = served_two_regions()
+    maps = listing(
+        ("20261127", NOV_27, list(two.regions["20261127"])),
+        ("20261129", NOV_29, [*two.regions["20261127"], portugal]),
+    )
+    return RoadMapService(FakeServedMap(engine), FakeStore(maps), FakeCatalogue(), changes, CLOCK)
+
+
+@given(free=st.integers(min_value=0, max_value=999), need=st.integers(min_value=0, max_value=999))
+def test_a_rebuild_that_stopped_for_lack_of_space_says_so_with_the_numbers_and_the_served_map_stays(
+    free: int, need: int
+) -> None:
+    failed = RebuildResult("failed", ENDED, code="disk", free_gb=free, need_gb=need, request=ASKED, added=("Portugal",))
+    service = ended_planner(failed)
+    change = service.planned_change()
+    assert change is not None and change.result is not None
+    assert (change.state, change.result.code, change.result.finished_at) == ("failed", "disk", ENDED)
+    assert f"the Pi has {free} GB of free disk and needs {need} GB" in change.result.message
+    assert "map data 28 November 2026" in change.result.message  # NOV_27 is noon of the 28th
+    assert "Your change is kept" in change.result.message
+    assert [r.name for r in change.added] == ["Portugal"] and change.removed == ()
+    assert [r.name for r in service.served().regions] == ["Italy", "Spain"]
+
+
+def test_a_failure_with_a_code_nobody_knows_is_a_generic_failure_with_no_code() -> None:
+    change = ended_planner(RebuildResult("failed", ENDED, code="mystery_box", request=ASKED)).planned_change()
+    assert change is not None and change.result is not None
+    assert change.result.code is None and "mystery_box" not in change.result.message
+
+
+def test_a_failure_whose_request_cannot_be_read_does_not_promise_the_change_is_kept() -> None:
+    change = ended_planner(RebuildResult("failed", ENDED, code="build")).planned_change()
+    assert change is not None and change.result is not None
+    assert "Your change is kept" not in change.result.message and change.added == ()
+
+
+def test_a_rebuild_that_ended_well_shows_once_the_engine_serves_the_new_map() -> None:
+    done = RebuildResult("done", ENDED, tileset="20261129", request=ASKED, added=("Portugal",))
+    service = ended_planner(done, engine=NOV_29)
+    change = service.planned_change()
+    assert change is not None and change.result is not None and change.state == "done"
+    assert change.result.code is None and change.result.finished_at == ENDED
+    assert change.result.message.endswith("Portugal added; 3 regions, map data 30 November 2026.")
+    assert [r.name for r in service.served().regions] == ["Italy", "Spain", "Portugal"]
+
+
+def test_a_rebuild_that_ended_well_says_nothing_while_the_old_map_is_still_served() -> None:
+    done = RebuildResult("done", ENDED, tileset="20261129", request=ASKED)
+    assert ended_planner(done, engine=NOV_27).planned_change() is None
+
+
+def test_a_change_waiting_or_running_hides_the_result_of_the_one_before() -> None:
+    service, changes, _ = queued_planner()
+    changes.ended = RebuildResult("failed", ENDED, code="disk", request=ASKED)
+    service.plan_change(["italy", "portugal"], START)
+    planned = service.planned_change()
+    assert planned is not None and (planned.state, planned.result) == ("planned", None)

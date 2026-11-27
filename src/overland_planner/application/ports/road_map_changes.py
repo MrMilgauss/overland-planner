@@ -49,6 +49,23 @@ class RebuildProgress:
     step_at: datetime
 
 
+@dataclass(frozen=True)
+class RebuildResult:
+    """How the helper says a rebuild ended: a code and numbers only, never its own words (D303). The request it kept
+    comes with it (None when its lines are unreadable), and the names the request said it adds and removes."""
+
+    state: str  # "done" or "failed"
+    finished_at: datetime
+    code: str | None = None
+    free_gb: int | None = None
+    need_gb: int | None = None
+    have_gb: int | None = None
+    tileset: str | None = None
+    request: ChangeRequest | None = None
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+
+
 class RoadMapChanges(Probeable, Protocol):
     def available(self) -> bool:
         """Whether a change can be kept right now (the place exists and may be written)."""
@@ -86,4 +103,9 @@ class RoadMapChanges(Probeable, Protocol):
 
     def helper_seen_at(self) -> datetime | None:
         """When the helper last looked at the folder; None when it never did (or the mark cannot be read)."""
+        ...
+
+    def result(self) -> RebuildResult | None:
+        """How the last rebuild ended; None when none did since the last request, or the note is not strictly the
+        known keys (a plain file of at most 4 KB, no key twice)."""
         ...
