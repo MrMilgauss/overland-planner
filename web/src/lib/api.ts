@@ -393,6 +393,15 @@ export interface ServedRoadMap {
     regions: ServedRegion[];
     total_bytes: number;
   };
+  limits: RoadMapLimits;
+  server_utc_offset_minutes: number;
+}
+
+/** What the planner allows: the download limit, and when the next rebuild may run when today's UTC day has a map. */
+export interface RoadMapLimits {
+  max_gb: number;
+  max_bytes: number;
+  next_rebuild_from: string | null;
 }
 
 export function readRoadMap(): Promise<ServedRoadMap> {
@@ -421,8 +430,12 @@ export async function searchRegions(words: string): Promise<CatalogueRegion[]> {
   return body.results as CatalogueRegion[];
 }
 
-/** What a change would say before it is applied: only the information line is used on the screen so far. */
+/** What a change would cost and alter before it is applied: the planner's figures, which the page only words. */
 export interface ChangePreview {
+  added: { key: string; name: string }[];
+  removed: { key: string; name: string }[];
+  total_bytes: number;
+  estimate: { total_minutes: number; pause_minutes: number };
   not_linked_note: string | null;
 }
 

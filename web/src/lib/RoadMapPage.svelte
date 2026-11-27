@@ -2,46 +2,61 @@
   // The "Road map" screen (US-27): the regions of the served map with sizes, the total and the map date, or "Map coverage
   // unknown" before the first rebuild from the app. A region found by name is added, and a loaded one removed, as a
   // pending choice held here: the served list is never touched until a rebuild ends well. The preview of the choice
-  // says, as information only, when a region is not linked by land to the others.
+  // gives its size and time (the summary), and a choice above the planner's limit is refused in words and not kept.
   import {
     failureText,
     previewChange,
     readRoadMap,
     type CatalogueRegion,
+    type ChangePreview,
+    type RoadMapLimits,
     type ServedRoadMap,
   } from './api';
+  import ChangeSummary from './ChangeSummary.svelte';
   import RegionSearch from './RegionSearch.svelte';
-  import { mapDateText, pendingKeys, sizeText } from './roadMapView';
+  import { mapDateText, pendingKeys, sizeText, tooBigText } from './roadMapView';
 
   let served = $state<ServedRoadMap['served'] | undefined>();
   let failure = $state('');
   let removed = $state<string[]>([]);
   let added = $state<CatalogueRegion[]>([]);
-  let note = $state<string | null>(null);
+  let summary = $state<ChangePreview | undefined>();
+  let limits = $state<RoadMapLimits | undefined>();
+  let piOffset = $state(0);
   let refusal = $state('');
   let asked = 0;
 
   readRoadMap().then(
-    (answer) => (served = answer.served),
+    (answer) => {
+      served = answer.served;
+      limits = answer.limits;
+      piOffset = answer.server_utc_offset_minutes;
+    },
     (error: unknown) => (failure = failureText(error)),
   );
 
   const addedKeys = $derived(added.map((region) => region.key));
 
-  async function check(keys: string[]): Promise<void> {
+  async function check(keys: string[], undo: () => void): Promise<void> {
     const mine = ++asked;
-    note = null;
     refusal = '';
-    if (removed.length === 0 && added.length === 0) return;
+    if (removed.length === 0 && added.length === 0) {
+      summary = undefined;
+      return;
+    }
     try {
       const preview = await previewChange(keys);
-      if (mine === asked) note = preview.not_linked_note;
+      if (mine !== asked) return;
+      if (limits && preview.total_bytes > limits.max_bytes) {
+        refusal = tooBigText(preview.total_bytes, limits.max_gb);
+        undo();
+      } else summary = preview;
     } catch (error) {
       if (mine === asked) refusal = failureText(error);
     }
   }
 
-  function change(): void {
+  function change(undo: () => void): void {
     if (served)
       check(
         pendingKeys(
@@ -49,22 +64,26 @@
           removed,
           addedKeys,
         ),
+        undo,
       );
   }
 
   function toggleRemoval(key: string): void {
+    const before = removed;
     removed = removed.includes(key) ? removed.filter((k) => k !== key) : [...removed, key];
-    change();
+    change(() => (removed = before));
   }
 
   function addRegion(region: CatalogueRegion): void {
+    const before = added;
     if (!addedKeys.includes(region.key)) added = [...added, region];
-    change();
+    change(() => (added = before));
   }
 
   function dropAddition(key: string): void {
+    const before = added;
     added = added.filter((region) => region.key !== key);
-    change();
+    change(() => (added = before));
   }
 
   const where = (name: string, parent: string | null, bytes: number | null): string =>
@@ -130,8 +149,8 @@
         </ul>
       </section>
     {/if}
-    {#if note}
-      <p role="status">{note}</p>
+    {#if summary && limits}
+      <ChangeSummary {summary} {limits} serverOffsetMinutes={piOffset} choose={() => {}} />
     {/if}
     {#if refusal}
       <p role="alert">{refusal}</p>

@@ -27,18 +27,32 @@ const UTAH = {
   bytes: 1_100_000_000,
   in_map: false,
 };
+const LIMITS = { max_gb: 8, max_bytes: 8_000_000_000, next_rebuild_from: null };
+const SUMMARY = {
+  added: [{ key: 'us/utah', name: 'Utah' }],
+  removed: [],
+  total_bytes: 4_000_000_000,
+  estimate: { total_minutes: 35, pause_minutes: 24 },
+  land_groups: [],
+};
 const NOTE = 'Utah is not linked by land to your other regions. Trips inside Utah are fine.';
 
 function plan(
   served: unknown,
-  preview: { status: number; body: unknown } = { status: 200, body: { not_linked_note: null } },
+  preview: { status: number; body: unknown } = {
+    status: 200,
+    body: { ...SUMMARY, not_linked_note: null },
+  },
 ) {
   const calls: { url: string; body?: string }[] = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, body: init?.body as string | undefined });
-      if (url === '/api/road-map') return new Response(JSON.stringify({ served }));
+      if (url === '/api/road-map')
+        return new Response(
+          JSON.stringify({ served, limits: LIMITS, server_utc_offset_minutes: 60 }),
+        );
       if (url.startsWith('/api/road-map/catalogue'))
         return new Response(JSON.stringify({ results: [UTAH] }));
       return new Response(JSON.stringify(preview.body), { status: preview.status });
@@ -96,7 +110,7 @@ describe('Road map page', () => {
   });
 
   it('adds a found region as a pending one, leaves the loaded list alone and says it is not linked by land', async () => {
-    const calls = plan(SERVED, { status: 200, body: { not_linked_note: NOTE } });
+    const calls = plan(SERVED, { status: 200, body: { ...SUMMARY, not_linked_note: NOTE } });
     render(RoadMapPage);
     const list = await loaded();
     await fireEvent.input(screen.getByLabelText('Region name'), { target: { value: 'Utah' } });
@@ -136,5 +150,36 @@ describe('Road map page', () => {
     render(RoadMapPage);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read the road map.');
+  });
+
+  it('shows the size and time of the pending choice', async () => {
+    plan(SERVED, { status: 200, body: { ...SUMMARY, not_linked_note: null } });
+    render(RoadMapPage);
+    await fireEvent.input(await screen.findByLabelText('Region name'), {
+      target: { value: 'Utah' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add Utah' }));
+
+    expect(await screen.findByText('Total download 4.0 GB')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Rebuild road map' })).toBeVisible();
+  });
+
+  it('refuses, in words, an addition above the limit and leaves the pending choice as it was', async () => {
+    plan(SERVED, { status: 200, body: { ...SUMMARY, total_bytes: 9_000_000_000 } });
+    render(RoadMapPage);
+    await fireEvent.input(await screen.findByLabelText('Region name'), {
+      target: { value: 'Utah' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add Utah' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The download would be 9.0 GB and the limit is 8 GB.',
+    );
+    expect(screen.queryByRole('list', { name: 'Pending changes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rebuild road map' })).not.toBeInTheDocument();
   });
 });

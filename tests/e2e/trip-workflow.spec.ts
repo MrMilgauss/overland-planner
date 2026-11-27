@@ -322,6 +322,7 @@ test("On an empty trip every Add menu item is fully visible and the menu ends ab
       "Upload GPX trails",
       "Click on the map",
       "Type coordinates",
+      "Search for a place",
     ]);
     await menu.scrollIntoViewIfNeeded();
     for (const button of await menu.getByRole("button").all())

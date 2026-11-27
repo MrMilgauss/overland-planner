@@ -9,7 +9,8 @@ real service. It serves, from tests/acceptance/overland_route_planner_mvp/fixtur
     (the planner only asks the origin of its own index, D306/D315); the paths are kept. The planner's own check wants
     100 regions before it calls the list healthy, so the answer also holds spare regions named "Spare region NNN"
     under Europe, which no spec searches for;
-  - `GET <poly path>`: the region outlines of `poly/` (a spare region gets Andorra's);
+  - `GET <poly path>`: the region outlines of `poly/` (a spare region gets Andorra's; a sized region without a file,
+    such as North America, gets Utah's small box);
   - `HEAD <pbf path>`: the region's size as Content-Length (the sizes the acceptance steps use; a spare region 0.1 GB);
   - `GET /__requests`: every `METHOD path` received, in order; `DELETE /__requests` empties the log.
 Standard library only.
@@ -121,6 +122,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path.endswith(".poly"):
             name = "andorra.poly" if "/spare-" in path else path.rsplit("/", 1)[1]
             wanted = FIXTURES / "poly" / name
+            if not wanted.is_file() and name.removesuffix(".poly") in SIZES_GB:
+                wanted = FIXTURES / "poly" / "utah.poly"  # a big region without an outline file: a small far box
             if wanted.is_file():
                 self._reply(200, wanted.read_bytes(), "text/plain")
             else:

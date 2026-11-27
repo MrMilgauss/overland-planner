@@ -141,6 +141,58 @@ async function openTheRoadMap(page: Page): Promise<void> {
 const loaded = (page: Page): Locator =>
   page.getByRole("list", { name: "Loaded regions" });
 
+// Marco is in Milan: the times of the screen are read in the browser's own zone.
+test.use({ timezoneId: "Europe/Rome" });
+
+interface RoadMapAnswer {
+  limits: { next_rebuild_from: string | null };
+  server_utc_offset_minutes: number;
+}
+
+// The planner's real answer, except that the day has no map yet (or has one, with the next time to start) and the Pi's
+// clock is on the given offset: whether today's UTC day already holds a map depends on the date the run happens on.
+async function answerRoadMapWith(
+  page: Page,
+  nextRebuildFrom: string | null,
+  piOffsetMinutes: number,
+): Promise<void> {
+  await answerWith<RoadMapAnswer>(
+    page,
+    /\/api\/road-map$/,
+    "/api/road-map",
+    (real) => ({
+      ...real,
+      limits: { ...real.limits, next_rebuild_from: nextRebuildFrom },
+      server_utc_offset_minutes: piOffsetMinutes,
+    }),
+  );
+}
+
+// Searches the free list of regions for the words and adds the named one as a pending change.
+async function addRegion(
+  page: Page,
+  words: string,
+  name: string,
+): Promise<void> {
+  const form = page.getByRole("form", { name: "Search for a region" });
+  await form.getByLabel("Region name").fill(words);
+  await form.getByRole("button", { name: "Search", exact: true }).click();
+  await form.getByRole("button", { name: `Add ${name}` }).click();
+}
+
+const noSidewaysScrollAndBigTargets = async (page: Page): Promise<void> => {
+  await page.setViewportSize(AT_PHONE);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  for (const button of await page.getByRole("button").all()) {
+    if (!(await button.isVisible())) continue;
+    expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+};
+
 // @US-27 @ui
 test("The Road map screen shows what is loaded", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
@@ -267,18 +319,48 @@ test("A region is removed as a pending change", async ({ page }) => {
 });
 
 // @US-27 @ui
-test.fixme("Size and time are shown before applying", async ({ page }) => {
+test("Size and time are shown before applying", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
+  await answerRoadMapWith(page, null, 60);
   // Given Marco has added Portugal
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
   // Then the screen shows "Total download 6.8 GB", about 58 minutes in all and about 41 without planning
+  const summary = page.getByRole("region", { name: "Size and time" });
+  await expect(summary).toContainText("Total download 6.8 GB");
+  await expect(summary).toContainText("about 58 minutes in all");
+  await expect(summary).toContainText("about 41 without planning");
+  await expect(summary).toContainText("Estimate");
+  await expect(summary).toContainText("Adds Portugal");
+  // And "Rebuild road map" is offered, and the loaded regions are still the eight
+  await expect(
+    summary.getByRole("button", { name: "Rebuild road map" }),
+  ).toBeVisible();
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await noSidewaysScrollAndBigTargets(page);
 });
 
 // @US-27 @ui @error
-test.fixme("Too big is refused with the size", async ({ page }) => {
+test("Too big is refused with the size", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
+  await answerRoadMapWith(page, null, 60);
   // Given Marco has added Portugal
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
+  await expect(
+    page.getByRole("region", { name: "Size and time" }),
+  ).toContainText("Total download 6.8 GB");
   // When he adds "North America" and the total goes above the limit of 8 GB
+  await addRegion(page, "North America", "North America");
   // Then the screen refuses it, saying the size and the limit, and the pending change is unchanged
+  await expect(page.getByRole("alert")).toContainText("20.8 GB");
+  await expect(page.getByRole("alert")).toContainText("the limit is 8 GB");
+  const pending = page.getByRole("list", { name: "Pending changes" });
+  await expect(pending).toContainText("Portugal");
+  await expect(pending).not.toContainText("North America");
+  await expect(
+    page.getByRole("region", { name: "Size and time" }),
+  ).toContainText("Total download 6.8 GB");
 });
 
 // @US-28 @ui
@@ -897,19 +979,43 @@ test.fixme("A rebuild interrupted by a power cut ends with the old map served", 
 });
 
 // @US-31 @ui
-test.fixme("Marco picks now or a start time", async ({ page }) => {
+test("Marco picks now or a start time", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
+  await answerRoadMapWith(page, null, 60);
   // Given a pending change adds Portugal
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
   // When he chooses "Rebuild now"
-  // Then the rebuild is waiting to start within a minute
+  const summary = page.getByRole("region", { name: "Size and time" });
+  const now = summary.getByRole("radio", { name: "Rebuild now" });
+  await expect(now).toBeChecked();
+  await expect(
+    summary.getByRole("radio", { name: "Start at a time" }),
+  ).not.toBeChecked();
+  await expect(summary.getByLabel("Start time")).toBeHidden();
+  // Then the rebuild is offered to start now (waiting to start within a minute is step 13-27, which sends the plan)
+  await expect(
+    summary.getByRole("button", { name: "Rebuild road map" }),
+  ).toBeVisible();
 });
 
 // @US-31 @ui
-test.fixme("Marco picks a start time", async ({ page }) => {
+test("Marco picks a start time", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
+  // The planner's clock is on UTC while Marco's browser is on Milan time
+  await answerRoadMapWith(page, null, 0);
   // Given a pending change adds Portugal
-  // When he chooses tonight 02:00
-  // Then the screen says "Rebuild planned for tonight 02:00"
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
+  // When he chooses tonight 02:00 (here 2 December 2030, 02:00 in Milan)
+  const summary = page.getByRole("region", { name: "Size and time" });
+  await summary.getByRole("radio", { name: "Start at a time" }).check();
+  await summary.getByLabel("Start time").fill("2030-12-02T02:00");
+  // Then the screen says when the rebuild would start, in his time, and "(Pi time)" because the Pi's zone differs
+  await expect(summary).toContainText(
+    "Rebuild at 02:00 on 2 December (Pi time)",
+  );
+  // (the sentence "Rebuild planned for tonight 02:00" is the planned state of step 13-27)
 });
 
 // @US-31 @ui @edge
@@ -951,15 +1057,27 @@ test.fixme("While a change is pending or running a second change is refused", as
 });
 
 // @US-31 @ui @edge @error
-test.fixme("One rebuild a day, counted by the kept map, with the next time shown", async ({
+test("One rebuild a day, counted by the kept map, with the next time shown", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given a rebuild ended well on 27 November 2026 UTC and Marco is in Milan
+  // Given a rebuild ended well on 27 November 2026 UTC and Marco is in Milan (the Pi's clock is on Milan time too)
+  await answerRoadMapWith(page, "2026-11-28T00:00:00Z", 60);
   // When he tries to start another the same UTC day
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
   // Then the screen refuses it and says the next rebuild can start from 01:00 on 28 November
+  const summary = page.getByRole("region", { name: "Size and time" });
+  await expect(summary.getByRole("alert")).toContainText(
+    "The next rebuild can start from 01:00 on 28 November.",
+  );
+  await expect(summary).not.toContainText("Pi time");
+  await expect(
+    summary.getByRole("button", { name: "Rebuild road map" }),
+  ).toHaveCount(0);
   // And a rebuild that failed before the switch to the new map leaves no map that day, so it does not use the day up
   // And a rebuild that failed after the switch keeps its map and does use the day up
+  // (both are the planner's count of the kept maps, checked in the acceptance steps of US-31)
 });
 
 // @US-31 @ui @error
