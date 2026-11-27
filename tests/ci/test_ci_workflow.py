@@ -787,8 +787,9 @@ def test_job_7_selection_runs_the_enabled_slices_compose_and_security_checks() -
         "test_slice_01a.py::test_the_packaged_planner_started_without_its_data_storage_reports_that_projects_would_be_lost"
         in collected.stdout
     )
-    assert "test_container_hardening.py::test_planner_container_writes_only_data_and_tmp_without_privileges" in (
-        collected.stdout
+    assert (
+        "test_container_hardening.py::test_planner_container_writes_only_data_tmp_and_the_changes_folder_without_privileges"
+        in (collected.stdout)
     )
 
 
