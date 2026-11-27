@@ -230,7 +230,7 @@ class GeofabrikCatalogue:
 
     def _fetch(self, now: float) -> _Kept | None:
         try:
-            with httpx.Client(headers=self._headers, timeout=self._timeout_s) as client:
+            with self._client() as client:
                 answer = client.get(self._index_url)
             if answer.status_code != httpx.codes.OK:
                 return None
@@ -240,21 +240,18 @@ class GeofabrikCatalogue:
         self._keep(now, answer.text)
         return _Kept(now, index)
 
+    def _client(self) -> httpx.Client:
+        return httpx.Client(headers=self._headers, timeout=self._timeout_s)
+
     def _keep(self, now: float, body: str) -> None:
         envelope = {"index_url": self._index_url, "fetched_at": now, "body": body}
-        try:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            partial = self._file.with_name(self._file.name + ".part")
-            partial.write_text(json.dumps(envelope), encoding="utf-8")
-            os.replace(partial, self._file)
-        except OSError:
-            return  # not kept: the list stays in memory and is fetched again after a restart
+        self._keep_text(self._file, json.dumps(envelope))  # not kept: the list is fetched again after a restart
 
     def _get_text(self, address: str) -> str:
         if not address.startswith(self._origin):
             raise CatalogueUnavailableError("a border is only asked of the list's own service")
         try:
-            with httpx.Client(headers=self._headers, timeout=self._timeout_s) as client:
+            with self._client() as client:
                 answer = client.get(address)
         except httpx.HTTPError:
             raise CatalogueUnavailableError("the region service did not give a border") from None
@@ -264,17 +261,18 @@ class GeofabrikCatalogue:
 
     @staticmethod
     def _keep_text(file: Path, text: str) -> None:
+        """Written beside the file and renamed over it, so a reader never sees half of it; a failure keeps nothing."""
         try:
             file.parent.mkdir(parents=True, exist_ok=True)
             partial = file.with_name(file.name + ".part")
             partial.write_text(text, encoding="utf-8")
             os.replace(partial, file)
         except OSError:
-            return  # not kept: asked again next time
+            return
 
     def _head(self, address: str) -> int | None:
         try:
-            with httpx.Client(headers=self._headers, timeout=self._timeout_s) as client:
+            with self._client() as client:
                 answer = client.head(address)
             size = int(answer.headers["content-length"])
         except (httpx.HTTPError, KeyError, ValueError):
