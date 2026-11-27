@@ -1,0 +1,4 @@
+#!/bin/sh
+# Real mv; with SHIM_MV_CUT set, the power goes right after a rename of request.txt (the move is done, the caller is not told).
+/bin/mv "$@" || exit
+[ -z "${SHIM_MV_CUT:-}" ] || [ "$1" != request.txt ] || exit 1

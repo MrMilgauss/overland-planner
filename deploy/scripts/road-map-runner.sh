@@ -69,8 +69,10 @@ case $1 in
     name=request.txt ;;
   running) name=running.txt ;;
   take)
+    # no running.txt exists here, so the notes belong to an ended rebuild; they go before the rename so that a cut between the
+    # two never leaves them beside the running one, where recovery would read them
+    rm -f progress.txt failure.txt
     mv request.txt running.txt 2>/dev/null || { echo gone; exit 0; }
-    rm -f progress.txt failure.txt # the notes of an earlier rebuild must not be read by recovery
     name=running.txt ;;
   *) exit 2 ;;
 esac

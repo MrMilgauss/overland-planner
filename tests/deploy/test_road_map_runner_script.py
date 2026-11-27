@@ -362,6 +362,19 @@ def test_a_stale_progress_note_cannot_make_a_rebuild_cut_before_its_first_write_
     assert result_lines(pi)[1:3] == ["state=failed", "code=interrupted"]
 
 
+def test_the_notes_of_an_ended_rebuild_are_gone_before_the_request_becomes_the_running_one(pi: FakePi) -> None:
+    stub_refresh(pi)
+    put_request(pi, request_text())
+    (folder(pi) / "progress.txt").write_text(f"step=switching\nstep_at={T0}\nserving=1\nnew=20270201\n")
+    (folder(pi) / "failure.txt").write_text("code=disk\n")
+
+    minute(pi, 0, SHIM_MV_CUT="1")  # the power goes right after the rename
+
+    left = {p.name for p in folder(pi).iterdir()}
+    assert "running.txt" in left, left
+    assert not {"progress.txt", "failure.txt"} & left
+
+
 FAILURES = {
     "disk with its numbers": ("code=disk\nfree_gb=12\nneed_gb=40\n", ["code=disk", "free_gb=12", "need_gb=40"]),
     "memory with its number": ("code=memory\nhave_gb=3\n", ["code=memory", "have_gb=3"]),
