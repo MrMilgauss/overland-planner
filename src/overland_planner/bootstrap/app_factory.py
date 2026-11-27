@@ -144,7 +144,7 @@ class _Wiring:
         self._tileset_store = TilesetDirReader(
             settings.road_map_dir, progress_file=None if changes_dir is None else changes_dir / "progress.txt"
         )
-        self._place_search = _place_search(settings)
+        self._place_search = _place_search(settings, clock)
         self._catalogue = _region_catalogue(settings, clock, ports.catalogue_min_features)
         self._change_queue = None if changes_dir is None else ChangeQueueDir(changes_dir)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
@@ -278,12 +278,14 @@ class _Wiring:
         return export_routes(GpxExportService(runs, projects, self._file_store, self._gpx_writer, self._event_log))
 
 
-def _place_search(settings: Settings) -> NominatimPlaceSearch | SwitchedOffPlaceSearch:
+def _place_search(settings: Settings, clock: Clock) -> NominatimPlaceSearch | SwitchedOffPlaceSearch:
     """Place search: Nominatim (nothing is sent before a search is asked for), or nothing when switched off."""
     if settings.place_search == "off":
         return SwitchedOffPlaceSearch()
     return NominatimPlaceSearch(
-        settings.place_search_url, user_agent=f"overland-planner/{settings.planner_git_sha} {_USER_AGENT_WHO}"
+        settings.place_search_url,
+        user_agent=f"overland-planner/{settings.planner_git_sha} {_USER_AGENT_WHO}",
+        monotonic=clock.monotonic,
     )
 
 

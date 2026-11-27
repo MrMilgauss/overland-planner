@@ -3,7 +3,10 @@ sent (the typed words and nothing else), what is read, and how a bad answer is t
 
 from __future__ import annotations
 
+import itertools
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,8 +24,140 @@ AGENT = "overland-planner/test (household trip planner; +https://github.com/MrMi
 RECORDED = (Path(__file__).parent / "fixtures" / "nominatim-moab-jsonv2.json").read_text(encoding="utf-8")
 
 
-def adapter(url: str = URL) -> NominatimPlaceSearch:
-    return NominatimPlaceSearch(url, user_agent=AGENT)
+class FakeTime:
+    """A monotonic clock whose sleep moves it: nothing in these tests really waits."""
+
+    def __init__(self, start: float = 1000.0, *, sleeps: bool = True) -> None:
+        self.now = start
+        self._sleeps = sleeps
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        if self._sleeps:
+            self.now += seconds
+
+
+def adapter(url: str = URL, time: FakeTime | None = None) -> NominatimPlaceSearch:
+    time = time or FakeTime()
+    return NominatimPlaceSearch(url, user_agent=AGENT, monotonic=time.monotonic, sleep=time.sleep)
+
+
+def sending(time: FakeTime, answer: httpx.Response | None = None) -> tuple[respx.Route, list[float]]:
+    sent: list[float] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        sent.append(time.now)
+        return answer or httpx.Response(200, json=[{"name": "Moab", "lat": "1", "lon": "2"}])
+
+    return respx.get(URL).mock(side_effect=reply), sent
+
+
+@given(
+    gaps=st.lists(st.floats(min_value=0, max_value=5), min_size=2, max_size=8),
+)
+@settings(max_examples=40, deadline=None)
+def test_different_searches_reach_the_service_at_least_a_second_apart(gaps: list[float]) -> None:
+    time = FakeTime()
+    with respx.mock:
+        _, sent = sending(time)
+        search = adapter(time=time)
+        for number, gap in enumerate(gaps):
+            time.now += gap
+            search.search(f"place {number}")
+
+    assert all(later - earlier >= 1.0 for earlier, later in itertools.pairwise(sent))
+
+
+@given(count=st.integers(min_value=190, max_value=230))
+@settings(max_examples=5, deadline=None)
+def test_the_memory_holds_the_last_two_hundred_searches_only(count: int) -> None:
+    time = FakeTime()
+    kept = range(max(0, count - 200), count)
+    with respx.mock:
+        _, sent = sending(time)
+        search = adapter(time=time)
+        for number in range(count):
+            search.search(f"place {number}")
+        before = len(sent)
+        for number in kept:
+            search.search(f"place {number}")
+        remembered = len(sent) == before
+        if count > 200:
+            search.search("place 0")
+
+    assert remembered
+    assert len(sent) - before == (1 if count > 200 else 0)
+
+
+def test_the_same_search_within_a_day_is_answered_from_memory_and_after_a_day_is_sent_again() -> None:
+    time = FakeTime()
+    with respx.mock:
+        _, sent = sending(time)
+        search = adapter(time=time)
+        first = search.search("Moab")
+        time.now += 24 * 3600 - 1
+        again = search.search("  moab ")
+        time.now += 2
+        search.search("Moab")
+
+    assert again == first
+    assert len(sent) == 2
+
+
+def test_a_search_that_would_wait_more_than_three_seconds_is_busy_and_sends_nothing() -> None:
+    time = FakeTime(sleeps=False)  # the clock stands still: every search queues behind the one before
+    with respx.mock:
+        _, sent = sending(time)
+        search = adapter(time=time)
+        for number in range(4):  # waits 0, 1, 2 and 3 s
+            search.search(f"place {number}")
+        with pytest.raises(PlaceSearchUnavailableError):
+            search.search("one too many")
+
+    assert len(sent) == 4
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_after_a_busy_answer_nothing_is_sent_for_a_minute_then_the_next_search_goes_out(status: int) -> None:
+    time = FakeTime()
+    with respx.mock:
+        route, sent = sending(time, httpx.Response(status, text="slow down"))
+        search = adapter(time=time)
+        with pytest.raises(PlaceSearchUnavailableError):
+            search.search("Moab")
+        time.now += 59
+        with pytest.raises(PlaceSearchUnavailableError):
+            search.search("Lagos")
+        assert len(sent) == 1
+        route.mock(return_value=httpx.Response(200, json=[]))
+        time.now += 1.5
+        assert search.search("Lagos") == ()
+
+
+def test_two_identical_searches_at_once_send_one_request_and_both_get_the_answer() -> None:
+    time = FakeTime()
+    inside = threading.Event()
+    release = threading.Event()
+    with respx.mock:
+
+        def slow(request: httpx.Request) -> httpx.Response:
+            inside.set()
+            release.wait(5)
+            return httpx.Response(200, json=[{"name": "Moab", "lat": "1", "lon": "2"}])
+
+        route = respx.get(URL).mock(side_effect=slow)
+        search = adapter(time=time)
+        with ThreadPoolExecutor(2) as pool:
+            first = pool.submit(search.search, "Moab")
+            inside.wait(5)
+            second = pool.submit(search.search, "Moab")
+            release.set()
+            answers = (first.result(10), second.result(10))
+
+    assert route.call_count == 1
+    assert answers[0] == answers[1] != ()
 
 
 def test_a_recorded_real_answer_reads_as_places_with_a_region_falling_back_when_the_state_is_missing() -> None:
