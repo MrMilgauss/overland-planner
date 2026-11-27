@@ -93,6 +93,15 @@
 
   const outsideIds = $derived(coverage?.known ? coverage.outside_item_ids : []);
 
+  /** A warning for each of these items that is still in the trip, naming the regions the road map holds. */
+  function outsideWarnings(ids: string[], regionNames: string[]): { id: string; text: string }[] {
+    const where = joinedNames(regionNames);
+    return ids.flatMap((id) => {
+      const item = items.find((i) => i.id === id);
+      return item ? [{ id, text: alertTextOutside(item.name, where) }] : [];
+    });
+  }
+
   /** The trip's coverage, read after every change of it and never blocking: a failure is an unknown map. With `warn`, an
    * item that has become outside since the last reading is warned about once (each warning can be dismissed). */
   async function readCoverageOfTrip(warn: boolean): Promise<void> {
@@ -108,13 +117,12 @@
     coverageRead = true;
     const outside = read?.known ? read.outside_item_ids : [];
     if (warn && read?.known) {
-      const where = joinedNames(servedNames.length ? servedNames : read.regions);
       warnings = [
         ...warnings,
-        ...newlyOutside(outsideWarned, outside).flatMap((id) => {
-          const item = items.find((i) => i.id === id);
-          return item ? [{ id, text: alertTextOutside(item.name, where) }] : [];
-        }),
+        ...outsideWarnings(
+          newlyOutside(outsideWarned, outside),
+          servedNames.length ? servedNames : read.regions,
+        ),
       ];
     }
     outsideWarned = outside;
