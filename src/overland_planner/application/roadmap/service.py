@@ -238,13 +238,14 @@ class RoadMapService:
         self._clock = clock
         self._max_gb = max_gb
         self._last_matched: ServedMapView | None = None
+        self._viewed: tuple[tuple[object, ...], ServedMapView] | None = None  # the one served map built, by its source
 
     def served(self) -> ServedMapView:
         answered = None if self._served_map is None else self._served_map.served_id()
         if answered is None and self._last_matched is not None:
             return self._last_matched
         served_id = self._store.serving_hint() if answered is None else answered
-        view = self._view(self._store.listing(), served_id)
+        view = self._view_of(self._store.listing(), served_id)
         if view.known:
             self._last_matched = view
         return view
@@ -495,6 +496,17 @@ class RoadMapService:
         if size is None:
             raise CatalogueUnavailableError(f"the size of {entry.name} cannot be had")
         return size
+
+    def _view_of(self, listing: TilesetListing, served_id: ServedId | None) -> ServedMapView:
+        """The served map's view, built once while the same tileset is served (its outlines and land groups are
+        immutable then); a different tileset or a changed record builds again. One entry is kept."""
+        entry = select_served(listing.entries, served_id)
+        if entry is None:
+            return self._view(listing, served_id)
+        source = (entry.name, listing.built_at[entry.name], listing.regions[entry.name])
+        if self._viewed is None or self._viewed[0] != source:
+            self._viewed = (source, self._view(listing, served_id))
+        return self._viewed[1]
 
     @staticmethod
     def _view(listing: TilesetListing, served_id: ServedId | None) -> ServedMapView:

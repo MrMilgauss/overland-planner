@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.roadmap.outline import Outline
@@ -18,6 +19,11 @@ class RoadMapCoverage:
         return any(outline.contains(point) for _, outline in self.regions)
 
     def land_groups(self) -> tuple[tuple[str, ...], ...]:
+        """Connected components of the 'outlines overlap or touch' relation; computed once per coverage."""
+        return self._groups
+
+    @cached_property
+    def _groups(self) -> tuple[tuple[str, ...], ...]:
         """Connected components of the 'outlines overlap or touch' relation; names sorted, groups sorted."""
         ordered = sorted(self.regions, key=lambda region: region[0])
         unvisited = list(range(len(ordered)))

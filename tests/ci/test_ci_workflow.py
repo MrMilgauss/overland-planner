@@ -417,6 +417,30 @@ def test_e2e_runs_on_the_compose_stack_and_tears_it_down_before_the_selection() 
     assert not re.search(r"\.spec\.ts|tests/e2e", _runs(job)[playwright]), "job 7 runs every spec in tests/e2e"
 
 
+def test_e2e_serves_the_fixture_road_map_to_the_planner_and_the_specs() -> None:
+    """Slice 12c: job 7's planner reads a fixture road map (the eight regions, dated 27 November 2026) built by a
+    tracked script before compose starts, with a changes folder the specs can write notes to."""
+    job = _job(_workflow(), "e2e")
+    script = ".github/scripts/build-road-map-fixture.py"
+    built = _index(job, script)
+    assert _index(job, "uv sync --frozen") < built < _index(job, f"{COMPOSE_CI_STACK} up -d --wait")
+    assert job["env"]["ROAD_MAP_FIXTURE_DIR"] == "${{ github.workspace }}/.data/ci/road-map"
+    assert (REPO_ROOT / script).is_file()
+
+    class ComposeLoader(yaml.SafeLoader):
+        """compose.ci.yaml carries the `!override` tag of Compose; here it just means the list as written."""
+
+    ComposeLoader.add_constructor("!override", lambda loader, node: loader.construct_sequence(node, deep=True))
+    compose = yaml.load((REPO_ROOT / "deploy" / "compose.ci.yaml").read_text(), Loader=ComposeLoader)  # noqa: S506
+    override = compose["services"]["planner"]
+    assert override["environment"]["ROAD_MAP_SERVED_TILESET"] == "20261127"
+    mounts = override["volumes"]
+    assert any(m.endswith("/volume:/valhalla-data:ro") for m in mounts), "the tileset folder is read-only"
+    assert any(m.startswith("${ROAD_MAP_FIXTURE_DIR:?") and m.endswith("/changes:/road-map-changes") for m in mounts), (
+        "the specs write the helper's notes into the changes folder"
+    )
+
+
 def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     job = _job(_workflow(), "e2e")
     selection = job["steps"][_index(job, "pytest-selection.sh")]

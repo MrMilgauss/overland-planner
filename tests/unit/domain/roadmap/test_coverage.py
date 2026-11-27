@@ -7,9 +7,13 @@ disjoint separates) x 2 = 6; 4 used.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from overland_planner.adapters.roadmap.poly_parser import parse_poly
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.roadmap.coverage import RoadMapCoverage
 from overland_planner.domain.roadmap.outline import Outline
@@ -75,3 +79,33 @@ def test_linking_is_transitive_through_a_middle_region(x0, y0, size):
         regions=(("end", box(x0 + 2 * size, y0, size)), ("start", box(x0, y0, size)), ("mid", box(x0 + size, y0, size)))
     )
     assert chain.land_groups() == (("end", "mid", "start"),)
+
+
+FIXTURE_POLY = Path(__file__).parents[3] / "acceptance/overland_route_planner_mvp/fixtures/road-map/poly"
+EIGHT = [
+    "austria",
+    "italy",
+    "languedoc-roussillon",
+    "midi-pyrenees",
+    "provence-alpes-cote-d-azur",
+    "rhone-alpes",
+    "spain",
+    "switzerland",
+]
+
+
+def fixture_coverage(*names: str) -> RoadMapCoverage:
+    return RoadMapCoverage(tuple((n, parse_poly((FIXTURE_POLY / f"{n}.poly").read_text())) for n in names))
+
+
+@pytest.mark.parametrize(
+    ("extra", "groups"),
+    [
+        ((), (tuple(EIGHT),)),
+        (("portugal",), (tuple(sorted([*EIGHT, "portugal"])),)),
+        (("utah",), (tuple(EIGHT), ("utah",))),
+    ],
+)
+def test_the_real_fixture_outlines_form_the_same_land_groups(extra, groups):
+    """Italy, the French regions, Spain, Switzerland and Austria touch; Portugal touches Spain; Utah stands apart."""
+    assert fixture_coverage(*EIGHT, *extra).land_groups() == groups

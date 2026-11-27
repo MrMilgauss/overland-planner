@@ -5,8 +5,18 @@
 #
 # compose.yaml is interpolated before this file is merged, so PLANNER_BIND and PLANNER_IMAGE must be set in the
 # environment (job 7 sets both at job level); the ports are then replaced here.
+#
+# The road map is the fixture one (slice 12c): `.github/scripts/build-road-map-fixture.py $ROAD_MAP_FIXTURE_DIR` makes
+# `volume/` (the tileset folder, read-only in the container) and `changes/` (world-writable: the specs write the helper's
+# notes there from outside), and ROAD_MAP_SERVED_TILESET names the tileset the offline road map serves.
 services:
   planner:
     pull_policy: never
     ports: !override
       - "127.0.0.1:8080:8080"
+    environment:
+      ROAD_MAP_SERVED_TILESET: "20261127"
+    volumes: !override
+      - planner-data:/data
+      - ${ROAD_MAP_FIXTURE_DIR:?run .github/scripts/build-road-map-fixture.py and set ROAD_MAP_FIXTURE_DIR}/volume:/valhalla-data:ro
+      - ${ROAD_MAP_FIXTURE_DIR:?run .github/scripts/build-road-map-fixture.py and set ROAD_MAP_FIXTURE_DIR}/changes:/road-map-changes

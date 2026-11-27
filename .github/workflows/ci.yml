@@ -664,6 +664,8 @@ jobs:
       PLANNER_IMAGE: overland-planner:ci-${{ github.sha }}
       PLANNER_TEST_WORKSPACE: ${{ github.workspace }}/.data/ci
       DATA_DIR: ${{ github.workspace }}/.data/ci/data
+      # The fixture road map the planner serves and the specs write notes into (`changes/`), built below (slice 12c).
+      ROAD_MAP_FIXTURE_DIR: ${{ github.workspace }}/.data/ci/road-map
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -683,6 +685,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ needs.image-amd64.outputs.artifact-id }}
         run: gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: Build the fixture road map (eight regions, 27 November 2026; slice 12c)
+        run: uv run python .github/scripts/build-road-map-fixture.py "$ROAD_MAP_FIXTURE_DIR"
       - name: Start the planner with compose (compose.yaml + compose.ci.yaml, loopback, step 02-04)
         run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait --wait-timeout 120
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -705,13 +716,6 @@ jobs:
       - name: Stop the compose stack and remove its volume
         if: always()
         run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml down -v || true
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: uv sync --frozen
-        run: uv sync --frozen
       # Includes tests/deploy: compose fails closed without PLANNER_BIND, and the hardened container writes only
       # /data and /tmp (D173); with slice 01a enabled also the packaged planner without its data storage (D121).
       - name: pytest --run-external -m "compose or security" (D170)

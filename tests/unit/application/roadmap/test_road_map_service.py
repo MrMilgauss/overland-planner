@@ -745,3 +745,19 @@ def test_a_change_waiting_or_running_hides_the_result_of_the_one_before() -> Non
     service.plan_change(["italy", "portugal"], START)
     planned = service.planned_change()
     assert planned is not None and (planned.state, planned.result) == ("planned", None)
+
+
+def test_the_land_groups_of_a_served_map_are_computed_once_however_often_it_is_read(monkeypatch) -> None:
+    """The served map is immutable while served: reading it again (every coverage request) recomputes nothing."""
+    calls: list[int] = []
+    touches = Outline.touches
+    monkeypatch.setattr(Outline, "touches", lambda self, other: calls.append(1) or touches(self, other))
+    service = RoadMapService(FakeServedMap("20261127"), FakeStore(TWO_MAPS))
+
+    first = service.served().coverage.land_groups()
+    computed = len(calls)
+    second = service.served().coverage.land_groups()
+
+    assert computed > 0
+    assert len(calls) == computed
+    assert second == first
