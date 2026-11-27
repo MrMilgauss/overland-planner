@@ -1113,41 +1113,75 @@ describe('Plan panel: one plan state at a time', () => {
   });
 
   describe('a failed run no road reaches', () => {
-    const AREA = 'Italy, Switzerland, Austria and the French Alps';
-    const SENTENCE = `No road reaches these from your other stops. The planner's road map covers ${AREA}; places outside it can't be planned. Remove them or move them inside the area.`;
-    const MAP_CONFIG: Reply = {
+    const BASE = 'No road reaches these from your other stops.';
+    const TAIL = "can't be planned. Remove them or move them inside the area.";
+    const served = (names: string[], known = true): Reply => ({
       status: 200,
       body: {
-        tile_url: 'x',
-        attribution: 'x',
-        max_zoom: 17,
-        base_style_url: 'x',
-        base_attribution: 'x',
-        road_map_area: AREA,
+        served: {
+          known,
+          map_date: null,
+          total_bytes: 0,
+          regions: names.map((name, index) => ({
+            key: `r${index}`,
+            name,
+            parent_name: null,
+            bytes: 1,
+          })),
+        },
+        change: { state: 'none' },
       },
-    };
-
-    it('says why under the run lines, with the area the road map covers', async () => {
-      const line =
-        "Plan run #2 failed: 'Ruta' cannot be connected to any other stop at any confidence level";
+    });
+    const unreachable = (road: Reply | 'network down') => {
+      const line = "Plan run #2 failed: 'Ruta' cannot be connected to any other stop";
       stubPlanner({
         [`GET ${RUNS}`]: listed(['r2', 2, 'failed']),
         'GET /api/plan-runs/r2': failedRun('r2', 2, 'unreachable', null, [line]),
-        'GET /api/config/map': MAP_CONFIG,
+        'GET /api/road-map': road,
       });
+      return line;
+    };
+
+    it.each([
+      [['Italy'], `${BASE} The planner's road map covers Italy; places outside it ${TAIL}`],
+      [
+        ['Italy', 'Spain'],
+        `${BASE} The planner's road map covers Italy and Spain; places outside it ${TAIL}`,
+      ],
+      [
+        ['Italy', 'Spain', 'Switzerland'],
+        `${BASE} The planner's road map covers Italy, Spain and Switzerland; places outside it ${TAIL}`,
+      ],
+      [[], `${BASE} Places outside the planner's road map ${TAIL}`],
+    ])('says why under the run lines, naming the served regions %j', async (names, sentence) => {
+      const line = unreachable(served(names));
       render(PlanPanel, { props: { projectId: 'p1' } });
       await settled();
 
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent(line);
-      expect(alert).toHaveTextContent(SENTENCE);
+      expect(alert).toHaveTextContent(sentence);
+    });
+
+    it.each([
+      ['unknown', served(['Italy'], false)],
+      ['unreadable', 'network down' as const],
+    ])('names no region when the map is %s', async (_state, road) => {
+      unreachable(road);
+      render(PlanPanel, { props: { projectId: 'p1' } });
+      await settled();
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        `${BASE} Places outside the planner's road map ${TAIL}`,
+      );
+      expect(screen.queryByText(/covers/)).not.toBeInTheDocument();
     });
 
     it('says nothing of the road map when the run failed for another reason', async () => {
       stubPlanner({
         [`GET ${RUNS}`]: listed(['r2', 2, 'failed']),
         'GET /api/plan-runs/r2': failedRun('r2', 2, 'timeout', null, ['Plan run #2 failed']),
-        'GET /api/config/map': MAP_CONFIG,
+        'GET /api/road-map': served(['Italy']),
       });
       render(PlanPanel, { props: { projectId: 'p1' } });
       await settled();

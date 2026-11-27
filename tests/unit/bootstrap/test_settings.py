@@ -565,3 +565,40 @@ def test_a_served_tileset_named_for_the_offline_road_map_is_refused_with_valhall
     assert "ROAD_MAP_SERVED_TILESET" in str(refused.value)
     assert Settings.from_environ({"ROUTING_PROVIDER": "mock", "ROAD_MAP_SERVED_TILESET": tileset})
     assert Settings.from_environ({"ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": ""})
+
+
+# ------------------------------------------------------------------ place search (slice 12c, D307, D314 (3))
+PLACE_DEFAULTS = {"PLACE_SEARCH": "on", "PLACE_SEARCH_URL": "https://nominatim.openstreetmap.org/search"}
+PLACE_UNIVERSE = frozenset(PLACE_DEFAULTS)
+
+
+def place_view(settings: Settings) -> dict[str, Any]:
+    return {"PLACE_SEARCH": settings.place_search, "PLACE_SEARCH_URL": settings.place_search_url}
+
+
+@given(key=st.sampled_from(sorted(PLACE_DEFAULTS)))
+def test_an_empty_or_absent_place_search_setting_is_its_default(key: str) -> None:
+    # compose passes `${KEY:-}`: an unset key arrives empty and means the default, which for PLACE_SEARCH is on.
+    before = place_view(Settings.from_environ({}))
+    after = place_view(Settings.from_environ({key: ""}))
+    assert before == PLACE_DEFAULTS
+    assert_state_delta(before, after, universe=PLACE_UNIVERSE, expected={k: unchanged() for k in PLACE_UNIVERSE})
+
+
+@given(switch=st.sampled_from(["on", "off"]), address=_host.map(lambda host: f"https://{host}/search"))
+def test_the_place_search_switch_and_address_are_taken_as_given(switch: str, address: str) -> None:
+    after = place_view(Settings.from_environ({"PLACE_SEARCH": switch, "PLACE_SEARCH_URL": address}))
+    assert after == {"PLACE_SEARCH": switch, "PLACE_SEARCH_URL": address}
+
+
+@given(value=_printable.filter(lambda raw: raw not in {"on", "off"}))
+def test_a_place_search_value_other_than_on_or_off_is_refused_naming_the_key_but_never_the_value(value: str) -> None:
+    # bypass: a refusal leaves no settings to diff; the error's named keys and text are its whole observable surface.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"PLACE_SEARCH": value})
+    assert refused.value.setting_names == frozenset({"PLACE_SEARCH"})
+    assert "PLACE_SEARCH" in str(refused.value)
+    # the text is the same whatever was written, so the value is never in it
+    with pytest.raises(InvalidSettingsError) as reference:
+        Settings.from_environ({"PLACE_SEARCH": "~"})
+    assert str(refused.value) == str(reference.value)

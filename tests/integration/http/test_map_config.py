@@ -39,7 +39,7 @@ def test_the_map_settings_answer_the_chosen_tiles_with_the_default_for_what_is_l
         "attribution": "Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)",
         "max_zoom": 12,
         **POSITRON,
-        "road_map_area": "Italy, Spain, Switzerland, Austria and southern France",
+        "place_search": True,
     }
 
 
@@ -53,12 +53,13 @@ def test_the_light_base_map_is_chosen_by_the_settings_and_defaults_when_empty(da
     assert {k: answer[k] for k in POSITRON} == POSITRON
 
 
-def test_the_road_map_area_is_the_default_and_can_be_set(data_dir: Path) -> None:
+def test_the_map_settings_say_whether_place_search_is_offered_and_hold_no_road_map_area(data_dir: Path) -> None:
     with TestClient(create_app({"DATA_DIR": str(data_dir)})) as client:
-        default = client.get("/api/config/map").json()["road_map_area"]
-    with TestClient(create_app({"DATA_DIR": str(data_dir), "ROAD_MAP_AREA": "Spain"})) as client:
-        chosen = client.get("/api/config/map").json()["road_map_area"]
-    assert (default, chosen) == ("Italy, Spain, Switzerland, Austria and southern France", "Spain")
+        default = client.get("/api/config/map").json()
+    with TestClient(create_app({"DATA_DIR": str(data_dir), "PLACE_SEARCH": "off"})) as client:
+        off = client.get("/api/config/map").json()
+    assert (default["place_search"], off["place_search"]) == (True, False)
+    assert "road_map_area" not in default and "road_map_area" not in off
 
 
 def test_the_map_settings_are_behind_the_household_password(data_dir: Path) -> None:

@@ -108,10 +108,11 @@ class Settings(BaseSettings):
     map_base_attribution: Annotated[str, Field(validation_alias="MAP_BASE_ATTRIBUTION")] = (
         "© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors"
     )
-    # The area the planner's road map covers, in plain words for the page. It must match the extracts in
-    # deploy/scripts/tiles-refresh.sh (EXTRACTS).
-    road_map_area: Annotated[str, Field(validation_alias="ROAD_MAP_AREA")] = (
-        "Italy, Spain, Switzerland, Austria and southern France"
+    # Place search (slice 12c, D307, D314): the Add menu's "Search for a place". The address is only parsed here;
+    # empty means the public Nominatim default (usage policy: https://operations.osmfoundation.org/policies/nominatim/).
+    place_search: Annotated[Literal["on", "off"], Field(validation_alias="PLACE_SEARCH")] = "on"
+    place_search_url: Annotated[str, Field(validation_alias="PLACE_SEARCH_URL")] = (
+        "https://nominatim.openstreetmap.org/search"
     )
 
     road_map_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_DIR")] = None
@@ -173,7 +174,7 @@ class Settings(BaseSettings):
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("map_base_style_url", "map_base_attribution", "road_map_area", mode="before")
+    @field_validator("map_base_style_url", "map_base_attribution", mode="before")
     @classmethod
     def _blank_base_map_is_default(cls, value: object, info: ValidationInfo) -> object:
         blank = isinstance(value, str) and value.strip() == ""
@@ -191,6 +192,8 @@ class Settings(BaseSettings):
         "map_tile_url",
         "map_tile_attribution",
         "map_tile_max_zoom",
+        "place_search",
+        "place_search_url",
         mode="before",
     )
     @classmethod

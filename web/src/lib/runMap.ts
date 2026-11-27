@@ -19,8 +19,8 @@ export interface MapConfig {
   max_zoom: number;
   base_style_url: string;
   base_attribution: string;
-  /** Where the planner's road map reaches, in words. */
-  road_map_area: string;
+  /** Whether the Add menu offers "Search for a place" (the PLACE_SEARCH setting). */
+  place_search: boolean;
 }
 
 type LngLat = [number, number];

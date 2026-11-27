@@ -41,7 +41,7 @@ const CONFIG: MapConfig = {
   max_zoom: 17,
   base_style_url: 'https://styles.example.test/light.json',
   base_attribution: 'Light credit',
-  road_map_area: 'Italy',
+  place_search: true,
 };
 
 function line(

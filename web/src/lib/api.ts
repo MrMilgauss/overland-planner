@@ -346,6 +346,15 @@ export function readMapConfig(): Promise<MapConfig> {
   return call('/api/config/map', {}, 'Could not load the map settings.');
 }
 
+/** The regions the engine serves, by name; `known` is false when the planner cannot tell (GET /api/road-map). */
+export interface ServedRoadMap {
+  served: { known: boolean; regions: { name: string }[] };
+}
+
+export function readRoadMap(): Promise<ServedRoadMap> {
+  return call('/api/road-map', {}, 'Could not read the road map.');
+}
+
 /** The lines and markers of a ready run, in the planner's own words when it refuses (a Failed run has no route). */
 export function readRunGeometry(planRunId: string): Promise<RunGeometry> {
   return call(

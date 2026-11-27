@@ -296,7 +296,7 @@ def create_app(
         max_zoom=settings.map_tile_max_zoom,
         base_style_url=settings.map_base_style_url,
         base_attribution=settings.map_base_attribution,
-        road_map_area=settings.road_map_area,
+        place_search=settings.place_search == "on",
     )
     app.include_router(platform_routes(health, map_config))
 

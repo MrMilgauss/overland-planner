@@ -26,7 +26,7 @@
     failureText,
     listPlanRuns,
     PlannerError,
-    readMapConfig,
+    readRoadMap,
     type Incumbent,
     type Item,
     type Objective,
@@ -95,7 +95,7 @@
   let readyRun = $state<PlanRunDetail | undefined>();
   let readyRunStale = $state(false); // from the run list: the project changed since the run was computed
   let failedRun = $state<PlanRunDetail | undefined>();
-  let roadMapArea = $state(''); // where the road map reaches, read when a run failed for want of a road
+  let roadMapRegions = $state<string[]>([]); // the served regions' names, read when a run failed for want of a road
   let stoppable = $state(false);
   let stopPressed = $state(false);
   let notices = $state<string[]>([]);
@@ -150,13 +150,20 @@
     );
   }
 
-  /** Only to explain an unreachable item: without the answer the sentence is left out and the run lines still show. */
-  async function readRoadMapArea(): Promise<void> {
+  /** Only to explain an unreachable item: without the answer the sentence names no region. */
+  async function readRoadMapRegions(): Promise<void> {
     try {
-      roadMapArea = (await readMapConfig()).road_map_area ?? '';
+      const { served } = await readRoadMap();
+      roadMapRegions = served.known ? served.regions.map((region) => region.name) : [];
     } catch {
-      roadMapArea = '';
+      roadMapRegions = [];
     }
+  }
+
+  function joinedNames(names: string[]): string {
+    return names.length < 2
+      ? names.join('')
+      : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
   }
 
   /** The highest-numbered ready run stays on show under the failure of a later run. */
@@ -166,7 +173,7 @@
       const latest = highestNumbered(runs);
       const ready = highestNumbered(runs.filter((run) => run.status === 'ready'));
       failedRun = latest && latest !== ready ? await readPlanRun(latest.id) : undefined;
-      if (failedRun?.failure_reason === UNREACHABLE) await readRoadMapArea();
+      if (failedRun?.failure_reason === UNREACHABLE) await readRoadMapRegions();
       readyRun = ready ? await readPlanRun(ready.id) : undefined;
       readyRunStale = ready?.stale === true;
       unreadable = false;
@@ -314,10 +321,16 @@
 </script>
 
 {#snippet outsideTheRoadMap(run: PlanRunDetail)}
-  {#if run.failure_reason === UNREACHABLE && roadMapArea}
+  {#if run.failure_reason === UNREACHABLE}
     <p>
-      No road reaches these from your other stops. The planner's road map covers {roadMapArea};
-      places outside it can't be planned. Remove them or move them inside the area.
+      No road reaches these from your other stops.
+      {#if roadMapRegions.length > 0}
+        The planner's road map covers {joinedNames(roadMapRegions)}; places outside it can't be
+        planned.
+      {:else}
+        Places outside the planner's road map can't be planned.
+      {/if}
+      Remove them or move them inside the area.
     </p>
   {/if}
 {/snippet}
