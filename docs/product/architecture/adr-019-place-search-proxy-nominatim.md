@@ -29,3 +29,5 @@ Accepted (slice 12c DESIGN, D307, 2026-11-26). Owner named the service and its p
 - Positive: the policy is met in one place; the switch is a setting; the page can state the credit and what leaves the house.
 - Negative: the planner container makes outbound HTTPS calls (the first non-engine ones, with ADR-020's catalogue); an operator's block of our User-Agent ends the feature until the setting changes; the 1-second spacing makes a second concurrent user wait.
 - Enforced by: the adapter's own limiter test with a fake clock; import-linter keeps `httpx` out of `application` and `domain`; `adapters.geocoding` is in the adapter-independence contract.
+
+**As built (step 13-30, 2026-11-27).** Built as designed: the proxy keeps one search a second, 24 h in memory, 60 s calm after a busy answer. Deviation: the acceptance scenario for the one-second spacing waits about 1 s on the real clock; the adapter's own limiter test uses a fake clock. Blocks in CI with slice 12c (fake place search in job 7).

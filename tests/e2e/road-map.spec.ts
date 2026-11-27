@@ -1,7 +1,7 @@
 // Slice 12c the planner knows its map (US-27 to US-31): the @ui scenarios of
 // tests/acceptance/overland_route_planner_mvp/slice-12c-the-planner-knows-its-map.feature, one test per scenario, named
-// after it (DISTILL D312). Every test is `test.fixme` until the DELIVER step that builds its behaviour turns it into
-// `test` and writes its body (the Gherkin lines are kept in each body as the plan); CI job 7 skips them, so it stays green.
+// after it (DISTILL D312). Every test runs in CI job 7 on chromium and webkit-iphone14 (step 13-30); the Gherkin
+// lines are kept in each body as the plan.
 //
 // Runs in CI job 7 on chromium (Desktop Chrome; 1440 x 900 set per test with `page.setViewportSize`) and
 // webkit-iphone14 (390 px) against the packaged planner on PLANNER_URL, which plans on the offline road map, as

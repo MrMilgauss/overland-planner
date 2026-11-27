@@ -7074,3 +7074,67 @@ Steps 12-01 to 12-07, one commit each: 12-01 the planner names the light base ma
 **Deviations.** 12-02: the Terrain button uses `rgb()` literals as a map control (tokens test green); its pressed look was unreadable on real tiles and the light credit showed twice, both fixed in 12-04; prettier rewrote the quote style of run-map.spec.ts. 12-03: a place added on the map takes the page back to Build the trip (needed by the unchanged slice-09 map-click check). 12-04: the Objective select's two vitest cases became the "Plan for" switch; phone-itinerary.spec.ts reads the itinerary's Objective line; the "Included" badge was dropped and "Left out" restored for excluded items in 12-05; a webkit zoom flake (12.95 against >= 13) was seen once and passed 3 of 3 after. 12-05: a comment in planState.ts still says Details comes in 12-05 (refactor); PlanPanel.test.ts keeps "Plan run #N" checks as run-identity checks. 12-06: the retrace scenario's RED was not seen (run cut short); PlanPanel.svelte and its test were added to the step's files; scenario step numbers use the real 3-stop run; a rate limit interrupted the step twice. Track shapes before a plan show only their ends (D288). 12-03 and 12-06 each ran against a cut-short RED (12-03: 2 of 10 new tests seen RED).
 
 **12-07.** `@pending` removed from the feature's tag line (that line only); `--run-pending=slice-12b` added to PENDING_FLAGS; a pin proves both and that no `test.fixme` is left in trip-workflow.spec.ts (RED before the edit, GREEN after). The 2 `@driving_port` scenarios now block in CI job 2 (1.6 s locally for the two); the Playwright tests of trip-workflow.spec.ts in job 7 (33 per project) are part of a 1.3 min local run of both projects, 79 passed and 47 skipped for the one-width tests. The screenshots test (`slice-12b-screenshots.spec.ts`, local only, real tiles) saves 36 images under `.data/e2e/slice-12b/`. The CI mutation job stays manual (D238); DoD 4 and 5 are the orchestrator's.
+
+## Wave: DELIVER / [REF] Slice 12c (2026-11-27)
+
+Steps 13-01 to 13-30, one commit each (hash after the step name). Gates not yet run are listed at the end.
+
+| Step | What | Commit |
+|---|---|---|
+| 13-01 | Outline and coverage (domain), poly parser | `bb657ce` |
+| 13-02 | Region choice, refusals, estimate | `0e43b86` |
+| 13-03 | Served map, tileset reader, `GET /api/road-map` | `ffa7f99` |
+| 13-04 | Trip coverage (groups of stops) | `dcd6430` |
+| 13-05 | An in-map item sits in one group | `76eaaa6` |
+| 13-06 | Place-search setting, the plan sentence names the regions | `3ed6753` |
+| 13-07 | Geofabrik catalogue and region search | `ba2768f` |
+| 13-08 | Preview of a road-map change | `6e501c3` |
+| 13-09 | Queue and cancel a change | `07bb0a2` |
+| 13-10 | One change at a time, one rebuild a day | `6d02fd9` |
+| 13-11 | Helper heartbeat, progress, planning paused | `9e47a94` |
+| 13-12 | Result of a rebuild in plain words | `5dc9554` |
+| 13-13 | Place search through the planner | `b756cd8` |
+| 13-14 | One search a second, remembered, calm after busy | `4b33a29` |
+| 13-15 | Refresh rebuilds from a list of regions | `fbec94e` |
+| 13-16 | Refresh writes the record of the regions | `638e435` |
+| 13-17 | Refresh reports its steps | `fabb894` |
+| 13-18 | Helper installed as one timed job | `5ae8677` |
+| 13-19 | Deploy installs the helper, purge removes it | `6520411` |
+| 13-20 | Runner takes and validates a request | `bce67be` |
+| 13-21 | Runner retries, records results, recovers | `f512ed9`, fix `c1d3195` |
+| 13-22 | Coverage box, outside tag | `2287dfa`, fix `b83d7f7` |
+| 13-23 | Outside places and land groups warned | `55d910e` |
+| 13-24 | Place search from the Add menu | `74d7286` |
+| 13-25 | Road map screen | `624bdf6` |
+| 13-26 | Size, time and start of a change | `af201d5` |
+| 13-27 | Rebuild, cancel, refresh | `ebd2935` |
+| 13-28 | Progress, planning paused | `4a3909d`, fix `e4c11b3` |
+| 13-29 | Result of a rebuild everywhere | `0fbd458` |
+| 13-30 | Slice blocking in CI, docs as built | this commit |
+
+**D290 rows, done in the step that caused them.** 13-26 only: the Add-menu list of `trip-workflow.spec.ts` (line 308, now 4 entries, because the place-search entry joined the menu in 13-24). No other slice-12 or 12b check changed; the 13-30 slice-02 phone check is run on its own.
+
+**Deviations.**
+
+| Where | What |
+|---|---|
+| 13-15 | Production script written before its RED test (RED evidence taken by stashing); `test_compose_contract.py` edited outside the step's file list. |
+| 13-14 | The "a second apart" scenario waits about 1 s on the real clock. |
+| 13-21 | Seam bug found by the orchestrator: a done `result.txt` lacked the new tileset name, so the planner never showed done. Fixed in `c1d3195`. |
+| 13-22 | Coverage took 14 s per call; fixed to 0.05 s in `b83d7f7` (bbox prefilter, land groups computed once, one view per tileset). |
+| 13-24 | CI webkit failure of a 13-22 test fixed. One webkit flake seen ("A place inside the map shows no warning"), passed on rerun. |
+| 13-26 | Add-menu list of `trip-workflow.spec.ts` fixed (4 entries). The preview does not refuse `too_big`, only the POST does; the page compares sizes. |
+| 13-27, 13-28 | Planned text first used date words; "tonight 02:00" fixed in 13-28. |
+| 13-27, 13-28 | Webkit "click has no effect" flake (Add form, row menu) under load: waits added, not proven fixed; CI job 7 is the check. |
+| 13-28 | The "Plan the route" button of an out-of-date route card is not disabled while planning is paused (the planner still refuses). |
+| 13-20 | `bad_request` has no plain sentence of its own; the generic sentence shows. |
+| 13-21 | A leftover `.routing.env.orig` after an interrupted rebuild is logged only, not recovered: a DELIVER check (D314), deferred. |
+| ADRs | Accepted PINs that moved with their code: `progress.txt` carries `build_started_at` (13-11 ruling, built in 13-17); a done `result.txt` carries `tileset=` (`c1d3195`); the preview's `too_big` as above. Scenario placement followed the step that builds each behaviour, not always the roadmap's. |
+| Edits outside file lists | `test_compose_contract.py` (13-15), `api.ts` types (13-28), `trip-workflow.spec.ts` (13-26). |
+| Unrelated flake | `test_mock_routing_provider.py` Hypothesis deadline (277 ms against 200 ms) once under load, passed on retry. |
+| Mac limits | Disk about 340 MB free: no full local suite, no `make e2e-local`; webkit checked only in CI job 7. |
+| Risk | The 8 GB memory limit is above the 6.4 GB at which the 9 GB build cap was measured (D314); the gate rebuild does not cover it. |
+
+**13-30.** `@pending` removed from the feature's tag line (that line only); `--run-pending=slice-12c` in PENDING_FLAGS; pins in `tests/ci/test_ci_workflow.py` prove the tag line, the flag, the comment, no `test.fixme` in `road-map.spec.ts` and that job 7 runs the whole folder on both projects (RED before the edit, GREEN after). The 90 scenarios block in job 2 and the 36 `@ui` tests per project in job 7. Added CI time: to be measured at the gate (last green main run before this step: job 2 1,062 s, job 7 344 s, run at `9ba8ea9`).
+
+**Still to run (not done here):** refactor, adversarial review, mutation (`make mutate`, >= 80 %), deploy, the Pi gate (one real "Refresh map data" and one forced failure, D313 Q1) and the owner's cold-start check.

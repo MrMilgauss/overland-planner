@@ -1,10 +1,9 @@
 """pytest-bdd binding: the slice 12c scenarios checked at the HTTP API, with the real driven adapters, and on the
 shell scripts (US-27 to US-30; D299-D311, DISTILL D312).
 
-The feature is `@slice-12c @pending`: `uv run pytest` skips every scenario here; `--run-pending=slice-12c` runs them
-(RED until DELIVER). DELIVER adds `--run-pending=slice-12c` to PENDING_FLAGS (.github/workflows/ci.yml) in its last
-step and removes `@pending`, as slices 12 and 12b. The `@ui` scenarios are checked by tests/e2e/road-map.spec.ts
-(Playwright, CI job 7) and are not bound here.
+The feature is `@slice-12c` and blocks in CI: step 13-30 added `--run-pending=slice-12c` to PENDING_FLAGS
+(.github/workflows/ci.yml) and removed `@pending`, as slices 12 and 12b. The `@ui` scenarios are checked by
+tests/e2e/road-map.spec.ts (Playwright, CI job 7) and are not bound here.
 
 Layers: `@driving_port` scenarios run the real app from the composition root in-process; `@real-io @adapter-
 integration` add the real driven adapter against real I/O (two local fake servers that record each request, real

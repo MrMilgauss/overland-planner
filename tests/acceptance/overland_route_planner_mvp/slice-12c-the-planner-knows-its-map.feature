@@ -28,7 +28,7 @@
 # Region sizes are the fixture's: today's eight regions are 6.4 GB, Portugal 0.4 GB, Utah 1.1 GB, North America 14 GB.
 # "Today" is 28 November 2026 at 21:00 UTC and the served map was built on 27 November 2026, unless a scenario says so.
 
-@slice-12c @pending
+@slice-12c
 Feature: The planner knows its map
   As the owner, Marco and Giulia, we want to choose which regions have roads, see when the road map was built and
   whether a rebuild worked, be told before we plan that a place is outside the map, and find a place by its name,
