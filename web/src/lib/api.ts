@@ -348,11 +348,29 @@ export function readMapConfig(): Promise<MapConfig> {
 
 /** The regions the engine serves, by name; `known` is false when the planner cannot tell (GET /api/road-map). */
 export interface ServedRoadMap {
-  served: { known: boolean; regions: { name: string }[] };
+  served: { known: boolean; map_date: string | null; regions: { name: string }[] };
 }
 
 export function readRoadMap(): Promise<ServedRoadMap> {
   return call('/api/road-map', {}, 'Could not read the road map.');
+}
+
+/** A trip judged against the served map (GET /api/projects/{id}/coverage): `outside_item_ids` lie outside the loaded
+ * regions, and `known` is false when the planner cannot tell (then regions and outside items are empty). */
+export interface TripCoverage {
+  known: boolean;
+  map_date: string | null;
+  regions: string[];
+  outside_item_ids: string[];
+  groups: { regions: string[]; item_ids: string[] }[];
+}
+
+export function readCoverage(projectId: string): Promise<TripCoverage> {
+  return call(
+    `/api/projects/${encodeURIComponent(projectId)}/coverage`,
+    {},
+    'Could not read the map coverage.',
+  );
 }
 
 /** The lines and markers of a ready run, in the planner's own words when it refuses (a Failed run has no route). */

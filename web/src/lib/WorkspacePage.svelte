@@ -3,6 +3,7 @@
   // trails with its Add menu (upload GPX trails, click on the map, type coordinates), Start and End from a place's row
   // menu, and the "Plan for" switch. Every refusal of the planner is shown with its own message, verbatim.
   import AddMenu from './AddMenu.svelte';
+  import CoverageBox, { joinedNames } from './CoverageBox.svelte';
   import PlanPanel from './PlanPanel.svelte';
   import TripList from './TripList.svelte';
   import TripMap from './TripMap.svelte';
@@ -12,6 +13,8 @@
     importTracks,
     listItems,
     openProject,
+    readCoverage,
+    readRoadMap,
     removeItem,
     setAnchors,
     setObjective,
@@ -19,6 +22,7 @@
     type Objective,
     type Item,
     type Project,
+    type TripCoverage,
   } from './api';
 
   let { projectId }: { projectId: string } = $props();
@@ -33,6 +37,12 @@
   let shownRunIsEstimate = $state(false); // its roads are the offline road map: the map's chip says so
   let selectedStop = $state<number | undefined>(); // the itinerary step or the map's number marker picked, on the shown run
   let planning = $state(false); // the panel is on Planning: the trip is read-only
+  let coverage = $state<TripCoverage | undefined>(); // undefined until read; unreadable counts as unknown, never as a guess
+  let servedNames = $state<string[]>([]); // the loaded regions in the road map's own order (the coverage lists them by name)
+  let coverageRead = $state(false);
+  let outsideWarned: string[] = []; // the items already known to be outside: only a new one is warned about
+  let warnings = $state<{ id: string; text: string }[]>([]);
+  let coverageReads = 0;
   let stage = $state<HTMLElement | undefined>();
   let panel = $state<{ reload: () => Promise<void>; edit: () => void } | undefined>();
 
@@ -46,6 +56,43 @@
     items = await listItems(projectId);
   }
 
+  const outsideIds = $derived(coverage?.known ? coverage.outside_item_ids : []);
+
+  /** The trip's coverage, read after every change of it and never blocking: a failure is an unknown map. With `warn`, an
+   * item that has become outside since the last reading is warned about once (each warning can be dismissed). */
+  async function readCoverageOfTrip(warn: boolean): Promise<void> {
+    const mine = ++coverageReads;
+    const [read, served] = await Promise.all([
+      readCoverage(projectId).catch(() => undefined),
+      readRoadMap().catch(() => undefined),
+    ]);
+    if (mine !== coverageReads) return; // a later reading is on its way or done
+    coverage = read;
+    servedNames = served?.served.known ? served.served.regions.map((r) => r.name) : [];
+    coverageRead = true;
+    const outside = read?.known ? read.outside_item_ids : [];
+    if (warn && read?.known) {
+      const where = joinedNames(servedNames.length ? servedNames : read.regions);
+      const fresh = outside.filter((id) => !outsideWarned.includes(id));
+      warnings = [
+        ...warnings,
+        ...fresh.flatMap((id) => {
+          const item = items.find((i) => i.id === id);
+          return item
+            ? [
+                {
+                  id,
+                  text: `${item.name} is outside the planner's road map (${where}). It is kept, but it can't be planned unless its region is added on the Road map screen`,
+                },
+              ]
+            : [];
+        }),
+      ];
+    }
+    outsideWarned = outside;
+    warnings = warnings.filter((w) => outside.includes(w.id));
+  }
+
   /** A step pressed: the map goes to the stop and, on a phone where the map is above the list, comes into view. */
   function stepPressed(stop: number): void {
     selectedStop = stop;
@@ -56,6 +103,7 @@
   /** The trip changed: its list and the panel's runs (the shown route may be out of date now) are read again. */
   async function changed(): Promise<void> {
     await refresh();
+    await readCoverageOfTrip(true);
     await panel?.reload();
   }
 
@@ -75,6 +123,7 @@
     try {
       project = await openProject(projectId);
       await refresh();
+      await readCoverageOfTrip(false);
     } catch (error) {
       problem = failureText(error);
     }
@@ -110,7 +159,8 @@
 
   /** A place added on the map changes the project: the item list and the panel's runs (now Stale) are read again. */
   async function placeAddedOnMap(): Promise<void> {
-    void refresh();
+    await refresh();
+    await readCoverageOfTrip(true);
     panel?.edit();
     await panel?.reload();
   }
@@ -174,7 +224,22 @@
 {/snippet}
 
 {#snippet build()}
-  <TripList {items} onanchors={chooseStartAndEnd} onremove={removeFromTrip}>
+  {#each warnings as warning (warning.id)}
+    <div class="warning" role="alert">
+      <span>{warning.text}</span>
+      <button type="button" onclick={() => (warnings = warnings.filter((w) => w.id !== warning.id))}
+        >Dismiss</button
+      >
+    </div>
+  {/each}
+  {#if coverageRead}
+    <CoverageBox
+      known={coverage?.known ?? false}
+      regions={servedNames.length ? servedNames : (coverage?.regions ?? [])}
+      mapDate={coverage?.map_date ?? null}
+    />
+  {/if}
+  <TripList {items} {outsideIds} onanchors={chooseStartAndEnd} onremove={removeFromTrip}>
     <AddMenu onupload={upload} onplace={typedPlace} onclickmap={() => (clickMode = true)} />
   </TripList>
   <div class="switch" role="group" aria-label="Plan for">
@@ -209,6 +274,20 @@
   .summary {
     margin: 0;
     color: var(--color-text-muted);
+  }
+  .warning {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--color-warning-fg);
+    border-radius: var(--radius-md);
+    background: var(--color-warning-bg);
+    color: var(--color-warning-fg);
+  }
+  .warning span {
+    flex: 1 1 12rem;
   }
   .switch {
     display: flex;

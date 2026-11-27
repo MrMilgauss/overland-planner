@@ -290,3 +290,22 @@ describe('Trip list', () => {
     expect(within(row('Casa Marco, Torino')).queryByText('Left out')).not.toBeInTheDocument();
   });
 });
+
+describe('Trip list: outside the road map', () => {
+  it.each([
+    { case: 'a place outside', outsideIds: ['Chefchaouen'], tagged: ['Chefchaouen'] },
+    { case: 'a trail outside', outsideIds: ['t1'], tagged: [assietta.name] },
+    { case: 'nothing outside (inside, or the map unknown)', outsideIds: [], tagged: [] },
+  ])('$case: only those rows carry the tag, and every row stays', ({ outsideIds, tagged }) => {
+    render(TripList, {
+      props: { items: [poi('Chefchaouen'), poi('Cadaques'), assietta], outsideIds },
+    });
+
+    const rows = screen.getAllByRole('listitem');
+    expect(rows).toHaveLength(3);
+    const withTag = rows
+      .filter((li) => within(li).queryByText('Outside road map') !== null)
+      .map((li) => li.querySelector('.name')?.textContent);
+    expect(withTag).toEqual(tagged);
+  });
+});

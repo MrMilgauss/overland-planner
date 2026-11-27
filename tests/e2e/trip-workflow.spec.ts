@@ -176,6 +176,10 @@ test("A project without a route opens on Build the trip", async ({
   await expect(
     panel.getByRole("button", { name: "Plan the route" }),
   ).toHaveClass(/primary/);
+  // The coverage box (slice 12c, US-28 S1, D290 row): the regions and the map date, or "Map coverage unknown".
+  await expect(
+    panel.getByText(/^(Roads loaded for: |Map coverage unknown)/),
+  ).toBeVisible();
   await expect(page.getByRole("list", { name: "Itinerary" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Export GPX" })).toHaveCount(0);
   await expect(page.getByText("Route ready")).toHaveCount(0);

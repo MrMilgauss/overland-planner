@@ -49,9 +49,10 @@ function place(id: string, name: string, anchor: Item['anchor'] = null): Item {
 }
 
 /** A planner whose item list is `items`; `replies` answers the write calls by "METHOD path". */
-function stubPlanner(items: Item[][], replies: Record<string, Reply> = {}): Call[] {
+function stubPlanner(items: Item[][], replies: Record<string, Reply | Reply[]> = {}): Call[] {
   const calls: Call[] = [];
   let itemReads = 0;
+  const served: Record<string, number> = {};
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -59,8 +60,11 @@ function stubPlanner(items: Item[][], replies: Record<string, Reply> = {}): Call
       calls.push({ method, url, body: init.body });
       const key = `${method} ${url}`;
       let reply: Reply;
-      if (key in replies) reply = replies[key];
-      else if (key === 'GET /api/projects/p1') reply = { status: 200, body: PROJECT };
+      if (key in replies) {
+        const given = replies[key];
+        const at = (served[key] = (served[key] ?? -1) + 1); // a list answers in turn, the last one stays
+        reply = Array.isArray(given) ? given[Math.min(at, given.length - 1)] : given;
+      } else if (key === 'GET /api/projects/p1') reply = { status: 200, body: PROJECT };
       else if (key === 'GET /api/projects/p1/items') {
         reply = { status: 200, body: items[Math.min(itemReads, items.length - 1)] };
         itemReads += 1;
@@ -500,4 +504,84 @@ describe('Workspace page: a stop selected on the itinerary or on the map (D286)'
       }
     },
   );
+});
+
+// US-28: the coverage of the trip is read after every change of it; what lies outside is tagged, and warned once when it
+// became outside; a map the page cannot read invents nothing.
+const REGIONS = ['Italy', 'Spain'];
+const covered = (outside: string[], known = true): Reply => ({
+  status: 200,
+  body: {
+    known,
+    map_date: '2026-11-27T12:00:00Z',
+    regions: known ? REGIONS : [],
+    outside_item_ids: outside,
+    groups: [],
+  },
+});
+const coverageReads = (calls: Call[]): number =>
+  calls.filter((c) => c.method === 'GET' && c.url === '/api/projects/p1/coverage').length;
+const WARNING =
+  "Chefchaouen is outside the planner's road map (Italy and Spain). It is kept, but it can't be planned unless its region is added on the Road map screen";
+
+describe('Workspace page: coverage', () => {
+  it('shows the box on opening, with no alert for what was outside before', async () => {
+    stubPlanner([[place('i1', 'Chefchaouen')]], {
+      'GET /api/projects/p1/coverage': {
+        ...covered(['i1']),
+        body: { ...(covered(['i1']).body as object), regions: ['Spain', 'Italy'] }, // by name
+      },
+      'GET /api/road-map': {
+        status: 200,
+        body: {
+          served: { known: true, map_date: null, regions: [{ name: 'Italy' }, { name: 'Spain' }] },
+        },
+      },
+    });
+
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    // the road map's own order, not the coverage's
+    expect(await screen.findByText('Roads loaded for: Italy and Spain')).toBeInTheDocument();
+    expect(screen.getByText('Map data: 27 November 2026')).toBeInTheDocument();
+    expect(screen.getByText('Outside road map')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('reads the coverage again after a change and warns once for the item that became outside, dismissibly', async () => {
+    const calls = stubPlanner([[], [place('i1', 'Chefchaouen')]], {
+      'GET /api/projects/p1/coverage': [covered([]), covered(['i1'])],
+      'POST /api/projects/p1/pois': { status: 201, body: place('i1', 'Chefchaouen') },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await screen.findByText('Roads loaded for: Italy and Spain');
+    expect(coverageReads(calls)).toBe(1);
+
+    await typeAPlace('Chefchaouen', '35.1688', '-5.2636');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(WARNING);
+    expect(screen.getByText('Outside road map')).toBeInTheDocument();
+    expect(coverageReads(calls)).toBe(2);
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Outside road map')).toBeInTheDocument();
+  });
+
+  it.each([
+    { case: 'a map without a record', reply: covered(['i1'], false) },
+    {
+      case: 'a coverage the page cannot read',
+      reply: { status: 500, body: { code: 'x', message: 'no' } },
+    },
+  ])('$case: says "Map coverage unknown" at most, no list, no tag, no alert', async ({ reply }) => {
+    stubPlanner([[place('i1', 'Chefchaouen')]], { 'GET /api/projects/p1/coverage': reply });
+
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await itemNamed('Chefchaouen');
+
+    expect(await screen.findByText('Map coverage unknown')).toBeInTheDocument();
+    expect(screen.queryByText(/Roads loaded for/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Outside road map')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

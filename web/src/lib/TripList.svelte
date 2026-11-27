@@ -12,12 +12,15 @@
   let {
     items,
     readonly = false,
+    outsideIds = [],
     onanchors,
     onremove,
     children,
   }: {
     items: Item[];
     readonly?: boolean;
+    /** The items outside the planner's road map (tagged, and kept); empty while the map is unknown. */
+    outsideIds?: string[];
     /** The anchors call with both ids; true once the planner has taken it. */
     onanchors?: (startId: string, endId: string) => Promise<boolean>;
     /** Takes the item off the trip and reads the trip again; rejects with the planner's refusal. */
@@ -130,6 +133,7 @@
         <span class="name">{item.name}</span>
         <span class="type">{TYPE_LABELS[item.type]}</span>
         {#if !item.included}<span class="left-out">Left out</span>{/if}
+        {#if outsideIds.includes(item.id)}<span class="outside">Outside road map</span>{/if}
         {#each tagsOf(item) as tag (tag.text)}
           <span class="tag">{tag.text}</span>
           {#if tag.unsaved}<span class="unsaved">not saved yet</span>{/if}
@@ -214,6 +218,15 @@
     border-radius: var(--radius-sm);
     background: var(--color-info-bg);
     color: var(--color-info-fg);
+    font-size: var(--text-sm);
+    font-weight: 700;
+  }
+  .outside {
+    padding: 0.1rem var(--space-2);
+    border: 1px solid var(--color-warning-fg);
+    border-radius: var(--radius-sm);
+    background: var(--color-warning-bg);
+    color: var(--color-warning-fg);
     font-size: var(--text-sm);
     font-weight: 700;
   }

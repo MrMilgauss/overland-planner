@@ -18,7 +18,14 @@
 //    planner's `/api/road-map/catalogue` and `/api/places/search` (policy waiver W4: read the real answer once, the
 //    handler only fulfills it);
 //  - "typed without pressing Search sends nothing" is read from the request log of that local server, never from a timer.
-import { test } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
+import { serveTheBaseMap } from "./blankTile";
 
 const AT_LAPTOP = { width: 1440, height: 900 };
 const AT_PHONE = { width: 390, height: 844 };
@@ -26,6 +33,86 @@ const AT_PHONE = { width: 390, height: 844 };
 // Referenced by the bodies DELIVER writes; kept so the widths are decided once.
 void AT_LAPTOP;
 void AT_PHONE;
+
+// W4 without a race (as trip-workflow.spec.ts): the planner's real answer is read once now, changed, and every later GET
+// matching `pattern` is fulfilled with that copy; the handler never fetches.
+async function answerWith<T>(
+  page: Page,
+  pattern: RegExp,
+  address: string,
+  change: (real: T) => T,
+): Promise<void> {
+  const real = (await (await page.request.get(address)).json()) as T;
+  const rewritten = change(real);
+  await page.route(pattern, (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ json: rewritten })
+      : route.continue(),
+  );
+}
+
+interface Served {
+  served: { known: boolean; regions: { name: string }[] };
+}
+interface Coverage {
+  known: boolean;
+  regions: string[];
+  outside_item_ids: string[];
+}
+
+const tripList = (page: Page): Locator =>
+  page.getByRole("list", { name: "Your trip" });
+
+// The served map's regions, as the planner names them, joined with commas and "and" as the page does.
+async function servedRegions(page: Page): Promise<string> {
+  const { served } = (await (
+    await page.request.get("/api/road-map")
+  ).json()) as Served;
+  const names = served.regions.map((region) => region.name);
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+async function newProject(
+  page: Page,
+  testInfo: TestInfo,
+  label = "Spagna test",
+): Promise<void> {
+  const name = `${label} (${testInfo.project.name} ${Date.now()})`;
+  await page.goto("/");
+  await page.getByLabel("Project name").fill(name);
+  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+}
+
+async function addPlaceOnTheForm(
+  page: Page,
+  name: string,
+  lat: string,
+  lon: string,
+): Promise<void> {
+  const before = await tripList(page).getByRole("listitem").count();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Type coordinates" }).click();
+  const form = page.getByRole("form", { name: "Type coordinates" });
+  await form.getByLabel("Name").fill(name);
+  await form.getByLabel("Latitude").fill(lat);
+  await form.getByLabel("Longitude").fill(lon);
+  await form.getByRole("button", { name: "Add" }).click();
+  await expect(tripList(page).getByRole("listitem")).toHaveCount(before + 1);
+}
+
+// A short trail on the Algarve (Portugal): its entry and exit are both outside the eight regions.
+const ALGARVE_GPX = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="slice-12c-test" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>algarve</name><trkseg>${[
+  [37.1, -8.6],
+  [37.12, -8.57],
+  [37.14, -8.54],
+  [37.16, -8.5],
+]
+  .map(([lat, lon]) => `<trkpt lat="${lat}" lon="${lon}"></trkpt>`)
+  .join("")}</trkseg></trk></gpx>`;
+
+const projectIdOf = (url: string): string =>
+  decodeURIComponent(/#\/projects\/([^/]+)$/.exec(url)![1]);
 
 // @US-27 @ui
 test.fixme("The Road map screen shows what is loaded", async ({ page }) => {
@@ -82,26 +169,65 @@ test.fixme("Too big is refused with the size", async ({ page }) => {
 });
 
 // @US-28 @ui
-test.fixme("Build the trip shows the regions and the map date", async ({
+test("Build the trip shows the regions and the map date", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given after a rebuild from the app the served map has the eight regions, with map data of 27 November 2026
+  const regions = await servedRegions(page);
   // When Marco opens "Alpi Occidentali giugno 2027" on Build the trip
+  await newProject(page, testInfo, "Alpi Occidentali giugno 2027");
   // Then he sees "Roads loaded for" with those eight names and "Map data: 27 November 2026"
+  const panel = page.getByRole("region", { name: "Build the trip" });
+  await expect(panel).toContainText(`Roads loaded for: ${regions}`);
+  await expect(panel).toContainText("Map data: 27 November 2026");
   // And neither is inside "Details"
+  await expect(page.locator("details")).toHaveCount(0);
   // And on a 390 px wide iPhone both are shown in full width text with no horizontal scroll
+  await page.setViewportSize(AT_PHONE);
+  await expect(panel).toContainText(`Roads loaded for: ${regions}`);
+  await expect(panel).toContainText("Map data: 27 November 2026");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
 });
 
 // @US-28 @ui @edge
-test.fixme("A trail outside the map is warned at add time and on its row, and kept", async ({
+test("A trail outside the map is warned at add time and on its row, and kept", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given Marco is building "Spagna test"
+  const regions = await servedRegions(page);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
   // When he uploads "algarve.gpx", a trail in Portugal
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Upload GPX trails" }).click();
+  await (
+    await chooser
+  ).setFiles({
+    name: "algarve.gpx",
+    mimeType: "application/gpx+xml",
+    buffer: Buffer.from(ALGARVE_GPX),
+  });
   // Then the page says "algarve" is outside the planner's road map and names the regions loaded
+  await expect(page.getByRole("alert")).toContainText(
+    `algarve is outside the planner's road map (${regions})`,
+  );
   // And the trail stays in the list with an "Outside road map" tag on its row
+  const row = tripList(page)
+    .getByRole("listitem")
+    .filter({ hasText: "algarve" });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Outside road map");
 });
 
 // @US-28 @ui @edge
@@ -125,11 +251,19 @@ test.fixme("A place outside the map is warned when added by typed coordinates", 
 });
 
 // @US-28 @ui
-test.fixme("A place inside the map shows no warning", async ({ page }) => {
+test("A place inside the map shows no warning", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the loaded regions include Spain, as after a rebuild from the app
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toContainText("Spain");
   // When Marco adds "Cadaques" at 42.2889, 3.2776
+  await addPlaceOnTheForm(page, "Cadaques", "42.2889", "3.2776");
   // Then no warning is shown, at add time or on its row
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Outside road map")).toHaveCount(0);
 });
 
 // @US-28 @ui @error
@@ -144,14 +278,30 @@ test.fixme("Planning is not blocked by an outside item and says why it fails", a
 });
 
 // @US-28 @ui @error @edge
-test.fixme("Without knowledge of the loaded map the page does not invent warnings", async ({
+test("Without knowledge of the loaded map the page does not invent warnings", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the served map was built on 26 November 2026, before the app kept its regions, or the page cannot read them
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  await answerWith<Coverage>(
+    page,
+    /\/api\/projects\/[^/]+\/coverage$/,
+    `/api/projects/${encodeURIComponent(projectIdOf(page.url()))}/coverage`,
+    (real) => ({ ...real, known: false, regions: [], outside_item_ids: [] }),
+  );
   // When Marco adds "Chefchaouen"
+  await addPlaceOnTheForm(page, "Chefchaouen", "35.1688", "-5.2636");
   // Then the page says "Map coverage unknown" with the map date and shows no "Roads loaded for" list
+  await expect(page.getByText("Map coverage unknown")).toBeVisible();
+  await expect(page.getByText("Map data: 27 November 2026")).toBeVisible();
+  await expect(page.getByText("Roads loaded for")).toHaveCount(0);
   // And it shows no outside-the-map warning or tag for any item
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Outside road map")).toHaveCount(0);
 });
 
 // @US-28 @ui @edge

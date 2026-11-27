@@ -37,6 +37,7 @@ Feature: The planner follows the trip
     Then the page shows the phase "Build the trip" with one list holding "Strada dell'Assietta" and "Torino"
     And the status reads "No plan yet"
     And the only main action is "Plan the route"
+    And the coverage box (slice 12c, US-28 S1) shows "Roads loaded for" and "Map data", or "Map coverage unknown" when the map is not known
     And no summary card, itinerary, "Export GPX" or "Details" is shown
 
   # trip-workflow.spec.ts: "Every way to add a stop is in one Add control and lands in the one list" (chromium; real).
