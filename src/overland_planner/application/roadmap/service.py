@@ -23,6 +23,7 @@ from overland_planner.application.ports.road_map_changes import (
     STEPS,
     ChangeRequest,
     ChangesUnavailableError,
+    RebuildProgress,
     RebuildResult,
     RequestedRegion,
     RoadMapChanges,
@@ -282,11 +283,17 @@ class RoadMapService:
         held = tuple(sorted(region.key for region in self.served().regions))
         return held or SEED_REGION_KEYS
 
+    def _keys_or_refresh(self, region_keys: Sequence[str] | None) -> Sequence[str]:
+        return self.refresh_keys() if region_keys is None else region_keys
+
+    def _tileset_names(self) -> list[str]:
+        return [entry.name for entry in self._store.listing().entries]
+
     def preview_change(self, region_keys: Sequence[str] | None) -> ChangeSummary:
         """The summary of making the map hold exactly these regions; writes nothing. Only the border of a region not
         served is fetched, and only the size of a region not served is asked. Raises `Refusal` for a region unknown
         or overlapping another, `CatalogueUnavailableError` when the list, a size or a border cannot be had."""
-        return self._summary(self._choose(self.refresh_keys() if region_keys is None else region_keys))
+        return self._summary(self._choose(self._keys_or_refresh(region_keys)))
 
     def plan_change(self, region_keys: Sequence[str] | None, start_at: datetime | None = None) -> ChangeSummary:
         """Keep the change ready for the helper and answer with its summary; the served map is left as it is (no keys:
@@ -303,11 +310,11 @@ class RoadMapService:
         if changes.waiting():
             raise Refusal("change_pending", "A change is already planned: apply or cancel it before planning another")
         now = clock.now()
-        chosen = self._choose(self.refresh_keys() if region_keys is None else region_keys)
+        chosen = self._choose(self._keys_or_refresh(region_keys))
         chosen.choice.check_size(self._max_gb)
         if start_at is not None:
             check_start_window(start_at, now)
-        check_same_day(now if start_at is None else start_at, [entry.name for entry in self._store.listing().entries])
+        check_same_day(now if start_at is None else start_at, self._tileset_names())
         request = self._request(chosen, start_at, now)
         summary = self._summary(chosen)
         changes.queue(request, [ref.name for ref in summary.added], [ref.name for ref in summary.removed])
@@ -330,6 +337,11 @@ class RoadMapService:
         planned = self._told_against_served(request)
         if not self._changes.running():
             return planned
+        return self._as_running(planned, request, progress)
+
+    @staticmethod
+    def _as_running(planned: PlannedChange, request: ChangeRequest, progress: RebuildProgress | None) -> PlannedChange:
+        """The change as the helper is rebuilding it: its step, and when planning is back if the engine is stopped."""
         paused = progress is not None and progress.step in PAUSED_STEPS
         back = None
         if progress is not None and paused:
@@ -415,7 +427,7 @@ class RoadMapService:
         if self._clock is None:
             return None
         try:
-            check_same_day(self._clock.now(), [entry.name for entry in self._store.listing().entries])
+            check_same_day(self._clock.now(), self._tileset_names())
         except Refusal as refused:
             when = refused.details.get("next_rebuild_from")
             return when if isinstance(when, datetime) else None
