@@ -108,7 +108,7 @@ class ChangeQueueDir:
         try:
             step, step_at = values["step"], int(values["step_at"])
             started = values.get("build_started_at")
-            build_started_at = None if started is None else datetime.fromtimestamp(int(started), UTC)
+            build_started_at = None if started is None else _instant(started)
             return (
                 RebuildProgress(step, datetime.fromtimestamp(step_at, UTC), build_started_at) if step in STEPS else None
             )
@@ -206,16 +206,24 @@ def _result_of(text: str) -> RebuildResult | None:
         request = None
     return RebuildResult(
         state=state,
-        finished_at=datetime.fromtimestamp(int(values["finished_at"]), UTC),
+        finished_at=_instant(values["finished_at"]),
         code=code,
-        free_gb=None if numbers["free_gb"] is None else int(numbers["free_gb"]),
-        need_gb=None if numbers["need_gb"] is None else int(numbers["need_gb"]),
-        have_gb=None if numbers["have_gb"] is None else int(numbers["have_gb"]),
+        free_gb=_optional_int(numbers["free_gb"]),
+        need_gb=_optional_int(numbers["need_gb"]),
+        have_gb=_optional_int(numbers["have_gb"]),
         tileset=tileset,
         request=request,
         added=_names_of(values.get("added")),
         removed=_names_of(values.get("removed")),
     )
+
+
+def _instant(epoch_seconds: str) -> datetime:
+    return datetime.fromtimestamp(int(epoch_seconds), UTC)
+
+
+def _optional_int(text: str | None) -> int | None:
+    return None if text is None else int(text)
 
 
 def _names_of(line: str | None) -> tuple[str, ...]:
@@ -268,8 +276,8 @@ def _request_of(text: str) -> ChangeRequest:
     start = values.get("start_at")
     regions = tuple(_region_of(line.split("=", 1)[1]) for line in lines if line.startswith("region="))
     return ChangeRequest(
-        requested_at=datetime.fromtimestamp(int(values["requested_at"]), UTC),
-        start_at=None if start is None else datetime.fromtimestamp(int(start), UTC),
+        requested_at=_instant(values["requested_at"]),
+        start_at=None if start is None else _instant(start),
         regions=regions,
     )
 

@@ -22,10 +22,11 @@ export function pendingKeys(loaded: string[], removed: string[], added: string[]
   return [...loaded.filter((key) => !removed.includes(key)), ...added];
 }
 
+const minutesText = (count: number): string => `${count} minute${count === 1 ? '' : 's'}`;
+
 /** "about 58 minutes in all, of which about 41 without planning": the planner's figures, only worded. */
 export function estimateText(totalMinutes: number, pauseMinutes: number): string {
-  const minutes = (count: number): string => `${count} minute${count === 1 ? '' : 's'}`;
-  return `about ${minutes(totalMinutes)} in all, of which about ${pauseMinutes} without planning`;
+  return `about ${minutesText(totalMinutes)} in all, of which about ${pauseMinutes} without planning`;
 }
 
 /** The refusal of a download above the limit, with both figures. */
@@ -141,7 +142,7 @@ export function stepMarks(
 export function remainingText(step: string | null, backAt: string | null, now: number): string {
   if (step !== 'building' || backAt === null) return '';
   const minutes = Math.max(1, Math.ceil((Date.parse(backAt) - now) / 60_000));
-  return `about ${minutes} minute${minutes === 1 ? '' : 's'} left`;
+  return `about ${minutesText(minutes)} left`;
 }
 
 /** The one line while planning is paused (D309), in the browser's time. */
