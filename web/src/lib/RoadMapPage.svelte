@@ -4,17 +4,20 @@
   // pending choice held here: the served list is never touched until a rebuild ends well. The preview of the choice
   // gives its size and time (the summary), and a choice above the planner's limit is refused in words and not kept.
   import {
+    cancelChange,
     failureText,
+    planChange,
     previewChange,
     readRoadMap,
     type CatalogueRegion,
     type ChangePreview,
+    type RoadMapChange,
     type RoadMapLimits,
     type ServedRoadMap,
   } from './api';
   import ChangeSummary from './ChangeSummary.svelte';
   import RegionSearch from './RegionSearch.svelte';
-  import { mapDateText, pendingKeys, sizeText, tooBigText } from './roadMapView';
+  import { mapDateText, pendingKeys, plannedText, sizeText, tooBigText } from './roadMapView';
 
   let served = $state<ServedRoadMap['served'] | undefined>();
   let failure = $state('');
@@ -24,15 +27,36 @@
   let limits = $state<RoadMapLimits | undefined>();
   let piOffset = $state(0);
   let refusal = $state('');
+  let planned = $state<RoadMapChange | undefined>();
+  let cancelRefusal = $state('');
+  let refreshing = $state(false);
+  let startAt: string | null = null;
   let asked = 0;
 
-  readRoadMap().then(
-    (answer) => {
-      served = answer.served;
-      limits = answer.limits;
-      piOffset = answer.server_utc_offset_minutes;
-    },
-    (error: unknown) => (failure = failureText(error)),
+  function read(): Promise<void> {
+    return readRoadMap().then(
+      (answer) => {
+        served = answer.served;
+        limits = answer.limits;
+        piOffset = answer.server_utc_offset_minutes;
+        planned = ['planned', 'running'].includes(answer.change.state) ? answer.change : undefined;
+      },
+      (error: unknown) => {
+        failure = failureText(error);
+      },
+    );
+  }
+  read();
+
+  // Why no change is offered: the planner says so (no folder for changes, or a helper not seen for five minutes).
+  const unavailable = $derived(
+    !limits
+      ? ''
+      : !limits.changes_available
+        ? "Changing the road map isn't available right now"
+        : !limits.rebuilds_set_up
+          ? "Rebuilds aren't set up on the Pi yet"
+          : '',
   );
 
   const addedKeys = $derived(added.map((region) => region.key));
@@ -40,12 +64,13 @@
   async function check(keys: string[], undo: () => void): Promise<void> {
     const mine = ++asked;
     refusal = '';
-    if (removed.length === 0 && added.length === 0) {
+    if (removed.length === 0 && added.length === 0 && !refreshing) {
       summary = undefined;
+      startAt = null;
       return;
     }
     try {
-      const preview = await previewChange(keys);
+      const preview = await previewChange(refreshing && keys.length === 0 ? undefined : keys);
       if (mine !== asked) return;
       if (limits && preview.total_bytes > limits.max_bytes) {
         refusal = tooBigText(preview.total_bytes, limits.max_gb);
@@ -86,6 +111,48 @@
     change(() => (added = before));
   }
 
+  // "Refresh map data": the same regions again, asked and shown as a change made by hand.
+  function refresh(): void {
+    refreshing = true;
+    check([], () => (refreshing = false));
+  }
+
+  function dropRefresh(): void {
+    refreshing = false;
+    summary = undefined;
+    refusal = '';
+  }
+
+  // Only the planner knows whether this change may be kept; its refusal is shown as it words it.
+  async function rebuild(): Promise<void> {
+    refusal = '';
+    const asRefresh = refreshing && removed.length === 0 && added.length === 0;
+    const keys = pendingKeys(served?.regions.map((r) => r.key) ?? [], removed, addedKeys);
+    try {
+      await planChange(asRefresh ? undefined : keys, startAt ?? undefined);
+    } catch (error) {
+      refusal = failureText(error);
+      return;
+    }
+    removed = [];
+    added = [];
+    refreshing = false;
+    summary = undefined;
+    startAt = null;
+    cancelRefusal = '';
+    await read();
+  }
+
+  async function cancel(): Promise<void> {
+    cancelRefusal = '';
+    try {
+      await cancelChange();
+    } catch (error) {
+      cancelRefusal = failureText(error);
+    }
+    await read();
+  }
+
   const where = (name: string, parent: string | null, bytes: number | null): string =>
     [name, parent, sizeText(bytes)].filter((part) => part !== null && part !== '').join(', ');
 </script>
@@ -106,15 +173,20 @@
           <li>
             <span class="where">{where(region.name, region.parent_name, region.bytes)}</span>
             {#if going}<span class="tag">to be removed</span>{/if}
-            <button
-              type="button"
-              aria-label={`${going ? 'Keep' : 'Remove'} ${region.name}`}
-              onclick={() => toggleRemoval(region.key)}>{going ? 'Keep' : 'Remove'}</button
-            >
+            {#if !unavailable}
+              <button
+                type="button"
+                aria-label={`${going ? 'Keep' : 'Remove'} ${region.name}`}
+                onclick={() => toggleRemoval(region.key)}>{going ? 'Keep' : 'Remove'}</button
+              >
+            {/if}
           </li>
         {/each}
       </ul>
       <p>Total: {sizeText(served.total_bytes)}</p>
+      {#if !unavailable}
+        <button type="button" onclick={refresh}>Refresh map data</button>
+      {/if}
     </section>
   {:else}
     <section aria-label="What is loaded">
@@ -123,15 +195,42 @@
         The map was built before the app kept the regions of a map, so they cannot be listed.
         Refreshing the map data builds the same regions again.
       </p>
-      <button type="button" disabled>Refresh map data</button>
+      {#if !unavailable}
+        <button type="button" onclick={refresh}>Refresh map data</button>
+      {/if}
     </section>
   {/if}
   {#if served.map_date}
     <p>Map data: {mapDateText(served.map_date)}</p>
   {/if}
 
-  {#if served.known}
-    {#if added.length > 0}
+  {#if unavailable}
+    <p role="status">{unavailable}</p>
+  {/if}
+  {#if planned}
+    <section aria-label="Planned rebuild">
+      {#if planned.state === 'running'}
+        <p>The rebuild has started</p>
+      {:else}
+        <p>{plannedText(planned.start_at, piOffset)}</p>
+        <button type="button" onclick={cancel}>Cancel</button>
+      {/if}
+      {#if cancelRefusal}
+        <p role="alert">{cancelRefusal}</p>
+      {/if}
+    </section>
+  {/if}
+
+  {#if !unavailable}
+    {#if refreshing}
+      <section aria-label="Refresh">
+        <p>
+          The map data of the same regions is fetched again.
+          <button type="button" onclick={dropRefresh}>Don't refresh</button>
+        </p>
+      </section>
+    {/if}
+    {#if served.known && added.length > 0}
       <section aria-label="Changes to apply">
         <h2>Pending changes</h2>
         <ul aria-label="Pending changes">
@@ -150,15 +249,23 @@
       </section>
     {/if}
     {#if summary && limits}
-      <ChangeSummary {summary} {limits} serverOffsetMinutes={piOffset} choose={() => {}} />
+      <ChangeSummary
+        {summary}
+        {limits}
+        serverOffsetMinutes={piOffset}
+        choose={(chosen) => (startAt = chosen)}
+        {rebuild}
+      />
     {/if}
     {#if refusal}
       <p role="alert">{refusal}</p>
     {/if}
-    <section aria-label="Find a region">
-      <h2>Add a region</h2>
-      <RegionSearch chosen={addedKeys} add={addRegion} />
-    </section>
+    {#if served.known}
+      <section aria-label="Find a region">
+        <h2>Add a region</h2>
+        <RegionSearch chosen={addedKeys} add={addRegion} />
+      </section>
+    {/if}
   {/if}
 {/if}
 
@@ -190,6 +297,13 @@
     background: var(--color-warning-bg);
     color: var(--color-warning-fg);
     font-size: var(--text-sm);
+  }
+  section[aria-label='Planned rebuild'] {
+    margin: var(--space-4) 0;
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
   }
   .muted {
     color: var(--color-text-muted);

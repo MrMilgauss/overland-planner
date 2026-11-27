@@ -65,3 +65,15 @@ export function startAtUtc(typed: string): string | null {
   const moment = new Date(typed);
   return typed === '' || Number.isNaN(moment.getTime()) ? null : moment.toISOString();
 }
+
+/** What a change waiting for the helper says: a start now (or already due) waits for the helper's next look, within a
+ * minute; a later one says when, in Marco's time. */
+export function plannedText(
+  startAt: string | null,
+  piOffsetMinutes: number,
+  now: number = Date.now(),
+  timeZone?: string,
+): string {
+  if (startAt === null || Date.parse(startAt) <= now) return 'Waiting to start within a minute';
+  return `Rebuild planned for ${whenText(startAt, piOffsetMinutes, timeZone)}`;
+}

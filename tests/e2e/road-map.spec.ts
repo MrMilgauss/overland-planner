@@ -25,6 +25,8 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { serveTheBaseMap } from "./blankTile";
 
 const AT_LAPTOP = { width: 1440, height: 900 };
@@ -143,6 +145,117 @@ const loaded = (page: Page): Locator =>
 
 // Marco is in Milan: the times of the screen are read in the browser's own zone.
 test.use({ timezoneId: "Europe/Rome" });
+
+// The helper's folder (ROAD_MAP_CHANGES_DIR of the planner): a fresh "helper-seen" is the helper being set up, and a real
+// POST writes request.txt there. Both projects run at the same time against the one planner and the one folder, so only
+// the tests that really write a change run on chromium (`needsTheFolder`), which leaves the folder as it found it;
+// "helper-seen" is written before each test and never removed (the helper's absence is set with `answerWith`).
+const CHANGES_DIR = join(process.env.ROAD_MAP_FIXTURE_DIR ?? "", "changes");
+const WRITTEN = ["request.txt", "cancelled.txt", "running.txt"];
+test.beforeEach(() => {
+  writeFileSync(join(CHANGES_DIR, "helper-seen"), "");
+});
+test.afterEach(({}, testInfo) => {
+  if (testInfo.project.name !== "chromium") return;
+  for (const note of WRITTEN) rmSync(join(CHANGES_DIR, note), { force: true });
+});
+const needsTheFolder = (testInfo: TestInfo): void =>
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "writes a real change into the folder both projects share",
+  );
+
+// A start time for the real planner that never depends on today's date: five days ahead (the planner takes two minutes
+// to fourteen days) at 02:00 in Milan, as the "datetime-local" field holds it, so never on the fixture map's day.
+function fiveDaysAhead(): string {
+  const day = new Date(Date.now() + 5 * 86_400_000).toLocaleDateString(
+    "sv-SE",
+    { timeZone: "Europe/Rome" },
+  );
+  return `${day}T02:00`;
+}
+
+const planned = (page: Page): Locator =>
+  page.getByRole("region", { name: "Planned rebuild" });
+
+// Marco picks a start time in the summary and presses "Rebuild road map".
+async function rebuildAt(page: Page, typed: string): Promise<void> {
+  const summary = page.getByRole("region", { name: "Size and time" });
+  await summary.getByRole("radio", { name: "Start at a time" }).check();
+  await summary.getByLabel("Start time").fill(typed);
+  await summary.getByRole("button", { name: "Rebuild road map" }).click();
+}
+
+interface Real {
+  served: { regions: { key: string }[] };
+  change: Record<string, unknown>;
+  limits: Record<string, unknown>;
+}
+
+// The real planner with a real change in the folder, except that the UTC day has no map yet whatever date the run
+// happens on (the fixture map is dated 27 November 2026 and today's day would refuse the choice of a start). Unlike
+// `answerWith`, the handler reads the planner's answer afresh for every GET, because the change it must show is the one
+// this test's own real POST has just written; it still only fulfills with that answer, changed in one field.
+async function dayHasNoMap(page: Page): Promise<void> {
+  await page.route(/\/api\/road-map$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const real = (await (
+      await page.request.get("/api/road-map")
+    ).json()) as Real;
+    return route.fulfill({
+      json: { ...real, limits: { ...real.limits, next_rebuild_from: null } },
+    });
+  });
+}
+
+// For a plan that must not reach the folder (the fixture's map is dated 27 November 2026, and the planner refuses a
+// same-day rebuild with "now" on that very day): the planner's real answers are read once (the road map, the cost of
+// adding Portugal), the planner's POST is fulfilled with that cost and from then on the road map shows the plan.
+// Returns what the browser sent.
+async function planOnPaper(
+  page: Page,
+  piOffsetMinutes: number,
+): Promise<{ start_at?: string | null; region_keys?: string[] }[]> {
+  const real = (await (await page.request.get("/api/road-map")).json()) as Real;
+  const found = (await (
+    await page.request.get("/api/road-map/catalogue?q=Portugal")
+  ).json()) as { results: { key: string; name: string }[] };
+  const portugal = found.results.find((r) => r.name === "Portugal")!.key;
+  const cost = await (
+    await page.request.post("/api/road-map/change/preview", {
+      data: {
+        region_keys: [...real.served.regions.map((r) => r.key), portugal],
+      },
+    })
+  ).json();
+  let change = real.change;
+  const sent: { start_at?: string | null; region_keys?: string[] }[] = [];
+  await page.route(/\/api\/road-map$/, (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: {
+            ...real,
+            change,
+            limits: { ...real.limits, next_rebuild_from: null },
+            server_utc_offset_minutes: piOffsetMinutes,
+          },
+        })
+      : route.continue(),
+  );
+  await page.route(/\/api\/road-map\/change$/, (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const body = route.request().postDataJSON();
+    sent.push(body);
+    change = {
+      state: "planned",
+      start_at: body.start_at ?? null,
+      added: cost.added,
+      removed: [],
+    };
+    return route.fulfill({ status: 201, json: cost });
+  });
+  return sent;
+}
 
 interface RoadMapAnswer {
   limits: { next_rebuild_from: string | null };
@@ -981,7 +1094,7 @@ test.fixme("A rebuild interrupted by a power cut ends with the old map served", 
 // @US-31 @ui
 test("Marco picks now or a start time", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
-  await answerRoadMapWith(page, null, 60);
+  const sent = await planOnPaper(page, 60);
   // Given a pending change adds Portugal
   await openTheRoadMap(page);
   await addRegion(page, "Portugal", "Portugal");
@@ -993,17 +1106,18 @@ test("Marco picks now or a start time", async ({ page }) => {
     summary.getByRole("radio", { name: "Start at a time" }),
   ).not.toBeChecked();
   await expect(summary.getByLabel("Start time")).toBeHidden();
-  // Then the rebuild is offered to start now (waiting to start within a minute is step 13-27, which sends the plan)
-  await expect(
-    summary.getByRole("button", { name: "Rebuild road map" }),
-  ).toBeVisible();
+  await summary.getByRole("button", { name: "Rebuild road map" }).click();
+  // Then the rebuild is waiting to start within a minute (the plan was sent without a start time)
+  await expect(planned(page)).toContainText("Waiting to start within a minute");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].start_at ?? null).toBeNull();
 });
 
 // @US-31 @ui
 test("Marco picks a start time", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
   // The planner's clock is on UTC while Marco's browser is on Milan time
-  await answerRoadMapWith(page, null, 0);
+  const sent = await planOnPaper(page, 0);
   // Given a pending change adds Portugal
   await openTheRoadMap(page);
   await addRegion(page, "Portugal", "Portugal");
@@ -1015,51 +1129,107 @@ test("Marco picks a start time", async ({ page }) => {
   await expect(summary).toContainText(
     "Rebuild at 02:00 on 2 December (Pi time)",
   );
-  // (the sentence "Rebuild planned for tonight 02:00" is the planned state of step 13-27)
+  await summary.getByRole("button", { name: "Rebuild road map" }).click();
+  // And, once planned, says "Rebuild planned for" that time; the planner got it as UTC
+  await expect(planned(page)).toContainText(
+    "Rebuild planned for 02:00 on 2 December (Pi time)",
+  );
+  expect(sent.map((p) => p.start_at)).toEqual(["2030-12-02T01:00:00.000Z"]);
 });
 
 // @US-31 @ui @edge
-test.fixme("A planned rebuild can be cancelled until it starts", async ({
-  page,
-}) => {
+test("A planned rebuild can be cancelled until it starts", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given a rebuild is planned for tonight 02:00
+  await dayHasNoMap(page);
+  // Given a rebuild is planned for tonight 02:00 (here five days ahead, so the real planner takes it on any date)
+  await openTheRoadMap(page);
+  await addRegion(page, "Portugal", "Portugal");
+  await rebuildAt(page, fiveDaysAhead());
+  await expect(planned(page)).toContainText("Rebuild planned for 02:00");
   // When Marco cancels it at 22:00
+  await planned(page).getByRole("button", { name: "Cancel" }).click();
   // Then nothing is pending and the loaded regions and map date are unchanged
+  await expect(planned(page)).toHaveCount(0);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await expect(page.getByText("Map data: 27 November 2026")).toBeVisible();
 });
 
 // @US-31 @ui @edge @error
-test.fixme("A rebuild cannot be cancelled once it has started", async ({
-  page,
-}) => {
+test("A rebuild cannot be cancelled once it has started", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given a rebuild has just started at 02:00
+  // Given a rebuild has just started at 02:00 (the page still shows it as planned; the planner has no change waiting,
+  // as after the helper took it, and refuses the cancel)
+  await answerWith<Real>(page, /\/api\/road-map$/, "/api/road-map", (real) => ({
+    ...real,
+    change: {
+      state: "planned",
+      start_at: "2030-12-02T01:00:00Z",
+      added: [],
+      removed: [],
+    },
+  }));
+  await openTheRoadMap(page);
   // When Marco presses "Cancel" at 02:01
+  await planned(page).getByRole("button", { name: "Cancel" }).click();
   // Then the screen says it has already started and the rebuild goes on
+  await expect(page.getByRole("alert")).toContainText("already started");
+  await expect(planned(page)).toContainText("Rebuild planned for");
 });
 
 // @US-31 @ui @edge @error
-test.fixme("Refresh map data is the same workflow", async ({ page }) => {
+test("Refresh map data is the same workflow", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
+  await dayHasNoMap(page);
   // Given the road map has the eight regions and Marco is on the "Road map" screen
+  await openTheRoadMap(page);
+  const total = (await page.getByText(/^Total: /).innerText()).replace(
+    "Total: ",
+    "",
+  );
   // When he presses "Refresh map data" with the same regions
+  await page.getByRole("button", { name: "Refresh map data" }).click();
   // Then the screen shows its size and time and offers "Rebuild now" or a start time
+  const summary = page.getByRole("region", { name: "Size and time" });
+  await expect(summary).toContainText(`Total download ${total}`);
+  await expect(summary).toContainText("Estimate");
+  await expect(
+    summary.getByRole("radio", { name: "Rebuild now" }),
+  ).toBeVisible();
+  await expect(
+    summary.getByRole("radio", { name: "Start at a time" }),
+  ).toBeVisible();
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
 });
 
 // @US-31 @ui @edge @error
-test.fixme("While a change is pending or running a second change is refused", async ({
+test("While a change is pending or running a second change is refused", async ({
   page,
-}) => {
+}, testInfo) => {
+  needsTheFolder(testInfo);
   await page.setViewportSize(AT_LAPTOP);
+  await dayHasNoMap(page);
   // Given a refresh of the map data is pending
+  await openTheRoadMap(page);
+  await page.getByRole("button", { name: "Refresh map data" }).click();
+  await rebuildAt(page, fiveDaysAhead());
+  await expect(planned(page)).toContainText("Rebuild planned for 02:00");
   // When Marco tries to add another region
+  await addRegion(page, "Portugal", "Portugal");
+  await rebuildAt(page, fiveDaysAhead());
   // Then the second change is refused until the first is applied or cancelled
+  await expect(page.getByRole("alert")).toContainText(
+    "A change is already planned: apply or cancel it before planning another",
+  );
+  await expect(
+    planned(page).getByRole("button", { name: "Cancel" }),
+  ).toBeVisible();
 });
 
 // @US-31 @ui @edge @error
 test("One rebuild a day, counted by the kept map, with the next time shown", async ({
   page,
-}) => {
+}, testInfo) => {
+  needsTheFolder(testInfo);
   await page.setViewportSize(AT_LAPTOP);
   // Given a rebuild ended well on 27 November 2026 UTC and Marco is in Milan (the Pi's clock is on Milan time too)
   await answerRoadMapWith(page, "2026-11-28T00:00:00Z", 60);
@@ -1081,12 +1251,28 @@ test("One rebuild a day, counted by the kept map, with the next time shown", asy
 });
 
 // @US-31 @ui @error
-test.fixme("Without the helper the screen says rebuilds are not set up", async ({
+test("Without the helper the screen says rebuilds are not set up", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given the helper is not installed on the Pi
+  // Given the helper is not installed on the Pi (the planner says it never looked at the changes folder)
+  await answerWith<Real>(page, /\/api\/road-map$/, "/api/road-map", (real) => ({
+    ...real,
+    limits: { ...real.limits, rebuilds_set_up: false, helper_seen_at: null },
+  }));
   // When Marco opens "Road map" and tries to apply a change
+  await openTheRoadMap(page);
   // Then the screen says rebuilds are not set up on the Pi and refuses the change
+  await expect(
+    page.getByText("Rebuilds aren't set up on the Pi yet"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh map data" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Region name")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Remove / })).toHaveCount(0);
   // And the loaded regions and the page's other functions are unchanged
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await header(page).getByRole("link", { name: "Projects" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 });

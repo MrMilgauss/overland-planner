@@ -27,7 +27,28 @@ const UTAH = {
   bytes: 1_100_000_000,
   in_map: false,
 };
-const LIMITS = { max_gb: 8, max_bytes: 8_000_000_000, next_rebuild_from: null };
+const LIMITS = {
+  max_gb: 8,
+  max_bytes: 8_000_000_000,
+  next_rebuild_from: null,
+  changes_available: true,
+  rebuilds_set_up: true,
+  helper_seen_at: '2026-11-27T12:00:00Z',
+};
+const NO_CHANGE = { state: 'none', start_at: null, added: [], removed: [] };
+const PLANNED = {
+  state: 'planned',
+  start_at: null,
+  added: [{ key: 'us/utah', name: 'Utah' }],
+  removed: [],
+};
+type Answer = { status: number; body?: unknown };
+interface World {
+  change?: unknown;
+  limits?: unknown;
+  posted?: Answer;
+  cancelled?: Answer;
+}
 const SUMMARY = {
   added: [{ key: 'us/utah', name: 'Utah' }],
   removed: [],
@@ -43,18 +64,37 @@ function plan(
     status: 200,
     body: { ...SUMMARY, not_linked_note: null },
   },
+  world: World = {},
 ) {
-  const calls: { url: string; body?: string }[] = [];
+  const calls: { url: string; method?: string; body?: string }[] = [];
+  let change = world.change ?? NO_CHANGE;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push({ url, body: init?.body as string | undefined });
+      calls.push({ url, method: init?.method, body: init?.body as string | undefined });
       if (url === '/api/road-map')
         return new Response(
-          JSON.stringify({ served, limits: LIMITS, server_utc_offset_minutes: 60 }),
+          JSON.stringify({
+            served,
+            change,
+            limits: world.limits ?? LIMITS,
+            server_utc_offset_minutes: 60,
+          }),
         );
       if (url.startsWith('/api/road-map/catalogue'))
         return new Response(JSON.stringify({ results: [UTAH] }));
+      if (url === '/api/road-map/change' && init?.method === 'DELETE') {
+        const answer = world.cancelled ?? { status: 204 };
+        if (answer.status === 204) change = NO_CHANGE;
+        return new Response(answer.status === 204 ? null : JSON.stringify(answer.body), {
+          status: answer.status,
+        });
+      }
+      if (url === '/api/road-map/change') {
+        const answer = world.posted ?? { status: 201, body: { ...SUMMARY, not_linked_note: null } };
+        if (answer.status === 201) change = PLANNED;
+        return new Response(JSON.stringify(answer.body), { status: answer.status });
+      }
       return new Response(JSON.stringify(preview.body), { status: preview.status });
     }),
   );
@@ -181,5 +221,133 @@ describe('Road map page', () => {
     );
     expect(screen.queryByRole('list', { name: 'Pending changes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Rebuild road map' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['none', { ...NO_CHANGE }, []],
+    ['cancelled', { ...NO_CHANGE, state: 'cancelled' }, []],
+    ['planned now', { ...PLANNED }, ['Waiting to start within a minute', 'Cancel']],
+    [
+      'planned later',
+      { ...PLANNED, start_at: '2030-12-02T01:00:00Z' },
+      ['Rebuild planned for', 'Cancel'],
+    ],
+    ['running', { ...PLANNED, state: 'running' }, ['The rebuild has started']],
+  ])('tells a %s change', async (_state, change, words) => {
+    plan(SERVED, undefined, { change });
+    render(RoadMapPage);
+    await loaded();
+
+    const section = screen.queryByRole('region', { name: 'Planned rebuild' });
+
+    if (words.length === 0) expect(section).not.toBeInTheDocument();
+    for (const word of words) expect(section).toHaveTextContent(word);
+    expect(!!screen.queryByRole('button', { name: 'Cancel' })).toBe(words.includes('Cancel'));
+  });
+
+  it.each([
+    [{ ...LIMITS, rebuilds_set_up: false }, "Rebuilds aren't set up on the Pi yet"],
+    [{ ...LIMITS, changes_available: false }, "Changing the road map isn't available right now"],
+  ])('says changes are not possible and offers none (%#)', async (limits, words) => {
+    plan(SERVED, undefined, { limits });
+    render(RoadMapPage);
+    const list = await loaded();
+
+    expect(screen.getByText(words)).toBeVisible();
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+    expect(
+      screen.queryByRole('button', { name: /Remove|Refresh map data/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Region name')).not.toBeInTheDocument();
+  });
+
+  it('cancels a planned change and shows the served map as before', async () => {
+    const calls = plan(SERVED, undefined, { change: PLANNED });
+    render(RoadMapPage);
+    await loaded();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await vi.waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Planned rebuild' })).not.toBeInTheDocument(),
+    );
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(true);
+    expect(screen.getByText('Total: 2.9 GB')).toBeVisible();
+  });
+
+  it('says in the planner’s words that a started change cannot be cancelled, and keeps it', async () => {
+    plan(SERVED, undefined, {
+      change: PLANNED,
+      cancelled: { status: 409, body: { message: 'The rebuild has already started' } },
+    });
+    render(RoadMapPage);
+    await loaded();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The rebuild has already started');
+    expect(screen.getByRole('region', { name: 'Planned rebuild' })).toBeVisible();
+  });
+
+  it('sends the chosen regions and the start time as UTC, then shows the plan', async () => {
+    const calls = plan(SERVED);
+    render(RoadMapPage);
+    await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Austria' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Start at a time' }));
+    await fireEvent.input(screen.getByLabelText('Start time'), {
+      target: { value: '2030-12-02T02:00' },
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Rebuild road map' }));
+
+    const sent = await vi.waitFor(() => {
+      const post = calls.find((c) => c.url === '/api/road-map/change' && c.method === 'POST');
+      expect(post).toBeDefined();
+      return JSON.parse(post!.body!);
+    });
+    expect(sent).toEqual({
+      region_keys: ['italy'],
+      start_at: new Date('2030-12-02T02:00').toISOString(),
+    });
+    expect(await screen.findByRole('region', { name: 'Planned rebuild' })).toBeVisible();
+  });
+
+  it('refreshes the map data as the same workflow: same regions asked, same summary, no region list sent', async () => {
+    const calls = plan(SERVED, {
+      status: 200,
+      body: { ...SUMMARY, added: [], total_bytes: 2_900_000_000 },
+    });
+    render(RoadMapPage);
+    await loaded();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh map data' }));
+
+    expect(await screen.findByText('Total download 2.9 GB')).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Rebuild now' })).toBeVisible();
+    await fireEvent.click(screen.getByRole('button', { name: 'Rebuild road map' }));
+    await vi.waitFor(() =>
+      expect(
+        calls.find((c) => c.url === '/api/road-map/change' && c.method === 'POST'),
+      ).toBeDefined(),
+    );
+    expect(
+      JSON.parse(calls.find((c) => c.url === '/api/road-map/change' && c.method === 'POST')!.body!),
+    ).toEqual({});
+  });
+
+  it('shows the planner’s refusal of a second change in its words', async () => {
+    plan(SERVED, undefined, {
+      change: PLANNED,
+      posted: {
+        status: 409,
+        body: { message: 'A change is already planned: apply or cancel it first' },
+      },
+    });
+    render(RoadMapPage);
+    await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Austria' }));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Rebuild road map' }));
+
+    expect(await screen.findByText(/A change is already planned/)).toBeVisible();
   });
 });

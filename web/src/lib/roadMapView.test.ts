@@ -6,6 +6,7 @@ import {
   estimateText,
   mapDateText,
   pendingKeys,
+  plannedText,
   sizeText,
   startAtUtc,
   tooBigText,
@@ -86,5 +87,14 @@ describe('road map view words', () => {
       if (before === undefined) delete process.env.TZ;
       else process.env.TZ = before;
     }
+  });
+
+  it.each([
+    [null, 'Waiting to start within a minute'],
+    ['2026-11-27T12:00:00Z', 'Waiting to start within a minute'],
+    ['2026-12-02T01:00:00Z', 'Rebuild planned for 02:00 on 2 December'],
+  ])('says a rebuild planned at %s as %s', (startAt, words) => {
+    const now = Date.parse('2026-11-27T13:00:00Z');
+    expect(plannedText(startAt, 60, now, 'Europe/Rome')).toBe(words);
   });
 });

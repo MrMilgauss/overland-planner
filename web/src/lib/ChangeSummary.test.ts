@@ -15,17 +15,26 @@ const SUMMARY: ChangePreview = {
   estimate: { total_minutes: 58, pause_minutes: 41 },
   not_linked_note: null,
 };
-const LIMITS: RoadMapLimits = { max_gb: 8, max_bytes: 8_000_000_000, next_rebuild_from: null };
+const LIMITS: RoadMapLimits = {
+  max_gb: 8,
+  max_bytes: 8_000_000_000,
+  next_rebuild_from: null,
+  changes_available: true,
+  rebuilds_set_up: true,
+  helper_seen_at: null,
+};
 
 function show(overrides: Partial<ChangePreview> = {}, limits = LIMITS, offset = 60) {
   const choose = vi.fn();
+  const rebuild = vi.fn();
   render(ChangeSummary, {
     summary: { ...SUMMARY, ...overrides },
     limits,
     serverOffsetMinutes: offset,
     choose,
+    rebuild,
   });
-  return choose;
+  return Object.assign(choose, { rebuild });
 }
 
 const zone = process.env.TZ;
@@ -83,5 +92,15 @@ describe('Change summary', () => {
       'The next rebuild can start from 01:00 on 28 November.',
     );
     expect(screen.queryByRole('button', { name: 'Rebuild road map' })).not.toBeInTheDocument();
+  });
+
+  it('hands over the rebuild, but not while a start time is chosen and none is typed', async () => {
+    const choose = show();
+    await fireEvent.click(screen.getByRole('button', { name: 'Rebuild road map' }));
+    expect(choose.rebuild).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole('radio', { name: 'Start at a time' }));
+
+    expect(screen.getByRole('button', { name: 'Rebuild road map' })).toBeDisabled();
   });
 });

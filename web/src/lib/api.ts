@@ -393,8 +393,18 @@ export interface ServedRoadMap {
     regions: ServedRegion[];
     total_bytes: number;
   };
+  change: RoadMapChange;
   limits: RoadMapLimits;
   server_utc_offset_minutes: number;
+}
+
+/** The change that waits for the helper or is being built: `state` is none, planned, running, done, failed or
+ * cancelled; `start_at` is null for "now". */
+export interface RoadMapChange {
+  state: string;
+  start_at: string | null;
+  added: { key: string; name: string }[];
+  removed: { key: string; name: string }[];
 }
 
 /** What the planner allows: the download limit, and when the next rebuild may run when today's UTC day has a map. */
@@ -402,6 +412,9 @@ export interface RoadMapLimits {
   max_gb: number;
   max_bytes: number;
   next_rebuild_from: string | null;
+  changes_available: boolean;
+  rebuilds_set_up: boolean;
+  helper_seen_at: string | null;
 }
 
 export function readRoadMap(): Promise<ServedRoadMap> {
@@ -439,13 +452,38 @@ export interface ChangePreview {
   not_linked_note: string | null;
 }
 
-/** The summary of holding exactly these regions (POST /api/road-map/change/preview); nothing is written. */
-export function previewChange(regionKeys: string[]): Promise<ChangePreview> {
+/** The summary of holding exactly these regions (POST /api/road-map/change/preview); nothing is written. No keys is
+ * "Refresh map data": the regions now served. */
+export function previewChange(regionKeys?: string[]): Promise<ChangePreview> {
   return call(
     '/api/road-map/change/preview',
-    json('POST', { region_keys: regionKeys }),
+    json('POST', regionKeys === undefined ? {} : { region_keys: regionKeys }),
     'Could not check this change.',
   );
+}
+
+/** Keeps the change ready for the helper (POST /api/road-map/change): no keys is "Refresh map data", no start time is
+ * "now"; the planner's refusals (a change waiting or running, a day with a map, no helper) keep its words. */
+export function planChange(regionKeys?: string[], startAt?: string): Promise<ChangePreview> {
+  const body = {
+    ...(regionKeys === undefined ? {} : { region_keys: regionKeys }),
+    ...(startAt === undefined ? {} : { start_at: startAt }),
+  };
+  return call('/api/road-map/change', json('POST', body), 'Could not plan this change.');
+}
+
+/** Cancels the planned change (DELETE /api/road-map/change); refused in the planner's words once the helper took it. */
+export async function cancelChange(): Promise<void> {
+  const failure = 'Could not cancel this change.';
+  let response: Response;
+  try {
+    response = await fetch('/api/road-map/change', { method: 'DELETE' });
+  } catch {
+    throw new PlannerError(failure);
+  }
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => undefined);
+  throw new PlannerError(messageFrom(body) ?? failure, response.status);
 }
 
 /** A trip judged against the served map (GET /api/projects/{id}/coverage): `outside_item_ids` lie outside the loaded

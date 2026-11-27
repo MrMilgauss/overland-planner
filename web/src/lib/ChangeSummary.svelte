@@ -1,7 +1,7 @@
 <script lang="ts">
   // What a pending road-map change costs, before it is applied (US-27 S5, US-31 S1, S2, S5): the regions added and
   // removed, the size, the estimate with the part during which planning is paused, a region far from the others as
-  // information only, then the choice of now or a start time. When today's day already has a map the change is refused
+  // information only, then the choice of now or a start time and the rebuild itself. When today's day already has a map the change is refused
   // with the time the next rebuild may start. The planner's figures are only worded here; the choice is handed to the
   // page as the UTC instant, or null for now.
   import type { ChangePreview, RoadMapLimits } from './api';
@@ -12,11 +12,13 @@
     limits,
     serverOffsetMinutes,
     choose,
+    rebuild,
   }: {
     summary: ChangePreview;
     limits: RoadMapLimits;
     serverOffsetMinutes: number;
     choose: (startAt: string | null) => void;
+    rebuild: () => void;
   } = $props();
 
   let later = $state(false);
@@ -74,7 +76,9 @@
         {/if}
       {/if}
     </fieldset>
-    <button type="button" class="primary">Rebuild road map</button>
+    <button type="button" class="primary" disabled={later && startAt === null} onclick={rebuild}
+      >Rebuild road map</button
+    >
   {/if}
 </section>
 
