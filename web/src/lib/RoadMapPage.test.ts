@@ -460,4 +460,83 @@ describe('Road map page', () => {
 
     expect(screen.queryByRole('region', { name: 'Planned rebuild' })).not.toBeInTheDocument();
   });
+
+  describe('the result of a rebuild', () => {
+    const DISK =
+      "The rebuild didn't finish: the Pi has 18 GB of free disk and needs 25 GB. The previous road map is back (map data 27 November 2026); nothing is lost. Your change is kept: free some space and press Rebuild road map again.";
+    const result = (code: string | null, message: string) => ({
+      code,
+      message,
+      finished_at: '2026-11-28T01:56:00Z',
+    });
+    const result_of = () => screen.findByRole('region', { name: 'Rebuild result' });
+
+    it('says a rebuild is done in the planner’s words, beside the regions and date now served', async () => {
+      const message =
+        'Road map rebuilt on 28 November at 02:56. Utah added; 3 regions, map data 28 November 2026.';
+      plan(
+        {
+          ...SERVED,
+          map_date: '2026-11-28T01:00:00Z',
+          regions: [...SERVED.regions, region('us/utah', 'Utah', 1_100_000_000)],
+        },
+        undefined,
+        {
+          change: {
+            state: 'done',
+            start_at: null,
+            added: [],
+            removed: [],
+            result: result(null, message),
+          },
+        },
+      );
+      render(RoadMapPage);
+
+      expect(await result_of()).toHaveTextContent(message);
+      expect(within(await loaded()).getByText('Utah, Europe, 1.1 GB')).toBeVisible();
+      expect(screen.getByText('Map data: 28 November 2026')).toBeVisible();
+      expect(screen.queryByRole('region', { name: 'Planned rebuild' })).not.toBeInTheDocument();
+    });
+
+    it('says why a rebuild failed word for word, keeps the old map, and offers to rebuild the kept change again', async () => {
+      const calls = plan(SERVED, undefined, {
+        change: {
+          state: 'failed',
+          start_at: null,
+          added: [{ key: 'us/utah', name: 'Utah' }],
+          removed: [],
+          result: result('disk', DISK),
+        },
+      });
+      render(RoadMapPage);
+
+      expect(await result_of()).toHaveTextContent(DISK);
+      expect(screen.getByRole('alert')).toHaveTextContent(DISK);
+      expect(screen.queryByText(/\bdisk\b$/)).not.toBeInTheDocument();
+      expect(within(await loaded()).getAllByRole('listitem')).toHaveLength(2);
+      expect(screen.getByText('Map data: 27 November 2026')).toBeVisible();
+      const pending = await screen.findByRole('list', { name: 'Pending changes' });
+      expect(within(pending).getByText(/Utah/)).toBeVisible();
+      await fireEvent.click(await screen.findByRole('button', { name: 'Rebuild road map' }));
+      const sent = calls.find((c) => c.url === '/api/road-map/change' && c.method === 'POST');
+      expect(JSON.parse(sent?.body ?? '{}').region_keys).toEqual(['italy', 'austria', 'us/utah']);
+    });
+
+    it('shows nothing of a cancelled change', async () => {
+      plan(SERVED, undefined, {
+        change: {
+          state: 'cancelled',
+          start_at: null,
+          added: [],
+          removed: [],
+          result: result(null, 'x'),
+        },
+      });
+      render(RoadMapPage);
+      await loaded();
+
+      expect(screen.queryByRole('region', { name: 'Rebuild result' })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -798,4 +798,64 @@ describe('Workspace page while the road map changes', () => {
       vi.useRealTimers();
     }
   });
+
+  it('reads the coverage and the road map once more when the change ends, so the box names the new regions and date', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const running = {
+        state: 'running',
+        step: 'switching',
+        steps_done: 3,
+        start_at: null,
+        added: [],
+        removed: [],
+      };
+      const body = (served: unknown, change: unknown) => ({
+        status: 200,
+        body: {
+          served,
+          change,
+          limits: LIMITS,
+          planning_paused: false,
+          planning_back_at: null,
+          server_utc_offset_minutes: 0,
+        },
+      });
+      const old = { known: true, map_date: '2026-11-27T12:00:00Z', regions: [{ name: 'Italy' }] };
+      stubPlanner([TRIP], {
+        'GET /api/road-map': body(old, running),
+        'GET /api/projects/p1/coverage': covered([]),
+      });
+      render(WorkspacePage, { props: { projectId: 'p1' } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(screen.getByText('Roads loaded for: Italy')).toBeVisible());
+
+      const now = {
+        known: true,
+        map_date: '2026-11-28T01:00:00Z',
+        regions: [{ name: 'Italy' }, { name: 'Portugal' }],
+      };
+      const calls = stubPlanner([TRIP], {
+        'GET /api/projects/p1/coverage': covered([]),
+        'GET /api/road-map': body(now, {
+          state: 'done',
+          start_at: null,
+          added: [],
+          removed: [],
+          result: { code: null, message: 'Road map rebuilt', finished_at: '2026-11-28T01:56:00Z' },
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() =>
+        expect(screen.getByText('Roads loaded for: Italy and Portugal')).toBeVisible(),
+      );
+      expect(screen.getByText('Map data: 28 November 2026')).toBeVisible();
+      const reads = () => calls.filter((c) => c.url === '/api/road-map').length;
+      const before = reads();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads()).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

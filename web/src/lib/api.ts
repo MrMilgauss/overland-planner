@@ -412,6 +412,8 @@ export interface RoadMapChange {
   start_at: string | null;
   added: { key: string; name: string }[];
   removed: { key: string; name: string }[];
+  /** How a rebuild ended (state done or failed): the planner's sentence, shown as it is; `code` is never shown. */
+  result?: { code: string | null; message: string; finished_at: string } | null;
 }
 
 /** What the planner allows: the download limit, and when the next rebuild may run when today's UTC day has a map. */

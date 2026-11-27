@@ -10,6 +10,7 @@ import {
   pendingKeys,
   plannedText,
   remainingText,
+  resultOf,
   sizeText,
   startAtUtc,
   stepMarks,
@@ -159,5 +160,53 @@ describe('road map view words', () => {
     [null, 'The road map is being rebuilt; planning is back when it ends.'],
   ])('says planning is paused until %s', (back, words) => {
     expect(pausedLine(back, 'Europe/Rome')).toBe(words);
+  });
+
+  const DISK =
+    "The rebuild didn't finish: the Pi has 18 GB of free disk and needs 25 GB. The previous road map is back (map data 27 November 2026); nothing is lost. Your change is kept: free some space and press Rebuild road map again.";
+  const MEMORY =
+    "The rebuild didn't finish: the Pi has only 4 GB of memory, too little to rebuild the map. The previous road map is back; nothing is lost.";
+  const POWER =
+    "The rebuild didn't finish: the Pi lost power or restarted during the rebuild. The previous road map is back (map data 27 November 2026); nothing is lost. Your change is kept: press Rebuild road map again.";
+  const GENERIC =
+    "The rebuild didn't finish: something went wrong. The previous road map is back; nothing is lost.";
+  const DONE =
+    'Road map rebuilt on 28 November at 02:56. Portugal added; 9 regions, map data 28 November 2026.';
+  const ended = (state: string, code: string | null, message: string) => ({
+    state,
+    result: { code, message, finished_at: '2026-11-28T01:56:00Z' },
+  });
+
+  it.each([
+    ['done', ended('done', null, DONE), { kind: 'done', text: DONE }],
+    ['failed on disk numbers', ended('failed', 'disk', DISK), { kind: 'failed', text: DISK }],
+    [
+      'failed on memory numbers',
+      ended('failed', 'memory', MEMORY),
+      { kind: 'failed', text: MEMORY },
+    ],
+    [
+      'interrupted by a power cut',
+      ended('failed', 'interrupted', POWER),
+      { kind: 'failed', text: POWER },
+    ],
+    [
+      'failed with a code unknown to the planner',
+      ended('failed', null, GENERIC),
+      { kind: 'failed', text: GENERIC },
+    ],
+    [
+      'failed with no words from the planner',
+      { state: 'failed' },
+      {
+        kind: 'failed',
+        text: "The rebuild didn't finish. The previous road map is back; nothing is lost.",
+      },
+    ],
+    ['cancelled', ended('cancelled', null, 'cancelled'), null],
+    ['no change', { state: 'none' }, null],
+    ['running', { state: 'running' }, null],
+  ])('reads the result of a change that is %s as the planner words it', (_name, change, result) => {
+    expect(resultOf(change)).toEqual(result);
   });
 });

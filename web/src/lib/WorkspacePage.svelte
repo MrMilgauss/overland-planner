@@ -42,6 +42,7 @@
   let selectedStop = $state<number | undefined>(); // the itinerary step or the map's number marker picked, on the shown run
   let planning = $state(false); // the panel is on Planning: the trip is read-only
   let coverage = $state<TripCoverage | undefined>(); // undefined until read; unreadable counts as unknown, never as a guess
+  let servedDate = $state<string | null>(null); // the served map's day: after a rebuild it is the new one
   let servedNames = $state<string[]>([]); // the loaded regions in the road map's own order (the coverage lists them by name)
   let coverageRead = $state(false);
   let placeSearch = $state(false); // the map settings offer "Search for a place"; unreadable counts as not offered
@@ -51,6 +52,7 @@
   let plannedLine = $state(''); // a rebuild of the road map is planned: when, in Marco's time
   let planningPaused = $state(false); // the planner says it is not planning, from the build to the end of the switch
   let planningBackAt = $state<string | null>(null);
+  let rebuildBusy = false; // the last answer had a change planned or running
   let nextRoadMapRead: ReturnType<typeof setTimeout> | undefined;
   let gone = false;
   let stage = $state<HTMLElement | undefined>();
@@ -78,8 +80,15 @@
       answer.change.state === 'planned'
         ? plannedText(answer.change.start_at, answer.server_utc_offset_minutes)
         : '';
-    if (keepsPolling(answer.change.state))
-      nextRoadMapRead = setTimeout(() => void watchRoadMap(), POLL_MS);
+    const busy = keepsPolling(answer.change.state);
+    const over = rebuildBusy && !busy;
+    rebuildBusy = busy;
+    if (busy) nextRoadMapRead = setTimeout(() => void watchRoadMap(), POLL_MS);
+    // The change is over: the map served may be another now, so the coverage, the box and the panel's sentence are read once more.
+    if (over) {
+      await readCoverageOfTrip(false);
+      await panel?.reload();
+    }
   }
 
   const outsideIds = $derived(coverage?.known ? coverage.outside_item_ids : []);
@@ -94,6 +103,7 @@
     ]);
     if (mine !== coverageReads) return; // a later reading is on its way or done
     coverage = read;
+    servedDate = served?.served.map_date ?? null;
     servedNames = served?.served.known ? served.served.regions.map((r) => r.name) : [];
     coverageRead = true;
     const outside = read?.known ? read.outside_item_ids : [];
@@ -268,7 +278,7 @@
     <CoverageBox
       known={coverage?.known ?? false}
       regions={servedNames.length ? servedNames : (coverage?.regions ?? [])}
-      mapDate={coverage?.map_date ?? null}
+      mapDate={servedDate ?? coverage?.map_date ?? null}
       groups={coverage?.known ? coverage.groups : []}
     />
   {/if}

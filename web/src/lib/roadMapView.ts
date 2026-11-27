@@ -150,3 +150,26 @@ export function pausedLine(backAt: string | null, timeZone?: string): string {
     backAt === null ? 'when it ends' : `at about ${clockTime(new Date(backAt), timeZone)}`;
   return `The road map is being rebuilt; planning is back ${back}.`;
 }
+
+export interface ChangeResult {
+  code: string | null;
+  message: string;
+  finished_at: string;
+}
+
+/** How a rebuild ended, as the page shows it: the planner's own sentence verbatim (never a code), or a plain one when
+ * the planner sent none; a change that is not over, or was cancelled, has no result to show. */
+export function resultOf(change: {
+  state: string;
+  result?: ChangeResult | null;
+}): { kind: 'done' | 'failed'; text: string } | null {
+  if (change.state === 'done' && change.result)
+    return { kind: 'done', text: change.result.message };
+  if (change.state !== 'failed') return null;
+  return {
+    kind: 'failed',
+    text:
+      change.result?.message ??
+      "The rebuild didn't finish. The previous road map is back; nothing is lost.",
+  };
+}

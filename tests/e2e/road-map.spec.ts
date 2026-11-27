@@ -1044,7 +1044,7 @@ async function rebuildIsAt(
       step,
       steps_done: STEP_NUMBER[step],
       start_at: null,
-      added: [{ key: "europe/portugal", name: "Portugal" }],
+      added: [{ key: "portugal", name: "Portugal" }],
       removed: [],
     },
     planning_paused: backAt !== null,
@@ -1151,47 +1151,213 @@ test("During the build planning is disabled and the page says until when", async
   await expect(page.getByText("Torino")).toBeVisible();
 });
 
+// What the planner says of a rebuild that ended (the words are its own, as messages.py words them; the page shows them
+// as they are), with the served map as it is after it: the real answer read once, changed, fulfilled (W4).
+interface Rebuilt {
+  served: {
+    map_date: string | null;
+    total_bytes: number;
+    regions: Record<string, unknown>[];
+  };
+  change: Record<string, unknown>;
+}
+const PORTUGAL = { key: "portugal", name: "Portugal" };
+const OLD_DAY = "27 November 2026";
+
+// The planner's answer for the road map, which the test can change later (the page is opened again to read it): every GET
+// is fulfilled with the current copy, none is fetched.
+async function roadMapAnswers(
+  page: Page,
+  offsetMinutes = 60,
+): Promise<{
+  real: Rebuilt;
+  set: (change: (real: Rebuilt) => Rebuilt) => void;
+}> {
+  const real = (await (
+    await page.request.get("/api/road-map")
+  ).json()) as Rebuilt;
+  let current = real;
+  await page.route(/\/api\/road-map$/, (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: {
+            ...current,
+            server_utc_offset_minutes: offsetMinutes,
+            limits: {
+              ...(current as unknown as { limits: object }).limits,
+              next_rebuild_from: null,
+            },
+          },
+        })
+      : route.continue(),
+  );
+  return { real, set: (change) => (current = change(real)) };
+}
+
+// The served map after Portugal was added, on 28 November 2026.
+const withPortugal = (real: Rebuilt): Rebuilt["served"] => ({
+  ...real.served,
+  map_date: "2026-11-28T01:00:00Z",
+  regions: [
+    ...real.served.regions,
+    { ...real.served.regions[0], ...PORTUGAL, parent_name: "Europe" },
+  ],
+});
+const namesOf = (served: Rebuilt["served"]): string[] =>
+  served.regions.map((r) => r.name as string);
+const joined = (names: string[]): string =>
+  `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+const DONE_WORDS =
+  "Road map rebuilt on 28 November at 02:56. Portugal added; 9 regions, map data 28 November 2026.";
+const DISK_WORDS =
+  "The rebuild didn't finish: the Pi has 18 GB of free disk and needs 25 GB. The previous road map is back (map data 27 November 2026); nothing is lost. Your change is kept: free some space and press Rebuild road map again.";
+const POWER_WORDS =
+  "The rebuild didn't finish: the Pi lost power or restarted during the rebuild. The previous road map is back (map data 27 November 2026); nothing is lost. Your change is kept: press Rebuild road map again.";
+
+const ended = (
+  state: "done" | "failed",
+  code: string | null,
+  message: string,
+  finishedAt: string,
+): Rebuilt["change"] => ({
+  state,
+  start_at: null,
+  added: state === "failed" ? [PORTUGAL] : [],
+  removed: [],
+  result: { code, message, finished_at: finishedAt },
+});
+const resultOfTheRebuild = (page: Page): Locator =>
+  page.getByRole("region", { name: "Rebuild result" });
+
 // @US-30 @ui
-test.fixme("A successful rebuild shows the new regions and date everywhere", async ({
+test("A successful rebuild shows the new regions and date everywhere", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given the rebuild ended well
+  await serveTheBaseMap(page, testInfo);
+  // Given the rebuild ended well: the planner serves nine regions with map data of 28 November 2026
+  const { real, set } = await roadMapAnswers(page);
+  set((r) => ({
+    ...r,
+    served: withPortugal(r),
+    change: ended("done", null, DONE_WORDS, "2026-11-28T01:56:00Z"),
+  }));
   // When Marco opens Build the trip
+  await newProject(page, testInfo);
   // Then "Roads loaded for" names the new regions and "Map data" the new date
+  await expect(
+    page.getByText(
+      `Roads loaded for: ${joined([...namesOf(real.served), "Portugal"])}`,
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Map data: 28 November 2026")).toBeVisible();
   // And the "Road map" screen says the rebuild is done
+  await header(page).getByRole("link", { name: "Road map" }).click();
+  await expect(resultOfTheRebuild(page)).toContainText(DONE_WORDS);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(9);
+  await expect(page.getByText("Map data: 28 November 2026")).toBeVisible();
 });
 
 // @US-30 @ui @error
-test.fixme("A failed rebuild brings the old map back and says why", async ({
+test("A failed rebuild brings the old map back and says why", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given the Pi has 18 GB of free disk and the rebuild needs 25 GB
+  const { set } = await roadMapAnswers(page);
+  set((r) => ({
+    ...r,
+    change: ended("failed", "disk", DISK_WORDS, "2026-11-28T01:05:00Z"),
+  }));
+  // and the earlier map serves Marco's trip, planning works
+  await planATrip(page, testInfo);
+  await expect(
+    page.getByRole("button", { name: "Plan the route" }),
+  ).toBeEnabled();
+  await expect(page.getByText("The road map is being rebuilt;")).toHaveCount(0);
   // When Marco opens "Road map"
-  // Then it says the rebuild failed, why, in plain words, and that the change is kept
-  // And the earlier map, its regions and its date are served, and planning works
+  await header(page).getByRole("link", { name: "Road map" }).click();
+  // Then it says the rebuild failed, why, in plain words, and that the change is kept (never a code)
+  await expect(resultOfTheRebuild(page)).toContainText(DISK_WORDS);
+  await expect(resultOfTheRebuild(page)).not.toContainText("disk_full");
+  // And the earlier map, its regions and its date are served, and the change can be rebuilt again
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await expect(page.getByText(`Map data: ${OLD_DAY}`)).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Pending changes" }),
+  ).toContainText("Portugal");
+  await expect(
+    page.getByRole("button", { name: "Rebuild road map" }),
+  ).toBeVisible();
 });
 
 // @US-30 @ui @edge
-test.fixme("A planned rebuild starts at its time and the result is there next morning", async ({
+test("A planned rebuild starts at its time and the result is there next morning", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
-  // Given Marco planned a rebuild for 02:00 and closed the page
-  // When he opens "Road map" on his phone at 08:00
-  // Then it shows the result of the rebuild that began at 02:00 and not before
+  // Given Marco planned a rebuild for 02:00 (tonight, at 21:00 in Milan) and closed the page
+  await page.clock.setFixedTime(Date.parse("2030-12-01T20:00:00Z"));
+  const { set } = await roadMapAnswers(page, 60);
+  set((r) => ({
+    ...r,
+    change: {
+      state: "planned",
+      start_at: "2030-12-02T01:00:00Z",
+      added: [PORTUGAL],
+      removed: [],
+    },
+  }));
+  await openTheRoadMap(page);
+  await expect(planned(page)).toContainText(
+    "Rebuild planned for tonight 02:00",
+  );
+  await expect(resultOfTheRebuild(page)).toHaveCount(0);
+  // When he opens "Road map" on his phone at 08:00, after the rebuild that began at 02:00
+  const message =
+    "Road map rebuilt on 2 December at 02:05. Portugal added; 9 regions, map data 2 December 2030.";
+  set((r) => ({
+    ...r,
+    served: { ...withPortugal(r), map_date: "2030-12-02T01:00:00Z" },
+    change: ended("done", null, message, "2030-12-02T01:05:00Z"),
+  }));
+  await page.clock.setFixedTime(Date.parse("2030-12-02T07:00:00Z"));
+  await page.setViewportSize(AT_PHONE);
+  await openTheRoadMap(page);
+  // Then it shows the result of that rebuild, and the rebuild is no longer waiting
+  await expect(resultOfTheRebuild(page)).toContainText(message);
+  await expect(planned(page)).toHaveCount(0);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(9);
 });
 
 // @US-30 @ui @error @edge
-test.fixme("A rebuild interrupted by a power cut ends with the old map served", async ({
+test("A rebuild interrupted by a power cut ends with the old map served", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
   // Given the rebuild was building when the Pi lost power and the Pi has restarted
+  const { set } = await roadMapAnswers(page);
+  set((r) => ({
+    ...r,
+    change: ended("failed", "interrupted", POWER_WORDS, "2026-11-28T01:30:00Z"),
+  }));
   // When Marco opens "Road map"
+  await openTheRoadMap(page);
   // Then the earlier map is served again and the result says the rebuild was interrupted, with the change kept
-  // And if the switch to the new map had already happened, the result says the rebuild is done and the new regions are shown
+  await expect(resultOfTheRebuild(page)).toContainText(POWER_WORDS);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await expect(page.getByText(`Map data: ${OLD_DAY}`)).toBeVisible();
+  // And if the switch to the new map had already happened, the result says the rebuild is done and the new regions show
+  set((r) => ({
+    ...r,
+    served: withPortugal(r),
+    change: ended("done", null, DONE_WORDS, "2026-11-28T01:56:00Z"),
+  }));
+  await openTheRoadMap(page);
+  await expect(resultOfTheRebuild(page)).toContainText(DONE_WORDS);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(9);
 });
 
 // @US-31 @ui

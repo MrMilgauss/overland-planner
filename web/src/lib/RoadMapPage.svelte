@@ -25,6 +25,7 @@
     pendingKeys,
     plannedText,
     POLL_MS,
+    resultOf,
     sizeText,
     tooBigText,
   } from './roadMapView';
@@ -42,7 +43,9 @@
   let now = $state(Date.now());
   let cancelRefusal = $state('');
   let refreshing = $state(false);
+  let ended = $state<ReturnType<typeof resultOf>>(null);
   let startAt: string | null = null;
+  let seeded = false;
   let asked = 0;
 
   // The planner is asked once on open, and again every 10 seconds while a change is planned or running.
@@ -63,6 +66,11 @@
         limits = answer.limits;
         piOffset = answer.server_utc_offset_minutes;
         planned = answer.change && keepsPolling(answer.change.state) ? answer.change : undefined;
+        ended = answer.change ? resultOf(answer.change) : null;
+        if (!seeded) {
+          seeded = true;
+          if (answer.change?.state === 'failed') keepChange(answer.change);
+        }
         if (planned && !gone) nextRead = setTimeout(() => void read(), POLL_MS);
       },
       (error: unknown) => {
@@ -71,6 +79,23 @@
     );
   }
   read();
+
+  // A failed rebuild keeps its change: it comes back as the pending choice, so "Rebuild road map" can be pressed again.
+  function keepChange(kept: RoadMapChange): void {
+    if (kept.added.length === 0 && kept.removed.length === 0) return;
+    removed = kept.removed.map((region) => region.key);
+    added = kept.added.map((region) => ({
+      key: region.key,
+      name: region.name,
+      parent_name: null,
+      bytes: null,
+      in_map: false,
+    }));
+    change(() => {
+      removed = [];
+      added = [];
+    });
+  }
 
   // Why no change is offered: the planner says so (no folder for changes, or a helper not seen for five minutes).
   const unavailable = $derived(
@@ -228,6 +253,11 @@
     <p>Map data: {mapDateText(served.map_date)}</p>
   {/if}
 
+  {#if ended}
+    <section aria-label="Rebuild result" class={ended.kind}>
+      <p role={ended.kind === 'failed' ? 'alert' : 'status'}>{ended.text}</p>
+    </section>
+  {/if}
   {#if unavailable}
     <p role="status">{unavailable}</p>
   {/if}
@@ -328,7 +358,11 @@
     color: var(--color-warning-fg);
     font-size: var(--text-sm);
   }
-  section[aria-label='Planned rebuild'] {
+  section[aria-label='Rebuild result'].failed {
+    border-color: var(--color-warning-fg);
+  }
+  section[aria-label='Planned rebuild'],
+  section[aria-label='Rebuild result'] {
     margin: var(--space-4) 0;
     padding: var(--space-3);
     border: 1px solid var(--color-border);
