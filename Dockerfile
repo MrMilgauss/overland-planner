@@ -30,7 +30,7 @@ COPY REQUIREMENTS.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-# --- Stage 3: slim runtime; /app read-only (root-owned), only /data writable by uid 10001 ---
+# --- Stage 3: slim runtime; /app read-only (root-owned), only /data and /road-map-changes writable by uid 10001 ---
 FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runtime
 ARG GIT_SHA=unknown
 ARG COMMIT_TS=1970-01-01T00:00:00Z
@@ -42,8 +42,8 @@ LABEL org.opencontainers.image.revision="${GIT_SHA}" \
       org.overland.commit-ts="${COMMIT_TS}"
 RUN groupadd --gid 10001 planner \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin planner \
-    && mkdir /data \
-    && chown 10001:10001 /data
+    && mkdir /data /road-map-changes \
+    && chown 10001:10001 /data /road-map-changes
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=web /build/web/dist /app/web/dist
 # Alembic migrations, applied at start (MIGRATIONS_DIR), and alembic.ini for `docker compose run --rm planner alembic`.

@@ -49,6 +49,12 @@ HARDENING = (
 )
 PERF_VOLUMES = {"planner-perf-data": {"name": "overland_planner-perf-data"}}
 VALHALLA_VOLUMES = {"valhalla-data": {"name": "overland_valhalla-data"}}
+ROAD_MAP_VOLUMES = {"road-map": {"name": "overland_road-map"}}
+# D173 amended (slice 12c, D303, D316): the planner writes /data, /tmp and /road-map-changes; the engine's map volume is
+# mounted whole and read-only (a missing subpath would stop the container before any tileset is seeded, D234).
+CHANGES_MOUNT = "road-map:/road-map-changes"
+MAP_MOUNT = "valhalla-data:/valhalla-data:ro"
+ROAD_MAP_PASS_THROUGH = ("ROAD_MAP_MAX_GB", "PLACE_SEARCH", "PLACE_SEARCH_URL", "GEOFABRIK_INDEX_URL")
 VALHALLA_IMAGE = (
     "${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64"
     "@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6}"
@@ -157,8 +163,10 @@ def test_data_volume_log_rotation_and_curl_free_healthcheck() -> None:
     compose = _load(COMPOSE)
     planner = compose["services"]["planner"]
 
-    assert planner["volumes"] == ["planner-data:/data"]
-    assert compose["volumes"] == {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES | VALHALLA_VOLUMES
+    assert planner["volumes"] == ["planner-data:/data", CHANGES_MOUNT, MAP_MOUNT]
+    assert compose["volumes"] == (
+        {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES | VALHALLA_VOLUMES | ROAD_MAP_VOLUMES
+    )
     assert planner["logging"] == {"driver": "json-file", "options": {"max-size": "10m", "max-file": "5"}}
     probe = " ".join(planner["healthcheck"]["test"])
     assert "/healthz" in probe and "curl" not in probe and planner["healthcheck"]["test"][0] == "CMD"
@@ -171,6 +179,14 @@ def test_settings_reach_the_container_by_interpolation_and_secrets_are_never_wri
     for key in ("PLANNER_BASIC_AUTH_USER", "PLANNER_BASIC_AUTH_PASSWORD", *UPLOAD_CAPS):
         assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     assert environment["DATA_DIR"] == "/data"
+    # Slice 12c (D301, D316): the two folders are fixed by the mounts, not left to .env: step 13-07 wires the road-map
+    # screen only when both are set; ROAD_MAP_DIR is the folder of the volume that holds the tilesets/<name> sets.
+    assert (environment["ROAD_MAP_DIR"], environment["ROAD_MAP_CHANGES_DIR"]) == (
+        "/valhalla-data/tilesets",
+        "/road-map-changes",
+    )
+    for key in ROAD_MAP_PASS_THROUGH:
+        assert environment[key] == f"${{{key}:-}}", f"{key} is interpolated from .env, empty when unset"
     # D247: the road map is chosen by .env (mock when unset); the engine is the compose service, its tuning is empty
     # (the planner's default) unless .env says otherwise.
     assert environment["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}"
@@ -201,6 +217,28 @@ def test_env_example_documents_every_setting_and_binds_loopback() -> None:
     assert sorted((planner_settings | compose_variables) - set(example)) == []
 
 
+def test_env_example_documents_the_road_map_settings_with_their_container_paths_and_the_one_origin_rule() -> None:
+    text = ENV_EXAMPLE.read_text()
+    example = _env_example()
+
+    for key in ("ROAD_MAP_DOWNLOAD_PREFIX", "ROAD_MAP_MAX_GB", "ROAD_MAP_DIR", "ROAD_MAP_CHANGES_DIR"):
+        assert key in example, f"{key} is documented in .env.example"
+    assert "/valhalla-data/tilesets" in text and "/road-map-changes" in text, "the container paths are named"
+    mirror = next(
+        line for line in text.splitlines() if "GEOFABRIK_INDEX_URL" in line and "ROAD_MAP_DOWNLOAD_PREFIX" in line
+    )
+    assert "both" in mirror, "a mirror needs both settings"
+    assert "helper" in text[text.index("ROAD_MAP_DOWNLOAD_PREFIX") - 400 : text.index("ROAD_MAP_DOWNLOAD_PREFIX")]
+
+
+def test_the_image_makes_the_changes_folder_for_the_planner_before_it_drops_root() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+
+    assert "mkdir /data /road-map-changes" in dockerfile
+    assert "chown 10001:10001 /data /road-map-changes" in dockerfile
+    assert dockerfile.index("chown 10001:10001 /data /road-map-changes") < dockerfile.index("USER 10001:10001")
+
+
 def test_ci_override_runs_the_loaded_image_on_loopback_only() -> None:
     planner = _load(COMPOSE_CI)["services"]["planner"]
 
@@ -219,7 +257,12 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
     assert {key: perf.get(key) for key in HARDENING} == {key: planner.get(key) for key in HARDENING}
     assert perf["ports"] == ["127.0.0.1:18080:8080"], "reached only through the ssh tunnel of make perf-pi"
     assert perf["networks"] == ["edge", "routing"]
-    assert perf["volumes"] == ["planner-perf-data:/data", "./perf:/perf:ro"]
+    assert perf["volumes"] == [  # lists do not merge: both map mounts are named again, read-only
+        "planner-perf-data:/data",
+        "./perf:/perf:ro",
+        f"{CHANGES_MOUNT}:ro",
+        MAP_MOUNT,
+    ]
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
     assert planner["environment"]["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}", "the household switch is .env"
     assert perf["environment"] == planner["environment"] | {

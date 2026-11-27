@@ -418,6 +418,33 @@ def test_pi_targets_turn_the_routing_profile_on_exactly_when_routing_env_exists(
     assert on and all(routing_profile_on(argv) for argv in on)
 
 
+@pytest.mark.parametrize("target", ["uninstall", "purge"])
+def test_uninstall_and_purge_stop_the_helper_before_anything_is_removed(pi_home: FakePi, target: str) -> None:
+    (pi_home.shim_home / "crontab.txt").write_text(
+        "# note\n* * * * * cd /x && bash scripts/road-map-runner.sh # overland-road-map-runner\n"
+    )
+    pi_home.rule("docker", "volume ls", stdout="overland_planner-data\noverland_road-map\n")
+
+    result = remote(pi_home, target, stdin=PURGE_WORD + "\n")
+
+    assert result.returncode == 0, result.stderr
+    assert (pi_home.shim_home / "crontab.txt").read_text() == "# note\n"
+    calls = pi_home.calls()
+    first_job = next(i for i, c in enumerate(calls) if c["tool"] == "crontab")
+    first_removal = next(i for i, c in enumerate(calls) if c["tool"] == "docker" and {"down", "rm"} & set(c["argv"]))
+    assert first_job < first_removal
+
+
+def test_purge_removes_the_road_map_changes_volume_too(pi_home: FakePi) -> None:
+    pi_home.rule("docker", "volume ls", stdout="overland_planner-data\noverland_road-map\nimmich_pgdata\n")
+
+    result = remote(pi_home, "purge", stdin=PURGE_WORD + "\n")
+
+    assert result.returncode == 0, result.stderr
+    removed = [c["argv"][-1] for c in pi_home.calls("docker") if c["argv"][:2] == ["volume", "rm"]]
+    assert removed == ["overland_planner-data", "overland_road-map"]
+
+
 def test_purge_says_the_map_data_goes_too_and_removes_the_valhalla_volume(pi_home: FakePi) -> None:
     pi_home.rule("docker", "volume ls", stdout="overland_planner-data\noverland_valhalla-data\n")
 

@@ -52,12 +52,20 @@ has_helper() {
   ! cmp -s "$CURRENT" "$CHECK"
 }
 
+# prune_saved: only the newest 5 saved lists stay (the stamp in the name sorts by time; the one just made is the newest).
+prune_saved() {
+  local old
+  # shellcheck disable=SC2012 # names are our own fixed pattern: letters, digits, dots
+  for old in $(ls -1 crontab.before-road-map-helper.* 2>/dev/null | sort -r | tail -n +6); do rm -f "$old"; done
+}
+
 # apply: $NEW becomes the crontab; read back, compared, the saved list put back on a difference.
 apply() {
   local saved stamp
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   saved="crontab.before-road-map-helper.$stamp.$$"
   cp -p "$CURRENT" "$saved"
+  prune_saved
   if crontab "$NEW" >&2 && crontab -l >"$CHECK" 2>/dev/null && cmp -s "$NEW" "$CHECK"; then
     return 0
   fi

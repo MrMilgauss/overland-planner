@@ -159,3 +159,20 @@ def test_status_says_installed_and_changes_nothing(pi: FakePi) -> None:
     assert "not installed" not in result.stdout + result.stderr
     assert "installed" in result.stdout + result.stderr
     assert writes(pi) == []
+
+
+def test_only_the_five_newest_saved_lists_are_kept(pi: FakePi) -> None:
+    jobs_file(pi).write_text(f"{BACKUP}\n")
+    for day in range(1, 9):
+        old = pi.dir / f"crontab.before-road-map-helper.2026110{day}T030000Z.1"
+        old.write_text(f"old {day}\n")
+    other = pi.dir / "crontab.txt.mine"
+    other.write_text("not ours\n")
+
+    assert helper(pi, "install").returncode == 0
+
+    kept = sorted(p.name for p in pi.dir.iterdir() if p.name.startswith("crontab.before-road-map-helper."))
+    assert len(kept) == 5
+    assert all(f"2026110{day}T" not in " ".join(kept) for day in (1, 2, 3, 4))  # the four oldest of the eight are gone
+    assert any(f"2026110{day}T" in " ".join(kept) for day in (6, 7, 8)) and other.exists()
+    assert BACKUP + "\n" in saved_copies(pi), "the list this run saved is among the newest"

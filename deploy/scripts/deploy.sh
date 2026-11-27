@@ -22,7 +22,7 @@ if [ ! -t 0 ]; then IFS= read -r GHCR_TOKEN || true; fi
 exec </dev/null
 
 cd "$(dirname "$0")/.." || exit 1
-# shellcheck source=deploy/scripts/lib.sh
+# shellcheck source=deploy/scripts/lib.sh disable=SC1091 # followed by make lint-ci; the pre-commit hook gets no -x
 . scripts/lib.sh
 # Only the .env value may publish; an exported PLANNER_BIND from the ssh session must not.
 unset PLANNER_BIND
@@ -94,6 +94,18 @@ roll_back() {
   exit 1
 }
 
+# install_helper: the road-map helper's timed job, best effort. Its own words are kept for releases.log (NOTE); the
+# terminal gets one warning line.
+install_helper() {
+  local said
+  if said=$(bash scripts/road-map-helper.sh install 2>&1); then
+    say "$said"
+    return 0
+  fi
+  NOTE="road-map helper not installed: $(printf '%s\n' "$said" | tail -n 1)"
+  say "deploy: the road-map helper was not installed (the planner is not affected)"
+}
+
 # 1. One deploy at a time.
 exec 9>>.deploy.lock
 if ! flock -n 9; then
@@ -159,8 +171,10 @@ smoke_loopback || roll_back "$FAIL_REASON" yes
 # 8. Publish (write gate). From here on a failure keeps the data: digest-only rollback.
 publish || roll_back "$FAIL_REASON" no
 
-# 9. Done. The routing engine follows the planner and never fails the deploy (D234).
+# 9. Done. The routing engine and the road-map helper follow the planner and never fail the deploy (D234, D303).
 start_routing deploy
+NOTE=
+install_helper
 prune_snapshots
-record deploy ok
+record deploy ok "$NOTE"
 say "deploy: $TARGET serving on $(env_value .env PLANNER_BIND):$(planner_port) (git $NEW_SHA)"

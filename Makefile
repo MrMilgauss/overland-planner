@@ -165,16 +165,18 @@ image-gc: ## Remove planner images except the three digests of release.env, .pre
 	      *) docker image rm "$$ref" || echo "image-gc: $$ref still in use, kept" ;; esac; \
 	  done'
 
-uninstall: ## Stop and remove the overland containers and network; the data volume and the files stay
-	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) down'
+HELPER_OFF := { bash scripts/road-map-helper.sh uninstall || echo "make: WARNING the road-map helper may still be scheduled" >&2; }
+
+uninstall: ## Stop the road-map helper, then stop and remove the overland containers and network; the data volumes and the files stay
+	$(PI_SSH) 'cd $(PI_DIR) && $(HELPER_OFF) && $(PI_COMPOSE) down'
 
 purge: ## Remove project overland with its overland_* volumes and planner images (typed confirmation; NO backup is taken)
 	@printf '%s\n' "make purge removes the overland containers, every overland_* volume (ALL trip data and the" \
 	  "map data (about 4.9 GB, rebuilt only by make tiles-seed or make tiles-refresh)) and the" \
-	  "$(PLANNER_REPO) images on $(PI_HOST). No backup is taken (D91). Type '$(PURGE_WORD)' to go on:"; \
+	  "$(PLANNER_REPO) images on $(PI_HOST), and stops the road-map helper first. No backup is taken (D91). Type '$(PURGE_WORD)' to go on:"; \
 	read -r answer || answer=; \
 	if [ "$$answer" != "$(PURGE_WORD)" ]; then echo "make purge: aborted, nothing removed" >&2; exit 1; fi; \
-	$(PI_SSH) 'cd $(PI_DIR) && $(PI_COMPOSE) --profile routing --profile perf --profile ops --profile valhalla-build down && \
+	$(PI_SSH) 'cd $(PI_DIR) && $(HELPER_OFF) && $(PI_COMPOSE) --profile routing --profile perf --profile ops --profile valhalla-build down && \
 	  docker volume ls -q | { failed=0; while read -r volume; do case "$$volume" in overland_*) docker volume rm "$$volume" || failed=1 ;; esac; done; [ "$$failed" -eq 0 ]; } && \
 	  docker image ls --digests --format "{{.Repository}}@{{.Digest}}" $(PLANNER_REPO) | while read -r ref; do \
 	    case "$${ref#*@}" in "<none>"|"") ;; *) docker image rm "$$ref" ;; esac; \

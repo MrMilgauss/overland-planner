@@ -68,15 +68,27 @@ services:
       MAX_UPLOAD_FILE_MB: ${MAX_UPLOAD_FILE_MB:-}
       MAX_UPLOAD_REQUEST_MB: ${MAX_UPLOAD_REQUEST_MB:-}
       MAX_UPLOAD_FILES: ${MAX_UPLOAD_FILES:-}
+      # The road map (slice 12c; D301, D316): the folders are fixed by the mounts below, so the Road map screen is wired
+      # on the Pi whatever .env says; the other settings are empty when unset, which the planner reads as its default.
+      ROAD_MAP_DIR: /valhalla-data/tilesets
+      ROAD_MAP_CHANGES_DIR: /road-map-changes
+      ROAD_MAP_MAX_GB: ${ROAD_MAP_MAX_GB:-}
+      PLACE_SEARCH: ${PLACE_SEARCH:-}
+      PLACE_SEARCH_URL: ${PLACE_SEARCH_URL:-}
+      GEOFABRIK_INDEX_URL: ${GEOFABRIK_INDEX_URL:-}
+    # /road-map-changes: the planner's requests to the Pi's helper (D303). /valhalla-data: the whole engine volume,
+    # read-only, so a Pi with no tileset yet still starts the planner (D234; a subpath that is missing stops the container).
     volumes:
       - planner-data:/data
+      - road-map:/road-map-changes
+      - valhalla-data:/valhalla-data:ro
     # Resource caps (D83, D167): the Pi keeps room for the routing engine.
     cpus: 1
     mem_limit: 1g
     memswap_limit: 1g
     pids_limit: 256
     oom_score_adj: 500
-    # Hardening (D173): uid 10001 from the image, no capabilities, read-only root; writes only /data and /tmp.
+    # Hardening (D173): uid 10001 from the image, no capabilities, read-only root; writes only /data, /tmp and /road-map-changes (D303).
     cap_drop:
       - ALL
     security_opt:
@@ -114,6 +126,9 @@ services:
     volumes:
       - planner-perf-data:/data
       - ./perf:/perf:ro
+      # a list replaces the planner's: the two map mounts again, read-only (a measurement planner changes no map)
+      - road-map:/road-map-changes:ro
+      - valhalla-data:/valhalla-data:ro
 
   valhalla:
     image: ${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6}
@@ -251,3 +266,5 @@ volumes:
     name: overland_planner-perf-data
   valhalla-data:
     name: overland_valhalla-data
+  road-map:
+    name: overland_road-map

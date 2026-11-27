@@ -254,6 +254,11 @@ def test_deploy_stays_inside_the_overland_scope(pi: FakePi, rule: tuple[Any, ...
         else:
             assert argv[:3] == ["volume", "inspect", "overland_planner-data"]
     assert {path.name for path in pi.root.iterdir()} == {"overland-planner", "shim"}
+    # D303: the road-map helper's timed job is the one thing outside docker; it touches only the deploy user's list.
+    assert {c["tool"] for c in pi.calls()} - {"docker", "curl", "df", "flock", "crontab"} == set()
+    for call in pi.calls("crontab"):
+        assert call["cwd"] == str(pi.dir)
+        assert call["argv"] == ["-l"] or (len(call["argv"]) == 1 and not call["argv"][0].startswith("-"))
 
 
 # ---- D196: per-deploy GHCR login, nothing stored on the Pi -------------------------------------------------------
@@ -503,3 +508,50 @@ def test_a_failing_valhalla_start_leaves_the_deploy_ok_and_says_so_in_one_line(p
     ]
     assert (pi.releases_log()[-1]["action"], pi.releases_log()[-1]["result"]) == ("deploy", "ok")
     assert pi.pointers()["release.env"].startswith(f"PLANNER_IMAGE={NEW.image}")
+
+
+# ---- the road-map helper follows a deploy without ever failing it (D234, D303, D314) ----------------------------
+
+HELPER_MARK = "# overland-road-map-runner"
+
+
+def helper_lines(pi: FakePi) -> list[str]:
+    schedule = pi.shim_home / "crontab.txt"
+    return [x for x in schedule.read_text().splitlines() if HELPER_MARK in x] if schedule.exists() else []
+
+
+def test_a_deploy_installs_the_helper_after_the_publish_and_the_routing_start(pi: FakePi) -> None:
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=2026-10\n")
+
+    result = pi.deploy(NEW.digest)
+
+    assert result.returncode == 0, result.stderr
+    assert len(helper_lines(pi)) == 1
+    calls = pi.calls()
+    publish = index_of(calls, lambda c: c in compose_ups(pi) and published(c))
+    (valhalla,) = pi.valhalla_ups()
+    assert publish < calls.index(valhalla) < index_of(calls, lambda c: c["tool"] == "crontab")
+    assert (pi.releases_log()[-1]["result"], pi.releases_log()[-1]["reason"]) == ("ok", "")
+
+
+def test_a_pi_that_cannot_take_the_helper_still_gets_the_deploy_with_one_warning_and_a_note(pi: FakePi) -> None:
+    pi.rule("crontab", exit=1, stderr="crontab: installing new crontab failed\n")
+
+    result = pi.deploy(NEW.digest)
+
+    assert result.returncode == 0, result.stderr
+    assert len([x for x in result.stderr.splitlines() if "helper" in x.lower()]) == 1
+    last = pi.releases_log()[-1]
+    assert (last["action"], last["result"]) == ("deploy", "ok") and "helper" in last["reason"]
+    assert pi.pointers()["release.env"].startswith(f"PLANNER_IMAGE={NEW.image}")
+    assert helper_lines(pi) == []
+
+
+@pytest.mark.parametrize("outcome", ["unchanged", "auto-rollback"])
+def test_a_deploy_that_does_not_end_on_the_new_release_leaves_the_timed_jobs_alone(pi: FakePi, outcome: str) -> None:
+    if outcome == "auto-rollback":
+        pi.rule("curl", f"{LOOPBACK}:8080/healthz", exit=22, times=1)
+
+    pi.deploy(CURRENT.digest if outcome == "unchanged" else NEW.digest)
+
+    assert pi.calls("crontab") == []

@@ -1,4 +1,5 @@
-"""The hardened planner container writes only /data and /tmp (D173), run in CI job 7 (-m "compose or security").
+"""The hardened planner container writes only /data, /tmp and /road-map-changes (D173 amended, slice 12c D303, D316),
+mounts /valhalla-data read-only, run in CI job 7 (-m "compose or security").
 
 Starts a one-shot planner container from deploy/compose.yaml with the image under test (PLANNER_IMAGE) in a project
 of its own, with the data volume renamed so a real `overland_planner-data` volume is never touched or removed.
@@ -18,7 +19,19 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = REPO_ROOT / "deploy" / "compose.yaml"
 PROJECT = "overland-hardening-check"
-CANDIDATES = ("/app", "/app/.venv", "/", "/etc", "/usr/local/lib", "/var", "/home", "/data", "/tmp")  # noqa: S108 - paths inside the container
+CANDIDATES = (
+    "/app",
+    "/app/.venv",
+    "/",
+    "/etc",
+    "/usr/local/lib",
+    "/var",
+    "/home",
+    "/data",
+    "/road-map-changes",
+    "/valhalla-data",
+    "/tmp",  # noqa: S108 - path inside the container
+)
 PROBE = f"""
 import json, os, uuid
 writable = []
@@ -46,11 +59,18 @@ def compose_command(tmp_path: Path) -> list[str]:
     if not os.environ.get("PLANNER_IMAGE"):
         pytest.skip("set PLANNER_IMAGE to the image under test")
     isolated_volume = tmp_path / "compose.hardening.yaml"
-    isolated_volume.write_text(f"volumes:\n  planner-data:\n    name: {PROJECT}_data\n")
+    isolated_volume.write_text(
+        "volumes:\n"
+        f"  planner-data:\n    name: {PROJECT}_data\n"
+        f"  road-map:\n    name: {PROJECT}_road-map\n"
+        f"  valhalla-data:\n    name: {PROJECT}_valhalla-data\n"
+    )
     return ["docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), "-f", str(isolated_volume)]
 
 
-def test_planner_container_writes_only_data_and_tmp_without_privileges(compose_command: list[str]) -> None:
+def test_planner_container_writes_only_data_tmp_and_the_changes_folder_without_privileges(
+    compose_command: list[str],
+) -> None:
     env = {**os.environ, "PLANNER_BIND": "127.0.0.1"}
     try:
         run = subprocess.run(
@@ -66,4 +86,9 @@ def test_planner_container_writes_only_data_and_tmp_without_privileges(compose_c
     assert run.returncode == 0, run.stderr[-2000:]
     report = json.loads(run.stdout.strip().splitlines()[-1])
 
-    assert report == {"writable": ["/data", "/tmp"], "uid": 10001, "cap_eff": "0" * 16, "no_new_privs": "1"}  # noqa: S108
+    assert report == {
+        "writable": ["/data", "/road-map-changes", "/tmp"],  # noqa: S108
+        "uid": 10001,
+        "cap_eff": "0" * 16,
+        "no_new_privs": "1",
+    }
