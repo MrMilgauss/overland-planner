@@ -190,3 +190,62 @@ def test_the_folder_says_whether_a_request_waits_or_the_helper_runs_one(tmp_path
     assert (queue.waiting(), queue.running()) == (True, False)
     (tmp_path / "request.txt").rename(tmp_path / "running.txt")
     assert (queue.waiting(), queue.running()) == (False, True)
+
+
+# ------------------------------------------------------------------ what the helper writes: heartbeat and progress
+def test_the_helper_mark_gives_its_time_and_no_mark_gives_none(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    assert queue.helper_seen_at() is None
+    (tmp_path / "helper-seen").touch()
+    os.utime(tmp_path / "helper-seen", (NOW.timestamp(), NOW.timestamp()))
+    assert queue.helper_seen_at() == NOW
+
+
+def test_a_rebuild_taken_by_the_helper_is_read_with_its_regions_and_step(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    queue.queue(request(ITALY, UTAH), added=["Utah"], removed=[])
+    assert queue.running_request() is None
+    (tmp_path / "request.txt").rename(tmp_path / "running.txt")
+    assert queue.running_request() == request(ITALY, UTAH) and queue.pending() is None
+    assert queue.progress() is None
+    (tmp_path / "progress.txt").write_text(
+        f"step=building\nstep_at={int(NOW.timestamp())}\nserving=20261101\nnew=20261128\n"
+    )
+    progress = queue.progress()
+    assert progress is not None and (progress.step, progress.step_at) == ("building", NOW)
+
+
+def hostile(folder: Path, kind: str) -> None:
+    target = folder / "progress.txt"
+    good = f"step=building\nstep_at={int(NOW.timestamp())}\n"
+    if kind == "directory":
+        target.mkdir()
+    elif kind == "symlink":
+        (folder / "elsewhere.txt").write_text(good)
+        target.symlink_to(folder / "elsewhere.txt")
+    elif kind == "too large":
+        target.write_text(good + "serving=" + "x" * 5000 + "\n")
+    elif kind == "unknown key":
+        target.write_text(good + "colour=red\n")
+    elif kind == "repeated key":
+        target.write_text(good + "step=checking\n")
+    elif kind == "unknown step":
+        target.write_text(f"step=frying\nstep_at={int(NOW.timestamp())}\n")
+    elif kind == "not a number":
+        target.write_text("step=building\nstep_at=soon\n")
+    else:
+        target.write_bytes(b"step=\xff\xfe\n")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["directory", "symlink", "too large", "unknown key", "repeated key", "unknown step", "not a number", "not text"],
+)
+def test_a_note_that_is_not_plain_and_strict_says_nothing_and_never_fails(tmp_path: Path, kind: str) -> None:
+    hostile(tmp_path, kind)
+    assert ChangeQueueDir(tmp_path).progress() is None
+
+
+def test_a_mark_that_is_not_a_plain_file_says_nothing(tmp_path: Path) -> None:
+    (tmp_path / "helper-seen").mkdir()
+    assert ChangeQueueDir(tmp_path).helper_seen_at() is None

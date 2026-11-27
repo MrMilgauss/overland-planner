@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.region_catalogue import (
@@ -20,6 +20,7 @@ from overland_planner.application.ports.region_catalogue import (
     RegionCatalogue,
 )
 from overland_planner.application.ports.road_map_changes import (
+    STEPS,
     ChangeRequest,
     ChangesUnavailableError,
     RequestedRegion,
@@ -28,6 +29,7 @@ from overland_planner.application.ports.road_map_changes import (
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tileset_store import TilesetListing, TilesetStore
 from overland_planner.domain.roadmap.coverage import RoadMapCoverage
+from overland_planner.domain.roadmap.estimate import estimate
 from overland_planner.domain.roadmap.outline import Outline
 from overland_planner.domain.roadmap.region_choice import (
     CatalogRegion,
@@ -59,6 +61,8 @@ class ServedMapView:
 
 
 DEFAULT_MAX_GB = 8.0
+HELPER_FRESH = timedelta(minutes=5)  # one threshold (D315): the helper has looked less than this long ago
+PAUSED_STEPS = frozenset({"building", "switching"})  # only then is the engine stopped
 # The eight regions the map was first built from (D315): what "Refresh map data" asks for when the map has no record.
 SEED_REGION_KEYS = (
     "italy",
@@ -117,6 +121,11 @@ class PlannedChange:
     start_at: datetime | None
     added: tuple[RegionRef, ...]
     removed: tuple[RegionRef, ...]
+    state: str = "planned"  # "running" once the helper has taken it
+    step: str | None = None
+    steps_done: int = 0
+    planning_paused: bool = False
+    planning_back_at: datetime | None = None
 
 
 def _date(epoch: int | None) -> datetime | None:
@@ -273,6 +282,8 @@ class RoadMapService:
         limit (nothing is fetched for the last), and
         `CatalogueUnavailableError` as `preview_change` does. Nothing is written unless every check passed."""
         changes, clock = self._open_changes()
+        if not self.rebuilds_set_up():
+            raise Refusal("rebuilds_not_set_up", "Rebuilds are not set up on the Pi yet")
         if changes.running():
             raise Refusal("rebuild_running", "A rebuild is running: the next change can be planned when it ends")
         if changes.waiting():
@@ -293,18 +304,64 @@ class RoadMapService:
         return self._changes is not None and self._changes.cancel()
 
     def planned_change(self) -> PlannedChange | None:
-        """The change waiting for the helper, told against the map served now."""
-        request = None if self._changes is None else self._changes.pending()
+        """The change waiting for the helper, or the one it is rebuilding, told against the map served now."""
+        if self._changes is None:
+            return None
+        request = self._changes.pending()
+        progress = None
+        if request is None and self._changes.running():
+            request, progress = self._changes.running_request(), self._changes.progress()
         if request is None:
             return None
         served = {region.key: region.name for region in self.served().regions}
         kept = {region.key for region in request.regions}
-        return PlannedChange(
+        planned = PlannedChange(
             requested_at=request.requested_at,
             start_at=request.start_at,
             added=tuple(RegionRef(region.key, region.name) for region in request.regions if region.key not in served),
             removed=tuple(RegionRef(key, name) for key, name in sorted(served.items()) if key not in kept),
         )
+        if not self._changes.running():
+            return planned
+        paused = progress is not None and progress.step in PAUSED_STEPS
+        back = None
+        if progress is not None and paused:
+            pause = estimate(sum(region.bytes for region in request.regions)).pause_minutes
+            back = progress.step_at + timedelta(minutes=pause)
+        return replace(
+            planned,
+            state="running",
+            step=None if progress is None else progress.step,
+            steps_done=0 if progress is None else STEPS.index(progress.step),
+            planning_paused=paused,
+            planning_back_at=back,
+        )
+
+    def helper_seen_at(self) -> datetime | None:
+        """When the helper last looked, None when it never did."""
+        return None if self._changes is None else self._changes.helper_seen_at()
+
+    def rebuilds_set_up(self) -> bool:
+        """Whether the helper looked less than five minutes ago (no mark, no helper)."""
+        seen = self.helper_seen_at()
+        return seen is not None and self._clock is not None and self._clock.now() - seen < HELPER_FRESH
+
+    def next_rebuild_from(self) -> datetime | None:
+        """When the next rebuild may start when today's UTC day already has a map, None when it may start now."""
+        if self._clock is None:
+            return None
+        try:
+            check_same_day(self._clock.now(), [entry.name for entry in self._store.listing().entries])
+        except Refusal as refused:
+            when = refused.details.get("next_rebuild_from")
+            return when if isinstance(when, datetime) else None
+        return None
+
+    def utc_offset_minutes(self) -> int:
+        """The offset of the planner's own clock from UTC, in minutes (the page's "(Pi time)" note)."""
+        now = (self._clock.now() if self._clock is not None else datetime.now(UTC)).astimezone()
+        offset = now.utcoffset()
+        return 0 if offset is None else int(offset.total_seconds() // 60)
 
     @property
     def max_gb(self) -> float:

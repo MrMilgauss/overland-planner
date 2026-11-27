@@ -1095,7 +1095,7 @@ def then_the_change_is_done(world: PlannerWorld) -> None:
 @then("the planner says rebuilds are not set up on the Pi")
 def then_rebuilds_are_not_set_up(world: PlannerWorld) -> None:
     body = road_map(world)
-    assert body["change"]["state"] == "planned" and body["limits"]["helper_seen"] is False, body
+    assert body["change"]["state"] == "planned" and body["limits"]["rebuilds_set_up"] is False, body
 
 
 # ------------------------------------------------------------------------------------------------ US-28 the coverage

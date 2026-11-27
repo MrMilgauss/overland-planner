@@ -38,6 +38,17 @@ class ChangeRequest:
     regions: tuple[RequestedRegion, ...]
 
 
+STEPS = ("checking", "downloading", "building", "switching")
+
+
+@dataclass(frozen=True)
+class RebuildProgress:
+    """The step the helper says the rebuild is in, and when that step began."""
+
+    step: str
+    step_at: datetime
+
+
 class RoadMapChanges(Probeable, Protocol):
     def available(self) -> bool:
         """Whether a change can be kept right now (the place exists and may be written)."""
@@ -63,4 +74,16 @@ class RoadMapChanges(Probeable, Protocol):
 
     def pending(self) -> ChangeRequest | None:
         """The request waiting for the helper, None when there is none (or it cannot be read)."""
+        ...
+
+    def running_request(self) -> ChangeRequest | None:
+        """The request the helper has taken, None when none runs (or it cannot be read)."""
+        ...
+
+    def progress(self) -> RebuildProgress | None:
+        """The helper's note of the step it has reached; None when it says nothing or says something unreadable."""
+        ...
+
+    def helper_seen_at(self) -> datetime | None:
+        """When the helper last looked at the folder; None when it never did (or the mark cannot be read)."""
         ...

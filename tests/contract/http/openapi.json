@@ -1679,8 +1679,30 @@
           "limits": {
             "$ref": "#/components/schemas/RoadMapLimitsBody"
           },
+          "planning_back_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Back At"
+          },
+          "planning_paused": {
+            "default": false,
+            "title": "Planning Paused",
+            "type": "boolean"
+          },
           "served": {
             "$ref": "#/components/schemas/ServedMapBody"
+          },
+          "server_utc_offset_minutes": {
+            "default": 0,
+            "title": "Server Utc Offset Minutes",
+            "type": "integer"
           }
         },
         "required": [
@@ -1733,6 +1755,28 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checking",
+                  "downloading",
+                  "building",
+                  "switching"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "steps_done": {
+            "default": 0,
+            "title": "Steps Done",
+            "type": "integer"
           }
         },
         "required": [
@@ -1747,14 +1791,48 @@
             "title": "Changes Available",
             "type": "boolean"
           },
+          "helper_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helper Seen At"
+          },
+          "max_bytes": {
+            "title": "Max Bytes",
+            "type": "integer"
+          },
           "max_gb": {
             "title": "Max Gb",
             "type": "number"
+          },
+          "next_rebuild_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Rebuild From"
+          },
+          "rebuilds_set_up": {
+            "title": "Rebuilds Set Up",
+            "type": "boolean"
           }
         },
         "required": [
           "changes_available",
-          "max_gb"
+          "max_gb",
+          "max_bytes",
+          "rebuilds_set_up"
         ],
         "title": "RoadMapLimitsBody",
         "type": "object"

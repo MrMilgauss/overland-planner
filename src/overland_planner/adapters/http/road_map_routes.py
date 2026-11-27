@@ -35,6 +35,7 @@ from overland_planner.application.roadmap.facade import (
     RoadMapService,
     SearchTooShortError,
 )
+from overland_planner.domain.roadmap.estimate import BYTES_PER_GB
 
 
 def _utc(moment: datetime) -> datetime:
@@ -50,6 +51,8 @@ def _refused(refused: Refusal) -> JSONResponse:
     when = refused.details.get("next_rebuild_from")
     if isinstance(when, datetime):
         body["next_rebuild_from"] = _utc(when).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if refused.code == "rebuilds_not_set_up":
+        return JSONResponse(body, status_code=503)
     return JSONResponse(body, status_code=409 if refused.code in _CONFLICTS else 422)
 
 
@@ -62,10 +65,21 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
 
     @router.get("/api/road-map")
     def road_map() -> RoadMapBody:
+        change = service.planned_change()
         return RoadMapBody(
             served=ServedMapBody.of(service.served()),
-            change=RoadMapChangeBody.of(service.planned_change()),
-            limits=RoadMapLimitsBody(changes_available=service.changes_available(), max_gb=service.max_gb),
+            change=RoadMapChangeBody.of(change),
+            limits=RoadMapLimitsBody(
+                changes_available=service.changes_available(),
+                max_gb=service.max_gb,
+                max_bytes=int(service.max_gb * BYTES_PER_GB),
+                next_rebuild_from=service.next_rebuild_from(),
+                helper_seen_at=service.helper_seen_at(),
+                rebuilds_set_up=service.rebuilds_set_up(),
+            ),
+            planning_paused=change is not None and change.planning_paused,
+            planning_back_at=None if change is None else change.planning_back_at,
+            server_utc_offset_minutes=service.utc_offset_minutes(),
         )
 
     @router.get("/api/road-map/catalogue", response_model=CatalogueBody, responses=CATALOGUE_ERROR_RESPONSES)

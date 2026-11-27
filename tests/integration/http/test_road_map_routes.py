@@ -57,15 +57,26 @@ def test_the_served_map_is_named_with_its_regions_and_its_date(data_dir: Path, t
     with TestClient(create_app(environ(data_dir, volume(tmp_path)))) as client:
         answer = client.get("/api/road-map")
     assert answer.status_code == 200
-    assert answer.json() == {
+    body = answer.json()
+    assert isinstance(body.pop("server_utc_offset_minutes"), int)
+    assert body == {
         "served": {
             "known": True,
             "map_date": "2026-11-28T12:00:00Z",
             "regions": [{"key": "italy", "name": "Italy", "parent_name": None, "bytes": 5}],
             "total_bytes": 5,
         },
-        "change": {"state": "none", "start_at": None, "added": [], "removed": []},
-        "limits": {"changes_available": False, "max_gb": 8.0},
+        "change": {"state": "none", "step": None, "steps_done": 0, "start_at": None, "added": [], "removed": []},
+        "limits": {
+            "changes_available": False,
+            "max_gb": 8.0,
+            "max_bytes": 8_000_000_000,
+            "next_rebuild_from": None,
+            "helper_seen_at": None,
+            "rebuilds_set_up": False,
+        },
+        "planning_paused": False,
+        "planning_back_at": None,
     }
 
 
@@ -130,6 +141,8 @@ def test_a_summary_without_the_list_of_regions_is_unavailable(data_dir: Path, tm
 def _planner(data_dir: Path, tmp_path: Path, index_url: str, more: dict[str, str]) -> TestClient:
     if not (tmp_path / "changes").exists():
         (tmp_path / "changes").mkdir()
+    if (tmp_path / "changes").is_dir():
+        (tmp_path / "changes" / "helper-seen").touch()  # the helper of the Pi has just looked
     settings = (
         environ(data_dir, volume(tmp_path))
         | {"ROAD_MAP_CHANGES_DIR": str(tmp_path / "changes"), "GEOFABRIK_INDEX_URL": index_url}
@@ -154,7 +167,8 @@ def test_a_change_is_queued_shown_as_planned_and_cancelled(data_dir: Path, tmp_p
     server.stop()
     assert queued.status_code == 201
     assert [r["key"] for r in queued.json()["added"]] == ["portugal"]
-    assert before["limits"] == {"changes_available": True, "max_gb": 8.0}
+    assert before["limits"]["changes_available"] is True and before["limits"]["max_gb"] == 8.0
+    assert before["limits"]["max_bytes"] == 8_000_000_000 and before["limits"]["rebuilds_set_up"] is True
     assert planned["served"] == before["served"]
     assert planned["change"]["state"] == "planned"
     assert planned["change"]["start_at"] == start
@@ -162,7 +176,7 @@ def test_a_change_is_queued_shown_as_planned_and_cancelled(data_dir: Path, tmp_p
     assert cancelled.status_code == 204
     assert after["change"]["state"] == "none"
     assert (again.status_code, again.json()["code"]) == (409, "change_not_pending")
-    assert sorted(p.name for p in (tmp_path / "changes").iterdir()) == ["cancelled.txt"]
+    assert sorted(p.name for p in (tmp_path / "changes").iterdir()) == ["cancelled.txt", "helper-seen"]
 
 
 def test_a_refused_change_answers_its_code_and_writes_nothing(data_dir: Path, tmp_path: Path) -> None:
@@ -174,7 +188,7 @@ def test_a_refused_change_answers_its_code_and_writes_nothing(data_dir: Path, tm
     assert (unknown.status_code, unknown.json()["code"]) == (422, "unknown_region")
     assert (big.status_code, big.json()["code"]) == (422, "too_big")
     assert "0.4 GB" in big.json()["message"] and "limit is 0.0001 GB" in big.json()["message"]
-    assert list((tmp_path / "changes").iterdir()) == []
+    assert [p.name for p in (tmp_path / "changes").iterdir()] == ["helper-seen"]
 
 
 def test_changes_that_cannot_be_kept_are_unavailable_everywhere(data_dir: Path, tmp_path: Path) -> None:
@@ -228,3 +242,39 @@ def test_one_change_at_a_time_one_rebuild_a_day_a_start_in_its_window_and_refres
     assert (second.status_code, second.json()["code"]) == (409, "change_pending")
     assert (third.status_code, third.json()["code"]) == (409, "rebuild_running")
     assert (cancel.status_code, cancel.json()["code"]) == (409, "change_not_pending")
+
+
+def test_without_a_helper_the_change_is_refused_503_and_nothing_is_written(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        (tmp_path / "changes" / "helper-seen").unlink()
+        view = client.get("/api/road-map").json()
+        refused = client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+    server.stop()
+    assert (refused.status_code, refused.json()["code"]) == (503, "rebuilds_not_set_up")
+    assert list((tmp_path / "changes").iterdir()) == []
+    assert (view["limits"]["rebuilds_set_up"], view["limits"]["helper_seen_at"]) == (False, None)
+
+
+def test_a_running_rebuild_shows_its_step_the_pause_and_when_planning_is_back(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    began = datetime.now(UTC).replace(microsecond=0)
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+        (tmp_path / "changes" / "request.txt").rename(tmp_path / "changes" / "running.txt")
+        (tmp_path / "changes" / "progress.txt").write_text(f"step=building\nstep_at={int(began.timestamp())}\n")
+        running = client.get("/api/road-map").json()
+        (tmp_path / "changes" / "progress.txt").write_text("step=building\ncolour=red\n")
+        unreadable = client.get("/api/road-map").json()
+    server.stop()
+    change = running["change"]
+    assert (change["state"], change["step"], change["steps_done"]) == ("running", "building", 2)
+    assert [r["name"] for r in change["added"]] == ["Portugal"]
+    assert running["planning_paused"] is True
+    assert datetime.fromisoformat(running["planning_back_at"]) > began
+    assert running["limits"]["helper_seen_at"] is not None and "server_utc_offset_minutes" in running
+    assert (unreadable["change"]["state"], unreadable["change"]["step"], unreadable["planning_paused"]) == (
+        "running",
+        None,
+        False,
+    )

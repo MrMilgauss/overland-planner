@@ -175,6 +175,8 @@ class RoadMapChangeBody(BaseModel):
     """The change the helper waits for or works on; `start_at` and the regions are those of a planned change."""
 
     state: Literal["none", "planned", "running", "done", "failed", "cancelled"]
+    step: Literal["checking", "downloading", "building", "switching"] | None = None
+    steps_done: int = 0
     start_at: datetime | None = None
     added: list[RegionRefBody] = []
     removed: list[RegionRefBody] = []
@@ -184,7 +186,9 @@ class RoadMapChangeBody(BaseModel):
         if planned is None:
             return cls(state="none")
         return cls(
-            state="planned",
+            state=planned.state,  # type: ignore[arg-type]
+            step=planned.step,  # type: ignore[arg-type]
+            steps_done=planned.steps_done,
             start_at=planned.start_at,
             added=[RegionRefBody(**vars(r)) for r in planned.added],
             removed=[RegionRefBody(**vars(r)) for r in planned.removed],
@@ -194,12 +198,19 @@ class RoadMapChangeBody(BaseModel):
 class RoadMapLimitsBody(BaseModel):
     changes_available: bool
     max_gb: float
+    max_bytes: int
+    next_rebuild_from: datetime | None = None
+    helper_seen_at: datetime | None = None
+    rebuilds_set_up: bool
 
 
 class RoadMapBody(BaseModel):
     served: ServedMapBody
     change: RoadMapChangeBody
     limits: RoadMapLimitsBody
+    planning_paused: bool = False
+    planning_back_at: datetime | None = None
+    server_utc_offset_minutes: int = 0
 
 
 class ProjectCreate(BaseModel):

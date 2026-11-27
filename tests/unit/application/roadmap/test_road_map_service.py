@@ -15,7 +15,12 @@ from hypothesis import strategies as st
 
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.region_catalogue import CatalogueEntry, CatalogueUnavailableError
-from overland_planner.application.ports.road_map_changes import ChangeRequest, RequestedRegion
+from overland_planner.application.ports.road_map_changes import (
+    STEPS,
+    ChangeRequest,
+    RebuildProgress,
+    RequestedRegion,
+)
 from overland_planner.application.ports.tileset_store import ServedRegion, TilesetListing
 from overland_planner.application.roadmap.facade import SEED_REGION_KEYS, ChangesUnavailableError, RoadMapService
 from overland_planner.domain.catalog.coordinate import Coordinate
@@ -274,8 +279,11 @@ def test_a_change_that_cannot_be_summarised_says_why() -> None:
 class FakeChanges:
     """The change queue at its port boundary: keeps what it is given, as the helper's folder would."""
 
-    def __init__(self, open_: bool = True) -> None:
+    def __init__(self, open_: bool = True, seen: datetime | None = None) -> None:
         self.open = open_
+        self.seen: datetime | None = CLOCK.now() if seen is None else seen  # the helper has just looked
+        self.running_asked: ChangeRequest | None = None
+        self.note: RebuildProgress | None = None
         self.request: ChangeRequest | None = None
         self.report: tuple[list[str], list[str]] | None = None
         self.taken = False
@@ -284,10 +292,19 @@ class FakeChanges:
         return self.request is not None
 
     def running(self) -> bool:
-        return self.taken
+        return self.taken or self.running_asked is not None
 
     def available(self) -> bool:
         return self.open
+
+    def running_request(self) -> ChangeRequest | None:
+        return self.running_asked
+
+    def progress(self) -> RebuildProgress | None:
+        return self.note
+
+    def helper_seen_at(self) -> datetime | None:
+        return self.seen
 
     def queue(self, request: ChangeRequest, added: object, removed: object) -> None:
         assert self.open, "the folder cannot be written"
@@ -556,3 +573,83 @@ def test_refresh_with_no_record_asks_for_the_seed_regions() -> None:
     summary = service.plan_change(None, START)
     assert sorted(r.key for r in summary.added) == sorted(SEED_REGION_KEYS)
     assert changes.request is not None and sorted(r.key for r in changes.request.regions) == sorted(SEED_REGION_KEYS)
+
+
+# ------------------------------------------------------------------ the helper's heartbeat and the pause (D303, D315)
+@given(age_seconds=st.integers(min_value=0, max_value=1200))
+def test_rebuilds_are_set_up_while_the_helper_looked_under_five_minutes_ago(age_seconds: int) -> None:
+    changes = FakeChanges(seen=CLOCK.now() - timedelta(seconds=age_seconds))
+    service, _, _ = queued_planner(changes=changes)
+    assert service.rebuilds_set_up() is (age_seconds < 300)
+    assert service.helper_seen_at() == changes.seen
+    if age_seconds < 300:
+        service.plan_change(["italy", "portugal"], START)
+        assert changes.request is not None
+    else:
+        with pytest.raises(Refusal) as refused:
+            service.plan_change(["italy", "portugal"], START)
+        assert refused.value.code == "rebuilds_not_set_up" and "not set up" in refused.value.message
+        assert changes.request is None
+
+
+def test_without_a_mark_of_the_helper_nothing_is_planned() -> None:
+    changes = FakeChanges()
+    changes.seen = None
+    service, _, _ = queued_planner(changes=changes)
+    assert (service.rebuilds_set_up(), service.helper_seen_at()) == (False, None)
+    with pytest.raises(Refusal) as refused:
+        service.plan_change(["italy", "portugal"], START)
+    assert refused.value.code == "rebuilds_not_set_up" and changes.request is None
+
+
+def test_a_waiting_change_stays_planned_when_the_helper_has_not_looked_for_minutes() -> None:
+    service, changes, _ = queued_planner()
+    service.plan_change(["italy", "portugal"], START)
+    changes.seen = CLOCK.now() - timedelta(minutes=10)
+    planned = service.planned_change()
+    assert planned is not None and planned.state == "planned"
+    assert service.rebuilds_set_up() is False and service.helper_seen_at() == changes.seen
+
+
+BUILD_START = datetime(2026, 11, 29, 3, 10, tzinfo=UTC)
+
+
+def running_planner(step: str | None, step_at: datetime = BUILD_START) -> RoadMapService:
+    changes = FakeChanges()
+    changes.running_asked = ChangeRequest(
+        requested_at=CLOCK.now(),
+        start_at=None,
+        regions=(
+            RequestedRegion("italy", "Italy", "Europe", "u", "p", 2 * GB),
+            RequestedRegion("portugal", "Portugal", "Europe", "u", "p", 3 * GB),
+        ),
+    )
+    changes.note = None if step is None else RebuildProgress(step, step_at)
+    service, _, _ = queued_planner(changes=changes)
+    return service
+
+
+@given(step=st.sampled_from(STEPS), minutes=st.integers(min_value=0, max_value=600))
+def test_planning_is_paused_from_the_build_to_the_end_of_the_switch_and_back_after_the_estimate(
+    step: str, minutes: int
+) -> None:
+    started = BUILD_START + timedelta(minutes=minutes)
+    change = running_planner(step, started).planned_change()
+    assert change is not None and (change.state, change.step) == ("running", step)
+    assert change.steps_done == STEPS.index(step)
+    assert change.planning_paused is (step in ("building", "switching"))
+    # 5 GB to build: the pause is round(6 x 5) = 30 minutes counted from the step's own start
+    assert change.planning_back_at == (started + timedelta(minutes=30) if change.planning_paused else None)
+    assert [r.name for r in change.added] == ["Portugal"]
+
+
+def test_a_rebuild_that_says_nothing_about_its_step_is_running_and_pauses_nothing() -> None:
+    change = running_planner(None).planned_change()
+    assert change is not None
+    assert (change.state, change.step, change.steps_done, change.planning_paused, change.planning_back_at) == (
+        "running",
+        None,
+        0,
+        False,
+        None,
+    )
