@@ -2,7 +2,7 @@
   "roadmap": {
     "project_id": "overland-route-planner-mvp",
     "created_at": "2026-11-02T19:53:04Z",
-    "total_steps": 114
+    "total_steps": 144
   },
   "phases": [
     {
@@ -3830,6 +3830,1024 @@
           "implementation_notes": "Slice 12b; D262, D292; CI D170 (pending-scenario gate). LAST STEP OF SLICE 12B. Read the pins of slice 12's enabling step (11-08) in tests/ci/test_ci_workflow.py and follow them. The screenshots test is the one place real tiles load: it must skip itself when E2E_START_LOCAL is unset, and its files never leave .data/. Commit: 'test(acceptance): slice 12b blocking in CI'.\n\nPHASE RULES (every step of phase 12): outside-in TDD. RED_ACCEPTANCE: the two @driving_port scenarios are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12b.py (pytest-bdd, steps in steps/trip_workflow_steps.py, written in DISTILL; the feature keeps its `@slice-12b @pending` tag line until 12-07, so run them with `--run-pending=slice-12b`); every @ui scenario has one `test.fixme` in tests/e2e/trip-workflow.spec.ts (one per row of each outline): the step that owns the scenario writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under `make e2e-local` before any production code; log `--data FAIL`. A scenario that guards behaviour already on the page (its step says so) may pass at its first run: then break the guarded behaviour once on purpose, see the test fail for that reason, revert, and log both runs. W4 (D275, D292): states the packaged planner cannot reach (Loading, Planning, Couldn't plan, a Valhalla run, a retrace, a stopped plan, the large-project notice, an unanswering engine) are set with the spec's `answerWith`: the real answer is read ONCE with `page.request` and the route handler only fulfills it, never `route.fetch` (D278); everything else is real (offline road map, page actions and `page.request`). The base map never comes from the internet in a test: `serveTheBaseMap` answers the planner's `base_style_url` with CALM_STYLE and every other foreign request with a blank tile (the 12-07 screenshots are the one exception, local only); each test creates its own project; a test meant for one width skips itself on the other project. Outcomes, not pixels: labels, roles, bounding boxes, computed styles and the map's own style and published state, never pixel-compared screenshots. The planner's lines are read from its answer and checked word for word (D211). The feature text is the SSOT (D140): never edit a 12b scenario to fit the code; a wrong scenario is reported to the orchestrator; the only 12b feature edit is the tag line in 12-07. SLICE-12 CHECKS (D290): slice-12-ui-foundation.feature is not pending and blocks in CI, so every step keeps it and its Playwright and vitest checks green; a slice-12 line or check changes only as the DISTILL D290 table words it, in the step whose criteria name the row, each named in the commit body; when a row's new wording names an element a later step builds (line 68's and line 118's \"Details\", built in 12-05), the step writes the new wording, its check stops at what exists, and 12-05 completes the check. No other slice-12 or older check changes: the fast suite proves it. RED_UNIT: unit tests before production code: pytest for the server (settings, `/api/config/map`), vitest + jsdom for the inner checks of the DESIGN testability table (tripPhase, planState, PlanPanel, PhaseSteps, RouteCard, RunDetails, Itinerary, TripList, AddMenu, TripMap, runMap, WorkspacePage); property-based with Hypothesis where a Python behaviour is a rule over inputs (single examples only with a `# bypass:` reason), table-driven vitest cases for the TypeScript rules; state-delta assertions, no mocks of the code under test; log `--data FAIL` with a `RED evidence:` block in the commit body and hand-off (BATCH-2 RULE, D207). Property-test oracles get the same scrutiny as production code; tests never busy-wait (auto-waiting locators and `expect.poll`, never `waitForTimeout`). GOLDEN ORDER (D223): `uv run pytest -q tests/perf/test_golden_model_pin.py` and `uv run pytest -q -m golden_order` (marked solver_child, so not in the fast suite: run it explicitly) pass in every step; the solver, the fingerprint and the leg cache are untouched (slice OUT); never run bless; if either fails STOP and report, do not fix. Architecture rules (brief section 11, import-linter): the light base map settings live in bootstrap/settings.py beside MAP_TILE_URL and reuse its key guard, never a copy; domain and application are untouched. Web: the slice-12 look stays (D265): components use the tokens of web/src/app.css only (no hex value in a component except the map overlays, tokens.test.ts), both themes, the 3 px focus ring, 44 px targets, the K2 banner and D208's export rule (no Export GPX while a job of the page is active; an older ready run keeps its export under a later failed run); no CSS framework, icon font or new runtime dependency in web/package.json (MapLibre 6.19 as pinned). API changes regenerate tests/contract/http/openapi.json on purpose (`make openapi-snapshot`; only 12-01 changes the API). The repository is PUBLIC: no real host, address, login, password or token in any file, test, commit message or log (the only addresses are the public defaults D287 names and the tests' own example addresses). Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths only. No Pi access: never run ssh or a make target that reaches the Pi. Local check before COMMIT: `uv run pytest -q -m \"not slow and not solver_child\" -rf` (pass count reported), the two golden-order commands, `make lint`, `make test-web` when web/ changed, prettier on every changed web/ and tests/e2e/ file (`cd web && npx --no-install prettier --write <files>`) BEFORE the final `make e2e-local` when web/ or tests/e2e/ changed (Playwright starts `make run-local` itself, which builds web/dist first through `make web-dist`; a planner already on the port is reused, so stop it first; if a test says web/dist is stale, run `make web-dist`), markdownlint when a .md changed. The crafter stops at the commit and never pushes."
         }
       ]
+    },
+    {
+      "id": "13",
+      "name": "Slice 12c: the planner knows its map (served regions and map date, coverage warnings, place search, rebuild of the road map from the app)",
+      "status": "DRAFT 2026-11-27 (roadmap author; orchestrator approval pending)",
+      "description": "US-27 (J-01, J-05), US-28 (J-01), US-29 (J-06), US-30 (J-05), US-31 (J-05); user decisions D295-D299 and the owner-approved sketches (11 screens, D300). The planner reads the served map from the volume (regions, borders, map date; D301, D314), judges every trip item against the real borders, never boxes (D302), warns without blocking, searches places through a rate-limited proxy of Nominatim (D307), searches the Geofabrik catalogue (D306), queues one change of the road map for a cron-driven helper on the Pi (D303, D304) that runs the existing refresh on a regions file and reports its steps; the Road map screen, the coverage box and tags, the place search form, the progress and the paused Plan the route follow D309. Keys are Geofabrik index ids and addresses are the index's own (D315, D316). Checks: pytest-bdd test_slice_12c.py (90 scenarios, 138 cases: 61 @driving_port, 33 @real-io, 29 @script), Playwright tests/e2e/road-map.spec.ts (36 @ui scenarios, 36 test.fixme), pytest and Hypothesis on domain/roadmap and application/roadmap, vitest + jsdom on the web rules, tests/deploy offline script tests. D290-style checks changed on purpose, each in the step that changes the behaviour: 13-06 (road_map_area, D295 sentence, openapi, .env.example), 13-15 (REGIONS_FILE default kept), 13-16 (seed five names), 13-19 (compose contract, hardening, makefile targets, deploy script), 13-22 (Build the trip element list), 13-24 (three to four ways to add), 13-25 (header link), 13-28 (Plan the route disabled). OUT: new planning behaviour, solver, fingerprint, leg cache (golden order unaffected); a working Photon fallback; a docker socket for the planner. ESTIMATE: 58.5 h over 30 steps (about 7 days against the orchestrator's 4: 126 scenarios, 29 of them on scripts, plus the D290 rows do not fit 32 h without steps above a day; cut candidates if the owner wants 4 days: none without dropping scenarios); reference class: slices 11 and 12b, plus D277 for the refresh. Scenario coverage: 126 of 126 mapped to exactly one step (pytest 90 in 13-03..13-21, @ui 36 in 13-22..13-29; 13-01, 13-02 and 13-30 own none).",
+      "steps": [
+        {
+          "id": "13-01",
+          "name": "The domain knows outlines: containment, holes, land groups",
+          "description": "Pure domain in domain/roadmap: Outline (rings with holes, even-odd containment, boundary inside) and RoadMapCoverage (contains; land_groups by overlap or touch, connected components, group names from the regions). The Geofabrik .poly parser in adapters/roadmap reads the fixtures into Outline. Import-linter contracts domain-roadmap and facade-roadmap are added; domain/roadmap and application/roadmap join only_mutate.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "12-07"
+          ],
+          "estimated_hours": 3,
+          "criteria": [
+            "Hypothesis properties on Outline.contains: a point inside an outer ring and outside every hole is inside; a point in a hole is outside; a vertex or a point on an edge is inside; translating ring and point together does not change the answer.",
+            "Hypothesis properties on land_groups: linking is symmetric, groups partition the regions, two regions that share a vertex or cross edges are in one group, disjoint regions are in separate groups; group names are the member regions' names in a stable order.",
+            "The .poly parser (adapters/roadmap/poly_parser.py) parses the ten real fixtures and hand-made utah.poly under tests/acceptance/overland_route_planner_mvp/fixtures/road-map/ into Outlines; a malformed file (no closing END, a ring of fewer than 3 points, a non-numeric point) raises one named parse error, never a crash; pytest cases per fault.",
+            "On the real fixture borders: Italy and Spain are in one group with Rhone-Alpes, Provence-Alpes-Cote-d'Azur, Languedoc-Roussillon and Midi-Pyrenees loaded; without the two Occitanie regions Spain is its own group; Andorra la Vella is outside all eight.",
+            "pyproject.toml: only_mutate lists domain/roadmap and application/roadmap; import-linter contracts domain-roadmap (imports nothing from application or other domain modules except domain.catalog.coordinate) and facade-roadmap are added and green with `uv run lint-imports`.",
+            "Unit tests before production code: every rule of this step has its pytest or Hypothesis case written and seen RED first (RED evidence in the commit body).",
+            "`uv run pytest -q tests/perf/test_golden_model_pin.py` and `uv run pytest -q -m golden_order` pass (golden order untouched)."
+          ],
+          "test_file": "tests/unit/domain/roadmap/test_outline.py",
+          "scenario_name": "NOT_APPLICABLE: no scenario of its own (inner domain rules; the real-border scenarios 'A place is inside or outside the map by the borders of the regions, not by boxes' and 'Italy, the French regions and Spain are linked by land' turn green in 13-04 and 13-05 on top of it)",
+          "files_to_modify": [
+            "src/overland_planner/domain/roadmap/__init__.py",
+            "src/overland_planner/domain/roadmap/outline.py",
+            "src/overland_planner/domain/roadmap/coverage.py",
+            "src/overland_planner/adapters/roadmap/__init__.py",
+            "src/overland_planner/adapters/roadmap/poly_parser.py",
+            "tests/unit/domain/roadmap/test_outline.py",
+            "tests/unit/domain/roadmap/test_coverage.py",
+            "tests/unit/adapters/roadmap/test_poly_parser.py",
+            "pyproject.toml"
+          ],
+          "implementation_notes": "Slice 12c; D302. Read first: domain/catalog/coordinate.py (the only domain import allowed), pyproject.toml (only_mutate and the importlinter contracts), the fixtures README under fixtures/road-map/ (source and ODbL). Outlines are small (about 6,000 points for eight regions): plain ray casting, no spatial index. Antimeridian is out of scope (D302). Mutation (orchestrator's gate, >= 80 %) covers outline.py and coverage.py: write the edge properties so a mutant of each comparison dies. Commit: 'feat(roadmap): outlines, containment and land groups'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py and steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite; the orchestrator runs the full gates. Architecture (import-linter, brief section 11): domain/roadmap imports nothing from application; adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-02",
+          "name": "The domain knows the rules of a change: no overlap, size limit, estimate, same day, start window, served map",
+          "description": "Pure rules in domain/roadmap: select_served (listing + served id -> the directory or none), RegionChoice (ancestors and descendants refused both ways, byte sum against the limit, added and removed, land groups of the chosen regions), the estimate (pause = round(6 x GB) minutes, total = round(8.2 x GB + 2.5) minutes), same-day (UTC date against directory names) and the start-time window (2 minutes to 14 days).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-01"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "select_served: Hypothesis over generated listings: an epoch equal to exactly one tar mtime selects that directory; a directory name equal to the id selects it (mock); no match, an empty listing, a missing or schema-unknown record, or no served id -> not known, never an exception; two directories with the same mtime select none.",
+            "RegionChoice: a region and any ancestor or descendant of it cannot both be chosen in either order (the refusal names both: 'Utah is already in the road map as part of United States of America'); the byte sum is the sum of the members; added and removed are the set differences against the served keys; adding then removing the same region leaves the choice unchanged.",
+            "Estimate: 6.4 GB gives 38 and 55 minutes, 6.6 GB gives 40 and 57; both are monotonic in size (Hypothesis); size above ROAD_MAP_MAX_GB (default 8 GB) is refused with the total and the limit; today's eight regions (6.4 GB) pass.",
+            "Same-day: a start whose UTC date equals the name of any directory in the listing (served, previous or leftover) is refused with next_rebuild_from = the next UTC midnight; the date tested is the start time's UTC date, not the request's; a start in the window [now + 2 min, now + 14 days] passes, one second outside on either side is refused (Hypothesis on the boundaries with a fixed clock).",
+            "Unit tests before production code: every rule has its pytest or Hypothesis case seen RED first (RED evidence in the commit body).",
+            "`uv run pytest -q tests/perf/test_golden_model_pin.py` and `uv run pytest -q -m golden_order` pass (golden order untouched)."
+          ],
+          "test_file": "tests/unit/domain/roadmap/test_region_choice.py",
+          "scenario_name": "NOT_APPLICABLE: no scenario of its own (inner domain rules; 13-03, 13-08, 13-09 and 13-10 turn their scenarios green on top of it)",
+          "files_to_modify": [
+            "src/overland_planner/domain/roadmap/served_map.py",
+            "src/overland_planner/domain/roadmap/region_choice.py",
+            "src/overland_planner/domain/roadmap/estimate.py",
+            "tests/unit/domain/roadmap/test_served_map.py",
+            "tests/unit/domain/roadmap/test_region_choice.py",
+            "tests/unit/domain/roadmap/test_estimate.py"
+          ],
+          "implementation_notes": "Slice 12c; D301, D305, D314. The size limit and the estimate figures are D305's (the orchestrator's 10 + 8 x GB is superseded). One rebuild a UTC day is derived from the directory listing, not from a counter. These are pure functions of values the application will pass in (listing, clock, keys); no I/O, no settings. Mutation (orchestrator's gate) covers all three files: pin every boundary. Commit: 'feat(roadmap): rules of a road-map change'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py and steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite; the orchestrator runs the full gates. Architecture (import-linter, brief section 11): domain/roadmap imports nothing from application; adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-03",
+          "name": "The planner names the served map: its regions and its date, unknown when it cannot tell",
+          "description": "Ports ServedMap and TilesetStore, the tileset directory reader (listing, record schema 1 strict, outlines named in the record), ValhallaRoutingProvider.served_epoch() (uncached /status read) and the mock's ROAD_MAP_SERVED_TILESET, the application road-map service with its facade (last matched directory kept while the engine is stopped, fallback to serving= in progress.txt), settings ROAD_MAP_DIR and ROAD_MAP_SERVED_TILESET, wiring with probes, and the served part of GET /api/road-map.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-02"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "GET /api/road-map answers `served` {known, map_date, regions [{key, name, parent_name, bytes}], total_bytes}: the regions of the directory whose tar date equals the engine's epoch, map_date always present when a date can be read (also when the regions are unknown) and null otherwise; after a rollback the older directory is the one named; a missing tilesets directory, a missing or unknown-schema or truncated record, an unreadable outline or a record naming a missing outline give known=false and never an error status.",
+            "A damaged region border is reported as a degraded reason (`road_map_unreadable` on /api/health) and the map stays unknown; a missing mount is unknown, not degraded; TilesetStore never lists a directory of `outlines/` that the record does not name.",
+            "While the engine does not answer (the build) the service keeps the last matched served map in memory, and after a restart falls back to the tileset named by serving= in progress.txt; served_epoch() fails soft (refused connection, 5xx, non-integer epoch -> none) and does not return the cached provider identity after the engine changed version between two reads (scripted transport, unit).",
+            "Settings: ROAD_MAP_DIR (default empty = unknown), ROAD_MAP_SERVED_TILESET (mock only; with ROUTING_PROVIDER=valhalla a value refuses the start naming the key); unit tests in tests/unit/bootstrap/test_settings.py (Hypothesis on the guard and the empty = default rule).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'The planner names the regions and the date of the served map' | 'Before the first rebuild from the app the planner gives the map date and no regions' | 'The served map is the one whose map data carries the date the Pi reports' | 'After a rollback the older map is the one served' | 'A map whose regions cannot be read is unknown, never an error' (4 rows) | 'A damaged region border is reported as a reason, and the map stays unknown' | 'While the Pi is busy building, the last known map is still named'.",
+            "tests/contract/http/openapi.json is regenerated on purpose (`make openapi-snapshot`) for the new route; every probe is registered in wiring order, none fatal; a gold test per adapter fault (missing mount, truncated JSON, unknown schema, unparsable .poly).",
+            "Unit tests before production code (RED evidence in the commit body); the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "The planner names the regions and the date of the served map | Before the first rebuild from the app the planner gives the map date and no regions | The served map is the one whose map data carries the date the Pi reports | After a rollback the older map is the one served | A map whose regions cannot be read is unknown, never an error | A damaged region border is reported as a reason, and the map stays unknown | While the Pi is busy building, the last known map is still named",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/served_map.py",
+            "src/overland_planner/application/ports/tileset_store.py",
+            "src/overland_planner/application/roadmap/__init__.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/adapters/roadmap/tileset_dir_reader.py",
+            "src/overland_planner/adapters/routing/valhalla_routing_provider.py",
+            "src/overland_planner/adapters/routing/mock_routing_provider.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/unit/adapters/roadmap/test_tileset_dir_reader.py",
+            "tests/unit/adapters/routing/test_served_epoch.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D301, D314; ADR-013 Amendment 5. Seven scenarios in one step because they share one fixture-volume builder and one reader; the four rows of the 'cannot be read' outline are the same reader code with four faults. Read first: valhalla_routing_provider.py (the cached identity and the probe), mock_routing_provider.py, app_factory.py (wire, probe, use), tests/acceptance/.../steps/road_map_steps.py (fixture volumes and the scripted /status). The matching is the domain's select_served (13-02), never the adapter's. Mutation covers application/roadmap/service.py. Commit: 'feat(roadmap): the planner names the served map'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py and steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite; the orchestrator runs the full gates. Architecture (import-linter, brief section 11): domain/roadmap imports nothing from application; adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-04",
+          "name": "The planner judges a trip against the borders: places and trails outside the map",
+          "description": "CoverageService and GET /api/projects/{id}/coverage: {known, regions, map_date, outside_item_ids, groups}. A place is outside by its point, a trail when its entry or its exit is outside (the middle is irrelevant); unknown map -> known false and empty lists; a pending change never alters the judgment (the served map is read, never the choice).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-03"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "GET /api/projects/{id}/coverage lists outside_item_ids for included items: a place whose point is outside every served outline; a trail whose entry or exit is outside; a trail with an outside middle only is inside; excluded items are never listed; unknown project -> the usual not-found envelope.",
+            "Unknown map (no regions) answers known=false with empty regions, empty outside_item_ids and empty groups; a pending change in the queue leaves the answer exactly as it was (state-delta over the road-map view).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A place is inside or outside the map by the borders of the regions, not by boxes' (6 rows, real fixture borders; one row is Corsica or the Andorra case) | 'A trail is outside when its entry or its exit is outside, the middle does not matter' (3 rows) | 'Without the regions of the map the planner says the coverage is unknown and warns nothing' | 'A pending change does not alter what the trip is judged against'.",
+            "Unit tests of CoverageService (entry outside, exit outside, middle outside is fine, place outside, unknown map, excluded item) written first, Hypothesis where a rule over inputs; contract openapi.json regenerated on purpose.",
+            "`uv run pytest -q tests/perf/test_golden_model_pin.py` and `uv run pytest -q -m golden_order` pass (golden order untouched).",
+            "'A pending change does not alter what the trip is judged against' runs before 13-09 exists: its binding places a pending request in the changes folder through the test seam (the request file format of D303/D315), not through POST /api/road-map/change."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A place is inside or outside the map by the borders of the regions, not by boxes | A trail is outside when its entry or its exit is outside, the middle does not matter | Without the regions of the map the planner says the coverage is unknown and warns nothing | A pending change does not alter what the trip is judged against",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/coverage_service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "tests/unit/application/roadmap/test_coverage_service.py",
+            "tests/integration/http/test_coverage_route.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D302, D308. Trip rules live in the application (CoverageService), the geometry in the domain (13-01); the entry and exit of a trail are the existing anchors (see application/catalog anchor handling). Read the project's items through the existing catalog facade, never its tables. Commit: 'feat(roadmap): coverage of a trip against the served borders'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py and steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite; the orchestrator runs the full gates. Architecture (import-linter, brief section 11): domain/roadmap imports nothing from application; adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-05",
+          "name": "The planner groups stops by land: not linked by land",
+          "description": "The coverage answer's groups: the trip's included, non-outside items grouped by the served map's land groups with the member region names; more than one group is the not-linked case. No refusal; items are kept.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-04"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "coverage.groups lists, per land group containing at least one included non-outside item, {regions: names, item_ids}; a trip inside one group answers one group; items outside the map are in no group.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'Stops in areas not linked by land are grouped, and the groups are named' | 'Italy, the French regions and Spain are linked by land' (real borders of the eight regions: one group) | 'Without the French regions Spain is on its own' (Spain's own group).",
+            "Unit tests first: CoverageService groups (one group, two groups, outside item in no group, empty trip), Hypothesis: the item ids over all groups are a subset of the included items and disjoint.",
+            "`uv run pytest -q tests/perf/test_golden_model_pin.py` and `uv run pytest -q -m golden_order` pass (golden order untouched)."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "Stops in areas not linked by land are grouped, and the groups are named | Italy, the French regions and Spain are linked by land | Without the French regions Spain is on its own",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/coverage_service.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/roadmap/test_coverage_service.py",
+            "tests/integration/http/test_coverage_route.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D302. Known limit stated, not fixed: an outline says nothing about ferries, so islands inside a country count as the same group. Group names for the page are the member regions' names. Commit: 'feat(roadmap): trip stops grouped by land'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py and steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite; the orchestrator runs the full gates. Architecture (import-linter, brief section 11): domain/roadmap imports nothing from application; adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-06",
+          "name": "The map settings drop the road-map area and say whether place search is offered; the unreachable sentence reads the regions",
+          "description": "GET /api/config/map drops road_map_area (D295's ROAD_MAP_AREA goes away; a leftover line in a Pi's .env is ignored) and gains place_search from the new PLACE_SEARCH setting (on|off, empty = on) and PLACE_SEARCH_URL (empty = Nominatim default). The web reads the regions from GET /api/road-map: MapConfig, api.ts and the D295 sentence in PlanPanel change in this same step.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-03"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "GET /api/config/map no longer has road_map_area and answers place_search true by default, false with PLACE_SEARCH=off; PLACE_SEARCH= (empty) and PLACE_SEARCH_URL= (empty) mean the defaults; any other PLACE_SEARCH value refuses the start naming the key (never the value); both settings are in the empty-is-default validator lists with one test each; Hypothesis on the value guard.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'The map settings no longer name a road-map area and say whether place search is offered' | 'Switching place search off removes it from the Add menu' | 'Leaving the search address empty means the usual address, not off'.",
+            "D290 rows done: tests/integration/http/test_map_config.py (the road_map_area field and its test go; place_search is checked); tests/contract/http/openapi.json regenerated on purpose; web/src/lib/runMap.ts and runMap.test.ts MapConfig drops road_map_area and gains place_search (every vitest fixture that builds a map config follows); .env.example drops ROAD_MAP_AREA and gains PLACE_SEARCH and PLACE_SEARCH_URL with the Nominatim policy link.",
+            "D290 row done: PlanPanel.svelte and PlanPanel.test.ts (the D295 sentence): the regions come from GET /api/road-map (served.regions names, joined with commas and 'and'); when the map is unknown the sentence stays as the slice-12b wording without region names; vitest table cases for 0, 1, 2 and 3 regions.",
+            "Unit tests before production code (RED evidence in the commit body); the two golden-order commands pass; `make test-web` is NOT run (disk): run the changed vitest files only: `cd web && npx --no-install vitest run src/lib/runMap.test.ts src/lib/PlanPanel.test.ts`; prettier on every changed web file."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "The map settings no longer name a road-map area and say whether place search is offered | Switching place search off removes it from the Add menu | Leaving the search address empty means the usual address, not off",
+          "files_to_modify": [
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/adapters/http/platform_routes.py",
+            ".env.example",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/integration/http/test_map_config.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py",
+            "web/src/lib/api.ts",
+            "web/src/lib/runMap.ts",
+            "web/src/lib/runMap.test.ts",
+            "web/src/lib/RunMap.svelte.test.ts",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/PlanPanel.test.ts"
+          ],
+          "implementation_notes": "Slice 12c; D295 (superseded in its source), D307, D308, D314, D316 (4). The 'southern France' residue in settings.py and .env.example goes here (D317). Read first: settings.py (the ROAD_MAP_AREA setting and the empty-is-default validator lists at :156-183), PlanPanel.svelte :98, :154-160, :169, :317-319 and PlanPanel.test.ts :1117-1156. The PLACE_SEARCH_URL value is only parsed here (the adapter comes in 13-13). Keys must never put a host in tracked files. Commit: 'feat(config): place search switch; the road-map area leaves the map settings'. Name each changed D290 row in the commit body.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first (pytest with Hypothesis, vitest table cases for TypeScript rules), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (named pytest paths, named vitest files), never `make e2e-local` or the full suite. Web: tokens only (tokens.test.ts), both themes, 44 px targets, one column at 390 px, menus and forms in the page flow (D295, D298); prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-07",
+          "name": "The planner searches the free list of regions by name, and keeps what it fetched",
+          "description": "Port RegionCatalogue and the Geofabrik adapter (httpx): the index at GEOFABRIK_INDEX_URL cached on disk in the planner data directory for 7 days (stale copy used when a refetch fails), HEAD sizes cached 7 days, the planner's User-Agent, timeouts 10 s, one request at a time. GET /api/road-map/catalogue?q= with at least 2 letters. Probe region_catalogue_unavailable. Keys are index ids, addresses the index's own urls.pbf and urls.poly.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-03"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "The index is fetched once with the planner's identifying User-Agent and no query, kept on disk, reused after a restart without a new request, fetched again after 7 days (fake clock), and the kept copy is used when the service does not answer; a corrupt cache is discarded; features without a pbf or poly address or whose parent chain does not resolve are not offered.",
+            "The size of a region is asked once by one HEAD of its .osm.pbf and remembered; only region details are asked for (no trip data, no coordinates ever leave).",
+            "GET /api/road-map/catalogue?q= with fewer than 2 letters answers 422 with a plain message and sends nothing; with 2 or more letters at most 8 results {key, name, parent_name, bytes}.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A search for a region needs at least two letters' | 'The catalogue is fetched with the planner's name and only region details are asked for' | 'The catalogue is kept, so a restarted planner does not ask for it again' | 'The catalogue is fetched again after a week' | 'The kept catalogue is used when the region service does not answer' | 'The size of a region is remembered'.",
+            "Contract test of the adapter against the recorded real index (554 features, trimmed copy under the acceptance fixtures) with respx; the probe reads the cached index or fetches once at start (one attempt, 10 s) and checks 100 or more features, unique keys, every pbf address under the origin derived from GEOFABRIK_INDEX_URL, every parent resolves; GEOFABRIK_INDEX_URL empty = the default; openapi.json regenerated on purpose.",
+            "Unit tests before production code (RED evidence in the commit body); the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A search for a region needs at least two letters | The catalogue is fetched with the planner's name and only region details are asked for | The catalogue is kept, so a restarted planner does not ask for it again | The catalogue is fetched again after a week | The kept catalogue is used when the region service does not answer | The size of a region is remembered",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/region_catalogue.py",
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/roadmap/geofabrik_catalogue.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            ".env.example",
+            "tests/unit/adapters/roadmap/test_geofabrik_catalogue.py",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/integration/http/test_road_map_catalogue_route.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_fakes.py"
+          ],
+          "implementation_notes": "Slice 12c; D306, D310, D315. Contract tests recommended for Geofabrik: consumer-driven, recorded real answers replayed with respx. The allowed download origin derives from GEOFABRIK_INDEX_URL so tests run offline (D313 O3). .env.example gains GEOFABRIK_INDEX_URL and ROAD_MAP_MAX_GB (the latter used in 13-08). The adapter parses data only; the matching of parents lives in the domain's RegionChoice. Probe fault catalogue: unreachable, truncated JSON, fewer than 100 features, a duplicate key, an address off the origin, a parent that does not resolve. Commit: 'feat(roadmap): search the Geofabrik catalogue'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; httpx stays out of the application; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log (only the public defaults the design names). Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-08",
+          "name": "A region is found with its parent and what the map already covers; a change is summarised before it is written",
+          "description": "Catalogue results carry in_map (already chosen or covered by an ancestor) and the parent name that tells same-named regions apart. POST /api/road-map/change/preview answers the summary (added, removed, total_bytes, estimate {total_minutes, pause_minutes}, land_groups with names, not_linked_note) and writes nothing; the border of each chosen region is fetched once and cached; a region far from the others is information, not a refusal.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-02",
+            "13-07"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "Catalogue results mark in_map for a region already in the served map or covered by a chosen ancestor; two regions with one name carry different parent names.",
+            "POST /api/road-map/change/preview with {region_keys, start_at} answers the summary with the figures of the domain (6.4 GB -> about 38 and 55 minutes) and the land groups of the chosen regions; a region not linked by land to the others answers a not_linked_note and the status 200; each chosen region's .poly is fetched once per summary and then from the on-disk cache; nothing is written in the changes folder.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A region is found in the catalogue by name, with its parent and what the map already covers' (2 rows) | 'Two regions with the same name are told apart by their parent' | 'A change is summarised before it is written, and only the chosen region's border is fetched' | 'A region far from the others is information, not a refusal'.",
+            "Unit tests first: RegionChoice use in the service (in_map marking, summary figures, far region), pytest with a fixture catalogue; openapi.json regenerated on purpose; the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A region is found in the catalogue by name, with its parent and what the map already covers | Two regions with the same name are told apart by their parent | A change is summarised before it is written, and only the chosen region's border is fetched | A region far from the others is information, not a refusal",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/roadmap/geofabrik_catalogue.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D305, D306, D308. The request carries each region's urls.pbf and urls.poly taken by the planner from the catalogue, never from the browser (used from 13-09). The PINs of DISTILL fix the spelling of the answer (in_map, land_groups, not_linked_note, estimate{total_minutes, pause_minutes}). Commit: 'feat(roadmap): preview of a road-map change'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-09",
+          "name": "A change is queued for the helper, refused with its reason, or cancelled; nothing is applied by the planner",
+          "description": "Port RoadMapChanges and the change-queue adapter (request.txt written to a temp file in the same directory and renamed; cancelled.txt by renaming request.txt), POST and DELETE /api/road-map/change, the refusal codes unknown_region, overlaps_region, too_big, changes_unavailable, probe road_map_changes_unavailable, ROAD_MAP_CHANGES_DIR and ROAD_MAP_MAX_GB. The planner writes no list of regions record.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-08"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "POST /api/road-map/change with valid keys answers 201 with the summary and leaves request.txt (schema=1, requested_at, start_at as UTC epoch seconds when given, one tab-separated region line of six fields per region: key, name, parent name, pbf address, poly address, bytes, plus added= and removed=); the served map and the road-map view stay as they were; the planner writes no road-map.json.",
+            "Refusals answer {code, message} and write nothing: unknown_region, overlaps_region, too_big (total and limit in the message) as three rows; a changes folder that cannot be written gives changes_unavailable (503) on POST and the view's limits.changes_available false (the screen offers no change).",
+            "DELETE /api/road-map/change renames request.txt to cancelled.txt (the helper can no longer take it) and answers 409 when no request.txt is left to rename.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A pending change is kept ready for the helper' | 'A cancelled change can no longer be taken by the helper' | 'Planning a change leaves the served map as it is' | 'A change that cannot be applied is refused with the reason and nothing is written' (3 rows) | 'Changing the road map is not offered when the changes cannot be stored' | 'A change is refused when the changes cannot be stored'.",
+            "Probe: write, fsync, rename, read back and delete of a probe file in ROAD_MAP_CHANGES_DIR, with a gold test for a read-only folder, a root-owned folder and a missing mount; degraded reason road_map_changes_unavailable, never fatal.",
+            "Unit tests first for the adapter (atomic write: no half-written request.txt is ever visible; rename wins/loses once) and the service; openapi.json regenerated on purpose; the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A pending change is kept ready for the helper | A cancelled change can no longer be taken by the helper | Planning a change leaves the served map as it is | A change that cannot be applied is refused with the reason and nothing is written | Changing the road map is not offered when the changes cannot be stored | A change is refused when the changes cannot be stored",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/road_map_changes.py",
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/roadmap/change_queue.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/settings.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            ".env.example",
+            "tests/unit/adapters/roadmap/test_change_queue.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/unit/bootstrap/test_settings.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D304, D308, D310, D315. One writer per file: the planner writes request.txt and cancelled.txt only; the helper owns running.txt, progress.txt, result.txt, helper-seen. Both the planner's cancel and the helper's take rename request.txt: the atomic rename decides. Nothing is evaluated: the planner writes only the fixed line formats named here and the DISTILL PINs. The planner's cancel is a rename, never a delete. Names and parent names come from the catalogue (printable UTF-8, no tab or control character, at most 120 bytes: the planner refuses to write a region whose name breaks the helper's rule, as unknown_region). Mutation covers service.py. Commit: 'feat(roadmap): queue and cancel a road-map change'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-10",
+          "name": "One change at a time, one rebuild a day, a start time inside its window, Refresh map data as the same change",
+          "description": "The refusals that depend on the state: change_pending and rebuild_running (one request.txt or running.txt at a time), same_day with next_rebuild_from (the UTC date of the start against the directories in tilesets/, including a leftover of a failed switch; a failure before the switch leaves none), bad_start (2 minutes to 14 days ahead, UTC epoch seconds in the file), cancel refused once the helper took it, and Refresh map data asking for the served regions through the same preview and POST (the seed list SEED_REGION_KEYS when the map has no record).",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-09"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "A POST while request.txt or running.txt exists answers 409 change_pending or rebuild_running and writes nothing; a new accepted POST first moves result.txt to previous-result.txt and removes cancelled.txt; DELETE after the helper took the request (running.txt) answers 409.",
+            "A start whose UTC date equals a directory name in tilesets/ (served map, previous map or a leftover of a failed switch) is refused same_day with next_rebuild_from the next UTC midnight; with no directory of that date (a failure before the switch) the same start is accepted.",
+            "A start time under 2 minutes or over 14 days ahead (and one malformed) is refused bad_start; the accepted ones are written as UTC epoch seconds (4 rows).",
+            "Refresh map data uses the served regions (or the seed list when no record exists, resolved against the catalogue) and answers the same summary and cost as choosing them by hand.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'Refresh map data asks for the same regions and shows the same cost' | 'Only one change is pending at a time' | 'A planned change cannot be cancelled once the helper has taken it' | 'A rebuild is refused on a day that already has a map, with the next day and time it may run' | 'A new map left behind by a failed switch uses the day up' | 'A rebuild that failed before the switch leaves no map, so the day is not used up' | 'A start time must be between two minutes and fourteen days ahead' (4 rows).",
+            "A drift test pins the seed ids (italy, spain, switzerland, austria, rhone-alpes, provence-alpes-cote-d-azur, languedoc-roussillon, midi-pyrenees) against the trimmed index fixture (ids and addresses), not against EXTRACTS.",
+            "Unit tests first; openapi.json regenerated if the answers change; the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "Refresh map data asks for the same regions and shows the same cost | Only one change is pending at a time | A planned change cannot be cancelled once the helper has taken it | A rebuild is refused on a day that already has a map, with the next day and time it may run | A new map left behind by a failed switch uses the day up | A rebuild that failed before the switch leaves no map, so the day is not used up | A start time must be between two minutes and fourteen days ahead",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/unit/application/roadmap/test_seed_regions.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D305, D314, D315. Seven scenarios in one step because they are all refusals computed from one listing of the changes folder and the tilesets folder on top of 13-09's writer and 13-02's rules; the start-time outline is four rows of one rule. The rules themselves are the domain's (13-02): this step wires them to the folders and the clock (inject a fixed clock; no sleeping). Commit: 'feat(roadmap): one change at a time, one rebuild a day'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-11",
+          "name": "The planner says whether the helper is set up, which step the rebuild has reached, and when planning is back",
+          "description": "The change part of GET /api/road-map: state none|planned|running|done|failed|cancelled, step and steps_done from progress.txt, planning_paused (true from the building step to the end of the switch) with planning_back_at (ISO 8601 UTC), limits {max_bytes, next_rebuild_from, changes_available, helper_seen_at}; rebuilds_not_set_up (503 on POST) when helper-seen is older than 5 minutes or missing; a waiting change not looked at for minutes reads as not set up.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-10"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "Without a heartbeat file POST answers 503 rebuilds_not_set_up and writes nothing; the helper counts as set up while helper-seen is under 5 minutes old (4 minutes yes, 6 minutes no; fake clock); a waiting request.txt with a stale heartbeat shows limits.helper_seen_at and reads as not set up.",
+            "progress.txt step=checking|downloading|building|switching maps to state running, the step name and steps_done (4 rows); planning_paused is false while checking and downloading and true from building until the end of switching, with planning_back_at from the estimate counted from the building step's own start (3 rows: before, during, after).",
+            "Reads are capped and strict: a progress.txt or result.txt that is not a regular file, is larger than 4 KB or has an unknown key reads as no information (state unchanged), never a 500.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'Without the helper the planner says rebuilds are not set up and refuses the change' | 'The helper counts as set up while it looked less than five minutes ago' (outline) | 'A waiting change that the helper has not looked at for minutes says rebuilds are not set up' | 'The planner shows the step the helper has reached' (4 rows) | 'Planning is paused from the build until the switch ends, and the planner says when it is back' (3 rows).",
+            "Unit tests first (Hypothesis on the heartbeat threshold and on the pause window); openapi.json regenerated if the answers change; the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "Without the helper the planner says rebuilds are not set up and refuses the change | The helper counts as set up while it looked less than five minutes ago | A waiting change that the helper has not looked at for minutes says rebuilds are not set up | The planner shows the step the helper has reached | Planning is paused from the build until the switch ends, and the planner says when it is back",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/roadmap/change_queue.py",
+            "src/overland_planner/adapters/http/road_map_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/unit/adapters/roadmap/test_change_queue.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D305, D308, D315. One threshold, 5 minutes, one code (rebuilds_not_set_up). The pause is from the building step to the end of the switch because only then is Valhalla stopped (about 40 of about 55 minutes; the old map keeps planning while downloading). Add server_utc_offset_minutes to the answer for the page's '(Pi time)' note. The files here are fakes written by the test steps; the real producers arrive in 13-15 to 13-21. Commit: 'feat(roadmap): helper heartbeat, progress and the pause of planning'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-12",
+          "name": "A rebuild's result is told in plain words: out of space with the numbers, every failure, success shows the new map",
+          "description": "application/roadmap/messages.py: failure code + numbers -> the plain sentence of the approved screen 9 (codes locked, date, disk, memory, routing_status, download, region_missing, merge, build, build_oom, overrides, promote, switch, interrupted, bad_request), result.txt strict reader (state, finished_at, code, free_gb/need_gb/have_gb, tileset), and the done state showing the new regions and date once the new map is served.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-11"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "Every failure code answers a plain sentence without the code, a path or a script word (14 rows); each sentence says the previous road map is back with its map data date and that the change is kept when it is; the disk sentence carries the free and the needed gigabytes ('the Pi has 18 GB of free disk and needs 25 GB'); build_oom says the Pi ran out of memory building the map.",
+            "An unknown code reads as a generic failed sentence, never an exception; free text from the helper is never shown (code and numbers only).",
+            "A rebuild that stopped for lack of space answers state failed with the numbers while served is unchanged; a rebuild that ended well (result state done and the engine now serving the new tileset) answers the new regions and the new date in `served` and in `change.result`.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A rebuild that stopped for lack of space says so, with the numbers, and the served map is untouched' | 'Every way a rebuild can fail is told in plain words, not as a code' (14 rows) | 'A rebuild that ended well shows the new regions and date once the new map is served'.",
+            "Unit tests first (table over every code with Hypothesis on the numbers); the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A rebuild that stopped for lack of space says so, with the numbers, and the served map is untouched | Every way a rebuild can fail is told in plain words, not as a code | A rebuild that ended well shows the new regions and date once the new map is served",
+          "files_to_modify": [
+            "src/overland_planner/application/roadmap/messages.py",
+            "src/overland_planner/application/roadmap/service.py",
+            "src/overland_planner/adapters/roadmap/change_queue.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "tests/unit/application/roadmap/test_messages.py",
+            "tests/unit/application/roadmap/test_road_map_service.py",
+            "tests/integration/http/test_road_map_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D304, D314. The words are the planner's, bash carries codes and numbers only. Fourteen rows of one outline share one table-driven mapping; the three scenarios sit together because they read the same result.txt. Sentences follow the owner-approved screen 9 (D300); when the sentence for a code is not in the sketches, use the plain pattern of build_oom and keep it free of jargon. Mutation covers messages.py. Commit: 'feat(roadmap): the result of a rebuild in plain words'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): other modules reach application.roadmap through its facade. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-13",
+          "name": "Place search through the planner: up to five places, only the typed words, never a contact detail",
+          "description": "Port PlaceSearch and the Nominatim adapter in adapters/geocoding (jsonv2, addressdetails, limit 5, the planner's identifying User-Agent, timeout 10 s, no email or contact parameter ever), GET /api/places/search?q= answering up to 5 {name, region, country, lat, lon} each with its region; an empty list when nothing matches; names under 2 letters refused before anything is sent; PLACE_SEARCH=off answers 503 place_search_unavailable and the probe says switched off; no outbound call at start.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-06"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A name is answered with at most five places, each with name, region, country and point; the request the service saw has the planner's User-Agent, format=jsonv2, addressdetails=1, limit=5, the typed words and nothing else (no email, no contact, no trip data, no coordinates).",
+            "Nothing is sent at start, on a health check or by the page opening; a name shorter than 2 letters answers 422 and sends nothing; a name that matches nothing answers 200 with an empty list; PLACE_SEARCH=off answers 503 place_search_unavailable and sends nothing.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A place name is answered with up to five places, each with its region' | 'No contact detail is ever sent to the search service' | 'Nothing is sent to the search service unless a search is asked for' | 'Only the typed words reach the search service' | 'A name that matches nothing is an empty answer, not an error' | 'A name shorter than two letters is refused before anything is sent' | 'A search is answered as not available when place search is switched off'.",
+            "Contract test against a recorded copy of a real Nominatim jsonv2 answer with respx; the probe makes no outbound call: it checks the configured address parses and round-trips the limiter and cache with a fake clock (PLACE_SEARCH=off is ok with 'switched off'); degraded reason place_search_misconfigured; ADR-019 is the policy record (linked from .env.example beside the setting).",
+            "Unit tests first (respx, fake clock); openapi.json regenerated on purpose; the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A place name is answered with up to five places, each with its region | No contact detail is ever sent to the search service | Nothing is sent to the search service unless a search is asked for | Only the typed words reach the search service | A name that matches nothing is an empty answer, not an error | A name shorter than two letters is refused before anything is sent | A search is answered as not available when place search is switched off",
+          "files_to_modify": [
+            "src/overland_planner/application/ports/place_search.py",
+            "src/overland_planner/application/roadmap/facade.py",
+            "src/overland_planner/adapters/geocoding/__init__.py",
+            "src/overland_planner/adapters/geocoding/nominatim_place_search.py",
+            "src/overland_planner/adapters/http/place_routes.py",
+            "src/overland_planner/adapters/http/schemas.py",
+            "src/overland_planner/bootstrap/app_factory.py",
+            ".env.example",
+            "tests/unit/adapters/geocoding/test_nominatim_place_search.py",
+            "tests/integration/http/test_place_routes.py",
+            "tests/contract/http/openapi.json",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_fakes.py"
+          ],
+          "implementation_notes": "Slice 12c; D307, D314; ADR-019. Seven scenarios in one step because they share one local recording server and one adapter; each is one assertion on what the service saw or did not see. Contract tests recommended for Nominatim (recorded real answer, replayed with respx; one live query is manual, never in CI). The User-Agent names the repository in its public form only (as ADR-019 words it). A name is never logged. Adapters import the port, httpx stays out of the application; the empty adapters/geocoding package is extended, not replaced. Mutation covers the facade only (adapter code is outside only_mutate). Commit: 'feat(places): search for a place by name through the planner'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; httpx stays out of the application. PUBLIC repository: no host, address, login or token in any file, test, commit or log (only the public defaults). Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-14",
+          "name": "Place search is polite and safe: a second apart, remembered, one at a time, silent after a busy answer",
+          "description": "The adapter's behaviour over time: one request a second across the process (a waiting request waits for the rest of the second, at most 3 s, then answers busy), an in-memory cache of recent answers (200 entries, 24 hours, never on disk, never listed), two simultaneous identical searches send one, 429/5xx/timeouts/unreadable bodies answer 503 place_search_unavailable and leave the trip unchanged, and after a 429 or 503 the service is left alone for 60 seconds. A result outside the road map joins the trip as a kept, warned place.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-13",
+            "13-04"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "Two different searches in a row reach the service at least one second apart (fake clock); a third request that would wait more than 3 s answers busy; the same search again within 24 hours is answered from memory and sends nothing; the cache holds at most 200 entries and is never written to disk.",
+            "Two identical searches pressed at once send exactly one request and both receive the answer.",
+            "A busy, down, timing-out or garbled service (4 rows) answers 503 place_search_unavailable with the plain message and changes nothing in the project; after a 429 or 503 nothing is sent for 60 seconds (monotonic fake clock), then the next search goes out.",
+            "A result outside the road map, added with its name and point through the existing add-place call, is kept and is listed by GET /api/projects/{id}/coverage as outside.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'Two different searches in a row are a second apart' | 'The same search again is answered from memory and sends nothing' | 'Pressing Search twice at once sends one search' | 'A search service that is busy, down or garbled leaves the trip unchanged' (4 rows) | 'After a busy answer the search service is left alone for a minute' | 'A result outside the road map joins the trip as a kept, warned place'.",
+            "Unit tests first with a fake clock (Hypothesis on the spacing and on the cache bound); the two golden-order commands pass."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "Two different searches in a row are a second apart | The same search again is answered from memory and sends nothing | Pressing Search twice at once sends one search | A search service that is busy, down or garbled leaves the trip unchanged | After a busy answer the search service is left alone for a minute | A result outside the road map joins the trip as a kept, warned place",
+          "files_to_modify": [
+            "src/overland_planner/adapters/geocoding/nominatim_place_search.py",
+            "src/overland_planner/adapters/http/place_routes.py",
+            "tests/unit/adapters/geocoding/test_nominatim_place_search.py",
+            "tests/integration/http/test_place_routes.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_steps.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_fakes.py"
+          ],
+          "implementation_notes": "Slice 12c; D307, D314. The planner runs one worker, so one lock and the monotonic time of the last call are enough; tests inject the clock and never sleep (no real waiting in any test). The memory cache exists because the OSM policy requires clients to cache (D307 overrides the DISCUSS line 'caching OUT', whose intent was no search history): nothing is kept on disk and nothing is listed. Commit: 'feat(places): one search a second, remembered, calm after a busy answer'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); see them fail for a business reason before production code; log `--data FAIL`. RED_UNIT: unit tests first, Hypothesis where the behaviour is a rule over inputs (single examples only with a `# bypass:` reason), state-delta assertions, no mocks of the code under test; RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: targeted tests only (`uv run pytest -q <paths> -k ...`), never `make e2e-local` or the full suite. Architecture (import-linter, brief section 11): adapters import ports only; httpx stays out of the application. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Stage explicit paths; no Pi access. Local check before COMMIT: targeted pytest, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-15",
+          "name": "The refresh rebuilds from a list of regions: each its own file, its border fetched first, the disk guard scales, a held lock exits 75",
+          "description": "tiles-refresh.sh with REGIONS_FILE (six tab-separated fields per region: key, name, parent name, .osm.pbf address, .poly address, bytes) replaces EXTRACTS: files saved as src/<n>.osm.pbf by position; valhalla-fetch (second read-write mount of valhalla-data subpath road-map-meta at /meta) also downloads each .poly into /meta/outlines/ before anything is stopped (a 404 refuses naming the region); MIN_FREE = max(25 GB, 3.9 x download bytes); a lock refusal exits 75 and writes no failed line in tiles.log. Without REGIONS_FILE the script behaves as today.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "12-07"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "With REGIONS_FILE the downloads are the file's addresses, saved as src/1.osm.pbf, src/2.osm.pbf and so on in order, one download per region on its own; the .poly of each region is fetched into /meta/outlines/ before the engine is stopped; a missing border (404) stops the refresh before anything is stopped and names the region (nothing in `build/` or `tilesets/` changes).",
+            "The disk guard needs max(25 GB, 3.9 x download bytes): 6.4 GB -> 25 GB, 8 GB -> 31 GB, a smaller list -> 25 GB (3 rows, fake df); the refusal carries the free and the needed gigabytes.",
+            "A lock refusal exits 75 and writes no `failed` line in tiles.log (the refresh did nothing); every other refusal keeps its exit 1 and its line.",
+            "Without REGIONS_FILE nothing changes: the eight extracts of tests/deploy/test_tiles_refresh_script.py:151-172 are still the default (D290 row; that test is kept, not edited).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A rebuild from a list of regions downloads each region on its own' | 'A region whose border file cannot be fetched stops the rebuild before anything is stopped' | 'The disk the rebuild needs grows with the download' (3 rows) | 'A rebuild refused because a deploy is running says so, and reports no failure'.",
+            "Offline deploy tests first (docker, curl and df shims; RED evidence in the commit body); `make lint-ci` (shellcheck) clean on the changed scripts if the tool exists on the Mac, otherwise stated in the hand-off."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A rebuild from a list of regions downloads each region on its own | A region whose border file cannot be fetched stops the rebuild before anything is stopped | The disk the rebuild needs grows with the download | A rebuild refused because a deploy is running says so, and reports no failure",
+          "files_to_modify": [
+            "deploy/scripts/tiles-refresh.sh",
+            "deploy/scripts/lib.sh",
+            "deploy/compose.yaml",
+            "tests/deploy/test_tiles_refresh_script.py",
+            "tests/deploy/test_tiles_refresh_regions.py",
+            "tests/deploy/conftest.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D313, D314, D315, D316; ADR-013 Amendment 5. The download addresses change from tiles-refresh.sh:34 to the index addresses (europe/italy/italy-latest.osm.pbf); the gate's one real rebuild verifies them (do not try to download anything). The compose edit is only the valhalla-fetch second mount (the planner mounts follow in 13-19). `make tiles-refresh` by hand (no REGIONS_FILE) keeps EXTRACTS and writes no record. Never eval or source the regions file: read it line by line. Read first: tiles-refresh.sh (MIN_FREE_KB at :36, refuse at :53-57, fetch at :159-166, promote at :194-201, undo_switch at :67-71), tests/deploy/conftest.py (FakePi, shims). Commit: 'feat(deploy): the refresh rebuilds from a list of regions'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script changes; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy), property-style cases where a rule is quantifiable (disk numbers); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log (the install dir is $PWD on the Pi). Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-16",
+          "name": "The refresh builds the list of the map's regions itself, and it travels with the new tiles",
+          "description": "After the downloads succeed the refresh writes road-map.json (schema 1: regions with key, name, parent_name, pbf_url, outline, bytes; escaped with lib.sh json_text; outlines named in it) into road-map-meta/ through a short docker run of the pinned image; prepare-build empties road-map-meta/ (rm -rf then mkdir); the promote step moves road-map.json and outlines/ into tilesets/<NEW>/; SHA256SUMS covers exactly the files the record names plus road-map.json; tiles-seed.sh and volume_stored_sums compare only the five tileset names.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-15"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A run with REGIONS_FILE leaves tilesets/<NEW>/road-map.json whose regions match the file's lines one for one (key, name, parent_name, pbf_url, outline name, bytes), valid JSON for names with quotes or accents, and tilesets/<NEW>/outlines/ with the .poly files it names; a run without REGIONS_FILE writes no record.",
+            "prepare-build empties road-map-meta/ so a leftover of a failed earlier run never reaches the record; a failed run leaves no meta in the new tileset; rollback (tiles-rollback.sh, which uses no checksums) works unchanged on a directory with and without a record.",
+            "SHA256SUMS lists the five tileset files, road-map.json and exactly the outlines the record names; the integrity check fails when a named outline or the record is altered.",
+            "Seeding a map again still recognises the same five files after the list grew: the seed script and volume_stored_sums/sums_diff compare only the five names (D290 row: tests/deploy/test_tiles_seed_script.py and lib.sh:259-268 changed here).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'The rebuild builds the list of the map's regions itself, and it travels with the new map' | 'The map's integrity check covers its regions and borders too' | 'Seeding a map again still recognises the same tiles after the integrity check grew'.",
+            "Offline deploy tests first (RED evidence in the commit body); shellcheck clean if available."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "The rebuild builds the list of the map's regions itself, and it travels with the new map | The map's integrity check covers its regions and borders too | Seeding a map again still recognises the same tiles after the integrity check grew",
+          "files_to_modify": [
+            "deploy/scripts/tiles-refresh.sh",
+            "deploy/scripts/lib.sh",
+            "deploy/scripts/tiles-seed.sh",
+            "tests/deploy/test_tiles_refresh_script.py",
+            "tests/deploy/test_tiles_refresh_regions.py",
+            "tests/deploy/test_tiles_seed_script.py",
+            "tests/deploy/test_tiles_rollback_script.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D301, D313, D314, D316 (3); ADR-013 Amendment 5. One owner of the record: the refresh (the planner writes none, the helper copies none). The record travels with the tileset, so a failed switch is undone with it and the tileset directory stays Valhalla's /custom_files without upsetting the engine (the refresh already undoes the switch when /status fails). The reader of 13-03 reads only the outlines the record names. Commit: 'feat(deploy): the refresh writes the record of the map's regions'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script changes; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-17",
+          "name": "The refresh reports its steps in order, and only when asked",
+          "description": "lib.sh function progress STEP|failed CODE [k=v...], a no-op unless ROAD_MAP_PROGRESS=on, writing progress.txt (step, step_at epoch, serving=<old tileset>, new=<new tileset>) or the failure facts through the same pinned, time-limited docker run (--user 10001:10001, --network none, --cap-drop ALL, --read-only, no-new-privileges, pids and memory caps, mounting only overland_road-map); events checking, downloading, building (just before compose stop valhalla), switching (just before the promote); failure codes with numbers; a failed progress write is a warning, never a failure of the refresh.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-15",
+            "13-16"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "With ROAD_MAP_PROGRESS=on the refresh calls the progress hook in the order checking, downloading, building, switching (a helper-container run labelled `progress` whose next argument is the step); the building event comes before the engine is stopped and the switching event before the promote; progress.txt carries new=<tileset>.",
+            "Without ROAD_MAP_PROGRESS the refresh makes no progress call at all (docker shim records none).",
+            "Every failure path calls progress failed with its code (locked, date, disk, memory, routing_status, download, region_missing, merge, build, build_oom, overrides, promote, switch, interrupted as applicable) and the numbers it has (free_gb, need_gb, have_gb); a lock refusal exits 75 without a failure code written; a failing progress write leaves the refresh's own outcome unchanged (one warning line).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'The rebuild reports its steps in order' | 'The rebuild says nothing about its steps when not asked'.",
+            "Offline deploy tests first (RED evidence in the commit body); shellcheck clean if available."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "The rebuild reports its steps in order | The rebuild says nothing about its steps when not asked",
+          "files_to_modify": [
+            "deploy/scripts/lib.sh",
+            "deploy/scripts/tiles-refresh.sh",
+            "tests/deploy/test_tiles_refresh_script.py",
+            "tests/deploy/test_tiles_refresh_regions.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D314. The hook uses the same wrapper as the helper (13-20), so keep it in lib.sh as one function both scripts call; the wrapper's flags are pinned by the 'helper's containers run as an ordinary user' scenario in 13-20 and must be written here with the same flags. Bash carries codes and numbers only, never the refresh's free text. The pre-existing failure helper `refuse` keeps its tiles.log line except for the lock case. Commit: 'feat(deploy): the refresh reports its steps'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script changes; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-18",
+          "name": "The helper is installed once as one timed job of the deploy user, and removed again",
+          "description": "deploy/scripts/road-map-helper.sh install|uninstall|status: one marked crontab line (`* * * * * cd '<install dir>' && bash scripts/road-map-runner.sh >>road-map-runner.log 2>&1 # overland-road-map-runner`, path quoted for the shell, install dir = $PWD on the Pi), safe crontab edit (only 'no crontab for <user>' counts as empty; any other crontab -l failure exits without writing; old crontab saved to a file in the install dir; every other line kept byte for byte; read back and compared; restored on a difference). tests/deploy/shims/crontab exists from DISTILL.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-15"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "install writes exactly one marked line, runs every minute, and `status` says installed; installing again replaces only the marked line; a path with a space is quoted so the line runs; the Pi's other jobs are kept exactly, in order, with the helper's line appended.",
+            "uninstall removes only the marked line and keeps every other line; with no crontab it does nothing and succeeds.",
+            "A crontab that cannot be read for any reason but 'no crontab' leaves the Pi alone (nothing written, a plain message, non-zero exit); a write that reads back different is restored from the saved copy and fails with a warning.",
+            "status says installed or not installed (2 rows) and never changes anything.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'The helper is installed once and runs every minute' | 'A Pi whose app folder name has a space runs the helper too' | 'Installing again replaces the helper's own job and keeps the Pi's other jobs as they are' | 'The helper is added beside the Pi's other jobs, which are kept exactly' | 'Uninstalling removes only the helper's job' | 'A Pi whose jobs cannot be read is left alone' | 'The helper says whether it is installed' (2 rows).",
+            "Offline deploy tests first with the crontab shim (RED evidence in the commit body); `make lint-ci` shellcheck clean if available."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "The helper is installed once and runs every minute | A Pi whose app folder name has a space runs the helper too | Installing again replaces the helper's own job and keeps the Pi's other jobs as they are | The helper is added beside the Pi's other jobs, which are kept exactly | Uninstalling removes only the helper's job | A Pi whose jobs cannot be read is left alone | The helper says whether it is installed",
+          "files_to_modify": [
+            "deploy/scripts/road-map-helper.sh",
+            "deploy/scripts/lib.sh",
+            "tests/deploy/test_road_map_helper_script.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/crontab",
+            "tests/deploy/shims/_shim.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D314 (crontab rules); Q4 settled by D313 (crontab present, cron active, no crontab yet, the user is in the docker group; no sudo). Seven scenarios in one step because they are one script's three verbs over one shim and the status outline is two rows. Read first: lib.sh (conventions, json_text, the shims), the crontab shim written in DISTILL. The line is built from $PWD, never a literal path, host or user. Use `crontab <file>` with a temp file, never a pipe. Commit: 'feat(deploy): install the road-map helper as one timed job'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script exists; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-19",
+          "name": "Deploy installs the helper without failing, purge removes it first; the planner gets its mounts",
+          "description": "deploy.sh calls the helper's install after the publish and the routing start (best-effort like start_routing: a failure is one warning line and a releases.log note, never a failed deploy, D234); the Makefile's uninstall and purge call the helper's uninstall first and purge also removes the volume overland_road-map; compose.yaml gets the top-level volume road-map (name overland_road-map), planner mounts road-map at /road-map-changes (rw) and valhalla-data whole at /valhalla-data read-only, planner-perf's own volumes list gets both read-only, ROAD_MAP_DIR, ROAD_MAP_CHANGES_DIR, ROAD_MAP_MAX_GB, PLACE_SEARCH, PLACE_SEARCH_URL, GEOFABRIK_INDEX_URL pass as ${VAR:-}; the Dockerfile creates /road-map-changes owned by 10001:10001.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-18",
+            "13-09",
+            "13-13"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A deploy whose helper install fails still succeeds, with one warning line and a note in releases.log; a deploy installs the helper after the publish and the routing start; deploy.sh stays inside the overland scope (test_deploy_stays_inside_the_overland_scope) and the new crontab call is the only addition to the unexpected-call guards (D290 row: tests/deploy/test_deploy_script.py changes here).",
+            "make uninstall and make purge call the helper's uninstall before removing anything (crontab shim sees it first); purge's removed volumes gain overland_road-map (D290 row: tests/deploy/test_makefile_targets.py PI_TARGETS, ROUTING_TARGETS and the purge expectations change here).",
+            "compose.yaml: the planner and planner-perf lists carry the two mounts as named, the planner's valhalla-data mount is read-only without a subpath, the planner starts when no tileset is seeded (D234 promise kept); the Dockerfile creates /road-map-changes with owner 10001:10001 before USER (D290 rows: tests/deploy/test_compose_contract.py:160-161 and tests/deploy/test_container_hardening.py:69 now say the planner writes only /data, /tmp and /road-map-changes and mounts /valhalla-data read-only; planner-perf mounts asserted too); read-only root filesystem and cap_drop ALL stay.",
+            ".env.example documents ROAD_MAP_DOWNLOAD_PREFIX (Pi side, helper only, with the one-origin rule: a mirror needs both GEOFABRIK_INDEX_URL and ROAD_MAP_DOWNLOAD_PREFIX), ROAD_MAP_MAX_GB, ROAD_MAP_DIR and ROAD_MAP_CHANGES_DIR with their container paths, no host.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A Pi that cannot take the helper does not fail the deploy' | 'Removing the app from the Pi stops the helper first'.",
+            "Offline deploy tests first (RED evidence in the commit body); `make lint-ci` shellcheck clean if available."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A Pi that cannot take the helper does not fail the deploy | Removing the app from the Pi stops the helper first",
+          "files_to_modify": [
+            "deploy/scripts/deploy.sh",
+            "Makefile",
+            "deploy/compose.yaml",
+            "Dockerfile",
+            ".env.example",
+            "tests/deploy/test_deploy_script.py",
+            "tests/deploy/test_makefile_targets.py",
+            "tests/deploy/test_compose_contract.py",
+            "tests/deploy/test_container_hardening.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D173 amended on purpose (the planner writes /data, /tmp and /road-map-changes), D234, D303, D314, D316 (6). Mount whole valhalla-data read-only, not subpath tilesets: a missing subpath makes Docker refuse to start the container. planner-perf replaces the volumes list (lists do not merge), so both mounts are listed there too. Name each changed D290 row in the commit body. No Pi access: the compose and Dockerfile are proven by the contract tests, the Pi gate by the orchestrator. Commit: 'feat(deploy): the helper is installed by deploy, removed by purge; the planner mounts'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts and deploy files. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the code changes; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access (no ssh, no make target that reaches the Pi). Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-20",
+          "name": "The helper takes a request at its time, validates it strictly, and cannot reach the internet or the map",
+          "description": "deploy/scripts/road-map-runner.sh, run every minute: explicit PATH, flock -n on its own .road-map-runner.lock, helper-seen touched at the start of every run before the lock check, every container call a short timeout 60 docker run --rm of the pinned image with --network none, --user 10001:10001, --cap-drop ALL, --read-only, no-new-privileges, pids and memory caps, mounting only overland_road-map (never valhalla-data); non-regular files refused, reads capped (request 64 KB, status files 4 KB), nothing evaluated or sourced; strict line-by-line validation (schema=1, key ^[a-z0-9-]+(/[a-z0-9-]+)?$, names printable UTF-8 at most 120 bytes without tab, addresses under ROAD_MAP_DOWNLOAD_PREFIX with no .. segment, bytes digits, at most 40 regions, start_at and requested_at digits); a valid request with start_at reached (or absent) is renamed to running.txt, the regions file (mode 600) is written and tiles-refresh.sh runs with REGIONS_FILE and ROAD_MAP_PROGRESS=on; invalid -> result.txt state=failed code=bad_request.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-17",
+            "13-18",
+            "13-19"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A valid request whose start time has come is taken (request.txt renamed to running.txt) and the refresh is called once with the regions the request names (six fields per line) and ROAD_MAP_PROGRESS=on; a request with start_at in the future is left alone; helper-seen is touched on every run.",
+            "Each of eight malformed requests (wrong schema, a bad key, an address outside the prefix, an address with .., a control character in a name, an oversized request, more than 40 regions, a non-numeric time) is refused with result.txt state=failed code=bad_request and the refresh is never called; a symlink, a directory or a FIFO named request.txt is refused and never read.",
+            "Every docker call of the helper carries --network none, --user 10001:10001, --cap-drop ALL, --read-only, no-new-privileges, --pids-limit and a memory cap and never names valhalla-data (the shim records the argument list); a hung docker run is cut by timeout 60.",
+            "A request cancelled by the planner just before the helper looks is not started (the rename loses; nothing runs).",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A request is taken at its time and the rebuild runs on the regions it names' | 'A request is not started before its time' | 'A request that is not exactly what the planner writes is refused and nothing runs' (8 rows) | 'The helper cannot reach the internet or the served map' | 'A request cancelled just before the helper looks is not started'.",
+            "Offline deploy tests first (docker, flock, date shims; RED evidence in the commit body); shellcheck clean if available.",
+            "A named test: the docker and timeout shims record their argv, and every docker run of the runner is wrapped in 'timeout 60'."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A request is taken at its time and the rebuild runs on the regions it names | A request is not started before its time | A request that is not exactly what the planner writes is refused and nothing runs | The helper cannot reach the internet or the served map | A request cancelled just before the helper looks is not started",
+          "files_to_modify": [
+            "deploy/scripts/road-map-runner.sh",
+            "deploy/scripts/lib.sh",
+            "tests/deploy/test_road_map_runner_script.py",
+            "tests/deploy/conftest.py",
+            "tests/deploy/shims/_shim.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D304, D314, D315, D316 (7). The helper runs as the deploy user, who is in the docker group, which is itself root-equivalent on the host: the container flags limit what the helper's own code can do, not what the user could. Never eval, never source, no jq; the container's standard output carries the capped bytes to the host script which parses them into variables. Because the helper writes as uid 10001 the planner can read and rename everything it wrote. Epoch seconds only: no date parsing in bash. Read first: tiles-refresh.sh (what it expects of its environment), lib.sh (the progress wrapper from 13-17), the D277 shims. Commit: 'feat(deploy): the road-map runner takes and validates a request'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script exists; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-21",
+          "name": "The helper retries a busy Pi, runs once at a time, and records what happened, also after a power cut",
+          "description": "The runner after the refresh: exit 0 -> result.txt state=done; exit 75 -> running.txt goes back to request.txt and the next minute retries (at most 30 minutes, then failed code=locked); any other exit -> state=failed with the code and the numbers progress wrote (free_gb, need_gb, have_gb kept); a second helper in the same minute leaves at once (flock); recovery of a running.txt nobody holds: take .deploy.lock with flock -n (held -> do nothing), bring valhalla up with a timeout, compare routing.env's VALHALLA_TILESET with new= of progress.txt (equal and healthy -> done, different -> failed code=interrupted); road-map-runner.log records state changes only and is cut to its last 200 lines past 64 KB.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-20"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A refresh that exits 75 leaves a request.txt again, writes no failure, and is retried the next minute; after 30 minutes of 75 it ends failed code=locked; a refresh that fails with the disk guard keeps the three numbers in result.txt and the request lines (the change is kept).",
+            "Two helpers started in the same minute: the second leaves at once without touching any file except helper-seen.",
+            "A running.txt with nobody holding the runner lock and .deploy.lock free: valhalla is brought up with a timeout and, with routing.env equal to the tileset the run started, result.txt is state=done; with a different tileset it is failed code=interrupted and the old map serves; with .deploy.lock held nothing is changed and the next minute tries again (3 scenarios).",
+            "road-map-runner.log gains a line only on a state change (taken, step, done, failed, recovered), never on an idle minute, and is cut to its last 200 lines when it passes 64 KB.",
+            "Scenarios pass with `--run-pending=slice-12c`: 'A rebuild refused because a deploy is running is tried again the next minute' | 'Two helpers at the same minute: the second leaves at once' | 'A rebuild the Pi lost before the switch is recorded as interrupted and the old map serves' | 'A rebuild the Pi lost after the switch is recorded as done' | 'A rebuild the Pi lost is not touched while a deploy is running' | 'The rebuild refuses for lack of disk with the numbers, and the helper keeps them'.",
+            "Offline deploy tests first (RED evidence in the commit body); shellcheck clean if available. The leftover .routing.env.orig case is listed in the hand-off as a DELIVER check (D314), not silently handled."
+          ],
+          "test_file": "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+          "scenario_name": "A rebuild refused because a deploy is running is tried again the next minute | Two helpers at the same minute: the second leaves at once | A rebuild the Pi lost before the switch is recorded as interrupted and the old map serves | A rebuild the Pi lost after the switch is recorded as done | A rebuild the Pi lost is not touched while a deploy is running | The rebuild refuses for lack of disk with the numbers, and the helper keeps them",
+          "files_to_modify": [
+            "deploy/scripts/road-map-runner.sh",
+            "deploy/scripts/lib.sh",
+            "tests/deploy/test_road_map_runner_script.py",
+            "tests/deploy/conftest.py",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/steps/road_map_script_steps.py"
+          ],
+          "implementation_notes": "Slice 12c; D303, D314 (power-loss recovery). Recovery never runs the refresh's restore logic for a half-written switch it cannot see. Pointers only change at the switch, so a different routing.env means the old map is still serving. Read first: the refresh's exit trap and .deploy.lock use in deploy.sh and lib.sh. Tests never wait for real minutes (shim the clock, run the script once per simulated minute). Commit: 'feat(deploy): the road-map runner retries, records results and recovers'.\n\nPHASE RULES (every step of phase 13): outside-in TDD on scripts. RED_ACCEPTANCE: the scenarios of the step are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py (pytest-bdd; steps in steps/road_map_script_steps.py, written in DISTILL; the feature keeps `@slice-12c @pending` until 13-30, so run with `--run-pending=slice-12c -k <this step's scenarios>`); they run the real scripts under tests/deploy seams and shims; see them fail for a business reason before the script changes; log `--data FAIL`. RED_UNIT: offline deploy tests first (tests/deploy); RED evidence in the commit body. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code; report a wrong scenario to the orchestrator. GOLDEN ORDER: the two golden commands pass; solver, fingerprint and leg cache untouched; never bless. DISK: the Mac has under 2 GB free: run only the named tests/deploy files and the step's scenarios, never the full suite or `make e2e-local`. PUBLIC repository: no host, address, login, user name or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named tests/deploy files, targeted acceptance, the golden commands, `make lint`. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-22",
+          "name": "Build the trip shows the regions and the map date, and tags what is outside",
+          "description": "CoverageBox.svelte in TripList's heading area ('Roads loaded for: ...', 'Map data: ...', 'Map coverage unknown' when unknown), the 'Outside road map' tag on the rows listed in outside_item_ids, a trail outside warned at add time and kept; WorkspacePage loads GET /api/projects/{id}/coverage after every change to the trip; api.ts gains the coverage and road-map calls and types; the places inside the map show no tag; an unknown map invents no warning.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-04",
+            "13-06",
+            "13-12"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Build the trip shows the loaded regions (joined with commas and 'and') and the map date from GET /api/road-map and the coverage; an outside trail row carries the tag 'Outside road map' and stays in the trip; an inside place or trail shows no tag.",
+            "With known=false (and today's tileset has no record) the box says 'Map coverage unknown', shows the date when it has one, and no tag or warning appears anywhere.",
+            "The page reloads the coverage after every change of the trip (add, remove, include, exclude, import) and never blocks planning.",
+            "Playwright, written RED first (`test.fixme` -> `test`) in tests/e2e/road-map.spec.ts: 'Build the trip shows the regions and the map date' | 'A trail outside the map is warned at add time and on its row, and kept' | 'A place inside the map shows no warning' | 'Without knowledge of the loaded map the page does not invent warnings'; W4: the fixture volume and the mock road map are real, states the packaged planner cannot reach are set with `answerWith` read once.",
+            "D290 row done: the US-23 S1 element list on Build the trip (tests/e2e/trip-workflow.spec.ts first test) names the coverage box as a new element; web vitest first: CoverageBox, TripList tag, WorkspacePage coverage loading (table cases), api.ts types.",
+            "Tokens only, both themes, 44 px targets, one column at 390 px; prettier on every changed web/ and tests/e2e/ file; targeted vitest files and the targeted Playwright tests on chromium only (never `make e2e-local`); the two golden-order commands pass.",
+            "The slice 12b US-23 S1 element list changes here (DISTILL D290-style row): edit tests/acceptance/overland_route_planner_mvp/slice-12b-trip-workflow.feature and its test in this step and name the row in the commit body."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "Build the trip shows the regions and the map date | A place inside the map shows no warning | Without knowledge of the loaded map the page does not invent warnings",
+          "files_to_modify": [
+            "web/src/lib/CoverageBox.svelte",
+            "web/src/lib/CoverageBox.test.ts",
+            "web/src/lib/TripList.svelte",
+            "web/src/lib/TripList.test.ts",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "web/src/lib/api.ts",
+            "tests/e2e/road-map.spec.ts",
+            "tests/e2e/trip-workflow.spec.ts",
+            "tests/acceptance/overland_route_planner_mvp/slice-12b-trip-workflow.feature"
+          ],
+          "implementation_notes": "Slice 12c; D309, D295, D298; US-28 S1-S2, S4, S6. Words are the approved sketches' (D300); the planner's own refusal words (D211) stay for a race. Read first: TripList.svelte and WorkspacePage.svelte, tripPhase.ts (the coverage box belongs to the Build phase), tests/e2e/road-map.spec.ts (the 36 test.fixme and its fixtures: a fixture volume, a changes folder, two local servers), the 12b spec helpers (answerWith, serveTheBaseMap). The coverage and the road-map view are two calls; the page never reads a pending choice. Commit: 'feat(web): the coverage box and the outside tag'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. A scenario that guards behaviour already on the page may pass at its first run: break the guarded behaviour once on purpose, see the test fail, revert, log both runs. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); the two foreign services are local recording servers; the base map never comes from the internet in a test; each test creates its own project. Outcomes, not pixels: labels, roles, bounding boxes, computed styles and published state. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first for the inner rules (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-23",
+          "name": "A place outside the map is warned however it was added; planning is not blocked; stops not linked by land are warned",
+          "description": "WorkspacePage raises a one-time, dismissible alert for each item that became outside (a click on the map, typed coordinates, a file import: one alert per outside item), keeps the item, shows the not-linked-by-land warning from coverage.groups on Build the trip, and when planning fails keeps the planner's own words (D211) with the region names below them.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-22",
+            "13-05"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Adding a place by a click on the map and adding it by typed coordinates each raise the alert once when the place is outside the loaded map, the row carries the tag and the item stays; an alert is not raised again for an item that was already outside; a file import of several outside trails raises one alert per item.",
+            "'Plan the route' stays enabled with an outside item; when planning fails the planner's own refusal words stay verbatim with the loaded regions named below them.",
+            "With two land groups in coverage.groups, Build the trip shows the warning naming the groups; one group shows nothing.",
+            "Playwright, written RED first: 'A place outside the map is warned when added by a click on the map' | 'A place outside the map is warned when added by typed coordinates' | 'Planning is not blocked by an outside item and says why it fails' | 'Stops in areas not linked by land are warned on Build the trip'.",
+            "Vitest first: the alert-once rule (a pure function over the previous and the new outside ids, table cases), the groups warning, WorkspacePage wiring.",
+            "Tokens only, both themes, 44 px targets, 390 px one column; prettier before finishing; targeted vitest and Playwright on chromium only; the two golden-order commands pass.",
+            "The trail-outside scenario moved here from 13-22 (roadmap review): its add-time alert is this step's; its row tag comes from 13-22."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "A place outside the map is warned when added by a click on the map | A place outside the map is warned when added by typed coordinates | Planning is not blocked by an outside item and says why it fails | Stops in areas not linked by land are warned on Build the trip | A trail outside the map is warned at add time and on its row, and kept",
+          "files_to_modify": [
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "web/src/lib/CoverageBox.svelte",
+            "web/src/lib/CoverageBox.test.ts",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/PlanPanel.test.ts",
+            "web/src/lib/coverageAlerts.ts",
+            "web/src/lib/coverageAlerts.test.ts",
+            "tests/e2e/road-map.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D309; US-28 S3, S5, S7. The alert-once rule is a pure function in coverageAlerts.ts (previous outside ids, new outside ids -> the ids to alert), so it is table-tested. 'Became outside' includes a place whose point moved. Nothing refuses planning (HC-4's own words stay). Commit: 'feat(web): warn about places outside the map and stops not linked by land'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. A scenario that guards behaviour already on the page may pass at its first run: break the guarded behaviour once on purpose, see the test fail, revert, log both runs. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); the two foreign services are local recording servers; the base map never comes from the internet in a test; each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first for the inner rules (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-24",
+          "name": "Search for a place by name from the Add menu",
+          "description": "AddMenu gains a fourth entry 'Search for a place' when place_search is true (three when PLACE_SEARCH=off), opening PlaceSearchForm in the page flow: label, input, 'Search', 'Close', up to five results each with 'Add' (the existing add-place call with that name and point; the form stays open), the 'Outside road map' tag from the coverage check of the point, the fine print, the two error messages; nothing is sent while typing, only on Search or Enter; Search pressed twice quickly sends one search.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-14",
+            "13-22"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "Typing sends nothing; Search or Enter sends one search; two quick presses send one; the fine print reads 'Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors.'",
+            "A result's 'Add' joins the place to the trip and the form stays open; a result outside the road map is added with the outside warning; no result shows 'No place found' (a clear message); an unreachable or busy service shows its message and leaves the trip unchanged.",
+            "At 390 px the form fits without sideways scroll, opens in the page flow (no floating menu) and every target is at least 44 px.",
+            "Playwright, written RED first: 'A place is found by name and joins the trip' | 'Nothing is sent until Marco presses Search, and the screen says what leaves the house' | 'No result gives a clear message' | 'An unreachable or busy search service leaves the trip unchanged' | 'A result outside the road map is added with the warning' | 'Pressing Search twice quickly sends one search' | 'On a phone the search form fits and opens in the page flow' (the last one on webkit-iphone14).",
+            "D290 rows done: web/src/lib/AddMenu.test.ts:30, tests/e2e/trip-workflow.spec.ts:185 and the 12b feature's US-23 S2 lines (three ways to add become four when place_search is true: '... or search for a place'; three when PLACE_SEARCH=off), changed only as the DISTILL table words it and named in the commit body.",
+            "Vitest first: PlaceSearchForm (Enter, Close, five results, both errors, double press), AddMenu with place_search true and false; tokens only, both themes; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass.",
+            "A vitest case shows the Add menu with three entries when the map settings say place search is off (the scenario 'Switching place search off removes it from the Add menu' only checks the settings answer)."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "A place is found by name and joins the trip | Nothing is sent until Marco presses Search, and the screen says what leaves the house | No result gives a clear message | An unreachable or busy search service leaves the trip unchanged | A result outside the road map is added with the warning | Pressing Search twice quickly sends one search | On a phone the search form fits and opens in the page flow",
+          "files_to_modify": [
+            "web/src/lib/PlaceSearchForm.svelte",
+            "web/src/lib/PlaceSearchForm.test.ts",
+            "web/src/lib/AddMenu.svelte",
+            "web/src/lib/AddMenu.test.ts",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "web/src/lib/api.ts",
+            "tests/e2e/road-map.spec.ts",
+            "tests/e2e/trip-workflow.spec.ts",
+            "tests/acceptance/overland_route_planner_mvp/slice-12b-trip-workflow.feature"
+          ],
+          "implementation_notes": "Slice 12c; D298 (menus and forms in the page flow), D307, D309, D314 (12), D317; US-29 S1-S7. Seven scenarios in one step because they are one form and its states; the two foreign services are local recording servers (W4). The 12b feature file is the SSOT of 12b (D140): its US-23 S2 lines change only as the DISTILL D290 table words it, in this commit, named in the body; no other 12b line changes. Nothing is stored about a search on the page. The fine print's credit is part of the screen, not a link. Commit: 'feat(web): search for a place from the Add menu'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium` or webkit-iphone14 for the phone one; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. A scenario that guards behaviour already on the page may pass at its first run: break the guarded behaviour once on purpose, see the test fail, revert, log both runs. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); the base map never comes from the internet in a test; each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-25",
+          "name": "The Road map screen shows what is loaded and lets a region be found, added and removed",
+          "description": "Route #/road-map and the header link 'Road map' beside Projects; RoadMapPage.svelte with the served regions, map date and sizes (or 'unknown until the first rebuild from the app'), RegionSearch.svelte (a search sent only on Search or Enter, saying what it fetches from Geofabrik), adding a found region and removing a loaded one as a pending change; pure roadMapView.ts for date and size words.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-08",
+            "13-12",
+            "13-22"
+          ],
+          "estimated_hours": 2.5,
+          "criteria": [
+            "#/road-map shows the loaded regions with their sizes, the total and the map date; with unknown regions it says so in plain words and still shows the date; the header link 'Road map' sits beside Projects.",
+            "A search by name lists regions with parent and size, marks those already covered, and adds a result to the pending choice; a loaded region is removed as a pending change (the served map is not touched on the screen until applied).",
+            "At 390 px: no sideways scroll, targets at least 44 px, the form in the page flow.",
+            "Playwright, written RED first: 'The Road map screen shows what is loaded' | 'Before the first rebuild from the app the screen says the regions are unknown' | 'A region is added by searching the free list of regions by name' | 'A region is removed as a pending change'.",
+            "D290 row done: the slice-12 header checks (tests/e2e/ui-foundation.spec.ts:236 and :332) now list 'Road map' beside Projects and Diagnostics; vitest first for roadMapView.ts (table cases: sizes in GB, dates, unknown) and the page.",
+            "Tokens only, both themes, 44 px targets; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "The Road map screen shows what is loaded | Before the first rebuild from the app the screen says the regions are unknown | A region is added by searching the free list of regions by name | A region is removed as a pending change",
+          "files_to_modify": [
+            "web/src/App.svelte",
+            "web/src/App.test.ts",
+            "web/src/lib/RoadMapPage.svelte",
+            "web/src/lib/RoadMapPage.test.ts",
+            "web/src/lib/RegionSearch.svelte",
+            "web/src/lib/RegionSearch.test.ts",
+            "web/src/lib/roadMapView.ts",
+            "web/src/lib/roadMapView.test.ts",
+            "web/src/lib/api.ts",
+            "tests/e2e/road-map.spec.ts",
+            "tests/e2e/ui-foundation.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D309, D295, D298; US-27 S1-S4; owner-approved sketches screens 6-11 (D300). The screen polls GET /api/road-map every 10 s only while a change is planned or running (13-28). The catalogue search says what it fetches: the region list, the size of the regions shown and the outline of a chosen one, from Geofabrik, no trip data. Commit: 'feat(web): the Road map screen'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. A scenario that guards behaviour already on the page may pass at its first run: break the guarded behaviour once on purpose, see the test fail, revert, log both runs. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); the two foreign services are local recording servers; each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-26",
+          "name": "Size and time are shown before applying; too big is refused; Marco picks now or a start time; one rebuild a day",
+          "description": "ChangeSummary.svelte: the preview's added and removed regions, size, estimate ('about ... minutes', pause), the not-linked note, the 'now' or start-time choice (shown in the browser's local time, '(Pi time)' only when the offset differs), too big refused with the figures, and the one-rebuild-a-day refusal with the next time it may run.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-25",
+            "13-10"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "The summary appears from the preview while Marco is still choosing: regions added and removed, the total size and the estimated total and pause minutes with 'about' and 'estimate'; a region far from the others adds a note and no refusal; 'Rebuild road map' is offered with a 'Now' or a start-time choice.",
+            "Too big (above the limit) is refused with the size and the limit in words; a day that already has a map says when the next rebuild may run (next_rebuild_from in the browser's local time).",
+            "A chosen start time is sent as UTC; '(Pi time)' appears only when the browser's offset differs from server_utc_offset_minutes.",
+            "Playwright, written RED first: 'Size and time are shown before applying' | 'Too big is refused with the size' | 'Marco picks now or a start time' | 'Marco picks a start time' | 'One rebuild a day, counted by the kept map, with the next time shown'.",
+            "Vitest first: roadMapView.ts time words (table cases across zones), ChangeSummary states; tokens only, both themes, 390 px; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "Size and time are shown before applying | Too big is refused with the size | Marco picks now or a start time | Marco picks a start time | One rebuild a day, counted by the kept map, with the next time shown",
+          "files_to_modify": [
+            "web/src/lib/ChangeSummary.svelte",
+            "web/src/lib/ChangeSummary.test.ts",
+            "web/src/lib/RoadMapPage.svelte",
+            "web/src/lib/RoadMapPage.test.ts",
+            "web/src/lib/roadMapView.ts",
+            "web/src/lib/roadMapView.test.ts",
+            "web/src/lib/api.ts",
+            "tests/e2e/road-map.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D305, D309; US-27 S5-S6, US-31 S1-S2, S5. Two scenarios of the stories were split in DISTILL (US-27 S5, US-31 S2). The figures are the planner's (D305: pause = round(6 x GB) minutes, total = round(8.2 x GB + 2.5)); the page only words them. A pending change is chosen on the page; the served map is never redrawn until applied. Commit: 'feat(web): size, time and start of a road-map change'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-27",
+          "name": "Rebuild, cancel until it starts, Refresh map data, and rebuilds not set up",
+          "description": "RoadMapPage: 'Rebuild road map' writes the change; a planned change shows its time and a Cancel that works until the helper takes it (then the screen says it cannot be cancelled); 'Refresh map data' is the same workflow on the served regions; a second change while one is pending or running is refused in words; without the helper the screen says 'Rebuilds aren't set up on the Pi yet' and offers no change.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-26",
+            "13-11"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "A planned change shows when it starts and a Cancel; pressing Cancel removes it and the screen shows the served map as before; after the helper took the change the same press is refused with a plain message and the change stays.",
+            "'Refresh map data' asks for the same regions and shows the same summary and cost as choosing them by hand; while a change is pending or running a second one is refused with the planner's message.",
+            "With limits.changes_available false or the helper not seen for 5 minutes the screen says 'Rebuilds aren't set up on the Pi yet' (or 'Changing the road map isn't available right now') and offers no change.",
+            "Playwright, written RED first: 'A planned rebuild can be cancelled until it starts' | 'A rebuild cannot be cancelled once it has started' | 'Refresh map data is the same workflow' | 'While a change is pending or running a second change is refused' | 'Without the helper the screen says rebuilds are not set up'.",
+            "Vitest first: page states (none, planned, running, cancelled, not set up) as table cases; tokens only, both themes, 390 px; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "A planned rebuild can be cancelled until it starts | A rebuild cannot be cancelled once it has started | Refresh map data is the same workflow | While a change is pending or running a second change is refused | Without the helper the screen says rebuilds are not set up",
+          "files_to_modify": [
+            "web/src/lib/RoadMapPage.svelte",
+            "web/src/lib/RoadMapPage.test.ts",
+            "web/src/lib/ChangeSummary.svelte",
+            "web/src/lib/ChangeSummary.test.ts",
+            "web/src/lib/roadMapView.ts",
+            "web/src/lib/roadMapView.test.ts",
+            "web/src/lib/api.ts",
+            "tests/e2e/road-map.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D303, D304, D309, D315; US-31 S3-S4, S6-S8 (US-31 S2 split in DISTILL). The planner decides the refusals (409, 503); the page words them and never decides on its own. W4: the helper's states in the browser are set with `answerWith`; the helper itself is proven by the script scenarios. Commit: 'feat(web): rebuild, cancel and refresh the road map'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. W4 as D275 extended by 12c: states the packaged planner cannot reach are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-28",
+          "name": "Progress of a rebuild, the old map keeps planning during the download, Plan the route is disabled during the build",
+          "description": "RebuildProgress.svelte on the Road map screen (step ticks from step and steps_done, remaining minutes from the building step's own start), polling GET /api/road-map every 10 s while a change is planned or running; WorkspacePage shows the planned-rebuild line; PlanPanel disables 'Plan the route' during planning_paused with the one line 'The road map is being rebuilt; planning is back at about <time>.' (the D298 pattern); during the download planning stays enabled.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-27",
+            "13-06"
+          ],
+          "estimated_hours": 2,
+          "criteria": [
+            "Progress shows the step the rebuild is in (checking, downloading, building, switching) with ticks and, from the building step, the remaining minutes; polling runs every 10 s only while a change is planned or running and once on open otherwise.",
+            "During downloading 'Plan the route' stays enabled; during planning_paused it is disabled with the one line naming the time planning is back (browser local time); the planner's own refusal words (D211) stay for a race.",
+            "D290 row done: PlanPanel.svelte and PlanPanel.test.ts gain the paused state beside the D295 sentence changed in 13-06; the 12b scenarios that press 'Plan the route' are not edited (the CI planner has no rebuild running).",
+            "Playwright, written RED first: 'Progress shows the step the rebuild is in' | 'During the download the old map keeps planning' | 'During the build planning is disabled and the page says until when'.",
+            "Vitest first: step tick rule and remaining-minutes rule (table cases and Hypothesis-style generated step sequences in vitest table form), poll start/stop, PlanPanel paused states; tokens only, both themes, 390 px; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "Progress shows the step the rebuild is in | During the download the old map keeps planning | During the build planning is disabled and the page says until when",
+          "files_to_modify": [
+            "web/src/lib/RebuildProgress.svelte",
+            "web/src/lib/RebuildProgress.test.ts",
+            "web/src/lib/RoadMapPage.svelte",
+            "web/src/lib/RoadMapPage.test.ts",
+            "web/src/lib/PlanPanel.svelte",
+            "web/src/lib/PlanPanel.test.ts",
+            "web/src/lib/roadMapView.ts",
+            "web/src/lib/roadMapView.test.ts",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "tests/e2e/road-map.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D298 (the disabled-with-one-line pattern), D303, D305, D309; US-30 S1-S3. Valhalla is stopped for about 40 of about 55 minutes: the screens say 'estimate' and 'about'. The page reads the planner's planning_paused and never derives it from the step itself. Commit: 'feat(web): progress of a rebuild and planning paused during the build'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. W4 as D275 extended by 12c: the helper's progress states in the browser are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-29",
+          "name": "The result of a rebuild is on the page: new map everywhere, a failure with its reason, a planned start, a power cut",
+          "description": "On success the Road map screen, the coverage box and the D295 sentence show the new regions and date; on failure the old map is shown with the planner's plain sentence and 'Your change is kept' where it is; a planned rebuild shows its time and the result is there next morning; a rebuild the Pi lost reads as ended with the old map served. The planned-rebuild line stays on Build the trip until the change ends.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-28",
+            "13-12"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "After a done result the Road map screen, the coverage box on Build the trip and the PlanPanel sentence all name the new regions and the new map date without a reload by hand.",
+            "A failed result shows the old map and the planner's sentence word for word (never a code), 'Your change is kept' when the planner says so, and a way to press Rebuild road map again.",
+            "A planned rebuild shows its start time and, later, its result; an interrupted rebuild (power cut) ends with the old map served and the planner's words.",
+            "Playwright, written RED first: 'A successful rebuild shows the new regions and date everywhere' | 'A failed rebuild brings the old map back and says why' | 'A planned rebuild starts at its time and the result is there next morning' | 'A rebuild interrupted by a power cut ends with the old map served'.",
+            "Vitest first: result states as table cases (done, failed with each kind of numbers, cancelled, interrupted); tokens only, both themes, 390 px; prettier before finishing; targeted vitest and Playwright only; the two golden-order commands pass."
+          ],
+          "test_file": "tests/e2e/road-map.spec.ts",
+          "scenario_name": "A successful rebuild shows the new regions and date everywhere | A failed rebuild brings the old map back and says why | A planned rebuild starts at its time and the result is there next morning | A rebuild interrupted by a power cut ends with the old map served",
+          "files_to_modify": [
+            "web/src/lib/RoadMapPage.svelte",
+            "web/src/lib/RoadMapPage.test.ts",
+            "web/src/lib/RebuildProgress.svelte",
+            "web/src/lib/RebuildProgress.test.ts",
+            "web/src/lib/WorkspacePage.svelte",
+            "web/src/lib/WorkspacePage.test.ts",
+            "web/src/lib/CoverageBox.svelte",
+            "web/src/lib/roadMapView.ts",
+            "web/src/lib/roadMapView.test.ts",
+            "tests/e2e/road-map.spec.ts"
+          ],
+          "implementation_notes": "Slice 12c; D303, D309; US-30 S4-S7. The words come from the planner (13-12); the page shows them verbatim. Nothing here invents a time: planning_back_at and finished_at are the planner's. Commit: 'feat(web): the result of a rebuild everywhere'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: every @ui scenario has one `test.fixme` in tests/e2e/road-map.spec.ts; the step that owns it writes its body, turns `test.fixme` into `test`, and sees it fail for a business reason under a targeted run (`cd web && npx --no-install playwright test ../tests/e2e/road-map.spec.ts -g \"<title>\" --project=chromium`; if web/dist is stale run `make web-dist`; if the disk does not allow a build, say so in the hand-off and rely on CI job 7) before production code; log `--data FAIL`. W4 as D275 extended by 12c: the helper's states in the browser are set with `answerWith` (the real answer read ONCE with `page.request`, the route handler only fulfills it, never `route.fetch`); each test creates its own project. Outcomes, not pixels. The feature text is the SSOT (D140): never edit a 12c scenario to fit the code. RED_UNIT: vitest + jsdom first (table-driven), no mocks of the code under test; RED evidence in the commit body. Web look: tokens of web/src/app.css only (tokens.test.ts), both themes, 3 px focus ring, 44 px targets, 390 px one column; menus and forms in the page flow (D295, D298); no CSS framework, icon font or new runtime dependency. Prettier (`cd web && npx --no-install prettier --write <files>`) before finishing. DISK: the Mac has under 2 GB free: targeted vitest files and targeted Playwright tests only, never `make e2e-local` or `make test-web` in full. GOLDEN ORDER: the two golden commands pass; never bless. PUBLIC repository: no host, address or token in any file, test, commit or log. Stage explicit paths; no Pi access. The crafter stops at the commit and never pushes."
+        },
+        {
+          "id": "13-30",
+          "name": "Slice 12c blocking in CI; docs as built",
+          "description": "The feature loses its `@pending`; PENDING_FLAGS gains slice-12c where 12b added its flag (D262); no `test.fixme` is left in road-map.spec.ts; the slice-02 phone check (tests/acceptance/overland_route_planner_mvp/test_slice_02.py, which drives Playwright from pytest) stays green; ADR-013 Amendment 5, ADR-019 and ADR-020 get their 'As built' lines; feature-delta gets the DELIVER notes.",
+          "agent": "nw-software-crafter",
+          "deps": [
+            "13-16",
+            "13-19",
+            "13-21",
+            "13-23",
+            "13-24",
+            "13-29"
+          ],
+          "estimated_hours": 1.5,
+          "criteria": [
+            "The slice-12c feature's tag line becomes `@slice-12c` (no `@pending`); no scenario's words change (`git diff` shows that line only); test_pending_slices.py no longer lists the slice-12c feature; PENDING_FLAGS in .github/workflows/ci.yml gains `--run-pending=slice-12c` and its comment gains '13-30 --run-pending=slice-12c'; pins in tests/ci/test_ci_workflow.py prove the tag line and the flag, as 12-07's do.",
+            "No `test.fixme` is left in tests/e2e/road-map.spec.ts (a pin in tests/ci proves it); CI job 7 runs the spec on chromium and webkit-iphone14 (the existing job 7 pin, extended if it names specs one by one); the 90 pytest scenarios block in CI job 2 and the 36 @ui tests per project in job 7; their added time reported in seconds.",
+            "The slice-02 phone check (test_slice_02.py, Playwright from pytest) is run on its own and is green; `uv run pytest -q tests/acceptance/overland_route_planner_mvp/test_slice_12c.py --run-pending=slice-12c` passes (138 cases) and, without the flag, the feature runs as a normal blocking feature.",
+            "Docs as built: ADR-013 Amendment 5, ADR-019 and ADR-020 each get a closing 'As built' line naming any deviation (at least: the roadmap's scenario placement, the accepted PINs and any changed one with its commit, the leftover .routing.env.orig recovery case listed as a DELIVER check, the 8 GB memory risk D314 not covered by the gate rebuild); feature-delta.md gets the slice 12c DELIVER notes (steps, deviations, the D290 rows done per step, the added CI time); markdownlint green.",
+            "Local checks: targeted only (the pins' tests, test_pending_slices.py, test_slice_02.py, test_slice_12c.py); the orchestrator runs the full suite, `make test-web`, `make e2e-local`, `make mutate` (domain/roadmap, application/roadmap, settings.py; >= 80 %), `make lint-ci` and the Pi gate (one real 'Refresh map data' on a UTC date after 2026-11-26 and one forced failure, D313 Q1) and the owner's cold-start check; the crafter does none of these.",
+            "Unit tests before production code: the CI pins of this step are written and seen RED before the workflow and tag edits (RED evidence in the commit body); the two golden-order commands pass; prettier on every changed web/ and tests/e2e/ file."
+          ],
+          "test_file": "tests/ci/test_ci_workflow.py",
+          "scenario_name": "NOT_APPLICABLE: no scenario of its own (it makes the 126 scenarios of 13-03 to 13-29 block in CI)",
+          "files_to_modify": [
+            "tests/acceptance/overland_route_planner_mvp/slice-12c-the-planner-knows-its-map.feature",
+            "tests/acceptance/overland_route_planner_mvp/test_slice_12c.py",
+            "tests/acceptance/overland_route_planner_mvp/test_pending_slices.py",
+            ".github/workflows/ci.yml",
+            "tests/ci/test_ci_workflow.py",
+            "tests/e2e/road-map.spec.ts",
+            "docs/product/architecture/adr-013-valhalla-tile-refresh.md",
+            "docs/product/architecture/adr-019-place-search.md",
+            "docs/product/architecture/adr-020-road-map-regions-chosen-in-the-app.md",
+            "docs/feature/overland-route-planner-mvp/feature-delta.md"
+          ],
+          "implementation_notes": "Slice 12c; D262, D317; CI D170 (pending-scenario gate). LAST STEP OF SLICE 12C. Follow 12-07 exactly: read its pins in tests/ci/test_ci_workflow.py and the PENDING_FLAGS block in ci.yml, and add the flag where 12b added its own. The ADR file names above are the expected ones: use the real file names under docs/product/architecture/ (Glob adr-013*, adr-019*, adr-020*). The slice-02 phone check is run explicitly because it is the one pytest scenario that drives Playwright and the new header link and Add menu entry must not break it. Commit: 'test(acceptance): slice 12c blocking in CI'.\n\nPHASE RULES (every step of phase 13): outside-in TDD. RED_ACCEPTANCE: the 126 scenarios are bound in tests/acceptance/overland_route_planner_mvp/test_slice_12c.py and tests/e2e/road-map.spec.ts; this step owns none: it flips the gate. RED_UNIT: the CI pins first, seen RED, then the edits. The feature text is the SSOT (D140): the only 12c feature edit is the tag line. GOLDEN ORDER: the two golden commands pass; never bless. DISK: the Mac has under 2 GB free: run only the named test files, never the full suite, `make e2e-local` or `make test-web` in full. PUBLIC repository: no host, address, login or token in any file, test, commit or log. Never touch docs/feature/overland-route-planner-mvp/spike/; stage explicit paths; no Pi access. Local check before COMMIT: the named test files, the golden commands, `make lint`, markdownlint on the changed .md files. The crafter stops at the commit and never pushes."
+        }
+      ]
     }
   ],
   "implementation_scope": {
@@ -3861,56 +4879,7 @@
   },
   "validation": {
     "status": "approved",
-    "scope": "phase 12 (slice 12b)",
-    "reviewer": "nw-acceptance-designer-reviewer (Haiku): 29 of 29 scenarios mapped, no orphan, no 8+ step; HIGH D208 label resolved by the owner-approved sketch wording (D282 row), MEDIUM and LOW applied; des-verify-integrity --roadmap-only exit 0",
-    "approved_at": "2026-11-19",
-    "previous_approval": {
-      "status": "approved",
-      "scope": "phase 11 (slice 12)",
-      "reviewer": "nw-acceptance-designer-reviewer (Haiku): 24 of 24 scenarios mapped, no orphan, no 8+ step; blocker on 11-04 rejected by the orchestrator (the outline row needs no Valhalla run); 11-06 oracle and 11-01 derived-field note applied; schema and integrity verified (des-verify-integrity --roadmap-only exit 0)",
-      "approved_at": "2026-11-18",
-      "previous_approval": {
-        "status": "approved",
-        "scope": "phase 10 (slice 09)",
-        "reviewer": "orchestrator self-check (scenario coverage 12 of 15, 3 deferred to slice 08 by D256; schema and integrity verified); no separate reviewer pass, recorded as a deviation",
-        "approved_at": "2026-11-17",
-        "previous_approval": {
-          "status": "approved",
-          "scope": "phase 09 (slice 06a)",
-          "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 2 BLOCKER, 5 HIGH, 5 MEDIUM, 4 LOW; scenario coverage complete, no orphan; every finding checked by the orchestrator and applied; integrity re-run by the orchestrator)",
-          "approved_at": "2026-11-17",
-          "previous_approval": {
-            "status": "approved",
-            "scope": "phase 08 (slice 06a-ops)",
-            "reviewer": "nw-acceptance-designer-reviewer (1st pass NEEDS_REVISION: 1 BLOCKER, 8 HIGH, 7 MEDIUM, 8 LOW; every blocking finding checked by the orchestrator against the files and applied; D239; integrity re-run by the orchestrator)",
-            "approved_at": "2026-11-16",
-            "previous_approval": {
-              "status": "approved",
-              "scope": "phase 06 (slices 03-ops, 03)",
-              "reviewer": "nw-acceptance-designer-reviewer (2nd pass APPROVED; 1st pass NEEDS_REVISION with 5 HIGH, 8 MEDIUM, 7 LOW; fixes and user rulings D223 applied; M4 rejected by the orchestrator; gate and integrity re-run by the orchestrator)",
-              "approved_at": "2026-11-09",
-              "previous_approval": {
-                "status": "approved",
-                "scope": "phase 05 (slice 02)",
-                "reviewer": "nw-acceptance-designer-reviewer (1st pass APPROVED with 1 HIGH, 2 MEDIUM, 9 LOW; all applied with user decisions D217-D220; gate and integrity re-run by the orchestrator)",
-                "approved_at": "2026-11-08",
-                "previous_approval": {
-                  "status": "approved",
-                  "scope": "phase 04 (slice 01b)",
-                  "reviewer": "nw-acceptance-designer-reviewer (2nd pass; 1st pass NEEDS_REVISION, blockers fixed in a39aa85)",
-                  "approved_at": "2026-11-04",
-                  "previous_approval": {
-                    "status": "approved",
-                    "scope": "phases 01-03",
-                    "reviewer": "nw-acceptance-designer-reviewer (3rd pass, user-approved extra pass)",
-                    "approved_at": "2026-11-02"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+    "scope": "phase 13 (slice 12c)",
+    "reviewer": "nw-acceptance-designer-reviewer (Haiku): 126 of 126 scenarios mapped (orchestrator script), no 8+ step; BLOCKER 13-30 deps fixed (+13-16, 13-23); BLOCKER title drift fixed in the feature (orchestrator rename recorded in D317 had not been applied); HIGH 13-22/13-23 alert scenario moved, 13-22 lists the 12b feature, 13-04 pending-change seam; LOW 13-17 after 13-16, 13-20 deps and timeout test, 13-24 AddMenu-off vitest; des-verify-integrity --roadmap-only exit 0"
   }
 }

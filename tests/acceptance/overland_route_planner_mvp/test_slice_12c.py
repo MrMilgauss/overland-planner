@@ -187,15 +187,15 @@ def test_stops_in_areas_not_linked_by_land_are_grouped_and_the_groups_are_named(
 
 
 @pytest.mark.driving_port
-@scenario(FEATURE, "Italy, southern France and Spain are linked by land")
+@scenario(FEATURE, "Italy, the French regions and Spain are linked by land")
 def test_italy_southern_france_and_spain_are_linked_by_land() -> None:
-    """Italy, southern France and Spain are linked by land."""
+    """Italy, the French regions and Spain are linked by land."""
 
 
 @pytest.mark.driving_port
-@scenario(FEATURE, "Without southern France Spain is on its own")
+@scenario(FEATURE, "Without the French regions Spain is on its own")
 def test_without_southern_france_spain_is_on_its_own() -> None:
-    """Without southern France Spain is on its own."""
+    """Without the French regions Spain is on its own."""
 
 
 @pytest.mark.driving_port

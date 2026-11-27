@@ -377,7 +377,7 @@ Feature: The planner knows its map
     And one group holds Torino and the other holds Moab
 
   @US-28 @driving_port @edge
-  Scenario: Italy, southern France and Spain are linked by land
+  Scenario: Italy, the French regions and Spain are linked by land
     Given the road map was rebuilt from the app and the served map holds the eight regions, with map data of 27 November 2026
     And Marco is building "Spagna test"
     And Marco has added the place "Torino" at 45.0703, 7.6869
@@ -385,7 +385,7 @@ Feature: The planner knows its map
     Then the trip's stops are in one group of regions linked by land
 
   @US-28 @driving_port @edge
-  Scenario: Without southern France Spain is on its own
+  Scenario: Without the French regions Spain is on its own
     Given the road map was rebuilt from the app and the served map holds Italy, Switzerland, Austria and Spain, with map data of 27 November 2026
     And Marco is building "Spagna test"
     And Marco has added the place "Torino" at 45.0703, 7.6869
