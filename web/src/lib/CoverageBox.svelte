@@ -24,11 +24,14 @@
     known,
     regions,
     mapDate,
+    groups = [],
   }: {
     known: boolean;
     regions: string[];
     /** ISO date-time of the served map, or null. */
     mapDate: string | null;
+    /** The land groups holding a stop of the trip: more than one is information (a ferry would be needed), never a refusal. */
+    groups?: { regions: string[] }[];
   } = $props();
 </script>
 
@@ -41,6 +44,13 @@
   {#if mapDate}
     <p>Map data: {dayOf(mapDate)}</p>
   {/if}
+  {#if groups.length > 1}
+    <p class="not-linked">
+      These stops are in areas not linked by land ({groups
+        .map((group) => joinedNames(group.regions))
+        .join(' | ')}), so a trip between them would need a ferry
+    </p>
+  {/if}
 </div>
 
 <style>
@@ -52,5 +62,8 @@
   }
   p {
     margin: 0;
+  }
+  .not-linked {
+    color: var(--color-warning-fg);
   }
 </style>

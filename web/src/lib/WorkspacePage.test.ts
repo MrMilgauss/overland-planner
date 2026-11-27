@@ -584,4 +584,52 @@ describe('Workspace page: coverage', () => {
     expect(screen.queryByText('Outside road map')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('warns once for each outside trail of a file import', async () => {
+    const trail = (id: string, name: string) => ({ ...place(id, name), type: 'track' as const });
+    const trails = [trail('t1', 'algarve'), trail('t2', 'lisboa')];
+    stubPlanner([[], trails], {
+      'GET /api/projects/p1/coverage': [covered([]), covered(['t1', 't2'])],
+      'POST /api/projects/p1/tracks': { status: 201, body: trails },
+    });
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+    await screen.findByText('Roads loaded for: Italy and Spain');
+    const files = ['algarve.gpx', 'lisboa.gpx'].map((n) => new File(['<gpx/>'], n));
+
+    await fireEvent.change(screen.getByLabelText('GPX files'), { target: { files } });
+
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.map((a) => a.textContent)).toEqual([
+      expect.stringContaining('algarve is outside the planner'),
+      expect.stringContaining('lisboa is outside the planner'),
+    ]);
+  });
+
+  it.each([
+    {
+      case: 'two land groups: Build the trip warns',
+      groups: [
+        { regions: ['Italy', 'Spain'], item_ids: ['i1'] },
+        { regions: ['Utah'], item_ids: ['i2'] },
+      ],
+      warned: true,
+    },
+    {
+      case: 'one land group: nothing',
+      groups: [{ regions: ['Italy'], item_ids: ['i1'] }],
+      warned: false,
+    },
+  ])('$case', async ({ groups, warned }) => {
+    stubPlanner([[place('i1', 'Torino'), place('i2', 'Moab')]], {
+      'GET /api/projects/p1/coverage': {
+        status: 200,
+        body: { ...(covered([]).body as object), groups },
+      },
+    });
+
+    render(WorkspacePage, { props: { projectId: 'p1' } });
+
+    await screen.findByText('Roads loaded for: Italy and Spain');
+    expect(screen.queryByText(/not linked by land/) !== null).toBe(warned);
+  });
 });

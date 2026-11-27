@@ -52,4 +52,27 @@ describe('Coverage box', () => {
     for (const line of lines) expect(screen.getByText(line)).toBeInTheDocument();
     for (const text of absent) expect(screen.queryByText(new RegExp(text))).not.toBeInTheDocument();
   });
+
+  it.each([
+    {
+      case: 'two land groups: both named, a ferry would be needed',
+      groups: [{ regions: ['Italy', 'Spain'] }, { regions: ['Utah'] }],
+      shown: true,
+    },
+    { case: 'one land group: nothing', groups: [{ regions: ['Italy', 'Spain'] }], shown: false },
+    { case: 'no group: nothing', groups: [], shown: false },
+  ])('$case', ({ groups, shown }) => {
+    render(CoverageBox, {
+      props: { known: true, regions: ['Italy', 'Spain', 'Utah'], mapDate: null, groups },
+    });
+
+    const warning = screen.queryByText(/not linked by land/);
+    if (!shown) {
+      expect(warning).not.toBeInTheDocument();
+      return;
+    }
+    expect(warning).toHaveTextContent(
+      'These stops are in areas not linked by land (Italy and Spain | Utah), so a trip between them would need a ferry',
+    );
+  });
 });

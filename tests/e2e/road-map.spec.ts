@@ -111,6 +111,17 @@ const ALGARVE_GPX = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" cr
   .map(([lat, lon]) => `<trkpt lat="${lat}" lon="${lon}"></trkpt>`)
   .join("")}</trkseg></trk></gpx>`;
 
+// The row menu of a place: "Set as start" or "Set as end".
+async function setFromTheRow(
+  page: Page,
+  place: string,
+  choice: "Set as start" | "Set as end",
+): Promise<void> {
+  const row = tripList(page).getByRole("listitem").filter({ hasText: place });
+  await row.getByRole("button", { name: `Actions for ${place}` }).click();
+  await page.getByRole("button", { name: choice }).click();
+}
+
 const projectIdOf = (url: string): string =>
   decodeURIComponent(/#\/projects\/([^/]+)$/.exec(url)![1]);
 
@@ -231,23 +242,84 @@ test("A trail outside the map is warned at add time and on its row, and kept", a
 });
 
 // @US-28 @ui @edge
-test.fixme("A place outside the map is warned when added by a click on the map", async ({
+test("A place outside the map is warned when added by a click on the map", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given Marco is building "Spagna test"
+  const regions = await servedRegions(page);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  // the map's own hook (?e2e=1) puts Morocco under the middle of the map, so that the click lands there
+  await page.goto(page.url().replace("/#/", "/?e2e=1#/"));
+  const map = page.getByRole("region", { name: "Map of the trip" });
+  await expect(map.locator("canvas.maplibregl-canvas")).toBeVisible({
+    timeout: 60_000,
+  });
+  await page.waitForFunction(
+    () =>
+      !!(window as unknown as { __overlandRunMap?: unknown }).__overlandRunMap,
+  );
+  await page.evaluate(() => {
+    const drawn = (
+      window as unknown as {
+        __overlandRunMap: {
+          jumpTo: (view: { center: number[]; zoom: number }) => void;
+        };
+      }
+    ).__overlandRunMap;
+    drawn.jumpTo({ center: [-5.2636, 35.1688], zoom: 9 });
+  });
   // When he adds "Chefchaouen" in Morocco by a click on the map
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Click on the map" }).click();
+  await expect(
+    map.getByRole("button", { name: "Click on map to add" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const frame = (await map.locator("canvas.maplibregl-canvas").boundingBox())!;
+  await page.mouse.click(frame.x + frame.width / 2, frame.y + frame.height / 2);
+  const form = page.getByRole("form", { name: "Add a place here" });
+  await form.getByLabel("Name").fill("Chefchaouen");
+  await form.getByRole("button", { name: "Add" }).click();
   // Then it is kept and shows the warning when added and the tag on its row
+  await expect(page.getByRole("alert")).toContainText(
+    `Chefchaouen is outside the planner's road map (${regions})`,
+  );
+  const row = tripList(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Chefchaouen" });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Outside road map");
 });
 
 // @US-28 @ui @edge
-test.fixme("A place outside the map is warned when added by typed coordinates", async ({
+test("A place outside the map is warned when added by typed coordinates", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given Marco is building "Spagna test"
+  const regions = await servedRegions(page);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
   // When he adds "Lagos" in Portugal by typed coordinates
+  await addPlaceOnTheForm(page, "Lagos", "37.1028", "-8.6742");
   // Then it is kept and shows the warning when added and the tag on its row
+  await expect(page.getByRole("alert")).toContainText(
+    `Lagos is outside the planner's road map (${regions})`,
+  );
+  const row = tripList(page).getByRole("listitem").filter({ hasText: "Lagos" });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Outside road map");
+  // the warning is shown once: dismissed, it does not come back when another place is added
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await addPlaceOnTheForm(page, "Cadaques", "42.2889", "3.2776");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(row).toContainText("Outside road map");
 });
 
 // @US-28 @ui
@@ -267,14 +339,63 @@ test("A place inside the map shows no warning", async ({ page }, testInfo) => {
 });
 
 // @US-28 @ui @error
-test.fixme("Planning is not blocked by an outside item and says why it fails", async ({
+test("Planning is not blocked by an outside item and says why it fails", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given "Spagna test" holds "Torino" as Start and End and the Moroccan place "Chefchaouen"
+  const regions = await servedRegions(page);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
+  await addPlaceOnTheForm(page, "Torino", "45.0703", "7.6869");
+  await setFromTheRow(page, "Torino", "Set as start");
+  await setFromTheRow(page, "Torino", "Set as end");
+  await addPlaceOnTheForm(page, "Chefchaouen", "35.1688", "-5.2636");
   // When Marco presses "Plan the route"
+  const plan = page.getByRole("button", { name: "Plan the route" });
+  await expect(plan).toBeEnabled();
+  await plan.click();
   // Then the planner's own words are shown for the run that couldn't plan
+  // (the offline planner of CI plans anywhere as an estimate, so its answer for that run is read once and rewritten as the
+  // refusal of a planner whose roads end at the regions, W4: the handlers only fulfill)
+  await expect(
+    page.getByRole("region", { name: "Your route", exact: true }),
+  ).toBeVisible({ timeout: 90_000 });
+  const id = encodeURIComponent(projectIdOf(page.url()));
+  const line =
+    "Plan run #1 failed: 'Chefchaouen' cannot be connected to any other stop";
+  await answerWith<{ id: string; status: string }[]>(
+    page,
+    /\/api\/projects\/[^/]+\/plan-runs(\?.*)?$/,
+    `/api/projects/${id}/plan-runs`,
+    (real) => real.map((run) => ({ ...run, status: "failed" })),
+  );
+  const runs = (await (
+    await page.request.get(`/api/projects/${id}/plan-runs`)
+  ).json()) as { id: string }[];
+  await answerWith<Record<string, unknown>>(
+    page,
+    /\/api\/plan-runs\/[^/]+$/,
+    `/api/plan-runs/${runs[0].id}`,
+    (real) => ({
+      ...real,
+      status: "failed",
+      failure_reason: "unreachable",
+      stops: [],
+      totals: null,
+      report: null,
+      estimate: false,
+      messages: [line],
+    }),
+  );
+  await page.reload();
+  await expect(page.getByText(line)).toBeVisible();
   // And the page names the regions with roads, as the row warning already did
+  await expect(
+    page.getByText(`The planner's road map covers ${regions}`),
+  ).toBeVisible();
 });
 
 // @US-28 @ui @error @edge
@@ -305,14 +426,48 @@ test("Without knowledge of the loaded map the page does not invent warnings", as
 });
 
 // @US-28 @ui @edge
-test.fixme("Stops in areas not linked by land are warned on Build the trip", async ({
+test("Stops in areas not linked by land are warned on Build the trip", async ({
   page,
-}) => {
+}, testInfo) => {
+  test.setTimeout(120_000);
   await page.setViewportSize(AT_LAPTOP);
+  await serveTheBaseMap(page, testInfo);
   // Given after a rebuild from the app the loaded regions are the eight above and Utah, which is not linked by land to them
+  const regions = (
+    (await (await page.request.get("/api/road-map")).json()) as Served
+  ).served.regions.map((region) => region.name);
+  await newProject(page, testInfo);
+  await expect(page.getByText("Roads loaded for:")).toBeVisible();
   // When Marco's trip holds "Torino" as Start and the place "Moab" in Utah
+  await addPlaceOnTheForm(page, "Torino", "45.0703", "7.6869");
+  await setFromTheRow(page, "Torino", "Set as start");
+  await setFromTheRow(page, "Torino", "Set as end");
+  await expect(page.getByText(/not linked by land/)).toHaveCount(0);
+  await answerWith<Coverage & { groups: unknown[] }>(
+    page,
+    /\/api\/projects\/[^/]+\/coverage$/,
+    `/api/projects/${encodeURIComponent(projectIdOf(page.url()))}/coverage`,
+    (real) => ({
+      ...real,
+      known: true,
+      regions: [...regions, "Utah"],
+      outside_item_ids: [],
+      groups: [
+        { regions, item_ids: ["torino"] },
+        { regions: ["Utah"], item_ids: ["moab"] },
+      ],
+    }),
+  );
+  await addPlaceOnTheForm(page, "Moab", "38.5733", "-109.5498");
   // Then Build the trip says these stops are in areas not linked by land, so a trip between them would need a ferry
+  const panel = page.getByRole("region", { name: "Build the trip" });
+  await expect(panel).toContainText("not linked by land");
+  await expect(panel).toContainText("would need a ferry");
+  await expect(panel).toContainText("Utah");
   // And "Plan the route" stays available
+  await expect(
+    panel.getByRole("button", { name: "Plan the route" }),
+  ).toBeEnabled();
 });
 
 // @US-29 @ui

@@ -4,6 +4,7 @@
   // menu, and the "Plan for" switch. Every refusal of the planner is shown with its own message, verbatim.
   import AddMenu from './AddMenu.svelte';
   import CoverageBox, { joinedNames } from './CoverageBox.svelte';
+  import { alertTextOutside, newlyOutside } from './coverageAlerts';
   import PlanPanel from './PlanPanel.svelte';
   import TripList from './TripList.svelte';
   import TripMap from './TripMap.svelte';
@@ -73,19 +74,11 @@
     const outside = read?.known ? read.outside_item_ids : [];
     if (warn && read?.known) {
       const where = joinedNames(servedNames.length ? servedNames : read.regions);
-      const fresh = outside.filter((id) => !outsideWarned.includes(id));
       warnings = [
         ...warnings,
-        ...fresh.flatMap((id) => {
+        ...newlyOutside(outsideWarned, outside).flatMap((id) => {
           const item = items.find((i) => i.id === id);
-          return item
-            ? [
-                {
-                  id,
-                  text: `${item.name} is outside the planner's road map (${where}). It is kept, but it can't be planned unless its region is added on the Road map screen`,
-                },
-              ]
-            : [];
+          return item ? [{ id, text: alertTextOutside(item.name, where) }] : [];
         }),
       ];
     }
@@ -237,6 +230,7 @@
       known={coverage?.known ?? false}
       regions={servedNames.length ? servedNames : (coverage?.regions ?? [])}
       mapDate={coverage?.map_date ?? null}
+      groups={coverage?.known ? coverage.groups : []}
     />
   {/if}
   <TripList {items} {outsideIds} onanchors={chooseStartAndEnd} onremove={removeFromTrip}>
