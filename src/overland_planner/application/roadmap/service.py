@@ -333,7 +333,7 @@ class RoadMapService:
         back = None
         if progress is not None and paused:
             pause = estimate(sum(region.bytes for region in request.regions)).pause_minutes
-            back = progress.step_at + timedelta(minutes=pause)
+            back = (progress.build_started_at or progress.step_at) + timedelta(minutes=pause)
         return replace(
             planned,
             state="running",

@@ -619,7 +619,9 @@ def test_a_waiting_change_stays_planned_when_the_helper_has_not_looked_for_minut
 BUILD_START = datetime(2026, 11, 29, 3, 10, tzinfo=UTC)
 
 
-def running_planner(step: str | None, step_at: datetime = BUILD_START) -> RoadMapService:
+def running_planner(
+    step: str | None, step_at: datetime = BUILD_START, build_started_at: datetime | None = None
+) -> RoadMapService:
     changes = FakeChanges()
     changes.running_asked = ChangeRequest(
         requested_at=CLOCK.now(),
@@ -629,7 +631,7 @@ def running_planner(step: str | None, step_at: datetime = BUILD_START) -> RoadMa
             RequestedRegion("portugal", "Portugal", "Europe", "u", "p", 3 * GB),
         ),
     )
-    changes.note = None if step is None else RebuildProgress(step, step_at)
+    changes.note = None if step is None else RebuildProgress(step, step_at, build_started_at)
     service, _, _ = queued_planner(changes=changes)
     return service
 
@@ -646,6 +648,14 @@ def test_planning_is_paused_from_the_build_to_the_end_of_the_switch_and_back_aft
     # 5 GB to build: the pause is round(6 x 5) = 30 minutes counted from the step's own start
     assert change.planning_back_at == (started + timedelta(minutes=30) if change.planning_paused else None)
     assert [r.name for r in change.added] == ["Portugal"]
+
+
+@given(later=st.integers(min_value=1, max_value=120))
+def test_planning_is_back_after_the_estimate_counted_from_the_start_of_the_build_not_of_the_switch(later: int) -> None:
+    switching_at = BUILD_START + timedelta(minutes=later)
+    change = running_planner("switching", switching_at, build_started_at=BUILD_START).planned_change()
+    assert change is not None and change.planning_paused
+    assert change.planning_back_at == BUILD_START + timedelta(minutes=30)
 
 
 def test_a_rebuild_that_says_nothing_about_its_step_is_running_and_pauses_nothing() -> None:

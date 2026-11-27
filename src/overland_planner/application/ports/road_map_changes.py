@@ -43,10 +43,12 @@ STEPS = ("checking", "downloading", "building", "switching")
 
 @dataclass(frozen=True)
 class RebuildProgress:
-    """The step the helper says the rebuild is in, and when that step began."""
+    """The step the helper says the rebuild is in, when that step began, and (from the building step on) when the
+    build began: the pause of the planning counts from there, whatever step the rebuild has moved on to."""
 
     step: str
     step_at: datetime
+    build_started_at: datetime | None = None
 
 
 @dataclass(frozen=True)

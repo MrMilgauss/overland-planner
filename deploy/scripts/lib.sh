@@ -221,6 +221,73 @@ publish() {
   healthz_ok "publish smoke" "http://$bind:$(planner_port)/healthz"
 }
 
+# ---- the refresh's progress hook (D303, D314; ADR-013 Amendment 5) ---------------------------------------------------
+
+CHANGES_VOLUME=overland_road-map
+# Set by the script that reports: the tileset served now and the one being made.
+PROGRESS_SERVING=
+PROGRESS_NEW=
+
+# limited SECONDS COMMAND...: the command under `timeout` where there is one (the Pi has it, the Mac has not).
+limited() {
+  if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift && "$@"; fi
+}
+
+# changes_run SCRIPT LABEL ARG...: the one wrapper that writes into the changes volume: the pinned image, no network, the
+# planner's uid (10001, who owns the volume), no capabilities, a read-only root, no new privileges, pids and memory caps,
+# only overland_road-map mounted, at most 60 s. Shared by the progress hook and the road-map helper.
+changes_run() {
+  limited 60 docker run --rm --network none --user 10001:10001 --cap-drop ALL --read-only \
+    --security-opt no-new-privileges --pids-limit 32 --memory 64m -v "$CHANGES_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
+    sh -c "$@"
+}
+
+# progress STEP | progress failed CODE [free_gb=N] [need_gb=N] [have_gb=N]: a no-op unless ROAD_MAP_PROGRESS=on. A step
+# writes progress.txt (step, step_at, serving, new; build_started_at from the building step on, carried unchanged);
+# a failure writes failure.txt (the code and its numbers). Codes and numbers only, never free text. A write that fails is
+# one warning: it never changes the outcome of the refresh.
+progress() {
+  [ "${ROAD_MAP_PROGRESS:-}" = on ] || return 0
+  local kind=$1 serving new fact
+  local args=()
+  case $kind in
+    checking | downloading | building | switching)
+      serving=$PROGRESS_SERVING new=$PROGRESS_NEW
+      case $serving in *[!A-Za-z0-9_.-]*) serving= ;; esac
+      case $new in *[!A-Za-z0-9_.-]*) new= ;; esac
+      args=("$serving" "$new")
+      ;;
+    failed)
+      case ${2:-} in '' | *[!a-z_]*) return 0 ;; esac
+      for fact in "${@:3}"; do
+        case $fact in free_gb=* | need_gb=* | have_gb=*) ;; *) return 0 ;; esac
+        case ${fact#*=} in '' | *[!0-9]*) return 0 ;; esac
+      done
+      args=("${@:2}")
+      ;;
+    *) return 0 ;;
+  esac
+  # shellcheck disable=SC2016 # the script is expanded by the container's sh
+  changes_run 'set -e; cd /vol; kind=$1; at=$2; shift 2
+    if [ "$kind" = failed ]; then
+      code=$1; shift
+      { printf "code=%s\n" "$code"; for fact in "$@"; do printf "%s\n" "$fact"; done; } >.failure.tmp
+      mv .failure.tmp failure.txt
+      exit 0
+    fi
+    serving=$1; new=$2; started=
+    case $kind in
+      checking) rm -f failure.txt ;;
+      building) started=$at ;;
+      switching) started=$(sed -n "s/^build_started_at=\([0-9]\{1,12\}\)\$/\1/p" progress.txt | head -n 1) ;;
+    esac
+    { printf "step=%s\nstep_at=%s\nserving=%s\nnew=%s\n" "$kind" "$at" "$serving" "$new"
+      [ -z "$started" ] || printf "build_started_at=%s\n" "$started"; } >.progress.tmp
+    mv .progress.tmp progress.txt' progress "$kind" "$(date +%s)" "${args[@]}" >&2 ||
+    say "progress could not be written for '$kind' (the refresh carries on)"
+  return 0
+}
+
 # ---- tilesets (06a-ops: make tiles-seed, make spike-cleanup; D92, D166, D178, D237; ADR-013 Amendment 3) -------------
 
 VALHALLA_VOLUME=overland_valhalla-data

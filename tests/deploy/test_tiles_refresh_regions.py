@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tests.deploy.conftest import REFRESH_DATE, TILES_FILES, FakePi
-from tests.deploy.test_tiles_refresh_script import serving  # noqa: F401 - the fixture
+from tests.deploy.test_tiles_refresh_script import SERVED, serving  # noqa: F401 - the fixture
 
 GB = 1_000_000_000
 HOST = "https://download.example.invalid"
@@ -236,3 +236,129 @@ def test_a_border_the_record_names_but_the_download_did_not_leave_fails_before_a
     assert result.returncode == 1 and "portugal" in result.stderr
     assert not any("stop" in c["argv"] for c in serving.calls("docker") if c["argv"][:1] == ["compose"])
     assert serving.tiles_log()[-1]["result"] == "failed"
+
+
+# ------------------------------------------------------------------------------ step 13-17: the refresh reports (D303)
+def changes_dir(pi: FakePi) -> Path:
+    return pi.shim_home / "volumes" / "overland_road-map"
+
+
+def note(path: Path) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
+
+def progress_calls(pi: FakePi) -> list[list[str]]:
+    return [c["argv"] for c in pi.calls("docker") if c["argv"][:1] == ["run"] and "progress" in c["argv"]]
+
+
+def test_asked_to_report_the_refresh_names_its_steps_in_order_around_the_stop_and_the_promote(
+    serving: FakePi,  # noqa: F811
+) -> None:
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 0, result.stderr[-400:]
+    calls = serving.calls("docker")
+    steps = [(i, c["argv"][c["argv"].index("progress") + 1]) for i, c in enumerate(calls) if "progress" in c["argv"]]
+    assert [s for _, s in steps] == ["checking", "downloading", "building", "switching"]
+    at = dict((s, i) for i, s in steps)
+    stop = next(i for i, c in enumerate(calls) if c["argv"][:1] == ["compose"] and "stop" in c["argv"])
+    promote = next(i for i, c in enumerate(calls) if "promote" in c["argv"])
+    assert at["building"] < stop and at["switching"] < promote
+    written = note(changes_dir(serving) / "progress.txt")
+    assert (written["step"], written["serving"], written["new"]) == ("switching", SERVED, REFRESH_DATE)
+    assert {"step_at", "build_started_at"} <= written.keys() and int(written["build_started_at"]) <= int(
+        written["step_at"]
+    )
+    assert not (changes_dir(serving) / "failure.txt").exists()
+
+
+def test_the_hook_runs_in_the_pinned_container_of_the_helper_with_every_limit(serving: FakePi) -> None:  # noqa: F811
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+
+    serving.tiles_refresh(env=env)
+
+    argv = progress_calls(serving)[0]
+    assert argv[argv.index("--user") + 1] == "10001:10001" and argv[argv.index("--network") + 1] == "none"
+    assert argv[argv.index("--cap-drop") + 1] == "ALL" and "--read-only" in argv
+    assert argv[argv.index("--security-opt") + 1] == "no-new-privileges"
+    assert "--pids-limit" in argv and "--memory" in argv
+    assert [a for a in argv if ":/vol" in a] == ["overland_road-map:/vol"]
+
+
+def test_not_asked_the_refresh_makes_no_progress_call(serving: FakePi) -> None:  # noqa: F811
+    result = serving.tiles_refresh(env=regions_file(serving, [("portugal", GB)]))
+
+    assert result.returncode == 0 and progress_calls(serving) == []
+    assert not changes_dir(serving).exists() or not list(changes_dir(serving).iterdir())
+
+
+def facts_of_failure(pi: FakePi) -> dict[str, str]:
+    return note(changes_dir(pi) / "failure.txt")
+
+
+def test_a_disk_refusal_reports_its_code_with_the_free_and_the_needed_gb(serving: FakePi) -> None:  # noqa: F811
+    disk(serving, 12)
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 1
+    assert facts_of_failure(serving) == {"code": "disk", "free_gb": "12", "need_gb": "25"}
+
+
+def test_a_memory_refusal_reports_its_code_with_the_available_and_the_needed_gb(serving: FakePi) -> None:  # noqa: F811
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+
+    result = serving.tiles_refresh(available_kb=3 * 1024 * 1024, env=env)
+
+    assert result.returncode == 1
+    assert facts_of_failure(serving) == {"code": "memory", "have_gb": "3", "need_gb": "10"}
+
+
+@pytest.mark.parametrize(
+    ("rule", "code"),
+    [
+        ({"args_contain": ["valhalla-fetch", "download"], "exit": 22}, "download"),
+        (
+            {
+                "args_contain": ["valhalla-fetch", "download"],
+                "exit": 22,
+                "stderr": "tiles-refresh: not fetched: /meta/outlines/portugal.poly\n",
+            },
+            "region_missing",
+        ),
+        ({"args_contain": ["valhalla-fetch", "merge"], "exit": 1}, "merge"),
+        ({"args_contain": ["-T valhalla-build"], "exit": 137}, "build_oom"),
+        ({"args_contain": ["promote"], "exit": 1}, "promote"),
+    ],
+)
+def test_a_failed_stage_reports_its_code(serving: FakePi, rule: dict, code: str) -> None:  # noqa: F811
+    serving.rule("docker", *rule["args_contain"], **{k: v for k, v in rule.items() if k != "args_contain"}, times=1)
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 1, result.stderr[-300:]
+    assert facts_of_failure(serving)["code"] == code
+
+
+def test_a_held_lock_reports_no_failure_and_exits_75(serving: FakePi) -> None:  # noqa: F811
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+    with (serving.dir / ".deploy.lock").open("w") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 75 and progress_calls(serving) == []
+
+
+def test_a_progress_write_that_fails_is_one_warning_and_the_refresh_still_succeeds(serving: FakePi) -> None:  # noqa: F811
+    env = regions_file(serving, [("portugal", GB)]) | {"ROAD_MAP_PROGRESS": "on"}
+    serving.rule("docker", "overland_road-map", exit=125)
+
+    result = serving.tiles_refresh(env=env)
+
+    assert result.returncode == 0, result.stderr[-400:]
+    assert serving.tiles_log()[-1]["result"] == "ok"
+    assert result.stderr.count("progress could not be written") >= 1

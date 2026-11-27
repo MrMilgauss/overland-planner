@@ -50,6 +50,8 @@ OLD_MODIFIED=
 GUARD=off
 POINTERS_BACKED_UP=no
 FAIL_WHY="refresh failed (interrupted)"
+FAIL_CODE=    # the code progress reports for the failure; empty at exit with the guard on: interrupted
+FAIL_FACTS=()
 FAILED_LOGGED=no
 
 record() {
@@ -57,17 +59,21 @@ record() {
   if [ "$1" = failed ]; then FAILED_LOGGED=yes; fi
 }
 
-# refuse WHY: a preflight refusal, nothing was changed.
+# refuse WHY CODE [k=v...]: a preflight refusal, nothing was changed; the code and its numbers go to progress.
 refuse() {
   say "tiles-refresh: $1"
   record failed "$1"
+  progress failed "$2" "${@:3}"
   exit 1
 }
 
-# fail_stage STAGE WHY: the old tileset keeps (or gets back) the serving; the exit trap starts it and logs the line.
+# fail_stage STAGE WHY [CODE [k=v...]]: the old tileset keeps (or gets back) the serving; the exit trap starts it, logs
+# the line and reports the code (STAGE unless CODE says otherwise).
 fail_stage() {
   say "tiles-refresh: $2; starting valhalla on the old tileset again"
   FAIL_WHY="refresh failed ($1)"
+  FAIL_CODE=${3:-$1}
+  FAIL_FACTS=("${@:4}")
   exit 1
 }
 
@@ -75,6 +81,7 @@ fail_stage() {
 undo_switch() {
   say "tiles-refresh: $1; restoring routing.env, tilesets/$NEW is kept for inspection"
   FAIL_WHY="refresh failed (switch)"
+  FAIL_CODE=switch
   exit 1
 }
 
@@ -88,6 +95,7 @@ on_exit() {
     fi
     planner_compose up -d valhalla >&2 || say "tiles-refresh: the old valhalla did not start either"
     if [ "$FAILED_LOGGED" = no ]; then record failed "$FAIL_WHY"; fi
+    progress failed "${FAIL_CODE:-interrupted}" ${FAIL_FACTS[@]+"${FAIL_FACTS[@]}"}
     [ "$status" -ne 0 ] || status=1
   fi
   exit "$status"
@@ -123,7 +131,7 @@ usable_address() {
 # read_regions: REGIONS_FILE line by line (never sourced or evaluated) into REGIONS and DOWNLOAD_BYTES.
 read_regions() {
   local line key pbf poly bytes name parent
-  [ -f "$REGIONS_FILE" ] || refuse "REGIONS_FILE $REGIONS_FILE is not a file"
+  [ -f "$REGIONS_FILE" ] || refuse "REGIONS_FILE $REGIONS_FILE is not a file" download
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     key=$(printf '%s' "$line" | cut -f1)
@@ -132,15 +140,15 @@ read_regions() {
     bytes=$(printf '%s' "$line" | cut -f6)
     name=$(printf '%s' "$line" | cut -f2)
     parent=$(printf '%s' "$line" | cut -f3)
-    case $key in '' | *[!a-z0-9/-]* | /* | */ | *..*) refuse "the regions file names a region key '$key' that is not a key" ;; esac
-    usable_address "$pbf" || refuse "region $key: the .osm.pbf address is not usable"
-    usable_address "$poly" || refuse "region $key: the .poly address is not usable"
-    case $bytes in '' | *[!0-9]*) refuse "region $key: the download size is not a number of bytes" ;; esac
+    case $key in '' | *[!a-z0-9/-]* | /* | */ | *..*) refuse "the regions file names a region key '$key' that is not a key" download ;; esac
+    usable_address "$pbf" || refuse "region $key: the .osm.pbf address is not usable" download
+    usable_address "$poly" || refuse "region $key: the .poly address is not usable" download
+    case $bytes in '' | *[!0-9]*) refuse "region $key: the download size is not a number of bytes" download ;; esac
     REGIONS+=("$key" "$pbf" "$poly")
     REGION_FIELDS+=("$name" "$parent" "$bytes")
     DOWNLOAD_BYTES=$((DOWNLOAD_BYTES + bytes))
   done <"$REGIONS_FILE"
-  [ "${#REGIONS[@]}" -gt 0 ] || refuse "the regions file lists no region"
+  [ "${#REGIONS[@]}" -gt 0 ] || refuse "the regions file lists no region" download
 }
 
 # region_record: the record of the map's regions (schema 1, what the planner reads), one region per REGIONS_FILE line.
@@ -166,6 +174,11 @@ if ! flock -n 9; then
   say "tiles-refresh: a deploy, rollback or tiles run is already running; nothing was done"
   exit 75
 fi
+current=$(env_value routing.env VALHALLA_TILESET)
+previous=$(env_value routing.env.prev VALHALLA_TILESET)
+PROGRESS_SERVING=$current
+PROGRESS_NEW=$NEW
+progress checking
 if [ -n "${REGIONS_FILE:-}" ]; then
   read_regions
   # 3.9 x the download (decimal GB, as the list counts them), never below 25 GB
@@ -174,44 +187,45 @@ if [ -n "${REGIONS_FILE:-}" ]; then
     NEED_GB=$((DOWNLOAD_BYTES * 39 / 10 / 1000000000))
   fi
 fi
-current=$(env_value routing.env VALHALLA_TILESET)
-previous=$(env_value routing.env.prev VALHALLA_TILESET)
-[ -n "$current" ] || refuse "no routing.env: nothing is served yet, run make tiles-seed first"
+[ -n "$current" ] || refuse "no routing.env: nothing is served yet, run make tiles-seed first" routing_status
 case $NEW in
   [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
-  *) refuse "the new tileset name must be 8 digits (YYYYMMDD), got '$NEW'" ;;
+  *) refuse "the new tileset name must be 8 digits (YYYYMMDD), got '$NEW'" date ;;
 esac
 if [ "$NEW" = "$current" ] || [ "$NEW" = "$previous" ]; then
-  refuse "tileset $NEW is served or kept for rollback; a served or rollback tileset is not overwritten"
+  refuse "tileset $NEW is served or kept for rollback; a served or rollback tileset is not overwritten" date
 fi
 present=0
 volume_has_dir "tilesets/$NEW" || present=$?
 case $present in
-  0) refuse "tilesets/$NEW already exists; one refresh a day at most, nothing is overwritten" ;;
+  0) refuse "tilesets/$NEW already exists; one refresh a day at most, nothing is overwritten" date ;;
   1) ;;
-  *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" ;;
+  *) refuse "cannot inspect the volume $VALHALLA_VOLUME (docker did not answer); nothing was changed" routing_status ;;
 esac
 root=${DOCKER_ROOT:-/var/lib/docker}
 [ -d "$root" ] || root=$HOME
 free_kb=$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')
 if [ "${free_kb:-0}" -lt "$MIN_FREE_KB" ]; then
-  refuse "disk: only $((${free_kb:-0} / 1024 / 1024)) GB free (need $NEED_GB GB)"
+  refuse "disk: only $((${free_kb:-0} / 1024 / 1024)) GB free (need $NEED_GB GB)" disk \
+    "free_gb=$((${free_kb:-0} / 1024 / 1024))" "need_gb=$NEED_GB"
 fi
-cap_kb=$(build_cap_kb) || refuse "VALHALLA_BUILD_MEM is not a size like 9g"
+cap_kb=$(build_cap_kb) || refuse "VALHALLA_BUILD_MEM is not a size like 9g" memory
 need_kb=$((cap_kb + 1024 * 1024))
 available_kb=$(mem_available_kb)
 if [ "${available_kb:-0}" -lt "$need_kb" ]; then
-  refuse "MemAvailable: $((${available_kb:-0} / 1024 / 1024)) GB, need $((need_kb / 1024 / 1024)) GB (build cap + 1 GiB)"
+  refuse "MemAvailable: $((${available_kb:-0} / 1024 / 1024)) GB, need $((need_kb / 1024 / 1024)) GB (build cap + 1 GiB)" memory \
+    "have_gb=$((${available_kb:-0} / 1024 / 1024))" "need_gb=$((need_kb / 1024 / 1024))"
 fi
 if ! curl_planner "http://$(env_value .env PLANNER_BIND):$(planner_port)/api/diagnostics" >/dev/null 2>&1; then
   say "tiles-refresh: note: the planner's /api/diagnostics did not answer; carrying on"
 fi
 # The map data served now: after the switch /status must name other map data, or the new tileset is not what answers.
-valhalla_status || refuse "valhalla /status did not answer (or names no tileset_last_modified); nothing was changed"
+valhalla_status || refuse "valhalla /status did not answer (or names no tileset_last_modified); nothing was changed" routing_status
 OLD_MODIFIED=$VALHALLA_MODIFIED
 
 # 2. Download and merge while valhalla serves.
 GUARD=on
+progress downloading
 say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset serves"
 # road-map-meta/ is emptied on every run: a leftover of a failed run never reaches the record
 PREPARE_SH='rm -rf /vol/build /vol/road-map-meta && mkdir -p /vol/build/src /vol/road-map-meta/outlines'
@@ -257,7 +271,7 @@ if [ "$fetch_status" -ne 0 ]; then
     border="(one of: $border)"
   fi
   rm -f "$fetch_err"
-  if [ -n "$border" ]; then fail_stage download "the border file of region $border was not found (region_missing)"; fi
+  if [ -n "$border" ]; then fail_stage download "the border file of region $border was not found (region_missing)" region_missing; fi
   fail_stage download "the download failed"
 fi
 rm -f "$fetch_err"
@@ -275,7 +289,8 @@ if [ -n "${REGIONS_FILE:-}" ]; then
 fi
 available_kb=$(mem_available_kb)
 if [ "${available_kb:-0}" -lt "$MERGE_MIN_KB" ]; then
-  fail_stage merge "MemAvailable $((${available_kb:-0} / 1024 / 1024)) GB, need 7 GB before the merge"
+  fail_stage merge "MemAvailable $((${available_kb:-0} / 1024 / 1024)) GB, need 7 GB before the merge" memory \
+    "have_gb=$((${available_kb:-0} / 1024 / 1024))" need_gb=7
 fi
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 planner_compose --profile valhalla-build run --rm -T valhalla-fetch sh -c 'set -e
@@ -287,9 +302,13 @@ docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c 'rm -rf /vol/build/src' drop-src >&2 || fail_stage merge "cannot delete the extracts"
 
 # 3. Stop serving, build, apply the overrides.
+progress building
 say "tiles-refresh: stopping the routing engine; a plan being calculated now ends with 'Routing engine unreachable - nothing was changed'"
 planner_compose stop valhalla >&2 || fail_stage build "valhalla did not stop"
-planner_compose --profile valhalla-build run --rm -T valhalla-build >&2 || fail_stage build "the tile build failed"
+planner_compose --profile valhalla-build run --rm -T valhalla-build >&2
+build_status=$?
+if [ "$build_status" -eq 137 ]; then fail_stage build "the tile build ran out of memory" build_oom; fi
+[ "$build_status" -eq 0 ] || fail_stage build "the tile build failed"
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 planner_compose --profile valhalla-build run --rm -T -v "$PWD/valhalla/valhalla.overrides.json:/overrides.json:ro" \
   --entrypoint sh valhalla-build -c 'set -e
@@ -298,6 +317,7 @@ planner_compose --profile valhalla-build run --rm -T -v "$PWD/valhalla/valhalla.
   fail_stage overrides "applying valhalla.overrides.json failed"
 
 # 4. Promote, switch, check.
+progress switching
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c 'set -e; name=$1; shift; part="/vol/tilesets/.$name.partial"

@@ -38,7 +38,7 @@ PREVIOUS_RESULT = "previous-result.txt"
 UNAVAILABLE = ProbeResult(outcome="degraded-healthy", reason="road_map_changes_unavailable")
 _MAX_BYTES = 1_000_000
 _MAX_NOTE_BYTES = 4096  # the helper's notes are a few short lines
-_PROGRESS_KEYS = frozenset({"step", "step_at", "serving", "new"})
+_PROGRESS_KEYS = frozenset({"step", "step_at", "serving", "new", "build_started_at"})
 _REQUEST_KEYS = frozenset({"schema", "requested_at", "start_at", "added", "removed"})  # and `region`, which repeats
 _RESULT_KEYS = frozenset({"finished_at", "state", "code", "free_gb", "need_gb", "have_gb", "tileset"})
 _CODE = re.compile(r"[a-z_]{1,32}")
@@ -107,7 +107,11 @@ class ChangeQueueDir:
         values = _note_of(self._directory / PROGRESS, _PROGRESS_KEYS)
         try:
             step, step_at = values["step"], int(values["step_at"])
-            return RebuildProgress(step, datetime.fromtimestamp(step_at, UTC)) if step in STEPS else None
+            started = values.get("build_started_at")
+            build_started_at = None if started is None else datetime.fromtimestamp(int(started), UTC)
+            return (
+                RebuildProgress(step, datetime.fromtimestamp(step_at, UTC), build_started_at) if step in STEPS else None
+            )
         except (KeyError, ValueError, OverflowError, OSError):
             return None
 

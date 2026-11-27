@@ -767,8 +767,7 @@ def refresh(world: PlannerWorld, **env: str) -> subprocess.CompletedProcess[str]
     return result
 
 
-@when("the rebuild runs on that list")
-def when_the_refresh_runs(world: PlannerWorld) -> None:
+def refresh_with_borders(world: PlannerWorld, **env: str) -> None:
     pi = pi_of(world)
     # valhalla-fetch leaves the borders it downloaded in the meta folder of the volume (D314); the shim stands for it
     pi.rule(
@@ -778,17 +777,22 @@ def when_the_refresh_runs(world: PlannerWorld) -> None:
         passthrough=True,
         times=1,
     )
-    refresh(world)
+    refresh(world, **env)
+
+
+@when("the rebuild runs on that list")
+def when_the_refresh_runs(world: PlannerWorld) -> None:
+    refresh_with_borders(world)
 
 
 @when("the rebuild runs with progress reporting on")
 def when_the_refresh_reports(world: PlannerWorld) -> None:
-    refresh(world, ROAD_MAP_PROGRESS="on")
+    refresh_with_borders(world, ROAD_MAP_PROGRESS="on")
 
 
 @when("the rebuild runs with progress reporting off")
 def when_the_refresh_is_quiet(world: PlannerWorld) -> None:
-    refresh(world, ROAD_MAP_PROGRESS="off")
+    refresh_with_borders(world, ROAD_MAP_PROGRESS="off")
 
 
 def progress_steps(pi: FakePi) -> list[str]:
@@ -844,7 +848,7 @@ def then_the_steps_were_reported(world: PlannerWorld) -> None:
 def then_no_step_was_reported(world: PlannerWorld) -> None:
     settled(world, queue=unchanged())
     fetches = [" ".join(a) for a in compose_mutations(pi_of(world)) if "valhalla-fetch" in a]
-    assert fetches and "src/0.osm.pbf" in fetches[0], (
+    assert fetches and "src/1.osm.pbf" in fetches[0], (
         "the refresh did not run on the list"
     )  # a silent run is a real run
     steps = progress_steps(pi_of(world))

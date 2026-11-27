@@ -215,6 +215,19 @@ def test_a_rebuild_taken_by_the_helper_is_read_with_its_regions_and_step(tmp_pat
     assert progress is not None and (progress.step, progress.step_at) == ("building", NOW)
 
 
+def test_the_start_of_the_build_is_read_from_the_note_and_a_note_without_it_gives_none(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    at = int(NOW.timestamp())
+    (tmp_path / "progress.txt").write_text(
+        f"step=switching\nstep_at={at + 600}\nserving=1\nnew=2\nbuild_started_at={at}\n"
+    )
+    progress = queue.progress()
+    assert progress is not None and progress.build_started_at == NOW
+    (tmp_path / "progress.txt").write_text(f"step=downloading\nstep_at={at}\n")
+    progress = queue.progress()
+    assert progress is not None and progress.build_started_at is None
+
+
 def hostile(folder: Path, kind: str) -> None:
     target = folder / "progress.txt"
     good = f"step=building\nstep_at={int(NOW.timestamp())}\n"
@@ -233,13 +246,25 @@ def hostile(folder: Path, kind: str) -> None:
         target.write_text(f"step=frying\nstep_at={int(NOW.timestamp())}\n")
     elif kind == "not a number":
         target.write_text("step=building\nstep_at=soon\n")
+    elif kind == "build start not a number":
+        target.write_text(good + "build_started_at=soon\n")
     else:
         target.write_bytes(b"step=\xff\xfe\n")
 
 
 @pytest.mark.parametrize(
     "kind",
-    ["directory", "symlink", "too large", "unknown key", "repeated key", "unknown step", "not a number", "not text"],
+    [
+        "directory",
+        "symlink",
+        "too large",
+        "unknown key",
+        "repeated key",
+        "unknown step",
+        "not a number",
+        "build start not a number",
+        "not text",
+    ],
 )
 def test_a_note_that_is_not_plain_and_strict_says_nothing_and_never_fails(tmp_path: Path, kind: str) -> None:
     hostile(tmp_path, kind)
