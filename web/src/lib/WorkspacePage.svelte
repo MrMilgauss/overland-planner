@@ -73,7 +73,12 @@
   async function watchRoadMap(): Promise<void> {
     clearTimeout(nextRoadMapRead);
     const answer = await readRoadMap().catch(() => undefined);
-    if (gone || !answer) return;
+    if (gone) return;
+    if (!answer) {
+      // a failed read leaves what was known, and while a rebuild is busy the next read still comes
+      if (rebuildBusy) nextRoadMapRead = setTimeout(() => void watchRoadMap(), POLL_MS);
+      return;
+    }
     planningPaused = answer.planning_paused;
     planningBackAt = answer.planning_back_at;
     plannedLine =

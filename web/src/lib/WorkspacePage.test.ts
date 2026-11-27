@@ -799,6 +799,36 @@ describe('Workspace page while the road map changes', () => {
     }
   });
 
+  it('keeps asking every 10 seconds after a failed read while a change runs, and enables planning when it ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const building = {
+        state: 'running',
+        step: 'building',
+        steps_done: 2,
+        start_at: null,
+        added: [],
+        removed: [],
+      };
+      stubPlanner([TRIP], roadMap(building, '2026-11-27T21:48:00Z'));
+      render(WorkspacePage, { props: { projectId: 'p1' } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Plan the route' })).toBeDisabled(),
+      );
+
+      stubPlanner([TRIP], { 'GET /api/road-map': { status: 503, body: {} } });
+      await vi.advanceTimersByTimeAsync(10_000);
+      stubPlanner([TRIP], roadMap({ state: 'none', start_at: null, added: [], removed: [] }, null));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Plan the route' })).toBeEnabled(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads the coverage and the road map once more when the change ends, so the box names the new regions and date', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {

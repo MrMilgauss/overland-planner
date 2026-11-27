@@ -60,6 +60,7 @@
     clearTimeout(nextRead);
     return readRoadMap().then(
       (answer) => {
+        failure = '';
         now = Date.now();
         backAt = answer.planning_back_at;
         served = answer.served;
@@ -75,6 +76,8 @@
       },
       (error: unknown) => {
         failure = failureText(error);
+        // a change that is planned or running goes on whatever one read says: the next read may answer
+        if (planned && !gone) nextRead = setTimeout(() => void read(), POLL_MS);
       },
     );
   }

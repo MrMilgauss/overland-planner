@@ -49,6 +49,7 @@ interface World {
   posted?: Answer;
   cancelled?: Answer;
   back?: string | null;
+  readFails?: boolean;
 }
 const RUNNING_AT = (step: string | null, stepsDone: number, back: string | null) => ({
   state: 'running',
@@ -82,6 +83,7 @@ function plan(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, method: init?.method, body: init?.body as string | undefined });
+      if (url === '/api/road-map' && world.readFails) return new Response('{}', { status: 503 });
       if (url === '/api/road-map')
         return new Response(
           JSON.stringify({
@@ -436,6 +438,23 @@ describe('Road map page', () => {
       await vi.advanceTimersByTimeAsync(10_000);
       await vi.advanceTimersByTimeAsync(30_000);
       expect(readsOf(calls)).toBe(2);
+    });
+
+    it('goes on every 10 seconds after a failed read while a change runs, and clears the alert when one succeeds', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const world: World = { change: RUNNING_AT('downloading', 1, null) };
+      const calls = plan(SERVED, undefined, world);
+      render(RoadMapPage);
+      await vi.advanceTimersByTimeAsync(0);
+
+      world.readFails = true;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(screen.getByRole('alert')).toBeVisible();
+      world.readFails = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(readsOf(calls)).toBe(3);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
     it('stops when the page is left', async () => {
