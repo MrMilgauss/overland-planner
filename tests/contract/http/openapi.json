@@ -1386,6 +1386,43 @@
         "title": "ProjectUpdate",
         "type": "object"
       },
+      "RoadMapBody": {
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/RoadMapChangeBody"
+          },
+          "served": {
+            "$ref": "#/components/schemas/ServedMapBody"
+          }
+        },
+        "required": [
+          "served",
+          "change"
+        ],
+        "title": "RoadMapBody",
+        "type": "object"
+      },
+      "RoadMapChangeBody": {
+        "properties": {
+          "state": {
+            "enum": [
+              "none",
+              "planned",
+              "running",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "RoadMapChangeBody",
+        "type": "object"
+      },
       "RunGeometryResource": {
         "description": "A run's map data (D251): a GeoJSON FeatureCollection, the lines in itinerary order and then the markers. A line's\n`stop` is the 1-based itinerary row it leads to or belongs to; `geometry` `unavailable` marks a road leg drawn as a\nstraight line because its shape could not be fetched (D253); a `start_end` marker carries the End's number in\n`end_stop`.",
         "properties": {
@@ -1446,6 +1483,81 @@
           "max"
         ],
         "title": "RunsPerProjectDayResource",
+        "type": "object"
+      },
+      "ServedMapBody": {
+        "description": "The map the engine serves (D308, D315): its regions when known, its date whenever one can be read.",
+        "properties": {
+          "known": {
+            "title": "Known",
+            "type": "boolean"
+          },
+          "map_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Date"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/ServedRegionBody"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "known",
+          "map_date",
+          "regions",
+          "total_bytes"
+        ],
+        "title": "ServedMapBody",
+        "type": "object"
+      },
+      "ServedRegionBody": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "parent_name",
+          "bytes"
+        ],
+        "title": "ServedRegionBody",
         "type": "object"
       },
       "TotalsResource": {
@@ -2495,6 +2607,24 @@
           }
         },
         "summary": "Import Tracks"
+      }
+    },
+    "/api/road-map": {
+      "get": {
+        "operationId": "road_map_api_road_map_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoadMapBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Road Map"
       }
     },
     "/healthz": {

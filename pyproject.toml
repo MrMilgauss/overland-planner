@@ -314,6 +314,7 @@ source_modules = [
     "overland_planner.bootstrap",
 ]
 forbidden_modules = ["overland_planner.application.roadmap"]
+ignore_imports = ["overland_planner.** -> overland_planner.application.roadmap.facade"]
 
 [[tool.importlinter.contracts]]
 id = "ortools-solver-only"

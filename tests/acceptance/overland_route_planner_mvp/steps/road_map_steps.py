@@ -899,6 +899,12 @@ def then_the_health_names(world: PlannerWorld, what: str, how: str) -> None:
     assert reason in text, f"the health detail does not name {reason}: {text[:300]}"
 
 
+@then("the planner reports that it cannot read the regions of the map")
+def then_the_planner_reports_unreadable_regions(world: PlannerWorld) -> None:
+    """Binding missing from DISTILL for this wording: the same reason the health detail names (D310)."""
+    then_the_health_names(world, "road map", "unreadable")
+
+
 @then("the planner does not report the catalogue as unavailable")
 def then_the_health_does_not_name_the_catalogue(world: PlannerWorld) -> None:
     assert "region_catalogue_unavailable" not in world.marco().health_detail().text

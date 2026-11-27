@@ -24,6 +24,9 @@ The light base map (ADR-004 Amendment 1, D287) is MAP_BASE_STYLE_URL, a style ad
 no placeholders are required) under the same guard as MAP_TILE_URL, so a key in its path is not detected either, and
 MAP_BASE_ATTRIBUTION, its credit; empty or blank is the default. A query word without "=" that names a private
 parameter refuses the start without naming the word, since it may itself be the secret.
+The served road map (slice 12c, D301, D314): ROAD_MAP_DIR is the tileset folder of the volume the planner mounts read-
+only, ROAD_MAP_CHANGES_DIR the folder of the rebuild's notes (`progress.txt`); empty or absent means unknown. With the
+offline road map, ROAD_MAP_SERVED_TILESET names the tileset folder it serves; with `valhalla` a value refuses the start.
 """
 
 from __future__ import annotations
@@ -111,6 +114,10 @@ class Settings(BaseSettings):
         "Italy, Spain, Switzerland, Austria and southern France"
     )
 
+    road_map_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_DIR")] = None
+    road_map_changes_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_CHANGES_DIR")] = None
+    road_map_served_tileset: Annotated[str | None, Field(validation_alias="ROAD_MAP_SERVED_TILESET")] = None
+
     @field_validator("map_tile_url")
     @classmethod
     def _tile_url_without_private_parameter(cls, value: str) -> str:
@@ -153,7 +160,15 @@ class Settings(BaseSettings):
             raise ValueError("must be an http or https URL with a host")
         return value
 
-    @field_validator("basic_auth_user", "basic_auth_password", "mock_plan", mode="before")
+    @field_validator(
+        "basic_auth_user",
+        "basic_auth_password",
+        "mock_plan",
+        "road_map_dir",
+        "road_map_changes_dir",
+        "road_map_served_tileset",
+        mode="before",
+    )
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
@@ -230,4 +245,8 @@ class Settings(BaseSettings):
             raise InvalidSettingsError({"FEASIBILITY_LIMIT_S": "must not exceed OPTIMISATION_LIMIT_S (D116)"})
         if settings.routing_provider == "valhalla" and settings.mock_plan is not None:
             raise InvalidSettingsError({"MOCK_PLAN": "cannot be used with ROUTING_PROVIDER=valhalla (offline script)"})
+        if settings.routing_provider == "valhalla" and settings.road_map_served_tileset is not None:
+            raise InvalidSettingsError(
+                {"ROAD_MAP_SERVED_TILESET": "cannot be used with ROUTING_PROVIDER=valhalla (the engine names it)"}
+            )
         return settings

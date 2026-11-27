@@ -322,7 +322,9 @@ class MockRoutingProvider:
         *,
         script: RoadMapScript | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        served_tileset: str | None = None,
     ) -> None:
+        self._served_tileset = served_tileset
         self._detour_factor = detour_factor if script is None else script.detour_factor
         self._script = script
         self._pairs: Mapping[RoadPair, RoadMeasure | None] = {} if script is None else script.pairs
@@ -343,6 +345,10 @@ class MockRoutingProvider:
     @property
     def profile(self) -> str:
         return PROFILE
+
+    def served_id(self) -> str | None:
+        """The tileset directory `ROAD_MAP_SERVED_TILESET` names (D301); the same `select_served` matches it."""
+        return self._served_tileset
 
     def matrix(
         self, sources: Sequence[Coordinate], targets: Sequence[Coordinate], observer: RoutingObserver | None = None

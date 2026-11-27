@@ -7,8 +7,8 @@ Order: settings -> the `MOCK_PLAN` road map, read once (a bad file refuses the s
 -> probe every registered component in wiring order (the database probe migrates it to head
 first; then the `plan_job_log` and `plan_refusals` write-and-read round trips, the diagnostics read, the file store
 round trip, the mount table, the `DATA_DIR` persistence verdict (D121), the GPX parser's embedded-sample and
-billion-laughs check, the GPX writer's write and re-parse and the road map's known pair) -> mount routes
-(API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
+billion-laughs check, the GPX writer's write and re-parse, the road map's known pair and the tileset store's listing)
+-> mount routes (API and health first, then the built web page, D162) -> log `app.started`. uvicorn serves only
 once the factory returns, so no request is answered before every component has reported its probe outcome. Invalid
 settings or the first fatal component refuse the start (`bootstrap/startup.py`: one `health.startup.refused` line,
 exit non-zero, no `app.started`); each degraded component gets one `health.startup.degraded` line {component, reason}
@@ -44,6 +44,7 @@ from overland_planner.adapters.http.errors import install_error_handlers
 from overland_planner.adapters.http.export_routes import export_routes
 from overland_planner.adapters.http.planning_routes import PlanningUseCases, planning_routes
 from overland_planner.adapters.http.platform_routes import platform_routes
+from overland_planner.adapters.http.road_map_routes import road_map_routes
 from overland_planner.adapters.http.schemas import MapConfig
 from overland_planner.adapters.http.upload_limits import UploadLimits
 from overland_planner.adapters.http.web_page import mount_web_page
@@ -55,6 +56,7 @@ from overland_planner.adapters.persistence.migrator import AlembicMigrator, Data
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
 from overland_planner.adapters.persistence.plan_refusal_repository import SqlAlchemyPlanRefusalLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from overland_planner.adapters.roadmap.tileset_dir_reader import TilesetDirReader
 from overland_planner.adapters.routing.mock_routing_provider import (
     InvalidRoadMapError,
     MockRoutingProvider,
@@ -83,7 +85,9 @@ from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.event_log import EventLog
 from overland_planner.application.ports.host import MountTable
 from overland_planner.application.ports.routing_provider import RoutingProvider, RoutingProviderError
+from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tour_solver import SolveLimits, TourSolver
+from overland_planner.application.roadmap.facade import RoadMapService
 from overland_planner.application.routing.facade import LegResolver, ShapeStore
 from overland_planner.bootstrap.registry import ProbeRegistry
 from overland_planner.bootstrap.settings import InvalidSettingsError, Settings
@@ -129,6 +133,10 @@ class _Wiring:
         self._gpx_parser = GpxpyParser()
         self._gpx_writer = GpxpyWriter()
         self._routing_provider = ports.routing_provider or _routing_provider_for(settings, ports, road_map)
+        changes_dir = settings.road_map_changes_dir
+        self._tileset_store = TilesetDirReader(
+            settings.road_map_dir, progress_file=None if changes_dir is None else changes_dir / "progress.txt"
+        )
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
@@ -165,6 +173,7 @@ class _Wiring:
         registry.register("gpx_parser", self._gpx_parser)
         registry.register("gpx_writer", self._gpx_writer)
         registry.register("routing_provider", self._routing_provider)
+        registry.register("tileset_store", self._tileset_store)  # degraded, never fatal: the map is then unknown
         registry.register("tour_solver", self._tour_solver)
         return registry
 
@@ -222,6 +231,11 @@ class _Wiring:
             )
         )
 
+    def road_map_router(self) -> APIRouter:
+        provider = self._routing_provider
+        served_map = provider if isinstance(provider, ServedMap) else None
+        return road_map_routes(RoadMapService(served_map, self._tileset_store))
+
     def diagnostics_router(self) -> APIRouter:
         service = DiagnosticsService(
             self._diagnostics_reader,
@@ -248,7 +262,7 @@ def _routing_provider_for(settings: Settings, ports: ExternalPorts, road_map: Ro
             snap_m=settings.confirmed_snap_m,
             transport=ports.routing_transport,
         )
-    return MockRoutingProvider(script=road_map)
+    return MockRoutingProvider(script=road_map, served_tileset=settings.road_map_served_tileset)
 
 
 def create_app(
@@ -287,6 +301,7 @@ def create_app(
     app.include_router(wiring.catalog_router())
     app.include_router(wiring.planning_router(health))
     app.include_router(wiring.export_router())
+    app.include_router(wiring.road_map_router())
     app.include_router(wiring.diagnostics_router())
     mount_web_page(app, settings.web_dist_dir)
     auth_enabled = _guard_with_password(app, settings, event_log)

@@ -537,3 +537,31 @@ def test_a_bare_query_word_with_a_private_name_is_refused_without_echoing_it(
     assert "carries a private parameter" in message
     assert bare not in message and digits not in message
     assert digits not in repr(refused.value) and digits not in repr(refused.value.__cause__)
+
+
+# ------------------------------------------------------------------ the served road map (slice 12c, D301, D314)
+@given(directory=_path, tileset=_printable)
+def test_the_served_road_map_settings_read_as_written_and_empty_is_unknown(directory: str, tileset: str) -> None:
+    written = Settings.from_environ(
+        {"ROAD_MAP_DIR": directory, "ROAD_MAP_CHANGES_DIR": directory, "ROAD_MAP_SERVED_TILESET": tileset}
+    )
+    assert (written.road_map_dir, written.road_map_changes_dir, written.road_map_served_tileset) == (
+        Path(directory),
+        Path(directory),
+        tileset,
+    )
+    empty = Settings.from_environ({"ROAD_MAP_DIR": "", "ROAD_MAP_CHANGES_DIR": "", "ROAD_MAP_SERVED_TILESET": ""})
+    assert (empty.road_map_dir, empty.road_map_changes_dir, empty.road_map_served_tileset) == (None, None, None)
+    unset = Settings.from_environ({})
+    assert (unset.road_map_dir, unset.road_map_served_tileset) == (None, None)
+
+
+@given(tileset=_printable)
+def test_a_served_tileset_named_for_the_offline_road_map_is_refused_with_valhalla(tileset: str) -> None:
+    # bypass: refusal path; the error's named keys are its whole observable surface.
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": tileset})
+    assert refused.value.setting_names == frozenset({"ROAD_MAP_SERVED_TILESET"})
+    assert "ROAD_MAP_SERVED_TILESET" in str(refused.value)
+    assert Settings.from_environ({"ROUTING_PROVIDER": "mock", "ROAD_MAP_SERVED_TILESET": tileset})
+    assert Settings.from_environ({"ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": ""})

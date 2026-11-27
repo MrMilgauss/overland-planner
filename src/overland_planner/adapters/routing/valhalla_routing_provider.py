@@ -19,6 +19,7 @@ their cells answer `OffNetwork`; nothing is remembered beyond that `matrix` call
 Road shape (D252): `route_shape` posts `/route` (two places with the same cutoff, the same costing, kilometres, no
 directions) through the same limit, retries and typed errors, and decodes the leg's polyline6; error 442 or 171 answers
 the straight line marked not available, and identical points answer one point without asking.
+`served_epoch()` reads `/status` afresh for the served map's date (D301).
 The probe reads `/status` and the 2x2 matrix of Torino and Susa once each and is never fatal.
 `transport` is the httpx transport seam of the tests and of the composition root.
 """
@@ -121,6 +122,18 @@ class ValhallaRoutingProvider:
     @property
     def profile(self) -> str:
         return PROFILE
+
+    def served_epoch(self) -> int | None:
+        """The map date the engine reports now: an uncached `/status` read, one attempt, never raising (D301, D314).
+
+        Not `provider_id`, which stays what the last probe saw; an engine that does not answer gives None."""
+        try:
+            return self._read_status(retry=False, probing=True)[1]
+        except RoutingProviderError:
+            return None
+
+    def served_id(self) -> int | None:
+        return self.served_epoch()
 
     def probe(self) -> ProbeResult:
         """`/status`, then the 2x2 matrix of Torino and Susa: one attempt each, never fatal, never tells an observer."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
+from overland_planner.application.roadmap.facade import ServedMapView
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
@@ -41,6 +43,40 @@ class MapConfig(BaseModel):
     base_style_url: str
     base_attribution: str
     road_map_area: str
+
+
+class ServedRegionBody(BaseModel):
+    key: str
+    name: str
+    parent_name: str | None
+    bytes: int
+
+
+class ServedMapBody(BaseModel):
+    """The map the engine serves (D308, D315): its regions when known, its date whenever one can be read."""
+
+    known: bool
+    map_date: datetime | None
+    regions: list[ServedRegionBody]
+    total_bytes: int
+
+    @classmethod
+    def of(cls, served: ServedMapView) -> ServedMapBody:
+        return cls(
+            known=served.known,
+            map_date=served.map_date,
+            regions=[ServedRegionBody(**vars(region)) for region in served.regions],
+            total_bytes=served.total_bytes,
+        )
+
+
+class RoadMapChangeBody(BaseModel):
+    state: Literal["none", "planned", "running", "done", "failed", "cancelled"]
+
+
+class RoadMapBody(BaseModel):
+    served: ServedMapBody
+    change: RoadMapChangeBody
 
 
 class ProjectCreate(BaseModel):
