@@ -448,4 +448,16 @@ describe('Road map page', () => {
       expect(readsOf(calls)).toBe(1);
     });
   });
+
+  it('reads an answer without a change as no change', async () => {
+    plan(SERVED, undefined, { change: undefined });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ served: SERVED, limits: LIMITS }))),
+    );
+    render(RoadMapPage);
+    await loaded();
+
+    expect(screen.queryByRole('region', { name: 'Planned rebuild' })).not.toBeInTheDocument();
+  });
 });

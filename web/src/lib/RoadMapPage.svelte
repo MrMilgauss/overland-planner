@@ -62,7 +62,7 @@
         served = answer.served;
         limits = answer.limits;
         piOffset = answer.server_utc_offset_minutes;
-        planned = keepsPolling(answer.change.state) ? answer.change : undefined;
+        planned = answer.change && keepsPolling(answer.change.state) ? answer.change : undefined;
         if (planned && !gone) nextRead = setTimeout(() => void read(), POLL_MS);
       },
       (error: unknown) => {
