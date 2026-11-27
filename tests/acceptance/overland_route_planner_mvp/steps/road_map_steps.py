@@ -572,8 +572,9 @@ def when_the_owner_asks_the_refresh_cost(world: PlannerWorld) -> None:
 def when_the_owner_cancels_it(world: PlannerWorld) -> None:
     rm = planner(world)
     rm.view_before = rm_view(world)
-    call(world, "DELETE", "/api/road-map/change")
-    rm.view_after = rm_view(world)
+    answer = call(world, "DELETE", "/api/road-map/change")
+    rm.view_after = rm_view(world)  # reads the road map again: the answer to the DELETE stays the one the Thens judge
+    rm.response = answer
 
 
 @given("the helper has taken it")

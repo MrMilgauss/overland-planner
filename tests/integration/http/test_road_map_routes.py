@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -139,11 +140,12 @@ def _planner(data_dir: Path, tmp_path: Path, index_url: str, more: dict[str, str
 
 def test_a_change_is_queued_shown_as_planned_and_cancelled(data_dir: Path, tmp_path: Path) -> None:
     server = region_service()
+    start = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
         before = client.get("/api/road-map").json()
         queued = client.post(
             "/api/road-map/change",
-            json={"region_keys": ["italy", "portugal"], "start_at": "2999-01-01T02:00:00Z"},
+            json={"region_keys": ["italy", "portugal"], "start_at": start},
         )
         planned = client.get("/api/road-map").json()
         cancelled = client.delete("/api/road-map/change")
@@ -155,7 +157,7 @@ def test_a_change_is_queued_shown_as_planned_and_cancelled(data_dir: Path, tmp_p
     assert before["limits"] == {"changes_available": True, "max_gb": 8.0}
     assert planned["served"] == before["served"]
     assert planned["change"]["state"] == "planned"
-    assert planned["change"]["start_at"] == "2999-01-01T02:00:00Z"
+    assert planned["change"]["start_at"] == start
     assert [r["name"] for r in planned["change"]["added"]] == ["Portugal"]
     assert cancelled.status_code == 204
     assert after["change"]["state"] == "none"
@@ -190,3 +192,39 @@ def test_changes_that_cannot_be_kept_are_unavailable_everywhere(data_dir: Path, 
         "reason": "road_map_changes_unavailable",
     }
     assert (refused.status_code, refused.json()["code"]) == (503, "changes_unavailable")
+
+
+def test_one_change_at_a_time_one_rebuild_a_day_a_start_in_its_window_and_refresh(
+    data_dir: Path, tmp_path: Path
+) -> None:
+    server = region_service()
+    now = datetime.now(UTC)
+    day = now + timedelta(days=3)
+    taken = day.strftime("%Y%m%d")
+    (tmp_path / "tilesets").mkdir(exist_ok=True)
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        (tmp_path / "tilesets" / taken).mkdir()  # a map of that day, the leftover of a failed switch
+        same_day = client.post("/api/road-map/change", json={"region_keys": ["italy"], "start_at": day.isoformat()})
+        too_soon = client.post(
+            "/api/road-map/change",
+            json={"region_keys": ["italy"], "start_at": (now + timedelta(minutes=1)).isoformat()},
+        )
+        refresh_cost = client.post("/api/road-map/change/preview", json={})
+        refresh = client.post("/api/road-map/change", json={"start_at": (now + timedelta(days=5)).isoformat()})
+        second = client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+        (tmp_path / "changes" / "request.txt").rename(tmp_path / "changes" / "running.txt")
+        third = client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+        cancel = client.delete("/api/road-map/change")
+    server.stop()
+    midnight = (day + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    assert (same_day.status_code, same_day.json()["code"], same_day.json()["next_rebuild_from"]) == (
+        422,
+        "same_day",
+        midnight,
+    )
+    assert (too_soon.status_code, too_soon.json()["code"]) == (422, "bad_start")
+    assert refresh_cost.status_code == 200 and refresh_cost.json()["added"] == refresh_cost.json()["removed"] == []
+    assert refresh.status_code == 201
+    assert (second.status_code, second.json()["code"]) == (409, "change_pending")
+    assert (third.status_code, third.json()["code"]) == (409, "rebuild_running")
+    assert (cancel.status_code, cancel.json()["code"]) == (409, "change_not_pending")

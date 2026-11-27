@@ -29,7 +29,13 @@ from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tileset_store import TilesetListing, TilesetStore
 from overland_planner.domain.roadmap.coverage import RoadMapCoverage
 from overland_planner.domain.roadmap.outline import Outline
-from overland_planner.domain.roadmap.region_choice import CatalogRegion, Refusal, RegionChoice
+from overland_planner.domain.roadmap.region_choice import (
+    CatalogRegion,
+    Refusal,
+    RegionChoice,
+    check_same_day,
+    check_start_window,
+)
 from overland_planner.domain.roadmap.served_map import ServedId, select_served
 
 
@@ -53,6 +59,17 @@ class ServedMapView:
 
 
 DEFAULT_MAX_GB = 8.0
+# The eight regions the map was first built from (D315): what "Refresh map data" asks for when the map has no record.
+SEED_REGION_KEYS = (
+    "italy",
+    "spain",
+    "switzerland",
+    "austria",
+    "rhone-alpes",
+    "provence-alpes-cote-d-azur",
+    "languedoc-roussillon",
+    "midi-pyrenees",
+)
 MIN_SEARCH_LETTERS = 2
 MAX_SEARCH_RESULTS = 8
 
@@ -237,21 +254,36 @@ class RoadMapService:
             for entry in matching[:MAX_SEARCH_RESULTS]
         )
 
-    def preview_change(self, region_keys: Sequence[str]) -> ChangeSummary:
+    def refresh_keys(self) -> tuple[str, ...]:
+        """The regions "Refresh map data" asks for: the served ones, or the seed list when the map has no record."""
+        held = tuple(sorted(region.key for region in self.served().regions))
+        return held or SEED_REGION_KEYS
+
+    def preview_change(self, region_keys: Sequence[str] | None) -> ChangeSummary:
         """The summary of making the map hold exactly these regions; writes nothing. Only the border of a region not
         served is fetched, and only the size of a region not served is asked. Raises `Refusal` for a region unknown
         or overlapping another, `CatalogueUnavailableError` when the list, a size or a border cannot be had."""
-        return self._summary(self._choose(region_keys))
+        return self._summary(self._choose(self.refresh_keys() if region_keys is None else region_keys))
 
-    def plan_change(self, region_keys: Sequence[str], start_at: datetime | None = None) -> ChangeSummary:
-        """Keep the change ready for the helper and answer with its summary; the served map is left as it is. Raises
-        `ChangesUnavailableError` when changes cannot be kept, `Refusal` for a region unknown, overlapping another,
-        one the helper would refuse to read, or a download above the limit (nothing is fetched for the last), and
+    def plan_change(self, region_keys: Sequence[str] | None, start_at: datetime | None = None) -> ChangeSummary:
+        """Keep the change ready for the helper and answer with its summary; the served map is left as it is (no keys:
+        refresh the served regions). Raises `ChangesUnavailableError` when changes cannot be kept, `Refusal` for a
+        change already waiting or running, a start outside two minutes to fourteen days ahead, a UTC day that already
+        has a map, a region unknown, overlapping another, one the helper would refuse to read, or a download above the
+        limit (nothing is fetched for the last), and
         `CatalogueUnavailableError` as `preview_change` does. Nothing is written unless every check passed."""
         changes, clock = self._open_changes()
-        chosen = self._choose(region_keys)
+        if changes.running():
+            raise Refusal("rebuild_running", "A rebuild is running: the next change can be planned when it ends")
+        if changes.waiting():
+            raise Refusal("change_pending", "A change is already planned: apply or cancel it before planning another")
+        now = clock.now()
+        chosen = self._choose(self.refresh_keys() if region_keys is None else region_keys)
         chosen.choice.check_size(self._max_gb)
-        request = self._request(chosen, start_at, clock.now())
+        if start_at is not None:
+            check_start_window(start_at, now)
+        check_same_day(now if start_at is None else start_at, [entry.name for entry in self._store.listing().entries])
+        request = self._request(chosen, start_at, now)
         summary = self._summary(chosen)
         changes.queue(request, [ref.name for ref in summary.added], [ref.name for ref in summary.removed])
         return summary

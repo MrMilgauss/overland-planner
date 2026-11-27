@@ -25,6 +25,9 @@ from overland_planner.application.ports.road_map_changes import (
 
 REQUEST = "request.txt"
 CANCELLED = "cancelled.txt"
+RUNNING = "running.txt"
+RESULT = "result.txt"
+PREVIOUS_RESULT = "previous-result.txt"
 UNAVAILABLE = ProbeResult(outcome="degraded-healthy", reason="road_map_changes_unavailable")
 _MAX_BYTES = 1_000_000
 _FIELDS = 6  # key, name, parent name, pbf address, poly address, bytes
@@ -49,12 +52,26 @@ class ChangeQueueDir:
                 written.write(text)
                 written.flush()
                 os.fsync(written.fileno())
+            self._start_afresh()
             os.replace(temporary, self._directory / REQUEST)
         except OSError as unwritable:
             with contextlib.suppress(OSError):
                 os.unlink(temporary)
             raise ChangesUnavailableError(str(unwritable)) from unwritable
         _sync_folder(self._directory)
+
+    def waiting(self) -> bool:
+        return (self._directory / REQUEST).exists()
+
+    def running(self) -> bool:
+        return (self._directory / RUNNING).exists()
+
+    def _start_afresh(self) -> None:
+        """A new request: the last result is kept as the previous one, a cancel is forgotten."""
+        with contextlib.suppress(FileNotFoundError):
+            os.replace(self._directory / RESULT, self._directory / PREVIOUS_RESULT)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(self._directory / CANCELLED)
 
     def cancel(self) -> bool:
         try:

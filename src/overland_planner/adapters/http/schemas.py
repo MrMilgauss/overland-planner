@@ -39,6 +39,12 @@ class ErrorEnvelope(BaseModel):
     message: str
 
 
+class ChangeRefusalEnvelope(ErrorEnvelope):
+    """A refused change: `same_day` also says from when the next rebuild may start (the next UTC midnight)."""
+
+    next_rebuild_from: datetime | None = None
+
+
 class MapConfig(BaseModel):
     """What the web needs to draw its maps (ADR-004): the Terrain raster tile address, its credit and the deepest zoom,
     the light base map's style address and credit (Amendment 1), and whether place search is offered."""
@@ -122,9 +128,9 @@ class CoverageBody(BaseModel):
 
 class ChangePreviewRequest(BaseModel):
     """The regions the road map should hold and when the rebuild should start; addresses come from the list, never
-    from here."""
+    from here. No `region_keys` is "Refresh map data": the served regions (the seed list when the map has no record)."""
 
-    region_keys: list[str]
+    region_keys: list[str] | None = None
     start_at: datetime | None = None
 
 
@@ -585,9 +591,10 @@ CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 CHANGE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {
-        "model": ErrorEnvelope,
-        "description": "validation_error, unknown_region, overlaps_region or too_big",
+        "model": ChangeRefusalEnvelope,
+        "description": "validation_error, unknown_region, overlaps_region, too_big, bad_start or same_day",
     },
+    409: {"model": ErrorEnvelope, "description": "change_pending or rebuild_running"},
     503: {"model": ErrorEnvelope, "description": "changes_unavailable or region_catalogue_unavailable"},
 }
 CANCEL_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

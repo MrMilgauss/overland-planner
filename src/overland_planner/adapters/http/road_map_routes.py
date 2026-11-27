@@ -41,6 +41,18 @@ def _utc(moment: datetime) -> datetime:
     return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
 
 
+_CONFLICTS = {"change_pending", "rebuild_running"}
+
+
+def _refused(refused: Refusal) -> JSONResponse:
+    """422 for a change the rules refuse, 409 while another is waiting or running; same_day names when to retry."""
+    body: dict[str, object] = {"code": refused.code, "message": refused.message}
+    when = refused.details.get("next_rebuild_from")
+    if isinstance(when, datetime):
+        body["next_rebuild_from"] = _utc(when).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(body, status_code=409 if refused.code in _CONFLICTS else 422)
+
+
 def _changes_unavailable() -> JSONResponse:
     return envelope(503, "changes_unavailable", "Changing the road map is not available right now")
 
@@ -92,7 +104,7 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
         except ChangesUnavailableError:
             return _changes_unavailable()
         except Refusal as refused:
-            return envelope(422, refused.code, refused.message)
+            return _refused(refused)
         except CatalogueUnavailableError:
             return envelope(
                 503,

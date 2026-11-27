@@ -4,6 +4,7 @@ from overland_planner.application.ports.region_catalogue import CatalogueUnavail
 from overland_planner.application.ports.road_map_changes import ChangesUnavailableError
 from overland_planner.application.roadmap.coverage_service import CoverageService, TripCoverage, TripGroup
 from overland_planner.application.roadmap.service import (
+    SEED_REGION_KEYS,
     CatalogueHit,
     ChangeSummary,
     PlannedChange,
@@ -16,6 +17,7 @@ from overland_planner.application.roadmap.service import (
 from overland_planner.domain.roadmap.region_choice import Refusal
 
 __all__ = [
+    "SEED_REGION_KEYS",
     "CatalogueHit",
     "CatalogueUnavailableError",
     "ChangeSummary",

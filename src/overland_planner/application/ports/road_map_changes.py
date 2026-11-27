@@ -44,8 +44,17 @@ class RoadMapChanges(Probeable, Protocol):
         ...
 
     def queue(self, request: ChangeRequest, added: Sequence[str], removed: Sequence[str]) -> None:
-        """Keep the request ready for the helper, for the report naming what is added and removed. Replaces nothing
-        half-written; raises `ChangesUnavailableError` and leaves nothing behind when it cannot."""
+        """Keep the request ready for the helper, for the report naming what is added and removed. Moves the last
+        result aside and forgets a cancel. Replaces nothing half-written;
+        raises `ChangesUnavailableError` and leaves nothing behind when it cannot."""
+        ...
+
+    def waiting(self) -> bool:
+        """Whether a request waits for the helper (readable or not)."""
+        ...
+
+    def running(self) -> bool:
+        """Whether the helper has taken a request and is rebuilding."""
         ...
 
     def cancel(self) -> bool:

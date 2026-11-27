@@ -7,7 +7,7 @@ an unknown map, and keeps the last matched map while the engine says nothing.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from hypothesis import given
@@ -17,7 +17,7 @@ from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.region_catalogue import CatalogueEntry, CatalogueUnavailableError
 from overland_planner.application.ports.road_map_changes import ChangeRequest, RequestedRegion
 from overland_planner.application.ports.tileset_store import ServedRegion, TilesetListing
-from overland_planner.application.roadmap.facade import ChangesUnavailableError, RoadMapService
+from overland_planner.application.roadmap.facade import SEED_REGION_KEYS, ChangesUnavailableError, RoadMapService
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.roadmap.outline import Outline
 from overland_planner.domain.roadmap.region_choice import Refusal
@@ -278,6 +278,13 @@ class FakeChanges:
         self.open = open_
         self.request: ChangeRequest | None = None
         self.report: tuple[list[str], list[str]] | None = None
+        self.taken = False
+
+    def waiting(self) -> bool:
+        return self.request is not None
+
+    def running(self) -> bool:
+        return self.taken
 
     def available(self) -> bool:
         return self.open
@@ -459,3 +466,93 @@ def test_a_region_containing_served_ones_is_refused_naming_every_one_of_them() -
         service.plan_change(["europe", "italy", "spain"], START)
     assert refused.value.message == "Europe contains Italy and Spain, which are already in the road map"
     assert changes.request is None
+
+
+# ------------------------------------------------------------ one change, one rebuild a day, a start window (D305)
+def test_a_second_change_is_refused_while_one_waits_or_runs_and_writes_nothing() -> None:
+    service, changes, _ = queued_planner()
+    service.plan_change(["italy", "portugal"], START)
+    kept = changes.request
+    with pytest.raises(Refusal) as pending:
+        service.plan_change(["italy", "us/utah"], START)
+    changes.request, changes.taken = None, True  # the helper took it
+    with pytest.raises(Refusal) as running:
+        service.plan_change(["italy", "us/utah"], START)
+    assert (pending.value.code, running.value.code) == ("change_pending", "rebuild_running")
+    assert kept is not None and changes.request is None
+
+
+@pytest.mark.parametrize(
+    ("start", "accepted"),
+    [
+        (CLOCK.now() + timedelta(minutes=1), False),
+        (CLOCK.now() + timedelta(minutes=2), True),
+        (CLOCK.now() + timedelta(days=14), True),
+        (CLOCK.now() + timedelta(days=14, seconds=1), False),
+    ],
+)
+def test_a_start_is_kept_only_from_two_minutes_to_fourteen_days_ahead(start: datetime, accepted: bool) -> None:
+    service, changes, _ = queued_planner()
+    if accepted:
+        service.plan_change(["italy", "portugal"], start)
+        assert changes.request is not None and changes.request.start_at == start
+    else:
+        with pytest.raises(Refusal) as refused:
+            service.plan_change(["italy", "portugal"], start)
+        assert (refused.value.code, changes.request) == ("bad_start", None)
+
+
+def day_service(*directories: str) -> tuple[RoadMapService, FakeChanges]:
+    maps = [(name, NOV_27, [region("italy", 2)]) for name in directories]
+    changes = FakeChanges()
+    service = RoadMapService(
+        FakeServedMap("20261127"), FakeStore(listing(*maps)), FakeCatalogue(), changes, CLOCK, max_gb=8
+    )
+    return service, changes
+
+
+@pytest.mark.parametrize(
+    ("directories", "start", "refused_from"),
+    [
+        (["20261127"], None, None),  # a start now is the 28th UTC: only the 27th has a map
+        (["20261127", "20261128"], None, datetime(2026, 11, 29, tzinfo=UTC)),  # a leftover of a failed switch
+        (["20261127", "20261129"], START, datetime(2026, 11, 30, tzinfo=UTC)),
+        (["20261127"], datetime(2026, 11, 29, 0, 30, tzinfo=timezone(timedelta(hours=1))), None),  # 28th UTC: free
+    ],
+)
+def test_one_rebuild_a_utc_day_counted_by_the_directories_of_the_volume(
+    directories: list[str], start: datetime | None, refused_from: datetime | None
+) -> None:
+    service, changes = day_service(*directories)
+    if refused_from is None:
+        service.plan_change(["italy", "portugal"], start)
+        assert changes.request is not None
+        return
+    with pytest.raises(Refusal) as refused:
+        service.plan_change(["italy", "portugal"], start)
+    assert (refused.value.code, refused.value.details, changes.request) == (
+        "same_day",
+        {"next_rebuild_from": refused_from},
+        None,
+    )
+
+
+# ------------------------------------------------------------------------- Refresh map data (D315)
+def test_refresh_asks_for_the_served_regions_through_preview_and_plan() -> None:
+    service, changes, _ = queued_planner()
+    by_hand = service.preview_change(["italy", "spain"])
+    assert service.preview_change(None) == by_hand
+    assert service.plan_change(None, START) == by_hand
+    assert changes.request is not None and [r.key for r in changes.request.regions] == ["italy", "spain"]
+
+
+def test_refresh_with_no_record_asks_for_the_seed_regions() -> None:
+    catalogue = FakeCatalogue()
+    catalogue.entries_ = tuple(CatalogueEntry(key, key.title(), None, "u", "p") for key in SEED_REGION_KEYS)
+    catalogue.sizes = {key: GB // 10 for key in SEED_REGION_KEYS}
+    catalogue.borders = {key: square(i * 3, 0, i * 3 + 1, 1) for i, key in enumerate(SEED_REGION_KEYS)}
+    changes = FakeChanges()
+    service = RoadMapService(FakeServedMap(None), FakeStore(listing()), catalogue, changes, CLOCK)
+    summary = service.plan_change(None, START)
+    assert sorted(r.key for r in summary.added) == sorted(SEED_REGION_KEYS)
+    assert changes.request is not None and sorted(r.key for r in changes.request.regions) == sorted(SEED_REGION_KEYS)

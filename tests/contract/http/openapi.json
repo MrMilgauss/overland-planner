@@ -99,14 +99,21 @@
         "type": "object"
       },
       "ChangePreviewRequest": {
-        "description": "The regions the road map should hold and when the rebuild should start; addresses come from the list, never\nfrom here.",
+        "description": "The regions the road map should hold and when the rebuild should start; addresses come from the list, never\nfrom here. No `region_keys` is \"Refresh map data\": the served regions (the seed list when the map has no record).",
         "properties": {
           "region_keys": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Region Keys",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Keys"
           },
           "start_at": {
             "anyOf": [
@@ -121,10 +128,38 @@
             "title": "Start At"
           }
         },
-        "required": [
-          "region_keys"
-        ],
         "title": "ChangePreviewRequest",
+        "type": "object"
+      },
+      "ChangeRefusalEnvelope": {
+        "description": "A refused change: `same_day` also says from when the next rebuild may start (the next UTC midnight).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_rebuild_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Rebuild From"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ChangeRefusalEnvelope",
         "type": "object"
       },
       "ChangeSummaryBody": {
@@ -3104,7 +3139,7 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3112,7 +3147,17 @@
                 }
               }
             },
-            "description": "validation_error, unknown_region, overlaps_region or too_big"
+            "description": "change_pending or rebuild_running"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRefusalEnvelope"
+                }
+              }
+            },
+            "description": "validation_error, unknown_region, overlaps_region, too_big, bad_start or same_day"
           },
           "503": {
             "content": {

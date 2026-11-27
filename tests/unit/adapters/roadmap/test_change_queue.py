@@ -171,3 +171,22 @@ def test_a_folder_that_can_be_written_is_available_and_the_probe_leaves_nothing(
     assert queue.available() is True
     assert queue.probe() == ProbeResult(outcome="ok")
     assert names(tmp_path) == []
+
+
+def test_a_new_request_moves_the_last_result_aside_and_forgets_a_cancel(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    (tmp_path / "result.txt").write_text("status=failed\n")
+    (tmp_path / "previous-result.txt").write_text("older\n")
+    (tmp_path / "cancelled.txt").write_text("old cancel\n")
+    queue.queue(request(ITALY), added=[], removed=[])
+    assert names(tmp_path) == ["previous-result.txt", "request.txt"]
+    assert (tmp_path / "previous-result.txt").read_text() == "status=failed\n"
+
+
+def test_the_folder_says_whether_a_request_waits_or_the_helper_runs_one(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    assert (queue.waiting(), queue.running()) == (False, False)
+    queue.queue(request(ITALY), added=[], removed=[])
+    assert (queue.waiting(), queue.running()) == (True, False)
+    (tmp_path / "request.txt").rename(tmp_path / "running.txt")
+    assert (queue.waiting(), queue.running()) == (False, True)
