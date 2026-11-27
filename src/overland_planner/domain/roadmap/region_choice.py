@@ -61,9 +61,6 @@ class RegionChoice:
             )
         return RegionChoice(self.catalogue, self.served_keys, self.chosen | {key})
 
-    def remove(self, key: str) -> RegionChoice:
-        return RegionChoice(self.catalogue, self.served_keys, self.chosen - {key})
-
     @property
     def total_bytes(self) -> int:
         return sum(self.catalogue[key].bytes for key in self.chosen)

@@ -94,20 +94,12 @@ def test_added_and_removed_are_the_differences_against_the_served_keys(catalogue
     served = frozenset(data.draw(st.sets(st.sampled_from(flat))))
     choice = empty(catalogue, served)
     target = data.draw(st.sampled_from(flat))
-    after = choice.remove(target) if target in served else choice.add(target)
+    after = RegionChoice(catalogue, served, served - {target}) if target in served else choice.add(target)
     assert after.added == after.chosen - served
     assert after.removed == served - after.chosen
     assert (after.added, after.removed) == (
         (frozenset(), frozenset({target})) if target in served else (frozenset({target}), frozenset())
     )
-
-
-@given(catalogue=catalogues(), data=st.data())
-def test_adding_then_removing_a_region_changes_nothing(catalogue, data):
-    flat = [k for k in sorted(catalogue) if catalogue[k].parent is None]
-    key = data.draw(st.sampled_from(flat))
-    choice = empty(catalogue)
-    assert choice.add(key).remove(key) == choice
 
 
 def test_an_unknown_key_is_refused():  # bypass: single refusal code
