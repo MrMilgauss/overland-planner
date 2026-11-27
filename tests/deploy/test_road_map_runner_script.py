@@ -41,6 +41,8 @@ STUB = """#!/usr/bin/env bash
 volume="$SHIM_HOME/volumes/overland_road-map"
 cat "$volume/running.txt" >"$PWD/running-during.txt"
 [ -z "${STUB_FAILURE:-}" ] || printf '%b' "$STUB_FAILURE" >"$volume/failure.txt"
+[ -z "${STUB_PROGRESS:-}" ] || printf '%b' "$STUB_PROGRESS" >"$volume/progress.txt"
+[ -z "${STUB_DIE:-}" ] || kill -9 "$PPID" # the Pi loses power while the refresh runs
 exit "${STUB_EXIT:-0}"
 """
 
@@ -105,9 +107,8 @@ def test_a_due_request_is_taken_and_the_refresh_is_called_once_with_its_regions(
 def test_a_rebuild_that_ended_well_leaves_a_result_with_the_request_copied(pi: FakePi) -> None:
     stub_refresh(pi)
     put_request(pi, request_text())
-    (folder(pi) / "progress.txt").write_text("step=switching\nstep_at=1800000000\nserving=20261101\nnew=20270201\n")
 
-    run_runner(pi, STUB_EXIT="0")
+    run_runner(pi, STUB_EXIT="0", STUB_PROGRESS="step=switching\nstep_at=1800000000\nserving=20261101\nnew=20270201\n")
 
     result = (folder(pi) / "result.txt").read_text().splitlines()
     assert re.fullmatch(r"finished_at=\d{10}", result[0]) and result[1] == "state=done"
@@ -323,6 +324,43 @@ def test_a_refresh_that_finds_the_pi_busy_is_retried_each_minute_for_half_an_hou
     assert sorted(p.name for p in folder(pi).iterdir()) == ["helper-seen", "result.txt"]
 
 
+@pytest.mark.parametrize(
+    "idle_minute_between", [True, False], ids=["an idle minute follows the cancel", "no run between"]
+)
+def test_a_busy_minute_of_a_cancelled_request_is_not_counted_against_the_next_one(
+    pi: FakePi, idle_minute_between: bool
+) -> None:
+    stub_refresh(pi)
+    put_request(pi, request_text())
+    minute(pi, 0, STUB_EXIT="75")  # busy at the first minute: locked-since.txt = T0
+    (folder(pi) / "request.txt").rename(folder(pi) / "cancelled.txt")  # the planner cancels
+    if idle_minute_between:
+        minute(pi, 1)
+    later = 60
+    put_request(pi, request_text().replace("requested_at=1700000000", f"requested_at={T0 + later * MINUTE}"))
+
+    minute(pi, later, STUB_EXIT="75")  # an hour later, busy again: the first busy minute of the new request
+
+    assert not (folder(pi) / "result.txt").exists() and (folder(pi) / "request.txt").exists()
+    assert (folder(pi) / "locked-since.txt").read_text().strip() == str(T0 + later * MINUTE)
+    minute(pi, later + 30, STUB_EXIT="75")
+    assert result_lines(pi)[2] == "code=locked"
+
+
+def test_a_stale_progress_note_cannot_make_a_rebuild_cut_before_its_first_write_look_done(pi: FakePi) -> None:
+    stub_refresh(pi)
+    put_request(pi, request_text())
+    (folder(pi) / "progress.txt").write_text(f"step=switching\nstep_at={T0}\nserving=1\nnew=20270201\n")
+    (folder(pi) / "failure.txt").write_text("code=disk\n")
+    (pi.dir / "routing.env").write_text("VALHALLA_TILESET=20270201\n")
+
+    minute(pi, 0, STUB_DIE="1")  # the runner is killed after it took the request, before the refresh wrote anything
+    assert (folder(pi) / "running.txt").exists() and not (folder(pi) / "result.txt").exists()
+    minute(pi, 2)
+
+    assert result_lines(pi)[1:3] == ["state=failed", "code=interrupted"]
+
+
 FAILURES = {
     "disk with its numbers": ("code=disk\nfree_gb=12\nneed_gb=40\n", ["code=disk", "free_gb=12", "need_gb=40"]),
     "memory with its number": ("code=memory\nhave_gb=3\n", ["code=memory", "have_gb=3"]),
@@ -439,8 +477,7 @@ def test_the_log_gains_a_line_per_state_change_never_for_an_idle_minute_and_is_c
     minute(pi, 1, STUB_EXIT="75")
     minute(pi, 2, STUB_EXIT="1", STUB_FAILURE="code=build\n")
     put_request(pi, request_text())
-    (folder(pi) / "progress.txt").write_text(f"step=switching\nstep_at={T0}\nserving=1\nnew=20270201\n")
-    minute(pi, 3)
+    minute(pi, 3, STUB_PROGRESS=f"step=switching\nstep_at={T0}\nserving=1\nnew=20270201\n")
     assert [line.split(" ", 1)[1] for line in log_lines(pi)] == [
         "taken", "busy", "taken", "failed code=build", "taken", "done",
     ]  # fmt: skip

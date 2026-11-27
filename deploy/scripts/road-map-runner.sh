@@ -70,11 +70,15 @@ case $1 in
   running) name=running.txt ;;
   take)
     mv request.txt running.txt 2>/dev/null || { echo gone; exit 0; }
+    rm -f progress.txt failure.txt # the notes of an earlier rebuild must not be read by recovery
     name=running.txt ;;
   *) exit 2 ;;
 esac
 if [ -L "$name" ]; then echo refused; exit 0; fi
-if [ ! -e "$name" ]; then echo none; exit 0; fi
+if [ ! -e "$name" ]; then
+  [ "$name" = request.txt ] && rm -f locked-since.txt # no request waits: no busy minute counts for the next one
+  echo none; exit 0
+fi
 if [ ! -f "$name" ]; then echo refused; exit 0; fi
 size=$(head -c 65537 "$name" | wc -c)
 if [ "$size" -gt 65536 ]; then echo refused; exit 0; fi
@@ -105,7 +109,7 @@ printf "%s\n" "$2" >".$1.tmp" && mv ".$1.tmp" "$1"'
 # A request taken a moment before the planner replaced it by one that is not due: put it back (or drop it, a newer one is there).
 # shellcheck disable=SC2016
 RETURN_SH='cd /vol || exit 3
-if [ -e request.txt ]; then rm -f running.txt; else mv running.txt request.txt; fi'
+if [ -e request.txt ]; then rm -f running.txt locked-since.txt; else mv running.txt request.txt; fi'
 
 # ---- validation ---------------------------------------------------------------------------------------------------------
 
@@ -147,8 +151,9 @@ region_ok() {
   [[ $bytes =~ $NUMBER_PATTERN ]]
 }
 
-# validate_request TEXT: exactly the lines the planner writes. Sets START_AT (empty: none) and REGION_LINES.
+# validate_request TEXT: exactly the lines the planner writes. Sets START_AT (empty: none), REQUESTED_AT and REGION_LINES.
 START_AT=
+REQUESTED_AT=
 REGION_LINES=
 SEEN_KEYS=
 validate_request() {
@@ -164,7 +169,7 @@ validate_request() {
     case $line in
       requested_at=*)
         [ "$requested" = no ] && [[ ${line#*=} =~ $NUMBER_PATTERN ]] || return 1
-        requested=yes ;;
+        requested=yes REQUESTED_AT=${line#*=} ;;
       start_at=*)
         [ "$started" = no ] && [[ ${line#*=} =~ $NUMBER_PATTERN ]] || return 1
         started=yes START_AT=${line#*=} ;;
@@ -288,7 +293,8 @@ busy_pi() {
   at=$(now)
   since=$(note locked-since.txt)
   since=${since%%$'\n'*}
-  if ! { [[ $since =~ $NUMBER_PATTERN ]] && [ "$since" -le "$at" ]; }; then
+  # a first busy minute older than the request is the note of an earlier request (cancelled before this one was made)
+  if ! { [[ $since =~ $NUMBER_PATTERN ]] && [ "$since" -le "$at" ] && [ "$since" -ge "${REQUESTED_AT:-0}" ]; }; then
     since=$at
     changes_run "$SET_NOTE_SH" set-note locked-since.txt "$at" >&2 || say "road-map-runner: locked-since.txt could not be written"
   fi
