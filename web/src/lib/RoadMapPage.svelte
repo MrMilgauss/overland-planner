@@ -91,10 +91,12 @@
       bytes: null,
       in_map: false,
     }));
-    change(() => {
-      removed = [];
-      added = [];
-    });
+    change(clearChoice);
+  }
+
+  function clearChoice(): void {
+    removed = [];
+    added = [];
   }
 
   // Why no change is offered: the planner says so (no folder for changes, or a helper not seen for five minutes).
@@ -109,6 +111,7 @@
   );
 
   const addedKeys = $derived(added.map((region) => region.key));
+  const servedKeys = $derived(served?.regions.map((region) => region.key) ?? []);
 
   async function check(keys: string[], undo: () => void): Promise<void> {
     const mine = ++asked;
@@ -131,15 +134,7 @@
   }
 
   function change(undo: () => void): void {
-    if (served)
-      check(
-        pendingKeys(
-          served.regions.map((r) => r.key),
-          removed,
-          addedKeys,
-        ),
-        undo,
-      );
+    if (served) check(pendingKeys(servedKeys, removed, addedKeys), undo);
   }
 
   function toggleRemoval(key: string): void {
@@ -176,15 +171,14 @@
   async function rebuild(): Promise<void> {
     refusal = '';
     const asRefresh = refreshing && removed.length === 0 && added.length === 0;
-    const keys = pendingKeys(served?.regions.map((r) => r.key) ?? [], removed, addedKeys);
+    const keys = pendingKeys(servedKeys, removed, addedKeys);
     try {
       await planChange(asRefresh ? undefined : keys, startAt ?? undefined);
     } catch (error) {
       refusal = failureText(error);
       return;
     }
-    removed = [];
-    added = [];
+    clearChoice();
     refreshing = false;
     summary = undefined;
     startAt = null;
@@ -207,6 +201,10 @@
 </script>
 
 <h1>Road map</h1>
+
+{#snippet refreshButton()}
+  <button type="button" onclick={refresh}>Refresh map data</button>
+{/snippet}
 
 {#if failure}
   <p role="alert">{failure}</p>
@@ -233,9 +231,7 @@
         {/each}
       </ul>
       <p>Total: {sizeText(served.total_bytes)}</p>
-      {#if !unavailable}
-        <button type="button" onclick={refresh}>Refresh map data</button>
-      {/if}
+      {#if !unavailable}{@render refreshButton()}{/if}
     </section>
   {:else}
     <section aria-label="What is loaded">
@@ -244,9 +240,7 @@
         The map was built before the app kept the regions of a map, so they cannot be listed.
         Refreshing the map data builds the same regions again.
       </p>
-      {#if !unavailable}
-        <button type="button" onclick={refresh}>Refresh map data</button>
-      {/if}
+      {#if !unavailable}{@render refreshButton()}{/if}
     </section>
   {/if}
   {#if served.map_date}
