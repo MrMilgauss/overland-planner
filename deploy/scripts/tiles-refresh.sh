@@ -230,13 +230,11 @@ say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset 
 # road-map-meta/ is emptied on every run: a leftover of a failed run never reaches the record
 PREPARE_SH='rm -rf /vol/build /vol/road-map-meta && mkdir -p /vol/build/src /vol/road-map-meta/outlines'
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c "$PREPARE_SH" prepare-build >&2 ||
+volume_sh rw "$PREPARE_SH" prepare-build >&2 ||
   fail_stage download "cannot prepare build/ in the volume"
 # The build has no network (D239) and valhalla_build_timezones downloads: the serving tileset's db is reused.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c 'test -s "/vol/tilesets/$1/timezones.sqlite" && cp "/vol/tilesets/$1/timezones.sqlite" /vol/build/timezones.sqlite' \
+volume_sh rw 'test -s "/vol/tilesets/$1/timezones.sqlite" && cp "/vol/tilesets/$1/timezones.sqlite" /vol/build/timezones.sqlite' \
   carry-timezones "$current" >&2 ||
   fail_stage download "tilesets/$current/timezones.sqlite is missing or empty; the build has no network to download it"
 # The download is a list of DESTINATION ADDRESS pairs: the borders first (a 404 stops the refresh before anything is
@@ -280,8 +278,7 @@ if [ -n "${REGIONS_FILE:-}" ]; then
   outlines=()
   for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do outlines+=("${REGIONS[i]//\//-}.poly"); done
   # shellcheck disable=SC2016 # the script is expanded by the container's sh
-  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-    sh -c 'set -e; record=$1; shift
+    volume_sh rw 'set -e; record=$1; shift
       for f in "$@"; do [ -s "/vol/road-map-meta/outlines/$f" ] || { echo "tiles-refresh: border not saved: $f" >&2; exit 1; }; done
       printf "%s\n" "$record" >/vol/road-map-meta/road-map.json.partial
       mv /vol/road-map-meta/road-map.json.partial /vol/road-map-meta/road-map.json' write-record "$(region_record)" "${outlines[@]}" >&2 ||
@@ -298,8 +295,7 @@ planner_compose --profile valhalla-build run --rm -T valhalla-fetch sh -c 'set -
   cd /work && osmium merge src/*.osm.pbf -o alps.osm.pbf --overwrite' merge >&2 ||
   fail_stage merge "the merge failed"
 # The scripted image may build from every *.pbf it finds: only the merged file stays.
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c 'rm -rf /vol/build/src' drop-src >&2 || fail_stage merge "cannot delete the extracts"
+volume_sh rw 'rm -rf /vol/build/src' drop-src >&2 || fail_stage merge "cannot delete the extracts"
 
 # 3. Stop serving, build, apply the overrides.
 progress building
@@ -319,8 +315,7 @@ planner_compose --profile valhalla-build run --rm -T -v "$PWD/valhalla/valhalla.
 # 4. Promote, switch, check.
 progress switching
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c 'set -e; name=$1; shift; part="/vol/tilesets/.$name.partial"
+volume_sh rw 'set -e; name=$1; shift; part="/vol/tilesets/.$name.partial"
     [ ! -e "/vol/tilesets/$name" ] || exit 1
     rm -rf "$part"; mkdir -p "$part"
     for f in "$@"; do mv "/vol/build/$f" "$part/$f"; done
@@ -350,8 +345,7 @@ GUARD=off
 
 # 5. The new tileset passed: only it and the previous one stay.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
-docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c 'for d in /vol/tilesets/*; do
+volume_sh rw 'for d in /vol/tilesets/*; do
     name=${d##*/}
     case $name in
       "$1" | "$2") ;;

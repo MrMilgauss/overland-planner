@@ -303,6 +303,15 @@ VALHALLA_MODIFIED=
 
 # The tileset files and the spike directory are owned by root: every read of them that needs it, every copy and every
 # removal goes through a pinned helper container without network (never sudo).
+# volume_sh ro|rw SCRIPT ARGS...: one short container of the pinned image, no network, the valhalla volume at /vol,
+# running SCRIPT with sh -c (ARGS become $0, $1, ...).
+volume_sh() {
+  local suffix='' script=$2
+  [ "$1" = ro ] && suffix=:ro
+  shift 2
+  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol$suffix" "$SNAPSHOT_IMAGE" sh -c "$script" "$@"
+}
+
 # dir_sums LABEL DIR: "<sha256>  <name>" of the five tileset files of the host directory DIR (mounted read-only).
 dir_sums() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
@@ -313,23 +322,20 @@ dir_sums() {
 # volume_sums LABEL SUBDIR: the same listing for SUBDIR (e.g. tilesets/20261101) of the valhalla volume.
 volume_sums() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
-  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-    sh -c 'cd "/vol/$1" && shift && sha256sum "$@"' "$1" "$2" "${TILES_FILES[@]}"
+  volume_sh ro 'cd "/vol/$1" && shift && sha256sum "$@"' "$1" "$2" "${TILES_FILES[@]}"
 }
 
 # volume_present_sums LABEL SUBDIR: the listing of the tileset files that SUBDIR holds (a missing file is left out).
 volume_present_sums() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's sh
-  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-    sh -c 'cd "/vol/$1" && shift && for f in "$@"; do if [ -f "$f" ]; then sha256sum "$f"; fi; done' "$1" "$2" "${TILES_FILES[@]}"
+  volume_sh ro 'cd "/vol/$1" && shift && for f in "$@"; do if [ -f "$f" ]; then sha256sum "$f"; fi; done' "$1" "$2" "${TILES_FILES[@]}"
 }
 
 # volume_stored_sums SUBDIR: the lines of the five tileset files in the SHA256SUMS written at seed time (a refresh adds
 # the record and the borders: the list may be longer, only the five names are compared).
 volume_stored_sums() {
   # shellcheck disable=SC2016 # $1 is expanded by the container's sh
-  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-    sh -c 'cd "/vol/$1" && shift && sums=$(cat SHA256SUMS) && for f in "$@"; do printf "%s\n" "$sums" | awk -v n="$f" "\$2 == n"; done' \
+  volume_sh ro 'cd "/vol/$1" && shift && sums=$(cat SHA256SUMS) && for f in "$@"; do printf "%s\n" "$sums" | awk -v n="$f" "\$2 == n"; done' \
     stored-sums "$1" "${TILES_FILES[@]}"
 }
 
@@ -356,8 +362,7 @@ valhalla_status() {
 volume_has_dir() {
   local status=0
   # shellcheck disable=SC2016 # $1 is expanded by the container's sh
-  docker run --rm --network none -v "$VALHALLA_VOLUME:/vol:ro" "$SNAPSHOT_IMAGE" \
-    sh -c 'test -d "/vol/$1"' tileset-exists "$1" >/dev/null 2>&1 || status=$?
+  volume_sh ro 'test -d "/vol/$1"' tileset-exists "$1" >/dev/null 2>&1 || status=$?
   case $status in 0 | 1) return "$status" ;; *) return 2 ;; esac
 }
 
