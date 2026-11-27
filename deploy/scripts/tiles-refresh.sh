@@ -20,6 +20,10 @@
 # routing.env and .prev, starts the old tileset and keeps the new directory for inspection. One tiles.log line per run.
 # An interrupted run (the ssh session drops) is a failed run: valhalla starts on the old tileset, the pointers come back.
 # After the switch /status must name other map data (tileset_last_modified) than before the stop.
+# With REGIONS_FILE (the helper's list, D303/D313: one region per line, six tab-separated fields: key, name, parent name,
+# .osm.pbf address, .poly address, bytes) the extracts are the file's, saved as src/<n>.osm.pbf by position, each .poly
+# is fetched into /meta/outlines/ (road-map-meta of the volume) first, and the disk needed is max(25 GB, 3.9 x bytes);
+# a held lock exits 75 and logs nothing. Without it the eight EXTRACTS below are the default.
 # The planner is never touched. Seams for the offline tests: TILES_DATE (the UTC date), MEMINFO (/proc/meminfo),
 # DOCKER_ROOT (the disk checked).
 set -uo pipefail
@@ -34,6 +38,9 @@ SPEEDS_URL=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/d
 EXTRACTS=(europe/italy-latest europe/spain-latest europe/switzerland-latest europe/austria-latest europe/france/rhone-alpes-latest
   europe/france/provence-alpes-cote-d-azur-latest europe/france/languedoc-roussillon-latest europe/france/midi-pyrenees-latest)
 MIN_FREE_KB=$((25 * 1024 * 1024))
+REGIONS=()    # key, pbf address, poly address per region (REGIONS_FILE only)
+DOWNLOAD_BYTES=0
+NEED_GB=25
 MERGE_MIN_KB=$((7 * 1024 * 1024))
 MODIFIED=
 OLD_MODIFIED=
@@ -103,9 +110,49 @@ build_cap_kb() {
   case $n in '' | *[!0-9]*) return 1 ;; esac
 }
 
+# usable_address ADDRESS: https and only the characters of a plain address (it travels as an argument, never evaluated).
+usable_address() {
+  case $1 in
+    https://?*) ;;
+    *) return 1 ;;
+  esac
+  case $1 in *[!A-Za-z0-9._/:-]*) return 1 ;; esac
+}
+
+# read_regions: REGIONS_FILE line by line (never sourced or evaluated) into REGIONS and DOWNLOAD_BYTES.
+read_regions() {
+  local line key pbf poly bytes
+  [ -f "$REGIONS_FILE" ] || refuse "REGIONS_FILE $REGIONS_FILE is not a file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    key=$(printf '%s' "$line" | cut -f1)
+    pbf=$(printf '%s' "$line" | cut -f4)
+    poly=$(printf '%s' "$line" | cut -f5)
+    bytes=$(printf '%s' "$line" | cut -f6)
+    case $key in '' | *[!a-z0-9/-]* | /* | */ | *..*) refuse "the regions file names a region key '$key' that is not a key" ;; esac
+    usable_address "$pbf" || refuse "region $key: the .osm.pbf address is not usable"
+    usable_address "$poly" || refuse "region $key: the .poly address is not usable"
+    case $bytes in '' | *[!0-9]*) refuse "region $key: the download size is not a number of bytes" ;; esac
+    REGIONS+=("$key" "$pbf" "$poly")
+    DOWNLOAD_BYTES=$((DOWNLOAD_BYTES + bytes))
+  done <"$REGIONS_FILE"
+  [ "${#REGIONS[@]}" -gt 0 ] || refuse "the regions file lists no region"
+}
+
 # 1. Preflight.
 exec 9>>.deploy.lock
-flock -n 9 || refuse "a deploy, rollback or tiles run is already running"
+if ! flock -n 9; then
+  say "tiles-refresh: a deploy, rollback or tiles run is already running; nothing was done"
+  exit 75
+fi
+if [ -n "${REGIONS_FILE:-}" ]; then
+  read_regions
+  # 3.9 x the download (decimal GB, as the list counts them), never below 25 GB
+  if [ $((DOWNLOAD_BYTES * 39 / 10)) -gt $((25 * 1024 * 1024 * 1024)) ]; then
+    MIN_FREE_KB=$((DOWNLOAD_BYTES * 39 / 10 / 1024))
+    NEED_GB=$((DOWNLOAD_BYTES * 39 / 10 / 1000000000))
+  fi
+fi
 current=$(env_value routing.env VALHALLA_TILESET)
 previous=$(env_value routing.env.prev VALHALLA_TILESET)
 [ -n "$current" ] || refuse "no routing.env: nothing is served yet, run make tiles-seed first"
@@ -127,7 +174,7 @@ root=${DOCKER_ROOT:-/var/lib/docker}
 [ -d "$root" ] || root=$HOME
 free_kb=$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')
 if [ "${free_kb:-0}" -lt "$MIN_FREE_KB" ]; then
-  refuse "disk: only $((${free_kb:-0} / 1024 / 1024)) GB free (need 25 GB)"
+  refuse "disk: only $((${free_kb:-0} / 1024 / 1024)) GB free (need $NEED_GB GB)"
 fi
 cap_kb=$(build_cap_kb) || refuse "VALHALLA_BUILD_MEM is not a size like 9g"
 need_kb=$((cap_kb + 1024 * 1024))
@@ -145,9 +192,11 @@ OLD_MODIFIED=$VALHALLA_MODIFIED
 # 2. Download and merge while valhalla serves.
 GUARD=on
 say "tiles-refresh: tileset $NEW; downloading and merging while the old tileset serves"
+PREPARE_SH='rm -rf /vol/build && mkdir -p /vol/build/src'
+[ -z "${REGIONS_FILE:-}" ] || PREPARE_SH='rm -rf /vol/build /vol/road-map-meta && mkdir -p /vol/build/src /vol/road-map-meta/outlines'
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
-  sh -c 'rm -rf /vol/build && mkdir -p /vol/build/src' prepare-build >&2 ||
+  sh -c "$PREPARE_SH" prepare-build >&2 ||
   fail_stage download "cannot prepare build/ in the volume"
 # The build has no network (D239) and valhalla_build_timezones downloads: the serving tileset's db is reused.
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
@@ -155,16 +204,42 @@ docker run --rm --network none -v "$VALHALLA_VOLUME:/vol" "$SNAPSHOT_IMAGE" \
   sh -c 'test -s "/vol/tilesets/$1/timezones.sqlite" && cp "/vol/tilesets/$1/timezones.sqlite" /vol/build/timezones.sqlite' \
   carry-timezones "$current" >&2 ||
   fail_stage download "tilesets/$current/timezones.sqlite is missing or empty; the build has no network to download it"
-urls=()
-for extract in "${EXTRACTS[@]}"; do urls+=("$GEOFABRIK/$extract.osm.pbf"); done
+# The download is a list of DESTINATION ADDRESS pairs: the borders first (a 404 stops the refresh before anything is
+# stopped), then default_speeds.json, then the extracts. A refused pair names its destination on stderr.
+pairs=()
+if [ -n "${REGIONS_FILE:-}" ]; then
+  for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do
+    pairs+=("/meta/outlines/${REGIONS[i]//\//-}.poly" "${REGIONS[i + 2]}")
+  done
+fi
+pairs+=(/work/default_speeds.json "$SPEEDS_URL")
+if [ -n "${REGIONS_FILE:-}" ]; then
+  for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do pairs+=("/work/src/$((i / 3 + 1)).osm.pbf" "${REGIONS[i + 1]}"); done
+else
+  for extract in "${EXTRACTS[@]}"; do pairs+=("/work/src/${extract##*/}.osm.pbf" "$GEOFABRIK/$extract.osm.pbf"); done
+fi
+fetch_err=$(mktemp) || fail_stage download "cannot make a temporary file"
 # shellcheck disable=SC2016 # the script is expanded by the container's sh
 planner_compose --profile valhalla-build run --rm -T valhalla-fetch sh -c 'set -e
   apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
-  speeds=$1; shift
-  echo "tiles-refresh: downloading $speeds" >&2; curl -fL --retry 3 -o /work/default_speeds.json "$speeds"
-  cd /work/src
-  for url in "$@"; do echo "tiles-refresh: downloading $url" >&2; curl -fL --retry 3 -O "$url"; done' download \
-  "$SPEEDS_URL" "${urls[@]}" >&2 || fail_stage download "the download failed"
+  while [ $# -gt 0 ]; do
+    echo "tiles-refresh: downloading $2" >&2
+    curl -fL --retry 3 -o "$1" "$2" || { echo "tiles-refresh: not fetched: $1" >&2; exit 22; }
+    shift 2
+  done' download "${pairs[@]}" >&2 2>"$fetch_err"
+fetch_status=$?
+cat "$fetch_err" >&2
+if [ "$fetch_status" -ne 0 ]; then
+  border=$(sed -n 's|.*not fetched: /meta/outlines/\(.*\)\.poly$|\1|p' "$fetch_err" | head -n 1)
+  if [ -z "$border" ] && [ -n "${REGIONS_FILE:-}" ] && grep -q 404 "$fetch_err"; then
+    for ((i = 0; i < ${#REGIONS[@]}; i += 3)); do border="${border:+$border, }${REGIONS[i]}"; done
+    border="(one of: $border)"
+  fi
+  rm -f "$fetch_err"
+  if [ -n "$border" ]; then fail_stage download "the border file of region $border was not found (region_missing)"; fi
+  fail_stage download "the download failed"
+fi
+rm -f "$fetch_err"
 available_kb=$(mem_available_kb)
 if [ "${available_kb:-0}" -lt "$MERGE_MIN_KB" ]; then
   fail_stage merge "MemAvailable $((${available_kb:-0} / 1024 / 1024)) GB, need 7 GB before the merge"

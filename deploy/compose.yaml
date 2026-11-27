@@ -191,6 +191,12 @@ services:
         target: /work
         volume:
           subpath: build
+      # the borders (.poly) of the regions of a rebuild: the refresh makes road-map-meta/ before the run (D314)
+      - type: volume
+        source: valhalla-data
+        target: /meta
+        volume:
+          subpath: road-map-meta
     cpus: 2
     mem_limit: 6g
     memswap_limit: 6g

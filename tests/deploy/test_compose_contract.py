@@ -310,7 +310,8 @@ def test_valhalla_fetch_is_the_only_service_on_egress_and_publishes_nothing() ->
 
     assert fetch["image"] == FETCH_IMAGE and fetch["profiles"] == ["valhalla-build"]
     assert fetch["networks"] == ["egress"] and "ports" not in fetch and "network_mode" not in fetch
-    assert fetch["volumes"] == _subpath_mount(fetch, "/work")
+    meta = {"type": "volume", "source": "valhalla-data", "target": "/meta", "volume": {"subpath": "road-map-meta"}}
+    assert fetch["volumes"] == [*_subpath_mount(fetch, "/work"), meta]  # D314: the borders go to road-map-meta
     assert (fetch["cpus"], fetch["mem_limit"], fetch["memswap_limit"]) == (2, "6g", "6g")
     assert (fetch["oom_score_adj"], fetch["restart"], fetch["logging"]) == (500, "no", LOG_10M)
     assert compose["networks"]["egress"] in ({}, None, {"driver": "bridge"})
