@@ -308,10 +308,10 @@ Fixture-theater checks (a scenario that passes before the feature exists is a de
 | stops in areas not linked by land are grouped and the groups are named | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
 | italy southern france and spain are linked by land | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
 | without southern france spain is on its own | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
-| the map settings no longer name a road map area and say whether place search is  | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| the map settings no longer name a road map area and say whether place search is  | 1 | MISSING_FUNCTIONALITY | {'tile_url': '`https://tile.opentopomap.org/{z}/{x}/{y}.png'`, 'attribution': 'Map data: © OpenSt |
 | a place name is answered with up to five places each with its region | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
 | no contact detail is ever sent to the search service | 1 | MISSING_FUNCTIONALITY | expected one of the requests the search service saw, found 0 |
-| nothing is sent to the search service unless a search is asked for | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| nothing is sent to the search service unless a search is asked for | 1 | MISSING_FUNCTIONALITY | {'tile_url': '`https://tile.opentopomap.org/{z}/{x}/{y}.png'`, 'attribution': 'Map data: © OpenSt |
 | only the typed words reach the search service | 1 | MISSING_FUNCTIONALITY | expected one of the requests the search service saw, found 0 |
 | two different searches in a row are a second apart | 1 | MISSING_FUNCTIONALITY | expected two of the requests the search service saw, found 0 |
 | the same search again is answered from memory and sends nothing | 1 | MISSING_FUNCTIONALITY | ('{"code":"not_found","message":"Not Found"}', '{"code":"not_found","message":"Not Found"}') |
@@ -320,9 +320,9 @@ Fixture-theater checks (a scenario that passes before the feature exists is a de
 | a search service that is busy down or garbled leaves the trip unchanged | 4 | MISSING_FUNCTIONALITY | the search answered 404 |
 | after a busy answer the search service is left alone for a minute | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
 | a name shorter than two letters is refused before anything is sent | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
-| switching place search off removes it from the add menu | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| switching place search off removes it from the add menu | 1 | MISSING_FUNCTIONALITY | {'tile_url': '`https://tile.opentopomap.org/{z}/{x}/{y}.png'`, 'attribution': 'Map data: © OpenSt |
 | a search is answered as not available when place search is switched off | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
-| leaving the search address empty means the usual address not off | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| leaving the search address empty means the usual address not off | 1 | MISSING_FUNCTIONALITY | {'tile_url': '`https://tile.opentopomap.org/{z}/{x}/{y}.png'`, 'attribution': 'Map data: © OpenSt |
 | a result outside the road map joins the trip as a kept warned place | 1 | MISSING_FUNCTIONALITY | {"code":"not_found","message":"Not Found"} |
 | the planner shows the step the helper has reached | 4 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
 | planning is paused from the build until the switch ends and the planner says whe | 3 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |

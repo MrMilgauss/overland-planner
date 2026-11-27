@@ -4,8 +4,8 @@ Small, real inputs for the road-map scenarios. Nothing here is fetched at test t
 
 - `poly/*.poly` (10 files: italy, spain, switzerland, austria, rhone-alpes, provence-alpes-cote-d-azur,
   languedoc-roussillon, midi-pyrenees, portugal, andorra): region outlines downloaded from Geofabrik
-  (https://download.geofabrik.de/) on 2026-11-26, unchanged. Data (c) OpenStreetMap contributors, licensed under the
-  Open Database Licence (ODbL) 1.0, https://www.openstreetmap.org/copyright.
+  (<https://download.geofabrik.de/>) on 2026-11-26, unchanged. Data (c) OpenStreetMap contributors, licensed under the
+  Open Database Licence (ODbL) 1.0, `https://www.openstreetmap.org/copyright`.
 - `poly/utah.poly`: NOT Geofabrik data. A hand-made rectangle (lon -114.05 to -109.04, lat 37.0 to 42.0) standing in
   for Utah, so the scenarios have a region outside Europe. No licence issue; it is not an outline of anything real.
 - `geofabrik-index-trimmed.json`: the Geofabrik index (`index-v1-nogeom.json`, 554 features on 2026-11-26) cut to the 19
