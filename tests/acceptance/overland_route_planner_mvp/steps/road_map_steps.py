@@ -1000,7 +1000,7 @@ def given_days_have_passed(world: PlannerWorld, days: str) -> None:
 def then_only_regions_were_asked_about(world: PlannerWorld) -> None:
     for seen in region_requests(world):
         assert not seen.query, f"the region service was sent {seen.query}"
-        assert seen.path.endswith(("index-v1-nogeom.json", ".poly", "-latest.osm.pbf")), seen.path
+        assert seen.path.endswith(("index-v1-nogeom.json", ".poly", "-latest.osm.pbf", "-261126.osm.pbf")), seen.path
     sized = {s.path.split("/")[-2] for s in region_requests(world, "-latest.osm.pbf", "HEAD")}
     assert sized <= {"utah", "italy"}, f"sizes were asked for {sized}"
     assert region_requests(world, ".poly") == [], "a border was fetched for a region that was only searched"

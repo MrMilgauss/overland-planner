@@ -133,6 +133,9 @@ class _Kept:
     index: _Index
 
 
+_MAX_HOPS = 3
+
+
 class GeofabrikCatalogue:
     def __init__(
         self,
@@ -251,13 +254,27 @@ class GeofabrikCatalogue:
         if not address.startswith(self._origin):
             raise CatalogueUnavailableError("a border is only asked of the list's own service")
         try:
-            with self._client() as client:
-                answer = client.get(address)
+            answer = self._ask("GET", address)
         except httpx.HTTPError:
-            raise CatalogueUnavailableError("the region service did not give a border") from None
-        if answer.status_code != httpx.codes.OK:
+            answer = None
+        if answer is None or answer.status_code != httpx.codes.OK:
             raise CatalogueUnavailableError("the region service did not give a border")
         return answer.text
+
+    def _ask(self, method: str, address: str) -> httpx.Response | None:
+        """The final answer, following redirects only within the list's own origin (at most `_MAX_HOPS`); a redirect
+        elsewhere, a loop or too many hops gives None, and a foreign address is never asked."""
+        seen: set[str] = set()
+        with self._client() as client:
+            for _ in range(_MAX_HOPS + 1):
+                answer = client.request(method, address, follow_redirects=False)
+                if not answer.is_redirect:
+                    return answer
+                seen.add(address)
+                address = str(httpx.URL(address).join(answer.headers.get("location", "")))
+                if not address.startswith(self._origin) or address in seen:
+                    return None
+        return None
 
     @staticmethod
     def _keep_text(file: Path, text: str) -> None:
@@ -272,8 +289,9 @@ class GeofabrikCatalogue:
 
     def _head(self, address: str) -> int | None:
         try:
-            with self._client() as client:
-                answer = client.head(address)
+            answer = self._ask("HEAD", address)
+            if answer is None:
+                return None
             size = int(answer.headers["content-length"])
         except (httpx.HTTPError, KeyError, ValueError):
             return None

@@ -11,7 +11,9 @@ real service. It serves, from tests/acceptance/overland_route_planner_mvp/fixtur
     under Europe, which no spec searches for;
   - `GET <poly path>`: the region outlines of `poly/` (a spare region gets Andorra's; a sized region without a file,
     such as North America, gets Utah's small box);
-  - `HEAD <pbf path>`: the region's size as Content-Length (the sizes the acceptance steps use; a spare region 0.1 GB);
+  - `HEAD|GET <region>-latest.osm.pbf`: a 307 to a dated name under the same origin, as the real service does;
+  - `HEAD <region>-261126.osm.pbf`: the region's size as Content-Length (the sizes the acceptance steps use; a spare
+    region 0.1 GB);
   - `GET /__requests`: every `METHOD path` received, in order; `DELETE /__requests` empties the log.
 Standard library only.
 """
@@ -29,6 +31,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "tests/acceptance/overland_rout
 GEOFABRIK = "https://download.geofabrik.de/"
 GB = 1_000_000_000
 SPARE = 90
+DATED = "261126"  # the date the real service puts in the name `-latest` redirects to
 
 # region id -> size in GB (the same as steps/road_map_fakes.py: today's eight regions add up to 6.4 GB)
 SIZES_GB: dict[str, float] = {
@@ -83,8 +86,9 @@ def index_text(origin: str) -> str:
 
 def size_of(path: str) -> int | None:
     """The size of the region whose `-latest.osm.pbf` address is this path, or None."""
-    if not path.endswith("-latest.osm.pbf"):
+    if not path.endswith(f"-{DATED}.osm.pbf"):
         return None
+    path = path.removesuffix(f"-{DATED}.osm.pbf") + "-latest.osm.pbf"
     text = (FIXTURES / "geofabrik-index-trimmed.json").read_text(encoding="utf-8")
     for feature in json.loads(text)["features"]:
         if feature["properties"]["urls"]["pbf"].removeprefix(GEOFABRIK) == path.lstrip("/"):
@@ -131,8 +135,19 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._reply(404, b"not found", "text/plain")
 
+    def _redirect_latest(self, path: str) -> bool:
+        if not path.endswith("-latest.osm.pbf"):
+            return False
+        self.send_response(307)
+        self.send_header("Location", path.removesuffix("-latest.osm.pbf") + f"-{DATED}.osm.pbf")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
     def do_HEAD(self) -> None:
         path = self._log()
+        if self._redirect_latest(path):
+            return
         size = size_of(path)
         if size is None:
             self._reply(404, b"", "text/plain")

@@ -16,7 +16,7 @@ import pytest
 import respx
 
 from overland_planner.adapters.roadmap.geofabrik_catalogue import GeofabrikCatalogue
-from overland_planner.application.ports.region_catalogue import CatalogueUnavailableError
+from overland_planner.application.ports.region_catalogue import CatalogueEntry, CatalogueUnavailableError
 from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import (
     GB,
     SIZES_GB,
@@ -166,7 +166,7 @@ def test_the_size_of_a_region_is_asked_by_one_head_and_remembered_for_a_week(
     found = catalogue(server.url, tmp_path, clock)
     utah = next(entry for entry in found.entries() if entry.key == "us/utah")
     assert found.size_of(utah) == int(SIZES_GB["us/utah"] * GB) == found.size_of(utah)
-    (asked,) = server.requests("HEAD")
+    (asked,) = server.requests("HEAD", "-latest.osm.pbf")
     assert (asked.path, asked.query, asked.headers["user-agent"]) == (
         "/north-america/us/utah/utah-latest.osm.pbf",
         {},
@@ -174,7 +174,7 @@ def test_the_size_of_a_region_is_asked_by_one_head_and_remembered_for_a_week(
     )
     clock.advance(WEEK.total_seconds() + 1)
     found.size_of(utah)
-    assert len(server.requests("HEAD")) == 2
+    assert len(server.requests("HEAD", "-latest.osm.pbf")) == 2
 
 
 def test_a_size_the_service_cannot_give_is_not_remembered(tmp_path: Path) -> None:
@@ -265,6 +265,82 @@ def test_contract_the_recorded_real_index_is_read_as_the_planner_expects(tmp_pat
 # --------------------------------------------------------------------------------------------- the border of a region
 def entry_of(found: GeofabrikCatalogue, key: str) -> Any:
     return next(entry for entry in found.entries() if entry.key == key)
+
+
+def redirecting(routes: dict[str, tuple[int, dict[str, str], bytes]]) -> RecordingServer:
+    """A service answering every path from `routes` (a missing path is 404); `{base}` in a header is its own address."""
+    holder: dict[str, RecordingServer] = {}
+
+    def respond(seen: Seen) -> tuple[int, dict[str, str], bytes]:
+        status, headers, body = routes.get(seen.path, (404, {}, b"not found"))
+        return status, {k: v.replace("{base}", holder["server"].url) for k, v in headers.items()}, body
+
+    holder["server"] = RecordingServer(respond).start()
+    return holder["server"]
+
+
+def asked_of(service: RecordingServer, tmp_path: Path) -> Callable[[str, str], tuple[int | None, Any]]:
+    """Asks the catalogue for the size of a region whose `.osm.pbf` is at the given path of `service`."""
+    found = catalogue(service.url, tmp_path, FakeClock(), minimum=1)
+    count = iter(range(1000))
+
+    def ask(pbf_path: str, poly_path: str) -> tuple[int | None, Any]:
+        entry = CatalogueEntry(f"r{next(count)}", "R", None, service.url + pbf_path, service.url + poly_path)
+        return found.size_of(entry), entry
+
+    return ask
+
+
+def test_a_size_follows_redirects_within_the_lists_own_origin(tmp_path: Path) -> None:
+    chain = redirecting(
+        {
+            "/italy-latest.osm.pbf": (307, {"Location": "/italy-261126.osm.pbf"}, b""),
+            "/italy-261126.osm.pbf": (200, {"X-Length": "2256145962"}, b""),
+            "/a-latest.osm.pbf": (301, {"Location": "{base}/b.osm.pbf"}, b""),
+            "/b.osm.pbf": (307, {"Location": "/c.osm.pbf"}, b""),
+            "/c.osm.pbf": (200, {"X-Length": "42"}, b""),
+        }
+    )
+    ask = asked_of(chain, tmp_path)
+    assert ask("/italy-latest.osm.pbf", "")[0] == 2256145962
+    assert ask("/a-latest.osm.pbf", "")[0] == 42
+    chain.stop()
+
+
+def test_a_size_behind_a_redirect_off_the_origin_or_too_long_is_unknown_and_nothing_foreign_is_asked(
+    tmp_path: Path,
+) -> None:
+    foreign = redirecting({"/x.osm.pbf": (200, {"X-Length": "7"}, b"")})
+    hops = {f"/h{n}": (307, {"Location": f"/h{n + 1}"}, b"") for n in range(1, 5)}
+    hops["/h5"] = (200, {"X-Length": "9"}, b"")
+    service = redirecting(
+        {
+            "/away-latest.osm.pbf": (307, {"Location": f"{foreign.url}/x.osm.pbf"}, b""),
+            "/loop-latest.osm.pbf": (307, {"Location": "/loop-latest.osm.pbf"}, b""),
+            "/h0": (307, {"Location": "/h1"}, b""),
+        }
+        | hops
+    )
+    ask = asked_of(service, tmp_path)
+    for name in ("away-latest.osm.pbf", "loop-latest.osm.pbf", "h0"):  # h0 -> h5 is 5 hops
+        assert ask(f"/{name}", "")[0] is None
+    assert foreign.requests() == []
+    service.stop()
+    foreign.stop()
+
+
+def test_a_border_behind_a_same_origin_redirect_is_read(tmp_path: Path) -> None:
+    border = Path(__file__).parents[3] / "acceptance/overland_route_planner_mvp/fixtures/road-map/poly/portugal.poly"
+    service = redirecting(
+        {
+            "/p.poly": (307, {"Location": "/q.poly"}, b""),
+            "/q.poly": (200, {}, border.read_bytes()),
+        }
+    )
+    found = catalogue(service.url, tmp_path, FakeClock(), minimum=1)
+    entry = CatalogueEntry("p", "P", None, f"{service.url}/p.osm.pbf", f"{service.url}/p.poly")
+    assert found.outline_of(entry).rings
+    service.stop()
 
 
 def test_a_border_is_fetched_once_and_then_read_from_the_disk_even_after_a_restart(

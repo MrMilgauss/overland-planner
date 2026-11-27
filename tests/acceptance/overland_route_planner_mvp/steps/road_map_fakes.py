@@ -173,9 +173,14 @@ def region_service() -> RecordingServer:
         if seen.path.endswith(".poly") and seen.method == "GET":
             wanted = FIXTURES / "poly" / seen.path.rsplit("/", 1)[1]
             return (200, {}, wanted.read_bytes()) if wanted.is_file() else (404, {}, b"not found")
-        if seen.path.endswith("-latest.osm.pbf") and seen.method == "HEAD":
+        if (
+            seen.path.endswith("-latest.osm.pbf") and seen.method == "HEAD"
+        ):  # as the real service: a 307 to a dated name
+            return 307, {"Location": seen.path.removesuffix("-latest.osm.pbf") + "-261126.osm.pbf"}, b""
+        if seen.path.endswith("-261126.osm.pbf") and seen.method == "HEAD":
+            latest = seen.path.removesuffix("-261126.osm.pbf") + "-latest.osm.pbf"
             for feature in catalogue_features():
-                if feature["properties"]["urls"]["pbf"].removeprefix(GEOFABRIK) == seen.path.lstrip("/"):
+                if feature["properties"]["urls"]["pbf"].removeprefix(GEOFABRIK) == latest.lstrip("/"):
                     return 200, {"X-Length": str(int(SIZES_GB[key_of(feature)] * GB))}, b""
         return 404, {}, b"not found"
 
