@@ -711,8 +711,9 @@ def then_the_search_is_refused_as_too_short(world: PlannerWorld) -> None:
     assert response is not None and response.status_code == 422, (
         f"the search answered {response and response.status_code}"
     )
-    message = str(response.json().get("message", "")).lower()
-    assert "short" in message or "two" in message or "2" in message, message
+    body = response.json()
+    assert body.get("code") == "validation_error", body
+    assert re.fullmatch(r"A (place name|region search) needs at least two letters", str(body.get("message"))), body
 
 
 # ------------------------------------------------------------------------------------------ the road map and change
@@ -877,6 +878,9 @@ def then_the_cancel_is_refused(world: PlannerWorld) -> None:
     assert response is not None and response.status_code == 409, (
         f"the cancel answered {response and response.status_code}"
     )
+    body = response.json()
+    assert body.get("code") == "change_not_pending", body
+    assert "already started" in str(body.get("message")), body
     delta(world)
 
 
@@ -1353,7 +1357,12 @@ def then_the_client_names_itself(world: PlannerWorld) -> None:
 @then("the search service received no contact detail")
 def then_no_contact_detail(world: PlannerWorld) -> None:
     seen = only(place_server(world).requests("GET", "/search"), "requests the search service saw")
-    assert "email" not in seen.query and "contact" not in seen.query, seen.query
+    assert set(seen.query) == {"q", "format", "addressdetails", "limit"}, seen.query
+    # the project URL is the identifying part Nominatim's policy asks for (ADR-019); no person's detail is in it
+    sha = os.environ.get("PLANNER_GIT_SHA", "dev")
+    assert seen.headers.get("user-agent") == (
+        f"overland-planner/{sha} (household trip planner; +https://github.com/MrMilgauss/overland-planner)"
+    ), seen.headers
 
 
 @then("the search service has seen no request")
