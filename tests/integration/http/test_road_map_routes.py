@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from overland_planner.bootstrap.app_factory import create_app
+from overland_planner.bootstrap.app_factory import ExternalPorts, create_app
 from overland_planner.bootstrap.startup import StartupRefusedError
+from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import region_service
 from tests.common.workspace import workspace_data_dir
 
 SQUARE = "square\n1\n 0.0 0.0\n 0.0 1.0\n 1.0 1.0\n 1.0 0.0\nEND\nEND\n"
@@ -86,3 +87,39 @@ def test_a_served_tileset_with_the_valhalla_provider_refuses_the_start_naming_th
     with pytest.raises(StartupRefusedError) as refused:
         create_app({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": "20261128"})
     assert "ROAD_MAP_SERVED_TILESET" in refused.value.reason
+
+
+def preview_planner(data_dir: Path, tmp_path: Path, index_url: str) -> TestClient:
+    (tmp_path / "changes").mkdir(exist_ok=True)
+    settings = environ(data_dir, volume(tmp_path)) | {
+        "ROAD_MAP_CHANGES_DIR": str(tmp_path / "changes"),
+        "GEOFABRIK_INDEX_URL": index_url,
+    }
+    return TestClient(create_app(settings, external=ExternalPorts(catalogue_min_features=10)))
+
+
+def test_a_change_is_summarised_with_the_figures_and_writes_nothing(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    with preview_planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json") as client:
+        answer = client.post(
+            "/api/road-map/change/preview", json={"region_keys": ["italy", "portugal"], "start_at": None}
+        )
+        unknown = client.post("/api/road-map/change/preview", json={"region_keys": ["atlantis"]})
+    server.stop()
+    body = answer.json()
+    assert answer.status_code == 200
+    assert (body["added"], body["removed"]) == ([{"key": "portugal", "name": "Portugal"}], [])
+    assert set(body["estimate"]) == {"total_minutes", "pause_minutes"}
+    assert body["total_bytes"] > 5  # the served square is far from Portugal: information, status 200
+    assert [g["regions"] for g in body["land_groups"]] == [["Italy"], ["Portugal"]]
+    assert "Portugal" in body["not_linked_note"]
+    assert list((tmp_path / "changes").iterdir()) == []
+    assert (unknown.status_code, unknown.json()["code"]) == (422, "unknown_region")
+
+
+def test_a_summary_without_the_list_of_regions_is_unavailable(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    server.stop()
+    with preview_planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json") as client:
+        answer = client.post("/api/road-map/change/preview", json={"region_keys": ["italy"]})
+    assert (answer.status_code, answer.json()["code"]) == (503, "region_catalogue_unavailable")

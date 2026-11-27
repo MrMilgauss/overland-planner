@@ -571,17 +571,18 @@ def when_the_owner_plans(world: PlannerWorld, added: str, removed: str | None, w
 def when_the_owner_asks_the_cost(world: PlannerWorld, added: str) -> None:
     rm = planner(world)
     rm.view_before = rm_view(world)
-    call(world, "POST", "/api/road-map/change/preview", json=change_body(world, added, None, None))
-    rm.view_after = rm_view(world)
+    summary = call(world, "POST", "/api/road-map/change/preview", json=change_body(world, added, None, None))
+    rm.view_after = rm_view(world)  # reads the road map again: the summary stays the answer the Then steps judge
+    rm.response = summary
 
 
 @when("the owner asks what refreshing the map data would cost")
 def when_the_owner_asks_the_refresh_cost(world: PlannerWorld) -> None:
     rm = planner(world)
     rm.view_before = rm_view(world)
-    call(world, "POST", "/api/road-map/change/preview", json=change_body(world, None, None, None))
-    rm.view_after = rm_view(world)
-    assert rm.response is not None
+    summary = call(world, "POST", "/api/road-map/change/preview", json=change_body(world, None, None, None))
+    rm.view_after = rm_view(world)  # reads the road map again: the summary stays the answer the Then steps judge
+    rm.response = summary
 
 
 @when("the owner cancels it")

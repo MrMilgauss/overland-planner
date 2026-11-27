@@ -16,7 +16,7 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
-from overland_planner.application.roadmap.facade import CatalogueHit, ServedMapView, TripCoverage
+from overland_planner.application.roadmap.facade import CatalogueHit, ChangeSummary, ServedMapView, TripCoverage
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
@@ -78,6 +78,7 @@ class CatalogueRegionBody(BaseModel):
     name: str
     parent_name: str | None
     bytes: int | None
+    in_map: bool
 
 
 class CatalogueBody(BaseModel):
@@ -110,6 +111,51 @@ class CoverageBody(BaseModel):
             regions=list(coverage.regions),
             outside_item_ids=list(coverage.outside_item_ids),
             groups=[TripGroupBody(regions=list(g.regions), item_ids=list(g.item_ids)) for g in coverage.groups],
+        )
+
+
+class ChangePreviewRequest(BaseModel):
+    """The regions the road map should hold and when the rebuild should start; addresses come from the list, never
+    from here."""
+
+    region_keys: list[str]
+    start_at: datetime | None = None
+
+
+class RegionRefBody(BaseModel):
+    key: str
+    name: str
+
+
+class EstimateBody(BaseModel):
+    total_minutes: int
+    pause_minutes: int
+
+
+class LandGroupBody(BaseModel):
+    regions: list[str]
+
+
+class ChangeSummaryBody(BaseModel):
+    """What a change would cost and alter, before it is written (D305, D308); a region far from the others is a
+    `not_linked_note`, never a refusal."""
+
+    added: list[RegionRefBody]
+    removed: list[RegionRefBody]
+    total_bytes: int
+    estimate: EstimateBody
+    land_groups: list[LandGroupBody]
+    not_linked_note: str | None
+
+    @classmethod
+    def of(cls, summary: ChangeSummary) -> ChangeSummaryBody:
+        return cls(
+            added=[RegionRefBody(**vars(r)) for r in summary.added],
+            removed=[RegionRefBody(**vars(r)) for r in summary.removed],
+            total_bytes=summary.total_bytes,
+            estimate=EstimateBody(total_minutes=summary.total_minutes, pause_minutes=summary.pause_minutes),
+            land_groups=[LandGroupBody(regions=list(group)) for group in summary.land_groups],
+            not_linked_note=summary.not_linked_note,
         )
 
 
@@ -507,6 +553,10 @@ class DiagnosticsResource(BaseModel):
 
 CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorEnvelope, "description": "validation_error (fewer than two letters)"},
+    503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},
+}
+PREVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    422: {"model": ErrorEnvelope, "description": "validation_error, unknown_region or overlaps_region"},
     503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},
 }
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

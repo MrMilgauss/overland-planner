@@ -12,6 +12,7 @@ the kept copy or fetches once.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -23,11 +24,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from overland_planner.adapters.roadmap.poly_parser import PolyParseError, parse_poly
 from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.probe import ProbeResult
 from overland_planner.application.ports.region_catalogue import CatalogueEntry, CatalogueUnavailableError
+from overland_planner.domain.roadmap.outline import Outline
 
 KEPT_FILE = "geofabrik-index.json"
+BORDERS_FOLDER = "borders"
 KEPT_FOR = timedelta(days=7).total_seconds()
 DEFAULT_MIN_FEATURES = 100
 _UNAVAILABLE = "region_catalogue_unavailable"
@@ -144,6 +148,7 @@ class GeofabrikCatalogue:
         self._index_url = index_url
         self._origin = f"{parts.scheme}://{parts.netloc}/"
         self._file = folder / KEPT_FILE
+        self._borders = folder / BORDERS_FOLDER
         self._clock = clock
         self._headers = {"User-Agent": user_agent}
         self._min_features = min_features
@@ -166,6 +171,25 @@ class GeofabrikCatalogue:
             if size is not None:
                 self._sizes[entry.key] = (entry.pbf_url, size, now)
             return size
+
+    def outline_of(self, entry: CatalogueEntry) -> Outline:
+        """The region's border: read from the disk when kept (a copy that does not read is discarded), else one GET of
+        its `.poly` under the list's own origin, kept only once it reads."""
+        with self._lock:
+            kept = self._borders / (hashlib.sha256(entry.poly_url.encode()).hexdigest() + ".poly")
+            try:
+                return parse_poly(kept.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                pass
+            except (OSError, ValueError):
+                kept.unlink(missing_ok=True)
+            text = self._get_text(entry.poly_url)
+            try:
+                outline = parse_poly(text)
+            except PolyParseError:
+                raise CatalogueUnavailableError(f"the border of {entry.name} does not read") from None
+            self._keep_text(kept, text)
+            return outline
 
     def probe(self) -> ProbeResult:
         try:
@@ -225,6 +249,28 @@ class GeofabrikCatalogue:
             os.replace(partial, self._file)
         except OSError:
             return  # not kept: the list stays in memory and is fetched again after a restart
+
+    def _get_text(self, address: str) -> str:
+        if not address.startswith(self._origin):
+            raise CatalogueUnavailableError("a border is only asked of the list's own service")
+        try:
+            with httpx.Client(headers=self._headers, timeout=self._timeout_s) as client:
+                answer = client.get(address)
+        except httpx.HTTPError:
+            raise CatalogueUnavailableError("the region service did not give a border") from None
+        if answer.status_code != httpx.codes.OK:
+            raise CatalogueUnavailableError("the region service did not give a border")
+        return answer.text
+
+    @staticmethod
+    def _keep_text(file: Path, text: str) -> None:
+        try:
+            file.parent.mkdir(parents=True, exist_ok=True)
+            partial = file.with_name(file.name + ".part")
+            partial.write_text(text, encoding="utf-8")
+            os.replace(partial, file)
+        except OSError:
+            return  # not kept: asked again next time
 
     def _head(self, address: str) -> int | None:
         try:

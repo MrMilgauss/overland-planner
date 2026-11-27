@@ -4,16 +4,22 @@ from overland_planner.application.ports.region_catalogue import CatalogueUnavail
 from overland_planner.application.roadmap.coverage_service import CoverageService, TripCoverage, TripGroup
 from overland_planner.application.roadmap.service import (
     CatalogueHit,
+    ChangeSummary,
+    RegionRef,
     RoadMapService,
     SearchTooShortError,
     ServedMapView,
     ServedRegionView,
 )
+from overland_planner.domain.roadmap.region_choice import Refusal
 
 __all__ = [
     "CatalogueHit",
     "CatalogueUnavailableError",
+    "ChangeSummary",
     "CoverageService",
+    "Refusal",
+    "RegionRef",
     "RoadMapService",
     "SearchTooShortError",
     "ServedMapView",

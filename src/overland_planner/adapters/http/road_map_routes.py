@@ -1,5 +1,6 @@
 """Road-map HTTP routes (D308): `GET /api/road-map` names the map the engine serves; `GET /api/road-map/catalogue?q=`
-searches the free list of regions by name (two letters at least); `GET /api/projects/{id}/coverage` judges a trip
+searches the free list of regions by name (two letters at least); `POST /api/road-map/change/preview` summarises a
+change without writing it; `GET /api/projects/{id}/coverage` judges a trip
 against the served map."""
 
 from __future__ import annotations
@@ -11,7 +12,10 @@ from overland_planner.adapters.http.errors import envelope
 from overland_planner.adapters.http.schemas import (
     CATALOGUE_ERROR_RESPONSES,
     ERROR_RESPONSES,
+    PREVIEW_ERROR_RESPONSES,
     CatalogueBody,
+    ChangePreviewRequest,
+    ChangeSummaryBody,
     CoverageBody,
     RoadMapBody,
     RoadMapChangeBody,
@@ -20,6 +24,7 @@ from overland_planner.adapters.http.schemas import (
 from overland_planner.application.roadmap.facade import (
     CatalogueUnavailableError,
     CoverageService,
+    Refusal,
     RoadMapService,
     SearchTooShortError,
 )
@@ -39,6 +44,19 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
             return CatalogueBody.of(service.search_catalogue(q))
         except SearchTooShortError as short:
             raise HTTPException(status_code=422, detail=str(short)) from None
+        except CatalogueUnavailableError:
+            return envelope(
+                503,
+                "region_catalogue_unavailable",
+                "The list of regions cannot be reached right now - try again later",
+            )
+
+    @router.post("/api/road-map/change/preview", response_model=ChangeSummaryBody, responses=PREVIEW_ERROR_RESPONSES)
+    def preview(request: ChangePreviewRequest) -> ChangeSummaryBody | JSONResponse:
+        try:
+            return ChangeSummaryBody.of(service.preview_change(request.region_keys))
+        except Refusal as refused:
+            return envelope(422, refused.code, refused.message)
         except CatalogueUnavailableError:
             return envelope(
                 503,

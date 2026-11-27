@@ -64,6 +64,10 @@
             ],
             "title": "Bytes"
           },
+          "in_map": {
+            "title": "In Map",
+            "type": "boolean"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -88,9 +92,93 @@
           "key",
           "name",
           "parent_name",
-          "bytes"
+          "bytes",
+          "in_map"
         ],
         "title": "CatalogueRegionBody",
+        "type": "object"
+      },
+      "ChangePreviewRequest": {
+        "description": "The regions the road map should hold and when the rebuild should start; addresses come from the list, never\nfrom here.",
+        "properties": {
+          "region_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Region Keys",
+            "type": "array"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          }
+        },
+        "required": [
+          "region_keys"
+        ],
+        "title": "ChangePreviewRequest",
+        "type": "object"
+      },
+      "ChangeSummaryBody": {
+        "description": "What a change would cost and alter, before it is written (D305, D308); a region far from the others is a\n`not_linked_note`, never a refusal.",
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/RegionRefBody"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/EstimateBody"
+          },
+          "land_groups": {
+            "items": {
+              "$ref": "#/components/schemas/LandGroupBody"
+            },
+            "title": "Land Groups",
+            "type": "array"
+          },
+          "not_linked_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Linked Note"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/RegionRefBody"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "removed",
+          "total_bytes",
+          "estimate",
+          "land_groups",
+          "not_linked_note"
+        ],
+        "title": "ChangeSummaryBody",
         "type": "object"
       },
       "CoverageBody": {
@@ -243,6 +331,24 @@
           "message"
         ],
         "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "EstimateBody": {
+        "properties": {
+          "pause_minutes": {
+            "title": "Pause Minutes",
+            "type": "integer"
+          },
+          "total_minutes": {
+            "title": "Total Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_minutes",
+          "pause_minutes"
+        ],
+        "title": "EstimateBody",
         "type": "object"
       },
       "G4Resource": {
@@ -539,6 +645,22 @@
           "runs_per_project_day"
         ],
         "title": "K7Resource",
+        "type": "object"
+      },
+      "LandGroupBody": {
+        "properties": {
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "regions"
+        ],
+        "title": "LandGroupBody",
         "type": "object"
       },
       "LineFeatureResource": {
@@ -1494,6 +1616,24 @@
           }
         },
         "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "RegionRefBody": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name"
+        ],
+        "title": "RegionRefBody",
         "type": "object"
       },
       "RoadMapBody": {
@@ -2858,6 +2998,54 @@
           }
         },
         "summary": "Catalogue"
+      }
+    },
+    "/api/road-map/change/preview": {
+      "post": {
+        "operationId": "preview_api_road_map_change_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSummaryBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error, unknown_region or overlaps_region"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "region_catalogue_unavailable"
+          }
+        },
+        "summary": "Preview"
       }
     },
     "/healthz": {

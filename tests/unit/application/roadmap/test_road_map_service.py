@@ -9,14 +9,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.region_catalogue import CatalogueEntry, CatalogueUnavailableError
 from overland_planner.application.ports.tileset_store import ServedRegion, TilesetListing
 from overland_planner.application.roadmap.facade import RoadMapService
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.roadmap.outline import Outline
+from overland_planner.domain.roadmap.region_choice import Refusal
 from overland_planner.domain.roadmap.served_map import ServedId, TilesetEntry
 
 BORDER = Outline(rings=((Coordinate(0, 0), Coordinate(0, 1), Coordinate(1, 0)),))
@@ -149,3 +152,117 @@ def test_a_restarted_planner_falls_back_to_the_tileset_the_rebuild_says_it_serve
 
 def test_a_hint_that_matches_no_directory_is_an_unknown_map() -> None:
     assert view(RoadMapService(FakeServedMap(None), FakeStore(TWO_MAPS, hint="19990101")))["known"] is False
+
+
+# ------------------------------------------------------------------------------------- the catalogue (D306, D308)
+def square(west: float, south: float, east: float, north: float) -> Outline:
+    ring = (Coordinate(south, west), Coordinate(south, east), Coordinate(north, east), Coordinate(north, west))
+    return Outline(rings=(ring,))
+
+
+class FakeCatalogue:
+    """The free list at its port boundary: entries, sizes and borders; records which borders were fetched."""
+
+    def __init__(self) -> None:
+        self.entries_ = (
+            CatalogueEntry("europe", "Europe", None, "u", "p"),
+            CatalogueEntry("italy", "Italy", "europe", "u", "p"),
+            CatalogueEntry("lombardy", "Lombardy", "italy", "u", "p"),
+            CatalogueEntry("spain", "Spain", "europe", "u", "p"),
+            CatalogueEntry("portugal", "Portugal", "europe", "u", "p"),
+            CatalogueEntry("us", "United States of America", None, "u", "p"),
+            CatalogueEntry("us/utah", "Utah", "us", "u", "p"),
+        )
+        self.sizes: dict[str, int | None] = {
+            "lombardy": GB // 2,
+            "portugal": int(0.4 * GB),
+            "us/utah": int(1.1 * GB),
+            "europe": 30 * GB,
+        }
+        self.borders = {
+            "portugal": square(2, 0, 3, 1),  # touches Spain
+            "us/utah": square(50, 50, 51, 51),
+            "europe": square(-9, -9, 9, 9),
+        }
+        self.fetched: list[str] = []
+
+    def entries(self) -> tuple[CatalogueEntry, ...]:
+        return self.entries_
+
+    def size_of(self, entry: CatalogueEntry) -> int | None:
+        return self.sizes.get(entry.key)
+
+    def outline_of(self, entry: CatalogueEntry) -> Outline:
+        self.fetched.append(entry.key)
+        return self.borders[entry.key]
+
+    def probe(self) -> ProbeResult:
+        return ProbeResult(outcome="ok")
+
+
+def served_two_regions() -> TilesetListing:
+    italy = ServedRegion("italy", "Italy", "Europe", 2 * GB, square(0, 0, 1, 1))
+    spain = ServedRegion("spain", "Spain", "Europe", int(1.5 * GB), square(1, 0, 2, 1))
+    return listing(("20261127", NOV_27, [italy, spain]))
+
+
+def planner_with(catalogue: FakeCatalogue | None) -> RoadMapService:
+    return RoadMapService(FakeServedMap(NOV_27), FakeStore(served_two_regions()), catalogue)
+
+
+@pytest.mark.parametrize(
+    ("words", "name", "in_map"),
+    [
+        ("italy", "Italy", True),  # served itself
+        ("lombardy", "Lombardy", True),  # covered by its served ancestor
+        ("portugal", "Portugal", False),
+        ("europe", "Europe", False),  # an ancestor of what is served is not itself served
+    ],
+)
+def test_a_region_found_says_whether_the_map_already_covers_it(words: str, name: str, in_map: bool) -> None:
+    hits = planner_with(FakeCatalogue()).search_catalogue(words)
+    assert [(hit.name, hit.in_map) for hit in hits if hit.name == name] == [(name, in_map)]
+
+
+def test_adding_a_region_summarises_figures_and_fetches_only_its_border() -> None:
+    catalogue = FakeCatalogue()
+    summary = planner_with(catalogue).preview_change(["italy", "spain", "portugal"])
+    assert [(r.key, r.name) for r in summary.added] == [("portugal", "Portugal")]
+    assert summary.removed == ()
+    assert summary.total_bytes == int(3.9 * GB)  # 2 + 1.5 served, 0.4 asked of the list
+    assert (summary.total_minutes, summary.pause_minutes) == (34, 23)  # D305: round(8.2 x 3.9 + 2.5), round(6 x 3.9)
+    assert summary.land_groups == (("Italy", "Portugal", "Spain"),)
+    assert summary.not_linked_note is None
+    assert catalogue.fetched == ["portugal"]
+
+
+def test_removing_a_region_names_it_and_fetches_nothing() -> None:
+    catalogue = FakeCatalogue()
+    summary = planner_with(catalogue).preview_change(["italy"])
+    assert ([r.key for r in summary.added], [r.name for r in summary.removed]) == ([], ["Spain"])
+    assert summary.total_bytes == 2 * GB
+    assert catalogue.fetched == []
+
+
+def test_a_region_far_from_the_others_is_a_note_and_not_a_refusal() -> None:
+    summary = planner_with(FakeCatalogue()).preview_change(["italy", "spain", "us/utah"])
+    assert summary.land_groups == (("Italy", "Spain"), ("Utah",))
+    assert summary.not_linked_note == (
+        "Utah is not linked by land to your other regions. "
+        "Trips inside Utah, or inside Europe, are fine; a trip between them can't be planned."
+    )
+
+
+def test_a_change_that_cannot_be_summarised_says_why() -> None:
+    sizeless = FakeCatalogue()
+    sizeless.sizes.pop("portugal")
+    with pytest.raises(CatalogueUnavailableError):
+        planner_with(sizeless).preview_change(["italy", "portugal"])
+    with pytest.raises(CatalogueUnavailableError):
+        planner_with(None).preview_change(["italy"])
+    with pytest.raises(Refusal) as unknown:
+        planner_with(FakeCatalogue()).preview_change(["italy", "atlantis"])
+    assert unknown.value.code == "unknown_region"
+    with pytest.raises(Refusal) as overlap:
+        planner_with(FakeCatalogue()).preview_change(["italy", "lombardy"])
+    assert overlap.value.code == "overlaps_region"

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -259,3 +260,41 @@ def test_contract_the_recorded_real_index_is_read_as_the_planner_expects(tmp_pat
     assert all(e.pbf_url.startswith("https://download.geofabrik.de/") for e in offered.values())
     assert all(e.parent is None or e.parent in offered for e in offered.values())
     assert offered["us/georgia"].parent == "us" and offered["georgia"].parent == "europe"
+
+
+# --------------------------------------------------------------------------------------------- the border of a region
+def entry_of(found: GeofabrikCatalogue, key: str) -> Any:
+    return next(entry for entry in found.entries() if entry.key == key)
+
+
+def test_a_border_is_fetched_once_and_then_read_from_the_disk_even_after_a_restart(
+    server: RecordingServer, tmp_path: Path
+) -> None:
+    clock = FakeClock()
+    first = catalogue(server.url, tmp_path, clock)
+    portugal = entry_of(first, "portugal")
+    outline = first.outline_of(portugal)
+    again = first.outline_of(portugal)
+    restarted = catalogue(server.url, tmp_path, clock).outline_of(portugal)
+    asked = server.requests("GET", ".poly")
+    assert [a.path for a in asked] == ["/europe/portugal/portugal.poly"]
+    assert asked[0].headers["user-agent"] == USER_AGENT
+    assert outline == again == restarted and outline.rings
+
+
+def test_a_border_that_does_not_come_or_does_not_read_is_unavailable_and_never_kept(
+    server: RecordingServer, tmp_path: Path
+) -> None:
+    found = catalogue(server.url, tmp_path, FakeClock())
+    missing = replace(entry_of(found, "portugal"), poly_url=f"{server.url}/nowhere.poly")
+    with pytest.raises(CatalogueUnavailableError):
+        found.outline_of(missing)
+    elsewhere = replace(entry_of(found, "portugal"), poly_url="https://example.invalid/portugal.poly")
+    with pytest.raises(CatalogueUnavailableError):  # off the list's own origin: nothing is asked
+        found.outline_of(elsewhere)
+    garbage = serving("this is not a polygon")
+    broken = replace(entry_of(found, "portugal"), poly_url=f"{garbage.url}/portugal.poly")
+    with pytest.raises(CatalogueUnavailableError):
+        found.outline_of(broken)
+    garbage.stop()
+    assert list(tmp_path.rglob("*.poly")) == []

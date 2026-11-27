@@ -20,7 +20,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import (
 )
 from tests.common.workspace import workspace_data_dir
 
-ROWS = {"key", "name", "parent_name", "bytes"}
+ROWS = {"key", "name", "parent_name", "bytes", "in_map"}
 
 
 @pytest.fixture
@@ -47,8 +47,14 @@ def test_a_search_finds_regions_with_their_parent_and_size(data_dir: Path, tmp_p
     server.stop()
     assert answer.status_code == 200
     assert sorted(answer.json()["results"], key=lambda row: row["key"]) == [
-        {"key": "georgia", "name": "Georgia", "parent_name": "Europe", "bytes": int(0.03 * GB)},
-        {"key": "us/georgia", "name": "Georgia", "parent_name": "United States of America", "bytes": int(0.5 * GB)},
+        {"key": "georgia", "name": "Georgia", "parent_name": "Europe", "bytes": int(0.03 * GB), "in_map": False},
+        {
+            "key": "us/georgia",
+            "name": "Georgia",
+            "parent_name": "United States of America",
+            "bytes": int(0.5 * GB),
+            "in_map": False,
+        },
     ]
 
 
@@ -114,5 +120,5 @@ def test_a_region_is_still_found_when_its_size_cannot_be_told(data_dir: Path, tm
     with planner(data_dir, tmp_path, server, catalogue_min_features=10) as client:
         answer = client.get("/api/road-map/catalogue", params={"q": "utah"})
     assert answer.json()["results"] == [
-        {"key": "us/utah", "name": "Utah", "parent_name": "United States of America", "bytes": None}
+        {"key": "us/utah", "name": "Utah", "parent_name": "United States of America", "bytes": None, "in_map": False}
     ]
