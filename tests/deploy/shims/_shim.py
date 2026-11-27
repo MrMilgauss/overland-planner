@@ -43,6 +43,9 @@ HEALTHZ_OK = '{"status":"ok"}'
 VALHALLA_STATUS_OK = '{"version":"3.9.1","tileset_last_modified":1793560782,"available_actions":["status","route"]}'
 BUILD_TIME = 1700000000  # modification time the scripted tile build gives valhalla_tiles.tar
 HELPER_MOUNTS = ("/seed", "/vol", "/target")
+MATCHED: dict[str, Any] | None = (
+    None  # the scripted rule of this call (a `passthrough` rule can still shape the default)
+)
 API_HEALTH_OK = '{"status":"ok","components":{"database":{"outcome":"ok","reason":null}},"banners":[]}'
 
 
@@ -52,6 +55,8 @@ def main(tool: str) -> None:
     with (HOME / "calls.jsonl").open("a") as log:
         log.write(json.dumps(record) + "\n")
     rule = _matching_rule(tool, argv)
+    global MATCHED
+    MATCHED = rule
     if rule is not None:
         _side_effects(rule)
         if not rule.get("passthrough"):
@@ -164,7 +169,9 @@ def _default(tool: str, argv: list[str], record: dict[str, Any]) -> None:
 
 def _crontab(argv: list[str], record: dict[str, Any]) -> None:
     """The deploy user's schedule, kept in `$SHIM_HOME/crontab.txt`: `-l` lists it (exit 1 and the real message when the
-    user has none), `-` replaces it with stdin, `-r` removes it. A scripted rule can make any call fail."""
+    user has none), `<file>` (or `-` for stdin) replaces it with that text, `-r` removes it. A scripted rule can make
+    any call fail; a `passthrough` rule with `stored_text` makes a replacement store that text instead (a write that
+    reads back different)."""
     schedule = HOME / "crontab.txt"
     if argv == ["-l"]:
         if not schedule.is_file():
@@ -173,6 +180,9 @@ def _crontab(argv: list[str], record: dict[str, Any]) -> None:
         sys.stdout.write(schedule.read_text())
     elif argv == ["-"]:
         schedule.write_text(sys.stdin.read())
+    elif len(argv) == 1 and not argv[0].startswith("-"):
+        stored = (MATCHED or {}).get("stored_text")
+        schedule.write_text(stored if stored is not None else Path(argv[0]).read_text())
     elif argv == ["-r"]:
         schedule.unlink(missing_ok=True)
     else:
