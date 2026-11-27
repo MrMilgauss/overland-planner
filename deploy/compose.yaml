@@ -82,6 +82,7 @@ services:
       - planner-data:/data
       - road-map:/road-map-changes
       - valhalla-data:/valhalla-data:ro
+      - /etc/localtime:/etc/localtime:ro # the Pi's zone: "Pi time" in the pages is this one, not UTC
     # Resource caps (D83, D167): the Pi keeps room for the routing engine.
     cpus: 1
     mem_limit: 1g
@@ -129,6 +130,7 @@ services:
       # a list replaces the planner's: the two map mounts again, read-only (a measurement planner changes no map)
       - road-map:/road-map-changes:ro
       - valhalla-data:/valhalla-data:ro
+      - /etc/localtime:/etc/localtime:ro
 
   valhalla:
     image: ${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64@sha256:f182f45e9e71cbe737e6c394d68808c67a7bd12e2a4cc47c4aba864de77ecdc6}

@@ -54,6 +54,8 @@ ROAD_MAP_VOLUMES = {"road-map": {"name": "overland_road-map"}}
 # mounted whole and read-only (a missing subpath would stop the container before any tileset is seeded, D234).
 CHANGES_MOUNT = "road-map:/road-map-changes"
 MAP_MOUNT = "valhalla-data:/valhalla-data:ro"
+# the Pi's own zone, read-only: the planner tells the owner which offset "Pi time" is (astimezone() reads it)
+LOCALTIME_MOUNT = "/etc/localtime:/etc/localtime:ro"
 ROAD_MAP_PASS_THROUGH = ("ROAD_MAP_MAX_GB", "PLACE_SEARCH", "PLACE_SEARCH_URL", "GEOFABRIK_INDEX_URL")
 VALHALLA_IMAGE = (
     "${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla-scripted:3.9.1-arm64"
@@ -163,7 +165,7 @@ def test_data_volume_log_rotation_and_curl_free_healthcheck() -> None:
     compose = _load(COMPOSE)
     planner = compose["services"]["planner"]
 
-    assert planner["volumes"] == ["planner-data:/data", CHANGES_MOUNT, MAP_MOUNT]
+    assert planner["volumes"] == ["planner-data:/data", CHANGES_MOUNT, MAP_MOUNT, LOCALTIME_MOUNT]
     assert compose["volumes"] == (
         {"planner-data": {"name": "overland_planner-data"}} | PERF_VOLUMES | VALHALLA_VOLUMES | ROAD_MAP_VOLUMES
     )
@@ -262,6 +264,7 @@ def test_planner_perf_runs_the_planners_image_hardened_on_its_own_volume_and_loo
         "./perf:/perf:ro",
         f"{CHANGES_MOUNT}:ro",
         MAP_MOUNT,
+        LOCALTIME_MOUNT,
     ]
     assert "overland_planner-data" not in str(perf) and "planner-data:" not in str(perf["volumes"])
     assert planner["environment"]["ROUTING_PROVIDER"] == "${ROUTING_PROVIDER:-mock}", "the household switch is .env"
