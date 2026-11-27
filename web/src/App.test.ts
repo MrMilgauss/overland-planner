@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 
@@ -27,5 +27,26 @@ describe('App routing', () => {
     render(App);
 
     expect(screen.getByRole('heading', { name: 'Projects' })).toBeInTheDocument();
+  });
+
+  it('has the Road map link beside Projects and Diagnostics and opens its screen on #/road-map', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              served: { known: false, map_date: null, regions: [], total_bytes: 0 },
+            }),
+          ),
+      ),
+    );
+    window.location.hash = '#/road-map';
+
+    render(App);
+
+    const links = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
+    expect(links.map((link) => link.textContent)).toEqual(['Projects', 'Road map', 'Diagnostics']);
+    expect(screen.getByRole('heading', { name: 'Road map' })).toBeInTheDocument();
   });
 });

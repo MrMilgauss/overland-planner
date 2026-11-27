@@ -20,6 +20,8 @@ services:
     environment:
       ROAD_MAP_SERVED_TILESET: "20261127"
       PLACE_SEARCH_URL: "http://host.docker.internal:8765/search"
+      # The region list is the fake of .github/scripts/fake-geofabrik.py, started beside it (slice 12c).
+      GEOFABRIK_INDEX_URL: "http://host.docker.internal:8766/index-v1-nogeom.json"
     volumes: !override
       - planner-data:/data
       - ${ROAD_MAP_FIXTURE_DIR:?run .github/scripts/build-road-map-fixture.py and set ROAD_MAP_FIXTURE_DIR}/volume:/valhalla-data:ro

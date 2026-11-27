@@ -1,8 +1,9 @@
 <script lang="ts">
-  // Hash routes, no router library: `#/projects/<id>` opens a project's workspace, `#/diagnostics` the Diagnostics page
+  // Hash routes, no router library: `#/projects/<id>` opens a project's workspace, `#/road-map` the Road map screen, `#/diagnostics` the Diagnostics page
   // (a hash, since the planner serves no page at other paths); anything else is the home page. One header on every page.
   import DiagnosticsPage from './lib/DiagnosticsPage.svelte';
   import ProjectsPage from './lib/ProjectsPage.svelte';
+  import RoadMapPage from './lib/RoadMapPage.svelte';
   import WorkspacePage from './lib/WorkspacePage.svelte';
 
   const PROJECT_ROUTE = /^#\/projects\/([^/]+)$/;
@@ -18,6 +19,7 @@
   }
   const projectId = $derived(decoded(PROJECT_ROUTE.exec(hash)?.[1]));
   const diagnostics = $derived(hash === '#/diagnostics');
+  const roadMap = $derived(hash === '#/road-map');
 </script>
 
 <svelte:window onhashchange={() => (hash = window.location.hash)} />
@@ -26,6 +28,7 @@
   <strong>Overland Route Planner</strong>
   <nav aria-label="Main">
     <a class="target" href="#/">Projects</a>
+    <a class="target" href="#/road-map">Road map</a>
     <a class="target" href="#/diagnostics">Diagnostics</a>
   </nav>
 </header>
@@ -35,6 +38,8 @@
     {#key projectId}
       <WorkspacePage {projectId} />
     {/key}
+  {:else if roadMap}
+    <RoadMapPage />
   {:else if diagnostics}
     <DiagnosticsPage />
   {:else}

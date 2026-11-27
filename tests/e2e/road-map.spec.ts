@@ -125,43 +125,145 @@ async function setFromTheRow(
 const projectIdOf = (url: string): string =>
   decodeURIComponent(/#\/projects\/([^/]+)$/.exec(url)![1]);
 
+// The planner's GEOFABRIK_INDEX_URL points at a local stand-in (.github/scripts/fake-geofabrik.py): the real service is
+// never asked. The planner keeps the list a week, so what the page sent is read from the browser's own requests.
+const header = (page: Page): Locator =>
+  page.getByRole("navigation", { name: "Main" });
+
+async function openTheRoadMap(page: Page): Promise<void> {
+  await page.goto("/");
+  await header(page).getByRole("link", { name: "Road map" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Road map" }),
+  ).toBeVisible();
+}
+
+const loaded = (page: Page): Locator =>
+  page.getByRole("list", { name: "Loaded regions" });
+
 // @US-27 @ui
-test.fixme("The Road map screen shows what is loaded", async ({ page }) => {
+test("The Road map screen shows what is loaded", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
   // Given the road map was rebuilt from the app and the served map has the eight regions, with map data of 27 November 2026
+  const { served } = (await (
+    await page.request.get("/api/road-map")
+  ).json()) as Served;
+  expect(served.regions).toHaveLength(8);
   // When Marco opens "Road map" from the header beside the projects
+  await page.goto("/");
+  const links = await header(page).getByRole("link").allTextContents();
+  expect(links.slice(0, 2)).toEqual(["Projects", "Road map"]);
+  await openTheRoadMap(page);
   // Then he sees the eight regions by name and "Map data: 27 November 2026"
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  for (const region of served.regions)
+    await expect(loaded(page)).toContainText(region.name);
+  await expect(page.getByText("Map data: 27 November 2026")).toBeVisible();
   // And no file, script or setting needs to be edited to change them
+  await expect(
+    loaded(page).getByRole("button", { name: "Remove Austria" }),
+  ).toBeVisible();
 });
 
 // @US-27 @ui @edge
-test.fixme("Before the first rebuild from the app the screen says the regions are unknown", async ({
+test("Before the first rebuild from the app the screen says the regions are unknown", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
   // Given the served map was built on 26 November 2026, before the app kept the regions of a map
+  await answerWith<
+    Served & { served: { map_date: string | null; total_bytes: number } }
+  >(page, /\/api\/road-map$/, "/api/road-map", (real) => ({
+    ...real,
+    served: {
+      ...real.served,
+      known: false,
+      map_date: "2026-11-26T12:00:00Z",
+      regions: [],
+      total_bytes: 0,
+    },
+  }));
   // When Marco opens "Road map"
+  await openTheRoadMap(page);
   // Then he sees "Map coverage unknown" with the map date and no list of regions
+  await expect(page.getByText("Map coverage unknown")).toBeVisible();
+  await expect(page.getByText("Map data: 26 November 2026")).toBeVisible();
+  await expect(loaded(page)).toHaveCount(0);
   // And he is offered "Refresh map data" to build the same eight regions again
+  await expect(
+    page.getByRole("button", { name: "Refresh map data" }),
+  ).toBeVisible();
 });
 
 // @US-27 @ui
-test.fixme("A region is added by searching the free list of regions by name", async ({
+test("A region is added by searching the free list of regions by name", async ({
   page,
 }) => {
   await page.setViewportSize(AT_LAPTOP);
   // Given the road map has the eight regions and Marco is on the "Road map" screen
+  await openTheRoadMap(page);
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  const form = page.getByRole("form", { name: "Search for a region" });
+  await expect(form).toContainText("Geofabrik");
+  const searches: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/road-map/catalogue"))
+      searches.push(request.url());
+  });
+  await form.getByLabel("Region name").fill("Utah");
+  // typing sends nothing: the list is asked only when Search is pressed
+  expect(searches).toEqual([]);
+  await form.getByRole("button", { name: "Search", exact: true }).click();
   // When he searches "Utah" and adds the result
+  await expect(
+    form.getByRole("list", { name: "Search results" }),
+  ).toContainText("United States of America");
+  expect(searches).toHaveLength(1);
+  await form.getByRole("button", { name: "Add Utah" }).click();
   // Then "Utah" is listed as "to be added" and the loaded regions are still the eight
+  const pending = page.getByRole("list", { name: "Pending changes" });
+  await expect(pending).toContainText("Utah");
+  await expect(pending).toContainText("to be added");
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  await expect(loaded(page)).not.toContainText("Utah");
   // And the screen says Utah is not linked by land to the other regions, as information only
+  await expect(page.getByRole("status")).toContainText(
+    "Utah is not linked by land to your other regions",
+  );
+  // At 390 px: no sideways scroll, targets of 44 px, the form in the page flow
+  await page.setViewportSize(AT_PHONE);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  for (const button of await page.getByRole("button").all()) {
+    if (!(await button.isVisible())) continue;
+    expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  expect(await form.evaluate((node) => getComputedStyle(node).position)).toBe(
+    "static",
+  );
 });
 
 // @US-27 @ui @edge
-test.fixme("A region is removed as a pending change", async ({ page }) => {
+test("A region is removed as a pending change", async ({ page }) => {
   await page.setViewportSize(AT_LAPTOP);
   // Given the loaded regions include Austria
+  await openTheRoadMap(page);
+  const austria = loaded(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Austria" });
+  await expect(austria).toHaveCount(1);
   // When Marco removes Austria
+  await austria.getByRole("button", { name: "Remove Austria" }).click();
   // Then Austria is listed as "to be removed" and is still loaded until a rebuild ends well
+  await expect(austria).toContainText("to be removed");
+  await expect(loaded(page).getByRole("listitem")).toHaveCount(8);
+  const { served } = (await (
+    await page.request.get("/api/road-map")
+  ).json()) as Served;
+  expect(served.regions.map((region) => region.name)).toContain("Austria");
 });
 
 // @US-27 @ui

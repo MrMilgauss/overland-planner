@@ -377,13 +377,62 @@ export function readMapConfig(): Promise<MapConfig> {
   return call('/api/config/map', {}, 'Could not load the map settings.');
 }
 
-/** The regions the engine serves, by name; `known` is false when the planner cannot tell (GET /api/road-map). */
+/** One region of the served map (GET /api/road-map): its size is what its map data weighs. */
+export interface ServedRegion {
+  key: string;
+  name: string;
+  parent_name: string | null;
+  bytes: number;
+}
+
+/** The regions the engine serves; `known` is false when the planner cannot tell (GET /api/road-map). */
 export interface ServedRoadMap {
-  served: { known: boolean; map_date: string | null; regions: { name: string }[] };
+  served: {
+    known: boolean;
+    map_date: string | null;
+    regions: ServedRegion[];
+    total_bytes: number;
+  };
 }
 
 export function readRoadMap(): Promise<ServedRoadMap> {
   return call('/api/road-map', {}, 'Could not read the road map.');
+}
+
+/** One region of the free list (GET /api/road-map/catalogue): `bytes` is null while its size cannot be told. */
+export interface CatalogueRegion {
+  key: string;
+  name: string;
+  parent_name: string | null;
+  bytes: number | null;
+  in_map: boolean;
+}
+
+const CATALOGUE_UNAVAILABLE = 'The list of regions cannot be reached right now - try again later';
+
+/** Up to eight regions for the typed words; the planner's refusal (under two letters, list down) keeps its words. */
+export async function searchRegions(words: string): Promise<CatalogueRegion[]> {
+  const body = await call<{ results?: unknown }>(
+    `/api/road-map/catalogue?q=${encodeURIComponent(words)}`,
+    {},
+    CATALOGUE_UNAVAILABLE,
+  );
+  if (!Array.isArray(body.results)) throw new PlannerError(CATALOGUE_UNAVAILABLE);
+  return body.results as CatalogueRegion[];
+}
+
+/** What a change would say before it is applied: only the information line is used on the screen so far. */
+export interface ChangePreview {
+  not_linked_note: string | null;
+}
+
+/** The summary of holding exactly these regions (POST /api/road-map/change/preview); nothing is written. */
+export function previewChange(regionKeys: string[]): Promise<ChangePreview> {
+  return call(
+    '/api/road-map/change/preview',
+    json('POST', { region_keys: regionKeys }),
+    'Could not check this change.',
+  );
 }
 
 /** A trip judged against the served map (GET /api/projects/{id}/coverage): `outside_item_ids` lie outside the loaded

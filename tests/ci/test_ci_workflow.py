@@ -462,6 +462,27 @@ def test_e2e_points_the_planner_at_a_local_place_search_never_the_real_one() -> 
     assert "host.docker.internal:host-gateway" in planner["extra_hosts"]
 
 
+def test_e2e_points_the_planner_at_a_local_region_list_never_the_real_geofabrik() -> None:
+    """Slice 12c (13-25): the region list of the specs is a tracked fake Geofabrik started by the job before compose,
+    on its own port; the planner container reaches it through the host gateway; the real service is never asked."""
+    job = _job(_workflow(), "e2e")
+    script = ".github/scripts/fake-geofabrik.py"
+    assert (REPO_ROOT / script).is_file()
+    started = _index(job, script)
+    assert _index(job, "uv sync --frozen") < started < _index(job, f"{COMPOSE_CI_STACK} up -d --wait")
+    assert "8766 0.0.0.0" in _runs(job)[started], "bound where the container's host gateway reaches it"
+    assert job["env"]["FAKE_GEOFABRIK_URL"] == "http://127.0.0.1:8766", "where the specs read its request log"
+
+    class ComposeLoader(yaml.SafeLoader):
+        """compose.ci.yaml carries the `!override` tag of Compose."""
+
+    ComposeLoader.add_constructor("!override", lambda loader, node: loader.construct_sequence(node, deep=True))
+    compose = yaml.load((REPO_ROOT / "deploy" / "compose.ci.yaml").read_text(), Loader=ComposeLoader)  # noqa: S506
+    planner = compose["services"]["planner"]
+    assert planner["environment"]["GEOFABRIK_INDEX_URL"] == "http://host.docker.internal:8766/index-v1-nogeom.json"
+    assert "host.docker.internal:host-gateway" in planner["extra_hosts"]
+
+
 def test_e2e_runs_compose_or_security_selection_with_external_flag() -> None:
     job = _job(_workflow(), "e2e")
     selection = job["steps"][_index(job, "pytest-selection.sh")]

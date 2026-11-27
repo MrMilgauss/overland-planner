@@ -234,6 +234,7 @@ test("On a phone nothing scrolls sideways and every target is touch-sized", asyn
     ["home", "/"],
     ["project", projectUrl],
     ["Diagnostics", "/#/diagnostics"],
+    ["Road map", "/#/road-map"],
   ] as const) {
     await page.goto(address);
     if (where === "project")
@@ -330,6 +331,7 @@ test("Every page uses the same look and the project page follows the trip's phas
     ["home", "/"],
     ["project", projectUrl],
     ["Diagnostics", "/#/diagnostics"],
+    ["Road map", "/#/road-map"],
   ] as const) {
     await page.goto(address);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

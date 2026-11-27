@@ -668,6 +668,8 @@ jobs:
       ROAD_MAP_FIXTURE_DIR: ${{ github.workspace }}/.data/ci/road-map
       # The place search of the specs is a local fake Nominatim (never the real one); the specs read its request log here.
       FAKE_PLACE_SEARCH_URL: http://127.0.0.1:8765
+      # The region list of the specs is a local fake Geofabrik (never the real one); the specs read its request log here.
+      FAKE_GEOFABRIK_URL: http://127.0.0.1:8766
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -698,6 +700,8 @@ jobs:
         run: uv run python .github/scripts/build-road-map-fixture.py "$ROAD_MAP_FIXTURE_DIR"
       - name: Start the fake place search (slice 12c; the planner reaches it through the host gateway)
         run: nohup python3 .github/scripts/fake-place-search.py 8765 0.0.0.0 > "$RUNNER_TEMP/fake-place-search.log" 2>&1 &
+      - name: Start the fake Geofabrik (slice 12c; the planner reaches it through the host gateway)
+        run: nohup python3 .github/scripts/fake-geofabrik.py 8766 0.0.0.0 > "$RUNNER_TEMP/fake-geofabrik.log" 2>&1 &
       - name: Start the planner with compose (compose.yaml + compose.ci.yaml, loopback, step 02-04)
         run: docker compose -f deploy/compose.yaml -f deploy/compose.ci.yaml up -d --wait --wait-timeout 120
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
