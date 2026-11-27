@@ -11,16 +11,16 @@ C4Context
   Person(giulia, "Giulia (household viewer)", "iPhone 390 px on the home Wi-Fi, read only")
   System(planner, "Overland Route Planner", "Compose stack on Raspberry Pi 5 (pi.example): planner app + self-hosted Valhalla. Imports tracks and POIs, plans a direction-safe itinerary, exports GPX 1.1")
   System_Ext(tiles, "Raster tile server", "OpenTopoMap (default) or OSM Standard")
-  System_Ext(geofabrik, "Geofabrik downloads", "OSM extracts for the Valhalla tile build (manual, quarterly)")
-  System_Ext(nominatim, "Nominatim", "Geocoding (Phase 2)")
+  System_Ext(geofabrik, "Geofabrik", "Region catalogue and outlines (read by the planner), OSM extracts for the tile build (at the owner's chosen time)")
+  System_Ext(nominatim, "OpenStreetMap Nominatim", "Place search by name (slice 12c, ADR-019; typed words only)")
   System_Ext(devices, "OsmAnd / Locus Map / Garmin", "Navigation apps and devices")
 
   Rel(marco, planner, "Plans trips and exports GPX with")
   Rel(giulia, planner, "Reads itineraries and maps in")
   Rel(marco, tiles, "Views map tiles from (browser)", "HTTPS")
   Rel(giulia, tiles, "Views map tiles from (browser)", "HTTPS")
-  Rel(planner, geofabrik, "Downloads OSM extracts from (tile build only)", "HTTPS")
-  Rel(planner, nominatim, "Searches place names in (Phase 2)", "HTTPS/JSON")
+  Rel(planner, geofabrik, "Reads the region catalogue and downloads OSM extracts from (the rebuild)", "HTTPS")
+  Rel(planner, nominatim, "Searches place names in", "HTTPS/JSON, 1 request a second")
   Rel(marco, devices, "Loads exported GPX files into")
 ```
 
@@ -53,6 +53,34 @@ C4Container
   Rel(api, valhalla, "Locates points, fetches matrices and leg routes from", "HTTP/JSON, max 2 concurrent")
   Rel(valhalla, tilesdb, "Memory-maps graph tiles from")
   Rel(build, tilesdb, "Writes built tiles to")
+```
+
+## L2 delta — slice 12c (road-map regions in the app)
+
+```mermaid
+C4Container
+  title Container delta - slice 12c (the planner knows its map)
+  Person(owner, "Owner / Marco / Giulia", "Browser")
+  Container_Boundary(pi, "Raspberry Pi 5 - compose project overland") {
+    Container(planner, "planner", "FastAPI", "Road-map, coverage and place-search routes; domain RoadMapCoverage")
+    ContainerDb(queue, "overland_road-map", "Named volume", "request, running, progress, result files")
+    ContainerDb(tiles, "overland_valhalla-data", "Named volume", "tilesets/<date>/ with tiles, road-map.json, outlines")
+    Container(valhalla, "valhalla", "Docker service", "Routes; stopped during the build")
+    Container(helper, "road-map-runner", "bash, user crontab, every minute", "Validates a request, runs the refresh at its time")
+    Container(refresh, "tiles-refresh + valhalla-fetch/build", "bash, compose run", "Downloads, builds, switches, rolls back on failure")
+  }
+  System_Ext(geofabrik, "Geofabrik", "Catalogue, outlines, extracts")
+  System_Ext(nominatim, "OSM Nominatim", "Place search")
+  Rel(owner, planner, "Chooses regions and searches places through")
+  Rel(planner, queue, "Writes requests to and reads progress from")
+  Rel(planner, tiles, "Reads the served record from (read-only)")
+  Rel(planner, valhalla, "Reads the served map date from", "HTTP /status")
+  Rel(planner, geofabrik, "Reads the catalogue and outlines from", "HTTPS")
+  Rel(planner, nominatim, "Sends the typed words to", "HTTPS, cached")
+  Rel(helper, queue, "Takes requests from and writes progress to")
+  Rel(helper, refresh, "Starts at the chosen time")
+  Rel(refresh, geofabrik, "Downloads extracts and outlines from", "HTTPS")
+  Rel(refresh, tiles, "Builds and promotes a new tileset in")
 ```
 
 ## L3 — Component: planning pipeline (inside "Planner application")

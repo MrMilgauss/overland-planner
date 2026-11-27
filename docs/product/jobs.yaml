@@ -33,7 +33,7 @@ jobs:
     importance: 10
     satisfaction: 3
     opportunity_score: 17
-    stories: [US-02a, US-02c, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16, US-20, US-21, US-23, US-24, US-25, US-26]   # primary job only (S11)
+    stories: [US-02a, US-02c, US-02b, US-04, US-06a, US-06b, US-10a, US-10b, US-12, US-16, US-20, US-21, US-23, US-24, US-25, US-26, US-29]   # primary job only (S11)
 
   - id: J-02
     name: trust-trail-integrity
@@ -113,7 +113,7 @@ jobs:
     importance: 8
     satisfaction: 3
     opportunity_score: 13
-    stories: [US-07b, US-08]
+    stories: [US-07b, US-08, US-28]
 
   - id: J-06
     name: own-planning-on-home-lan
@@ -133,7 +133,7 @@ jobs:
     importance: 6
     satisfaction: 4
     opportunity_score: 8
-    stories: [US-01a, US-01b]
+    stories: [US-01a, US-01b, US-27, US-30, US-31]
 
 opportunity_ranking:
   - {rank: 1, job: J-02, score: 18}
@@ -162,3 +162,6 @@ changelog:
   - date: 2026-11-19
     feature: overland-route-planner-mvp
     change: "Slice 12b DISCUSS: US-23, US-24, US-25 and US-26 (J-01); no new job."
+  - date: 2026-11-26
+    feature: overland-route-planner-mvp
+    change: "Slice 12c DISCUSS: US-27, US-30 and US-31 (J-06, owning the planner's map at home: the owner chooses, times and sees the rebuild), US-28 (J-05, know what the map covers) and US-29 (J-01, add a stop by name); no new job."

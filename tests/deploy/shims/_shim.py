@@ -1,5 +1,5 @@
 """Shared engine of the fake external commands for the offline deploy tests (docker, curl, df, flock, gh, ssh, rsync,
-ss).
+ss, crontab).
 
 Each shim appends one JSON record per invocation to `$SHIM_HOME/calls.jsonl` (tool, argv, cwd, PLANNER_BIND from the
 environment, curl's stdin config, the PLANNER_IMAGE of the release.env compose would read) and then answers:
@@ -69,6 +69,8 @@ def _record(tool: str, argv: list[str]) -> dict[str, Any]:
 
 
 def _reads_stdin(tool: str, argv: list[str]) -> bool:
+    if tool == "crontab":
+        return False  # the handler reads it itself: a recording read would leave the handler nothing
     if tool == "curl":
         return "-K" in argv
     if tool == "docker":
@@ -112,6 +114,12 @@ def _matching_rule(tool: str, argv: list[str]) -> dict[str, Any] | None:
 def _side_effects(rule: dict[str, Any]) -> None:
     if "mkdir" in rule:
         (HOME / "volumes" / "overland_valhalla-data" / rule["mkdir"]).mkdir(parents=True, exist_ok=True)
+    for relative, text in rule.get(
+        "write", {}
+    ).items():  # files that appear below the fake volume (a download's result)
+        target = HOME / "volumes" / "overland_valhalla-data" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
     if "kill_parent" in rule:
         os.kill(os.getppid(), getattr(signal, "SIG" + rule["kill_parent"]))
     if "sleep" in rule:
@@ -148,10 +156,28 @@ def _answer(tool: str, argv: list[str], rule: dict[str, Any]) -> None:
 
 
 def _default(tool: str, argv: list[str], record: dict[str, Any]) -> None:
-    handler = {"docker": _docker, "curl": _curl, "df": _df, "flock": _flock, "ssh": _ssh}.get(tool)
+    handler = {"docker": _docker, "curl": _curl, "df": _df, "flock": _flock, "ssh": _ssh, "crontab": _crontab}.get(tool)
     if handler is not None:
         handler(argv, record)
     sys.exit(0)
+
+
+def _crontab(argv: list[str], record: dict[str, Any]) -> None:
+    """The deploy user's schedule, kept in `$SHIM_HOME/crontab.txt`: `-l` lists it (exit 1 and the real message when the
+    user has none), `-` replaces it with stdin, `-r` removes it. A scripted rule can make any call fail."""
+    schedule = HOME / "crontab.txt"
+    if argv == ["-l"]:
+        if not schedule.is_file():
+            sys.stderr.write("no crontab for user\n")
+            sys.exit(1)
+        sys.stdout.write(schedule.read_text())
+    elif argv == ["-"]:
+        schedule.write_text(sys.stdin.read())
+    elif argv == ["-r"]:
+        schedule.unlink(missing_ok=True)
+    else:
+        sys.stderr.write(f"crontab shim: unsupported arguments {argv}\n")
+        sys.exit(2)
 
 
 def _docker(argv: list[str], record: dict[str, Any]) -> None:

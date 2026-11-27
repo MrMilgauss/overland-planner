@@ -173,7 +173,7 @@ Every driven port extends `Probeable`.
 | `TrackFileParser` | `parse(bytes, name)` or `InvalidTrackFile`; rejects DTD/entities | `GpxpyParser` (defusedxml pre-parse, then gpxpy) | Embedded GPX; plus an XXE/billion-laughs sample that must be rejected. Fatal |
 | `GpxWriter` | GPX 1.1 bytes, no extensions | `GpxpyWriter` | Write + re-parse. Fatal |
 | `EventLog` | Structured application events | `StructlogEventLog` | - |
-| `Geocoder` (Phase 2) | `search(query, bias_bbox?, limit)` | `NominatimGeocoder` | Phase 2 |
+| `PlaceSearch` (was `Geocoder`, Phase 2; slice 12c, ADR-019) | `search(query) -> up to 5 {name, region, country, point}` or unavailable | `NominatimPlaceSearch` (server-side proxy, 1 request a second, in-memory cache) | Configuration and limiter round trip; no outbound call at start-up. Degraded: `place_search_misconfigured` |
 | `Clock` | `now()`, `monotonic()` | `SystemClock`, `FixedClock` | monotonic increases |
 
 **MockRoutingProvider configuration** (review B4; YAML/JSON fixture or `MOCK_PLAN` path). It covers both normal behaviour and scripted faults:
@@ -408,12 +408,14 @@ Full plans, commands for `deploy@pi.example` and kill criteria are in `feature-d
 | ADR-010 | Consideration report in GPX 1.1 | Accepted + Amendment 1 |
 | ADR-011 | Composition root, probes, degraded mode | Accepted + Amendment 1, DEVOPS amendment, final gate D121 |
 | ADR-012 | Solver port in a child process | **Superseded by ADR-015** |
-| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133; Amendment 3 slice 06a-ops (D234-D242); Amendment 4 slice 06a (D243-D250) |
+| ADR-013 | Valhalla self-hosted, only MVP provider | Accepted; parameters validated by SPIKE-2R (D76); final gate D127/D128/D131/D133; Amendment 3 slice 06a-ops (D234-D242); Amendment 4 slice 06a (D243-D250); Amendment 5 slice 12c (D299-D305) |
 | ADR-014 | End-to-end budget, limits, determinism | Accepted; stage budget measured by the spikes (D77); final gate D124/D126/D127/D131/D132/D135 |
 | ADR-015 | Plan job lifecycle, Stop, incumbents | Accepted; measured by SPIKE-1R; final gate D122/D130/D133/D136 |
 | ADR-016 | Confidence levels + lexicographic optimisation | Accepted; amended after the spikes (D78, D79); final gate D125 |
 | ADR-017 | Out-and-back retrace (exit side only) | Accepted; penalty measured by SPIKE-1R; final gate D125/D134; Amendment 2 slice 03b as built (2026-11-11) |
 | ADR-018 | Versioned track files + SQLite hardening | Accepted; DEVOPS amendment D90/D91; final gate D123/D129 |
+| ADR-019 | Place search by name through a server-side Nominatim proxy | Accepted (slice 12c, D307) |
+| ADR-020 | Road-map regions chosen in the app; the served map is the truth | Accepted (slice 12c, D299-D306) |
 
 ### 15. Deployment topology (added by DEVOPS, 2026-11-02)
 
@@ -454,6 +456,10 @@ C4Deployment
   Rel(planner, pdata, "Reads and writes")
   Rel(valhalla, vdata, "Memory-maps tiles from")
 ```
+
+### 16. Slice 12c: the planner knows its map (added 2026-11-26; ADR-013 Amendment 5, ADR-019, ADR-020)
+
+The loaded regions are no longer configuration. The refresh writes `road-map.json` (regions) and the Geofabrik outlines next to the tiles of each tileset; the planner mounts the whole `valhalla-data` volume read-only (`/valhalla-data`) and reads the record of the directory whose `valhalla_tiles.tar` mtime equals the engine's `/status` epoch (uncached read), so the page shows what is served or "Map coverage unknown". New modules: `domain/roadmap` (outlines, containment, land groups, region choice, estimate; pure, mutation-tested), `application/roadmap` (facade: served map, change, coverage), `adapters/roadmap` (tileset reader, Geofabrik catalogue, change queue) and `adapters/geocoding` (Nominatim proxy). The owner picks regions, a start time and cancels on a "Road map" screen; the planner writes a request file into the small volume `overland_road-map`; a user crontab line (`deploy/scripts/road-map-runner.sh`, installed by the deploy, removable) validates it and runs the existing refresh with `REGIONS_FILE`, a progress hook and codes. Limits: one pending change, one rebuild a UTC day, 8 GB. Outside items and unlinked land groups are information, never a refusal. Every new adapter has a never-fatal probe; the place search makes no call at start-up. New external integrations (contract tests recommended: recorded consumer-driven copies replayed with respx): Geofabrik (index, outlines, sizes) and Nominatim.
 
 ## Review — nw-solution-architect-reviewer (2026-11-01)
 

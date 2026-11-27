@@ -259,3 +259,112 @@ Every failure is an `AssertionError` reached through a driving port (the in-proc
 The property's two oracles (`retraced_tracks`, `reversed_track_stops`) were run on hand-made plans: a reversed track, a retrace before its track, a retrace of another item and a retrace entry -> exit instead of exit -> entry each fail; a missing retrace fails the second Then (retraced tracks must equal the dead-end tracks driven).
 
 **Markers and CI cost.** `solver_child` on #1, #3-#6 (a real OR-Tools child per Calculate; each about 2 s when green). #2 stays in pre-push (no solve). #7 solves in-process and is `heavy_property` (D221): a stand-in run of the same generator and solve (without retrace arcs, which the planner cannot plan yet) took 0.9 s for 100 cases (profile dev) and 7.5 s for 1,000 cases (profile ci) of planning alone, so it is above the 3 s line at ci and should be `heavy_property`. The marker is not set: `tests/ci/test_ci_workflow.py::test_slow_properties_job_runs_the_slow_and_heavy_scenarios_at_profile_ci_and_job_2_does_not` pins job 10's population by name (it failed once the marker was set), so the orchestrator sets the marker and adds the test to that pin together before slice 03b is enabled. At profile dev it stays in pre-push. Re-measure once retrace arcs exist.
+
+## Slice 12c (`slice-12c-the-planner-knows-its-map.feature`), DISTILL D312 (revised after the consolidated review), 2026-11-26
+
+Host: dev-mac (macOS arm64, Python 3.12). Production code for the slice does not exist; the step bindings import none, so nothing can be an `IMPORT_ERROR`.
+
+```
+uv run pytest -q tests/acceptance/overland_route_planner_mvp/test_slice_12c.py
+  -> 138 skipped (pending: slice_12c not enabled yet)
+
+uv run pytest -q --run-pending=slice-12c tests/acceptance/overland_route_planner_mvp/test_slice_12c.py --tb=line
+  -> 138 failed, 0 errors, 0 passed (90 scenarios; 14 outlines expand to 62 rows); exception class of every failure: AssertionError (138)
+```
+
+D315 applied (keys are index ids, addresses from the index, `rebuilds_not_set_up`); re-run after it. Class of every case: `MISSING_FUNCTIONALITY` (an `AssertionError` in a Then, or in the last Given that needs the built thing: the routes answer 404, the setting is absent, the scripts do not exist). No case is `IMPORT_ERROR`, `FIXTURE_BROKEN`, `SETUP_FAILURE`, `WRONG_ASSERTION` or `OBSERVABLE_NOT_AT_PORT`. The 33 `@ui` scenarios are `test.fixme` (not run).
+
+Fixture-theater checks (a scenario that passes before the feature exists is a defect): two cases passed in the first revised run and were tightened: "Installing again ..." now starts from the helper installed by an older release (a different line must be replaced), and "The refresh says nothing about its steps when not asked" now requires the refresh to have run on the list. Also kept from the first pass: the "not started before its time", "cancelled just before", "deploy running tried again" and "outline cannot be fetched" scenarios require the helper to have run (its `helper-seen` file) and the refresh to name the region itself.
+
+| Scenario (test function) | Cases | Class | What fails now |
+|---|---|---|---|
+| the planner names the regions and the date of the served map | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| before the first rebuild from the app the planner gives the map date and no regi | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a region is found in the catalogue by name with its parent and what the map alre | 2 | MISSING_FUNCTIONALITY | the catalogue did not answer: 404 |
+| two regions with the same name are told apart by their parent | 1 | MISSING_FUNCTIONALITY | the catalogue did not answer: 404 |
+| a search for a region needs at least two letters | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| a change is summarised before it is written and each chosen region s border is f | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| planning a change leaves the served map as it is | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a change that cannot be applied is refused with the reason and nothing is writte | 3 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a region far from the others is information not a refusal | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| changing the road map is not offered when the changes cannot be stored | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a change is refused when the changes cannot be stored | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| the catalogue is fetched with the planner s name and only region details are ask | 1 | MISSING_FUNCTIONALITY | the list was asked for 0 times |
+| the catalogue is kept so a restarted planner does not ask for it again | 1 | MISSING_FUNCTIONALITY | the list was asked for 0 times |
+| the catalogue is fetched again after a week | 1 | MISSING_FUNCTIONALITY | the list was asked for 0 times |
+| the kept catalogue is used when the region service does not answer | 1 | MISSING_FUNCTIONALITY | precondition: the first search did not work |
+| the size of a region is asked once and remembered | 1 | MISSING_FUNCTIONALITY | the size of Utah was asked 0 times |
+| the served map is the one whose map data carries the date the routing engine rep | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| after a rollback the older map is the one served | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a map whose regions cannot be read is unknown never an error | 4 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a damaged region border is reported as a reason and the map stays unknown | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| while the routing engine is stopped for the build the last known map is still na | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a pending change is kept for the helper and no list of regions is written by the | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a cancelled change can no longer be taken by the helper | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a place is inside or outside the map by the borders of the regions not by boxes | 6 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| a trail is outside when its entry or its exit is outside the middle does not mat | 3 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| without the regions of the map the planner says the coverage is unknown and warn | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| a pending change does not alter what the trip is judged against | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| stops in areas not linked by land are grouped and the groups are named | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| italy southern france and spain are linked by land | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| without southern france spain is on its own | 1 | MISSING_FUNCTIONALITY | the trip's coverage did not open: 404 {"code":"not_found","message":"Not Found"} |
+| the map settings no longer name a road map area and say whether place search is  | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| a place name is answered with up to five places each with its region | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| no contact detail is ever sent to the search service | 1 | MISSING_FUNCTIONALITY | expected one of the requests the search service saw, found 0 |
+| nothing is sent to the search service unless a search is asked for | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| only the typed words reach the search service | 1 | MISSING_FUNCTIONALITY | expected one of the requests the search service saw, found 0 |
+| two different searches in a row are a second apart | 1 | MISSING_FUNCTIONALITY | expected two of the requests the search service saw, found 0 |
+| the same search again is answered from memory and sends nothing | 1 | MISSING_FUNCTIONALITY | ('{"code":"not_found","message":"Not Found"}', '{"code":"not_found","message":"Not Found"}') |
+| pressing search twice at once sends one search | 1 | MISSING_FUNCTIONALITY | ('{"code":"not_found","message":"Not Found"}', '{"code":"not_found","message":"Not Found"}') |
+| a name that matches nothing is an empty answer not an error | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| a search service that is busy down or garbled leaves the trip unchanged | 4 | MISSING_FUNCTIONALITY | the search answered 404 |
+| after a busy answer the search service is left alone for a minute | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| a name shorter than two letters is refused before anything is sent | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| switching place search off removes it from the add menu | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| a search is answered as not available when place search is switched off | 1 | MISSING_FUNCTIONALITY | the search answered 404 |
+| leaving the search address empty means the usual address not off | 1 | MISSING_FUNCTIONALITY | {'tile_url': 'https://tile.opentopomap.org/{z}/{x}/{y}.png', 'attribution': 'Map data: © OpenSt |
+| a result outside the road map joins the trip as a kept warned place | 1 | MISSING_FUNCTIONALITY | {"code":"not_found","message":"Not Found"} |
+| the planner shows the step the helper has reached | 4 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| planning is paused from the build until the switch ends and the planner says whe | 3 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a rebuild that stopped for lack of space says so with the numbers and the served | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| every way a rebuild can fail is told in plain words not as a code | 14 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a rebuild that ended well shows the new regions and date once the new map is ser | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| refresh map data asks for the same regions and shows the same cost | 1 | MISSING_FUNCTIONALITY | no summary: 404 |
+| only one change is pending at a time | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a planned change cannot be cancelled once the helper has taken it | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a rebuild is refused on a day that already has a map with the next day and time  | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a new map left behind by a failed switch uses the day up | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a rebuild that failed before the switch leaves no map so the day is not used up | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a start time must be between two minutes and fourteen days ahead | 4 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| without the helper the planner says rebuilds are not set up and refuses the chan | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| a waiting change that the helper has not looked at for minutes says rebuilds are | 1 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 {"code":"not_found","message":"Not Found"} |
+| the helper is installed once as one timed job of the deploy user | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: kind='predicate_failed' key='schedule.helper_lines |
+| the install folder may have spaces in its name | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: kind='predicate_failed' key='schedule.helper_lines |
+| installing again replaces the helper s own timed job and keeps the other jobs as | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: [+1 more line; full report in element text] |
+| the helper is added beside the other timed jobs which are kept exactly | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: kind='predicate_failed' key='schedule.helper_lines |
+| uninstalling removes only the helper s timed job | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: [+1 more line; full report in element text] |
+| a pi whose timed jobs cannot be read is left alone | 1 | MISSING_FUNCTIONALITY | exit 127: bash: scripts/road-map-helper.sh: no such file or directory |
+| the helper says whether it is installed | 2 | MISSING_FUNCTIONALITY | exit 127: bash: scripts/road-map-helper.sh: no such file or directory |
+| a pi that cannot take the helper does not fail the deploy | 1 | MISSING_FUNCTIONALITY | expected one warning about the helper, found [] |
+| removing the app from the pi removes the helper s timed job first | 1 | MISSING_FUNCTIONALITY | assert_state_delta: 1 violation(s) detected: [+1 more line; full report in element text] |
+| a request is taken at its time and the refresh runs on the regions it names | 1 | MISSING_FUNCTIONALITY | the refresh downloaded 0 times: bash: scripts/road-map-runner.sh: No such file or directory |
+| a request is not started before its time | 1 | MISSING_FUNCTIONALITY | the helper did not run |
+| a request that is not exactly what the planner writes is refused and nothing run | 8 | MISSING_FUNCTIONALITY | the helper did not run |
+| the helper s containers run as an ordinary user without network and without the  | 1 | MISSING_FUNCTIONALITY | the helper started no container for the changes: bash: scripts/road-map-runner.sh: No such file |
+| a request cancelled just before the helper looks is not started | 1 | MISSING_FUNCTIONALITY | the helper did not run |
+| a refresh refused because a deploy is running is tried again the next minute | 1 | MISSING_FUNCTIONALITY | the helper did not run |
+| two helpers at the same minute the second leaves at once | 1 | MISSING_FUNCTIONALITY | exit 127: bash: scripts/road-map-runner.sh: No such file or directory |
+| a rebuild the pi lost before the switch is recorded as interrupted and the old m | 1 | MISSING_FUNCTIONALITY | result: ''; bash: scripts/road-map-runner.sh: No such file or directory |
+| a rebuild the pi lost after the switch is recorded as done | 1 | MISSING_FUNCTIONALITY | result: ''; bash: scripts/road-map-runner.sh: No such file or directory |
+| a rebuild the pi lost is not touched while a deploy is running | 1 | MISSING_FUNCTIONALITY | the helper did not run |
+| the refresh refuses for lack of disk with the numbers and the helper keeps them | 1 | MISSING_FUNCTIONALITY | result: ''; bash: scripts/road-map-runner.sh: No such file or directory |
+| a refresh from a list of regions downloads those regions each to its own numbere | 1 | MISSING_FUNCTIONALITY | compose -p overland --env-file .env --env-file routing.env --profile routing --env-file release |
+| a region whose border file cannot be fetched stops the refresh before anything i | 1 | MISSING_FUNCTIONALITY | tiles-refresh: tileset 20270201; downloading and merging while the old tileset serves curl: (22 |
+| the refresh reports its steps in order | 1 | MISSING_FUNCTIONALITY | [] |
+| the refresh says nothing about its steps when not asked | 1 | MISSING_FUNCTIONALITY | the refresh did not run on the list |
+| the refresh builds the list of the map s regions itself and it travels with the  | 1 | MISSING_FUNCTIONALITY | the new map has no list of regions: ['SHA256SUMS', 'admins.sqlite', 'default_speeds.json', 'tim |
+| the checked files list covers the regions list and the borders too | 1 | MISSING_FUNCTIONALITY | ['admins.sqlite', 'default_speeds.json', 'timezones.sqlite', 'valhalla.json', 'valhalla_tiles.t |
+| seeding a map again still recognises the same five files after the list grew | 1 | MISSING_FUNCTIONALITY | exit 1: tiles-seed: checksums of the source files (this takes a while) tiles-seed: tilesets/202 |
+| the disk the refresh needs grows with the download | 3 | MISSING_FUNCTIONALITY | esh: stopping the routing engine; a plan being calculated now ends with 'Routing engine unreach |
+| a refresh refused because a deploy is running says so and writes no failure | 1 | MISSING_FUNCTIONALITY | 1 |
+| the helper counts as set up while it looked less than five minutes ago | 2 | MISSING_FUNCTIONALITY | the planner has no road map to show: 404 |

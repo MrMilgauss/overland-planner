@@ -98,6 +98,8 @@ class FakePi:
             "tiles-seed.sh",
             "tiles-rollback.sh",
             "tiles-refresh.sh",
+            "road-map-helper.sh",
+            "road-map-runner.sh",
             "spike-cleanup.sh",
         ):
             source = REPO / "deploy/scripts" / script

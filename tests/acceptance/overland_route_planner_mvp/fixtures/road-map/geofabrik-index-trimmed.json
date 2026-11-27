@@ -1,0 +1,294 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "andorra",
+    "name": "Andorra",
+    "iso3166-1:alpha2": [
+     "AD"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/andorra/andorra.poly",
+     "pbf": "https://download.geofabrik.de/europe/andorra/andorra-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "austria",
+    "name": "Austria",
+    "iso3166-1:alpha2": [
+     "AT"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/austria/austria.poly",
+     "pbf": "https://download.geofabrik.de/europe/austria/austria-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "europe",
+    "name": "Europe",
+    "parent": null,
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/europe.poly",
+     "pbf": "https://download.geofabrik.de/europe/europe-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "france",
+    "name": "France",
+    "iso3166-1:alpha2": [
+     "FR"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/france/france.poly",
+     "pbf": "https://download.geofabrik.de/europe/france/france-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "georgia",
+    "name": "Georgia",
+    "iso3166-1:alpha2": [
+     "GE"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/georgia/georgia.poly",
+     "pbf": "https://download.geofabrik.de/europe/georgia/georgia-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "germany",
+    "name": "Germany",
+    "iso3166-1:alpha2": [
+     "DE"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/germany/germany.poly",
+     "pbf": "https://download.geofabrik.de/europe/germany/germany-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "italy",
+    "name": "Italy",
+    "iso3166-1:alpha2": [
+     "IT"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/italy/italy.poly",
+     "pbf": "https://download.geofabrik.de/europe/italy/italy-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "languedoc-roussillon",
+    "name": "Languedoc-Roussillon",
+    "parent": "france",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/france/languedoc-roussillon/languedoc-roussillon.poly",
+     "pbf": "https://download.geofabrik.de/europe/france/languedoc-roussillon/languedoc-roussillon-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "midi-pyrenees",
+    "name": "Midi-Pyrenees",
+    "parent": "france",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/france/midi-pyrenees/midi-pyrenees.poly",
+     "pbf": "https://download.geofabrik.de/europe/france/midi-pyrenees/midi-pyrenees-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "north-america",
+    "name": "North America",
+    "parent": null,
+    "urls": {
+     "poly": "https://download.geofabrik.de/north-america/north-america.poly",
+     "pbf": "https://download.geofabrik.de/north-america/north-america-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "portugal",
+    "name": "Portugal",
+    "iso3166-1:alpha2": [
+     "PT"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/portugal/portugal.poly",
+     "pbf": "https://download.geofabrik.de/europe/portugal/portugal-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "provence-alpes-cote-d-azur",
+    "name": "Provence Alpes-Cote-d'Azur",
+    "parent": "france",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/france/provence-alpes-cote-d-azur/provence-alpes-cote-d-azur.poly",
+     "pbf": "https://download.geofabrik.de/europe/france/provence-alpes-cote-d-azur/provence-alpes-cote-d-azur-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "rhone-alpes",
+    "name": "Rhone-Alpes",
+    "parent": "france",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/france/rhone-alpes/rhone-alpes.poly",
+     "pbf": "https://download.geofabrik.de/europe/france/rhone-alpes/rhone-alpes-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "spain",
+    "name": "Spain",
+    "iso3166-1:alpha2": [
+     "ES"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/spain/spain.poly",
+     "pbf": "https://download.geofabrik.de/europe/spain/spain-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "switzerland",
+    "name": "Switzerland",
+    "iso3166-1:alpha2": [
+     "CH"
+    ],
+    "parent": "europe",
+    "urls": {
+     "poly": "https://download.geofabrik.de/europe/switzerland/switzerland.poly",
+     "pbf": "https://download.geofabrik.de/europe/switzerland/switzerland-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "us",
+    "name": "United States of America",
+    "iso3166-1:alpha2": [
+     "US"
+    ],
+    "parent": "north-america",
+    "urls": {
+     "poly": "https://download.geofabrik.de/north-america/us/us.poly",
+     "pbf": "https://download.geofabrik.de/north-america/us/us-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "us/california",
+    "name": "California",
+    "path-slug": "california",
+    "iso3166-2": [
+     "US-CA"
+    ],
+    "parent": "us",
+    "urls": {
+     "poly": "https://download.geofabrik.de/north-america/us/california/california.poly",
+     "pbf": "https://download.geofabrik.de/north-america/us/california/california-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "us/georgia",
+    "name": "Georgia",
+    "path-slug": "georgia",
+    "iso3166-2": [
+     "US-GA"
+    ],
+    "parent": "us",
+    "urls": {
+     "poly": "https://download.geofabrik.de/north-america/us/georgia/georgia.poly",
+     "pbf": "https://download.geofabrik.de/north-america/us/georgia/georgia-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": "us/utah",
+    "name": "Utah",
+    "path-slug": "utah",
+    "iso3166-2": [
+     "US-UT"
+    ],
+    "parent": "us",
+    "urls": {
+     "poly": "https://download.geofabrik.de/north-america/us/utah/utah.poly",
+     "pbf": "https://download.geofabrik.de/north-america/us/utah/utah-latest.osm.pbf"
+    }
+   },
+   "geometry": null
+  }
+ ]
+}

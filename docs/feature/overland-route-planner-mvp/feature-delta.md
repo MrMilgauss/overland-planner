@@ -3207,6 +3207,475 @@ Scenario: S7 The route still shows when the base map does not load
 
 - US-15 (the map), US-20 S7 (arrows and retrace label), US-21 (estimate chip).
 
+### US-27: I see which regions have roads and choose which to add or remove, with the cost shown first
+
+- job_id: J-06 | Slice: 12c | MoSCoW: Must | D295, D296, D297; owner feedback 2026-11-26 | Size: 0.8 d
+
+The job is J-06 (own the planner and its map at home), not J-01: what changes is who controls the planner's map, not how a trip is planned. US-31 and US-30 carry the same job.
+
+#### Problem
+
+Marco's trips grow (in three months, Utah) but the regions with roads are fixed in a script that only a developer edits and runs. He would have to ask for a new set of maps or run a script; he has said that does not fly. In D296 and D297 a gap in the list also gave Milan to Spain a ferry, and he cannot see or change what is loaded.
+
+#### Who
+
+- Marco (the owner of the household planner) | laptop, adds regions when his trips grow, wants to know the cost before he commits
+
+#### Solution
+
+A "Road map" screen, reached from the header beside the projects. It shows the regions with roads and the map date of the served map. Marco adds a region by searching the free list of regions by name (for example "Utah") or removes one. Before anything is applied the screen shows the total download size and an estimated rebuild time, with the part during which planning is paused. Regions that are not linked by land to the others are named as information, never refused. The change stays pending (US-31 starts it); the page keeps showing the regions of the served map, never the pending choice, until a rebuild ends well (US-30). A size limit protects the Pi. No file editing, no script.
+
+#### Elevator Pitch
+
+- Before: to load Utah, Marco would ask a developer for a new set of maps or run a script.
+- After: Marco opens "Road map" from the header, searches "Utah", adds it -> sees "Total download 6.6 GB; about 57 minutes in all, of which about 40 without planning" and "Utah is not linked by land to the other regions".
+- Decision enabled: Marco decides which regions to load and whether the cost (size, and the time planning is paused) is acceptable.
+
+#### Domain Examples
+
+1. Happy: after the first rebuild from the app, "Road map" lists Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon and Midi-Pyrénées with "Map data: 27 November 2026". Marco searches "Portugal", adds it and reads "Total download 6.8 GB; about 58 minutes, of which about 41 without planning".
+2. Edge: Marco adds "Utah": "Total download 6.6 GB; about 57 minutes, of which about 40 without planning" and "Utah is not linked by land to the other regions" (information only; he can still go on).
+3. Edge: today's map (built on 26 November 2026) was built before the app kept its regions: the screen says "Map coverage unknown" with the map date, and offers "Refresh map data" to build the same eight regions again.
+4. Error: Marco adds "North America": the screen refuses it, saying the download would be 14 GB and the limit is 8 GB, and the pending change is unchanged.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 The Road map screen shows what is loaded
+  Given the road map was rebuilt from the app and the served map has Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon and Midi-Pyrénées, with map data of 27 November 2026
+  When Marco opens "Road map" from the header beside the projects
+  Then he sees the eight regions by name and "Map data: 27 November 2026"
+  And no file, script or setting needs to be edited to change them
+
+Scenario: S2 Before the first rebuild from the app the screen says the regions are unknown
+  Given the served map was built on 26 November 2026, before the app kept the regions of a map
+  When Marco opens "Road map"
+  Then he sees "Map coverage unknown" with the map date and no list of regions
+  And he is offered "Refresh map data" to build the same eight regions again
+
+Scenario: S3 A region is added by searching the free list of regions by name
+  Given after a rebuild from the app the road map has the eight regions and Marco is on the "Road map" screen
+  When he searches "Utah" and adds the result
+  Then "Utah" is listed as "to be added" and the loaded regions are still the eight
+  And the screen says Utah is not linked by land to the other regions, as information only
+
+Scenario: S4 A region is removed as a pending change
+  Given after a rebuild from the app the loaded regions include Austria
+  When Marco removes Austria
+  Then Austria is listed as "to be removed" and is still loaded until a rebuild ends well
+
+Scenario: S5 Size and time are shown before applying, and too big is refused with the size
+  Given after a rebuild from the app the road map has the eight regions and Marco has added Portugal
+  Then the screen shows "Total download 6.8 GB", about 58 minutes in all and about 41 without planning
+  When he adds "North America" and the total goes above the limit of 8 GB
+  Then the screen refuses it, saying the size and the limit, and the pending change is unchanged
+```
+
+#### Acceptance Criteria
+
+- [ ] "Road map" is reachable from the header; after a rebuild from the app it shows the loaded regions (by their catalogue names) and the map date of the served map (S1)
+- [ ] Before the first rebuild from the app the screen says "Map coverage unknown", shows no regions and offers "Refresh map data" (S2)
+- [ ] A region is added by name from the free list (Utah, Portugal) and removed, as a pending change that never alters what the page shows until the rebuild ends well (S3, S4)
+- [ ] Regions not linked by land are named as information, never a refusal (S3)
+- [ ] Total download size and estimated rebuild time, with the part without planning (total minutes = 8.2 x GB + 2.5, pause = 6 x GB, rounded to the minute; D305), are shown before applying; more than 8 GB in all is refused, saying the size (S5)
+- [ ] The "Find a region" form says what is fetched: the public list of regions, the size of each shown region and the outline of each chosen one; nothing from the trip (S3)
+
+#### Outcome KPIs
+
+- Who: Marco | Does what: adds a region (Utah) and reads size and time before committing, without help and without a script | By how much: first try in the cold-start check | Measured by: the owner's cold-start check, step (e) | Baseline: regions fixed in a script; one gap reached the Pi (D296).
+
+#### Technical Notes
+
+- The free list of regions is Geofabrik's public index, cached by the planner for 7 days, with the size of each region shown and the outline of each chosen one (D306, ADR-020). Nothing from the trip or the household is sent; the screen says what is fetched. The record of the served map's regions travels with the tiles and is written by the refresh (D301, D313); `ROAD_MAP_AREA` is removed (D308).
+- Figures: the limit is 8 GB (`ROAD_MAP_MAX_GB`); today's eight regions are 6.4 GB, 55 minutes in all, 38 without planning. Eight plus Utah 6.6 GB (57 and 40), eight plus Portugal 6.8 GB (58 and 41) (D305).
+- Today's served map (20261126) has no record; coverage stays unknown until the gate's one real "Refresh map data" rebuild from the app, on a later UTC date (D313 Q1). The owner's cold-start check runs after it.
+- Region names are the catalogue's, with accents; "southern France" is no longer a name on any screen.
+- A pending change is US-31's; the rebuild itself is US-30's.
+
+#### Dependencies
+
+- Slice 03b/D277 refresh and ADR-013 Amendment 3; D296, D297; US-31, US-30; US-10a (unreachable run).
+
+### US-28: The page shows the regions and the map date, and warns when a trail or place is outside
+
+- job_id: J-05 | Slice: 12c | MoSCoW: Must | D295, D211 | Size: 0.8 d
+
+#### Problem
+
+Marco adds two Spanish trails to a trip that starts in Milan and learns only after a long "Plan the route" that they cannot be connected. The page never says which regions have roads or how old the map is (the date hides in "Details"). He cannot tell whether a place he added in Morocco is inside the planner's world.
+
+#### Who
+
+- Marco | laptop in the evening, adds many GPX files and places; sometimes on his 390 px iPhone from the sofa
+
+#### Solution
+
+Build the trip shows a short line: "Roads loaded for: <regions>" and "Map data: <date>", in view and also on a phone. When a trail or place is added outside the loaded regions, the page says so at once, and the item's row carries the same warning. The item is kept (proposal D299): a later refresh may cover it. A trail counts as outside when its entry or exit is. Planning is not blocked. When a trip's stops lie in loaded areas that are not linked by land (Europe and Utah), Build the trip says a trip between them would need a ferry.
+
+#### Elevator Pitch
+
+- Before: Marco plans, waits, and reads "cannot be connected to any other stop" for a place he put in Morocco.
+- After: Marco clicks the map in Morocco -> sees "Casablanca is outside the planner's road map (Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon and Midi-Pyrénées). It is kept, but it can't be planned unless its region is added on the Road map screen" and the row shows an "Outside road map" tag; the line "Map data: 27 November 2026" is in view above the list.
+- Decision enabled: Marco decides at once to remove the place or to add its region on the Road map screen (US-27), before he plans.
+
+#### Domain Examples
+
+1. Happy: Marco opens "Alpi Occidentali giugno 2027" and sees "Roads loaded for: Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon and Midi-Pyrénées" and "Map data: 27 November 2026". No tag on any row.
+2. Edge: Marco uploads "algarve.gpx" (Portugal). The page says the trail is outside the road map, keeps it and tags its row.
+3. Edge: Marco types "Chefchaouen" at 35.1688, -5.2636; the place is added with the tag; after he adds a region that covers it on the Road map screen and the rebuild ended, the tag is gone.
+4. Error: today's state, before the first rebuild from the app: the page says "Map coverage unknown" and shows no tags, rather than guessing.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 Build the trip shows the regions and the map date
+  Given after a rebuild from the app the served map has Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon and Midi-Pyrénées, with map data of 27 November 2026
+  When Marco opens "Alpi Occidentali giugno 2027" on Build the trip
+  Then he sees "Roads loaded for" with those eight names and "Map data: 27 November 2026"
+  And neither is inside "Details"
+  And on a 390 px wide iPhone both are shown in full width text with no horizontal scroll
+
+Scenario: S2 A trail outside the map is warned at add time and on its row, and kept
+  Given after a rebuild from the app the road map has the eight regions and Marco is building "Spagna test"
+  When he uploads "algarve.gpx", a trail in Portugal
+  Then the page says "algarve" is outside the planner's road map and names the regions loaded
+  And the trail stays in the list with an "Outside road map" tag on its row
+
+Scenario: S3 A place outside the map is warned whichever way it was added
+  Given after a rebuild from the app the road map has the eight regions and Marco is building "Spagna test"
+  When he adds "Chefchaouen" in Morocco by a click on the map, and "Lagos" in Portugal by typed coordinates
+  Then each is kept, each shows the warning when added and the tag on its row
+
+Scenario: S4 A place inside the map shows no warning
+  Given the loaded regions include Spain, as after a rebuild from the app
+  When Marco adds "Cadaques" at 42.2889, 3.2776
+  Then no warning is shown, at add time or on its row
+
+Scenario: S5 Planning is not blocked by an outside item and says why it fails
+  Given after a rebuild from the app the road map has the eight regions and "Spagna test" holds "Torino" as Start and End and the Moroccan place "Chefchaouen"
+  When Marco presses "Plan the route"
+  Then the planner's own words are shown for the run that couldn't plan
+  And the page names the regions with roads, as the row warning already did
+
+Scenario: S6 Without knowledge of the loaded map the page does not invent warnings
+  Given the served map was built on 26 November 2026, before the app kept its regions (today's state), or the page cannot read them
+  When Marco adds "Chefchaouen"
+  Then the page says "Map coverage unknown" with the map date and shows no "Roads loaded for" list
+  And it shows no outside-the-map warning or tag for any item
+
+Scenario: S7 Stops in areas not linked by land are warned on Build the trip
+  Given after a rebuild from the app the loaded regions are the eight above and Utah, which is not linked by land to them
+  When Marco's trip holds "Torino" as Start and the place "Moab" in Utah
+  Then Build the trip says these stops are in areas not linked by land, so a trip between them would need a ferry
+  And "Plan the route" stays available
+```
+
+#### Acceptance Criteria
+
+- [ ] After a rebuild from the app, "Roads loaded for" lists the eight catalogue names (Italy, Spain, Switzerland, Austria, Rhône-Alpes, Provence-Alpes-Côte d'Azur, Languedoc-Roussillon, Midi-Pyrénées) and "Map data" the date, in view on Build the trip, outside "Details", at 390 px too (S1)
+- [ ] A trail or place outside the loaded regions is warned at add time and tagged "Outside road map" on its row, for every way of adding, and is kept (S2, S3, D299)
+- [ ] Portugal and Morocco count as outside; a place in Spain, Italy or Provence-Alpes-Côte d'Azur does not (S3, S4)
+- [ ] Plan the route stays available; the planner's own failure words (D211) and the region names are shown after a failed plan (S5)
+- [ ] Today's map without a record, or an unreadable coverage, shows "Map coverage unknown", no region list and never a warning or a tag (S6)
+- [ ] Stops in areas not linked by land are warned on Build the trip, not refused (S7)
+
+#### Outcome KPIs
+
+- Who: the owner | Does what: learns that a place is outside the map before he plans | By how much: 100% of outside items warned at add time in the cold-start check; 0 questions about what the map covers | Measured by: the owner's cold-start check, step (c) | Baseline: only a failed run, with an unexplained message, until D295.
+
+#### Technical Notes
+
+- "Outside" uses the regions' outlines, not rectangles: a rectangle around Spain holds Portugal (D302; Andorra is outside since D297). A trail is outside when its entry or exit is. The test uses the served map's regions (US-27, US-30), never a pending choice. Until the first rebuild from the app the served map has no record (D313 Q1), so S6 is today's state; S1 to S5 and S7 need that rebuild first.
+- No new planning behaviour. A warning is page text from data the page already has plus the coverage of the served map; wording is UI text, not a planner message, so D211 does not apply to it.
+- Warnings stay after "Edit trip" and in the read-only Planning phase; they never alter the status words of slice 12b (D284).
+- The map date is the same date as in "Details" (the provider line, D285 unchanged there).
+
+#### Dependencies
+
+- US-27, US-30 (the served regions); US-23 (list, Add menu, phases); US-02a, US-02c, US-16 (ways to add); US-10a (failure words); US-25 (Details).
+
+### US-29: I find a place by typing its name
+
+- job_id: J-01 | Slice: 12c | MoSCoW: Must | D298 | Size: 0.6 d
+
+#### Problem
+
+To add "Gorges du Verdon" Marco must find it on the map by hand, or look up its coordinates elsewhere and type them. On his phone he can do neither easily. The page has no way to say "this place, by its name".
+
+#### Who
+
+- Marco | laptop, knows places by name, not by coordinates; sometimes on his 390 px iPhone from the sofa; he cares that his trip data stays in the house (J-06)
+
+#### Solution
+
+A fourth way in the existing "Add" menu: "Search for a place". Marco types a name and presses Search (never as he types), sees up to five results with their region, picks one and it joins the list as a place. Fine print says: "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors." No account, no key, no cost. The menu opens in the page flow (D295, D298). If nothing is found, if the service does not answer or is busy, or if the result is outside the loaded regions, the page says so and the trip is unchanged except for a kept, warned place.
+
+#### Elevator Pitch
+
+- Before: Marco copies coordinates from another site to add "Gorges du Verdon".
+- After: Marco opens "Add" and chooses "Search for a place", types "Gorges du Verdon", presses "Search" -> sees "Gorges du Verdon, Provence-Alpes-Côte d'Azur, France" and picks it -> sees it in the list as a place, with no warning because it is inside the map.
+- Decision enabled: Marco decides which stops to put in his trip by name, and whether a result is where he meant it.
+
+#### Domain Examples
+
+1. Happy: Marco searches "Gorges du Verdon", picks the first result; "Gorges du Verdon" joins "Assietta weekend" as a place at its coordinates.
+2. Edge: Marco searches "Lagos" and gets a result in Portugal and one in Nigeria; he picks the one in Portugal; it is added with the outside-the-map warning (US-28) and kept.
+3. Error: Marco searches "Zxqvbn" and reads "No place found for 'Zxqvbn'. Try another spelling or add it by clicking on the map."
+4. Error: the search service is busy or unreachable; Marco reads "The place search isn't answering. Try again in a minute, or add the place another way." and the trip is unchanged.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 A place is found by name and joins the trip
+  Given Marco is building "Assietta weekend"
+  When he opens "Add", chooses "Search for a place", types "Gorges du Verdon" and presses "Search"
+  Then he sees results with their region names
+  And after he picks "Gorges du Verdon, Provence-Alpes-Côte d'Azur, France" it is in the list as a place, with no warning when the road map was rebuilt from the app and covers it
+
+Scenario: S2 Nothing is sent until Marco presses Search, and the screen says what leaves the house
+  Given the search form of "Add" is open
+  When Marco types "Gorges du Verdon" without pressing Search
+  Then no search is made
+  And the form says "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors."
+
+Scenario: S3 No result gives a clear message
+  Given the search form is open
+  When Marco searches "Zxqvbn" and nothing is found
+  Then he reads that nothing was found with a hint to add the place on the map
+  And the trip is unchanged
+
+Scenario: S4 An unreachable or busy search service leaves the trip unchanged
+  Given the search service does not answer, or answers that it is busy
+  When Marco searches "Gorges du Verdon"
+  Then he reads that the place search isn't answering and to try again later or add the place another way
+  And the other three ways to add still work and the trip is unchanged
+
+Scenario: S5 A result outside the road map is added with the warning
+  Given after a rebuild from the app the loaded regions are the eight of the served map
+  When Marco searches "Lagos" and picks the result in Portugal
+  Then "Lagos" is in the list with the outside-the-map warning of US-28, at add time and as an "Outside road map" tag on its row
+
+Scenario: S6 Pressing Search twice quickly sends one search
+  Given Marco has typed "Gorges du Verdon"
+  When he presses "Search" twice within a second
+  Then one search is made and the results are shown once
+
+Scenario: S7 On a phone the search form fits and opens in the page flow
+  Given Marco opens "Add" on his 390 px wide iPhone
+  When he chooses "Search for a place"
+  Then the form and results open under the heading bar in the page flow, not covering "Plan the route" or any other control
+  And every control is at least 44 px high and wide
+```
+
+#### Acceptance Criteria
+
+- [ ] "Search for a place" is the fourth item of "Add"; a picked result joins the one list as a place (S1)
+- [ ] No search while typing; one search per press, at most one per second; the screen says only the typed words are sent and credits the service (S2, S6)
+- [ ] No result, an unreachable or busy service and a result outside the map each give a clear message and no unwanted change (S3, S4, S5)
+- [ ] The menu is in the page flow at 390 px, targets >= 44 px (S7, D295, D298)
+
+#### Outcome KPIs
+
+- Who: the owner | Does what: adds a place by name in the cold-start check | By how much: first try, under 30 seconds, no question about what is sent | Measured by: the owner's cold-start check, step (a) | Baseline: map click or typed coordinates only.
+
+#### Technical Notes
+
+- Settled by DESIGN (D307, ADR-019): the public Nominatim service, called by the planner server (a browser cannot set the User-Agent), identifying User-Agent, one request a second, no search-as-you-type, attribution; no contact email is sent (D313 Q7); a setting switches the search off.
+- Data stays in the house (J-06) except the typed words; the trip, the GPX files and the project name are never sent. The service necessarily sees the home internet address, which the fine print says ("from your home connection", D314).
+- A paid or key-bearing service is OUT. History and "search near the trip" are OUT. The earlier "caching OUT" line is superseded by D307: an in-memory cache of recent answers is required by the service's policy; it is never stored on disk.
+- A result's coordinates and name become a place as in US-02c; the warning is US-28's.
+
+#### Dependencies
+
+- US-23 (Add menu); US-02c (add place); US-28 (outside-the-map warning); D295, D298 (menu in the page flow).
+
+### US-30: I see the rebuild progress and result, and a failed rebuild brings the old map back
+
+- job_id: J-06 | Slice: 12c | MoSCoW: Must | D296, D297; owner feedback 2026-11-26 | Size: 1.1 d
+
+#### Problem
+
+A rebuild takes about 55 minutes on the Pi, and today it is a terminal run the owner watches. He needs to leave it, close the laptop, and later know on any device whether it worked, and what planning could do meanwhile. A rebuild that fails must not leave him without a map.
+
+#### Who
+
+- Marco (the owner) | starts it in the evening, checks in the morning from the laptop or his 390 px iPhone, and wants to know why he cannot plan right now
+
+#### Solution
+
+Once started, the "Road map" screen shows the steps (Waiting, "Checking the Pi's disk and memory", Downloading, Building, "Switching to the new map") and, when it ends, the result. During the download the old map keeps planning; during the build planning is paused: "Plan the route" is disabled with the line "The road map is being rebuilt; planning is back at about <time>." (D309). A failed rebuild brings the old map back, says why in plain words, and the regions and date are unchanged, with the change kept. A rebuild interrupted by a power cut ends the same way. A successful one shows the new regions and date there and on Build the trip. A small helper installed once on the Pi by the deploy does the work; the app asks it.
+
+#### Elevator Pitch
+
+- Before: the owner watches a terminal for an hour and has no way to see the result from his phone.
+- After: the owner presses "Rebuild now", closes the laptop, opens the "Road map" screen on his phone later -> sees "Building the road map, planning is paused, back around 03:10", and the next morning "Done: Utah added, map data 27 November 2026".
+- Decision enabled: the owner decides whether to plan now or wait, and whether to try again after a failure.
+
+#### Domain Examples
+
+1. Happy: Marco starts "Rebuild now" for Portugal at 21:00; at 21:05 the screen says "Downloading" and planning still works; at 21:17 "Building" and "Plan the route" is disabled with "The road map is being rebuilt; planning is back at about 21:58."; at 21:56 "Switching to the new map"; at 21:58 "Done".
+2. Edge: Marco opens "Assietta weekend" during the build: the trip and the exports of earlier routes are still readable, "Plan the route" is disabled with the line and the time.
+3. Edge: the rebuild planned for 02:00 starts at 02:00, not earlier; at 08:00 Marco reads "Done" on his phone.
+4. Error: the disk is too small at the start: the screen says the rebuild failed because the Pi has 18 GB of free disk and needs 25 GB; the old map (26 November 2026) is still served, the regions are unchanged and the change is kept.
+5. Error: the power goes off during the build; after the Pi restarts the old map is served again and the screen says the rebuild was interrupted and the change is kept.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 Progress shows the step the rebuild is in
+  Given a rebuild adding Portugal has started
+  When Marco opens "Road map"
+  Then he sees which step it is in (Waiting, "Checking the Pi's disk and memory", Downloading, Building or "Switching to the new map")
+  And the loaded regions and map date are still those of the served map
+
+Scenario: S2 During the download the old map keeps planning
+  Given the rebuild is downloading
+  When Marco plans "Alpi Occidentali giugno 2027"
+  Then the route is planned on the old map as usual
+
+Scenario: S3 During the build planning is disabled and the page says until when
+  Given the rebuild is building
+  When Marco opens "Assietta weekend" on Build the trip
+  Then "Plan the route" is disabled with the line "The road map is being rebuilt; planning is back at about 22:20."
+  And the trip and the exports of earlier routes stay readable
+
+Scenario: S4 A successful rebuild shows the new regions and date everywhere
+  Given the rebuild ended well
+  When Marco opens Build the trip
+  Then "Roads loaded for" names the new regions and "Map data" the new date
+  And the "Road map" screen says the rebuild is done
+
+Scenario: S5 A failed rebuild brings the old map back and says why
+  Given the Pi has 18 GB of free disk and the rebuild needs 25 GB
+  When Marco opens "Road map"
+  Then it says the rebuild failed, why, in plain words, and that the change is kept
+  And the earlier map, its regions and its date are served, and planning works
+
+Scenario: S6 A planned rebuild starts at its time and the result is there next morning
+  Given Marco planned a rebuild for 02:00 and closed the page
+  When he opens "Road map" on his phone at 08:00
+  Then it shows the result of the rebuild that began at 02:00 and not before
+
+Scenario: S7 A rebuild interrupted by a power cut ends with the old map served
+  Given the rebuild was building when the Pi lost power
+  When the Pi restarts and Marco opens "Road map"
+  Then the earlier map is served again and the result says the rebuild was interrupted, with the change kept
+  And if the switch to the new map had already happened, the result says the rebuild is done and the new regions are shown
+```
+
+#### Acceptance Criteria
+
+- [ ] The screen shows the steps (Waiting, "Checking the Pi's disk and memory", Downloading, Building, "Switching to the new map") and then done or failed, from any device (S1, S6)
+- [ ] The old map keeps planning during the download; during the build "Plan the route" is disabled with "The road map is being rebuilt; planning is back at about <time>." (S2, S3)
+- [ ] A successful rebuild changes the regions and date on the screen and on Build the trip (S4)
+- [ ] A failed rebuild restores the old map, says why, keeps the change, and changes nothing the page shows (S5)
+- [ ] An interrupted rebuild leaves the old map served and says it was interrupted; if the switch had happened it is done (S7, D314)
+- [ ] A planned rebuild starts at its time, never before (S6)
+
+#### Outcome KPIs
+
+- Who: the owner | Does what: leaves a rebuild running and reads the result from his phone | By how much: 0 rebuilds that leave no served map; the result is read without a terminal in 100% of runs | Measured by: the Pi acceptance check with a forced failure, the owner's cold-start check | Baseline: a terminal run watched by hand.
+
+#### Technical Notes
+
+- The helper (a line of the deploy user's crontab, run every minute, installed by the deploy) runs the existing refresh with its safety (old map restored on any failure, a date already served refused). Progress and result are files in a small volume, one writer each; the app never runs a script (D303, D304, D314).
+- Planning is unavailable during the build because the engine is stopped while its map is built (38 of the 55 minutes today). The page disables "Plan the route" with its one line while the planner reports planning paused; a plan sent anyway (another tab) meets the existing unreachable failure, worded as today (D313 O5, D211).
+- After a power cut the helper recovers on the next minute: engine started, then the served map checked against the one the rebuild started (D314).
+- This story's scenarios 1 to 5 and 7 are measured after the gate's one real "Refresh map data" rebuild on a UTC date after 26 November 2026.
+- Public repository: no host, address, user name or secret in the helper's files or the docs.
+
+#### Dependencies
+
+- US-27, US-31 (choice, start and schedule); the existing refresh script and ADR-013 Amendment 3; US-28 (the served regions); D296, D297.
+
+### US-31: I start the rebuild now or at a time I pick, and I can cancel it before it starts
+
+- job_id: J-06 | Slice: 12c | MoSCoW: Must | D296, D297; owner feedback 2026-11-26 | Size: 0.6 d
+
+#### Problem
+
+A rebuild stops planning for about 40 minutes and downloads several gigabytes. Marco wants it to run when he chooses, for example at 02:00 while the household sleeps, and to change his mind before it starts. Today only a developer can start it, at a time agreed in a chat.
+
+#### Who
+
+- Marco (the owner) | decides in the evening, wants the rebuild at night, may reconsider the next morning
+
+#### Solution
+
+After the choice of regions (US-27), the Road map screen offers "Rebuild now" or a start time (for example tonight 02:00) and shows "Rebuild planned for tonight 02:00" with "Cancel" until the rebuild starts. "Refresh map data" (same regions, newer data) is the same workflow. One pending change at a time. At most one rebuild per UTC date of a kept map, with the next allowed time shown in Marco's own time. If the helper is not installed on the Pi, the screen says rebuilds are not set up and refuses a change.
+
+#### Elevator Pitch
+
+- Before: a rebuild starts only when a developer runs a script at a time agreed in a chat, and cannot be taken back.
+- After: Marco has added Utah, picks "Tonight 02:00" -> sees "Rebuild planned for tonight 02:00" and "Cancel"; he changes his mind at 22:00 and presses "Cancel" -> sees no pending change and the regions unchanged.
+- Decision enabled: Marco decides when the planner may be unavailable and whether to go ahead at all.
+
+#### Domain Examples
+
+1. Happy: Marco has added Portugal, presses "Rebuild now": the screen says the rebuild is waiting to start, then US-30 takes over.
+2. Edge: Marco picks tonight 02:00 for Utah (a start between 2 minutes and 14 days ahead), then cancels at 22:00; nothing is pending and the loaded regions and map date are unchanged.
+3. Edge: Marco presses "Refresh map data" with the same eight regions and picks tonight 02:00; a second change is refused while this one is pending.
+4. Error: at 02:01 Marco presses "Cancel" and the screen says "It has already started"; the change goes on.
+5. Error: a rebuild ended well on 27 November 2026 (UTC); Marco in Milan tries another start the same UTC day and reads "The next rebuild can start from 01:00 on 28 November."
+6. Error: the helper was never installed (a Pi installed by hand): the screen says rebuilds are not set up on the Pi and refuses the change.
+
+#### UAT Scenarios (BDD)
+
+```gherkin
+Scenario: S1 Marco picks now or a start time
+  Given a pending change adds Portugal
+  When he chooses "Rebuild now", or chooses tonight 02:00
+  Then the rebuild is waiting to start within a minute, or the screen says "Rebuild planned for tonight 02:00"
+
+Scenario: S2 A planned rebuild can be cancelled until it starts, not after
+  Given a rebuild is planned for tonight 02:00
+  When Marco cancels it at 22:00
+  Then nothing is pending and the loaded regions and map date are unchanged
+  When he presses "Cancel" at 02:01 on another rebuild that has just started
+  Then the screen says it has already started and the rebuild goes on
+
+Scenario: S3 Refresh map data is the same workflow and only one change is pending
+  Given Marco presses "Refresh map data" with the same regions
+  Then the screen shows its size and time and offers "Rebuild now" or a start time
+  And while it is pending or running, a second change is refused until the first is applied or cancelled
+
+Scenario: S4 One rebuild a day, counted by the kept map, with the next time shown
+  Given a rebuild ended well on 27 November 2026 UTC and Marco is in Milan
+  When he tries to start another the same UTC day
+  Then the screen refuses it and says the next rebuild can start from 01:00 on 28 November
+  And a rebuild that failed before the switch to the new map leaves no map that day, so it does not use the day up
+  And a rebuild that failed after the switch keeps its map and does use the day up
+
+Scenario: S5 Without the helper the screen says rebuilds are not set up
+  Given the helper is not installed on the Pi
+  When Marco opens "Road map" and tries to apply a change
+  Then the screen says rebuilds are not set up on the Pi and refuses the change
+  And the loaded regions and the page's other functions are unchanged
+```
+
+#### Acceptance Criteria
+
+- [ ] "Rebuild now" or a start time (from 2 minutes to 14 days ahead); "Rebuild planned for <time>" with "Cancel" (S1)
+- [ ] Cancel works until the rebuild starts, then says "It has already started" (S2)
+- [ ] "Refresh map data" uses the same workflow; one change pending or running at a time (S3)
+- [ ] At most one rebuild per UTC date of a kept map; the next allowed time is shown in Marco's own time; a failure before the switch does not use the day up, one after the switch does (S4, D305, D314)
+- [ ] Without the helper the screen says rebuilds are not set up and refuses a change (S5)
+
+#### Outcome KPIs
+
+- Who: Marco | Does what: schedules a rebuild for a time he names and cancels it before it starts, without help | By how much: first try in the cold-start check; 0 rebuilds started at a time he did not choose | Measured by: the owner's cold-start check, step (e), and the Pi acceptance check | Baseline: a developer starts it in a terminal.
+
+#### Technical Notes
+
+- A request is one file in a small volume, cancelled by renaming; whoever renames first wins the race, so a cancel after the start is refused (D303). The start time travels as UTC; the page shows the browser's local time and "(Pi time)" only when it differs (D305).
+- One rebuild a UTC day: the refresh names the map by the UTC date and refuses a name already served, kept for rollback or present; a failure before the promotion leaves no directory, a failed switch keeps its folder (D305, D314).
+- The helper's absence is detected by a file it touches every run (D303); the page treats rebuilds as not set up when that file is missing or older than 5 minutes, checked before any change is written (code `rebuilds_not_set_up`, D315).
+- The owner names the start time of every rebuild (consent note); nothing starts in the background.
+
+#### Dependencies
+
+- US-27 (the pending change); US-30 (progress and result); the refresh script and ADR-013 Amendments 3 and 5.
+
 ## Wave: DISCUSS / [REF] Coverage map (HC and acceptance tests)
 
 | Constraint / test | Stories | Scenario(s) |
@@ -3487,6 +3956,43 @@ Revision 6: DESIGN back-propagation U1-U42 (`design/upstream-changes.md` Revisio
 | 9 Outcome KPIs | PASS (cold-start a, b) | PASS (cold-start c) | PASS (0 questions; no engine text outside Details) | PASS (route followed at trip-wide zoom) |
 
 DoR: self-assessed PASS on all 9 items for US-23 to US-26; peer review not run in this pass.
+
+### Slice 12c DISCUSS (2026-11-26)
+
+- Stories (revised 2026-11-26 after the owner's feedback on the sketches, then after the consolidated review, D313, D314): US-27 (the "Road map" screen: loaded regions and date, today's unknown state, add by name, remove, size and time before applying, size limit; 5 scenarios), US-31 (start now or at a time, cancel until it starts, "Refresh map data", one change, one rebuild a UTC day, helper not installed; 5 scenarios), US-30 (progress by step, planning during download and disabled during build, result, failed and interrupted rebuilds restore the old map; 7 scenarios), US-28 (regions and map date in view; warning at add time and tag on the row for a trail or place outside the map, kept; unknown coverage; stops not linked by land; 7 scenarios), US-29 (place search by name as the fourth way to add; 7 scenarios). 31 scenarios in all, about 22 of them error, edge or phone paths. US-31 is new: US-27 as first written held 9 scenarios, over the 7 limit.
+- Scope assessment: PASS at the upper end, by the owner's choice of one slice (D299: the owner's exception to the one-day slice rule, D13). 5 stories, 3 contexts (the web page and its new screen, the planner's server side with the region list, schedule and place search, a helper installed once on the Pi by the deploy), about 3.9 d (US-27 0.8, US-31 0.6, US-30 1.1, US-28 0.8, US-29 0.6) against a brief that says "about 4 days, at risk" (the helper and the rebuild workflow, search service terms, the outline-based "outside" test). Elephant Carpaccio: US-27, US-31 and US-30 (2.5 d) are the first thin slice if the owner wants to split later; US-28 and US-29 are independent of it. The owner's cold-start check is the stop rule.
+- JTBD trace: US-27, US-31 and US-30 -> J-06 (the owner owns the planner and its map at home; nothing changes unless he chooses and times it), kept as the job rather than J-01 because what changes is who controls the map, not how a trip is planned; US-28 -> J-05 (know what is included: what the map covers and how old it is); US-29 -> J-01 (plan the whole trip, adding stops by name), with the J-06 tension stated on screen: only the typed words leave the house, from the home connection (the region list search fetches Geofabrik's public index, the size of regions shown and the outline of a chosen one; no trip data leaves). US-27 and US-28 touch J-01 (the reason a trip can't be planned). No new job. Back-links are in `docs/product/jobs.yaml`.
+- Persona: one per story, Marco (the owner of the household planner, on a laptop or sometimes his 390 px iPhone); Giulia, who only reads, drives no 12c scenario.
+- Feature type user-facing, brownfield, no walking skeleton, lightweight UX depth (happy path and key error paths).
+- UI words fixed here (the approved screens, D300, and D312): "Road map" (header link and screen), "Rebuild now", "Refresh map data", "Roads loaded for", "Map data", "Search for a place", "Search", "Map coverage unknown", "Outside road map" (row tag), "not linked by land"; steps "Waiting", "Checking the Pi's disk and memory" (first step, D312 records `checking`), "Downloading", "Building", "Switching to the new map"; the add-time warning says a trail or place is "outside the planner's road map" and names the regions. Slice 12b words are kept ("Add", "Build the trip", "Plan the route", "Couldn't plan", "Details"). No engine words: no "tileset", "extract", "geocoder", "Valhalla" on the page, and "Nominatim" only in the place search's fine print and credit.
+- User decisions checked against every scenario (D276 lesson): D208 F2 (no export while a job is active; Add and Search are not offered while planning, as "Add" is not: US-29 S1 runs on Build the trip only), D208 F3 (a failed plan keeps the previous route; tags change nothing there: US-28 S5), D211 (the planner's failure words verbatim, region names added below, never inside: US-28 S5; a plan sent during the build meets the existing unreachable failure, US-30 technical notes), D284 (status words unchanged; tags and the disabled-button line are not statuses: US-28, US-30 S3), D285 (the provider line and the date stay in "Details" too; the date is also shown in view: US-28 S1), D295 (menus in the page flow, 44 px targets: US-29 S7; "Remove" stays on every row, so an outside item can be removed), D298 (Add menu in the page flow; "Plan the route" disabled with a reason on an empty trip and, in 12c, during the build, enabled with an outside item: US-28 S5, US-30 S3; place search joins this slice), D296, D297 (the old map is restored on failure and a date already served is refused: US-30 S5, S7, US-31 S4; the earlier "gap is refused" proposal is dropped, the screen only informs: US-27 S3, US-28 S7), D299 (items outside the map are kept and warned: US-28 S2, S3, US-29 S5), D313 Q1 (coverage unknown until the first rebuild from the app: US-27 S2, US-28 S6), the owner's consent note (the owner names the start time of every rebuild: US-31 S1, S2, US-30 S6).
+- Outcome KPI: the owner's cold-start check on a laptop, run after the gate's one real "Refresh map data" rebuild from the app on a UTC date after 26 November 2026 (D313 Q1): (a) add one real Spanish GPX track and a place found by name, (b) see the regions and the map date without opening "Details", (c) see a warning for a place in Portugal or Morocco, (d) plan the trip, (e) on the "Road map" screen add "Utah" (or another region), read the size and time, schedule the rebuild for a later day and cancel it, all without help, in under 8 minutes, without asking what a word means. Disproved if any of these fails.
+- OUT (binding, brief): background or automatic refreshes; regions drawn on the map; routing across ferries; search as you type, history, a paid or hosted service, a key; new planning behaviour; translations. IN since the owner's feedback: changing regions from the page, and the small helper installed once on the Pi by the deploy.
+- Slice 12 and 12b scenarios changed on purpose (DISTILL changes them, it does not keep both):
+  - D295's fixed sentence "The planner's road map covers <area>" (a gate-bug fix, no DISCUSS scenario) -> the regions' names read from the served map (US-28 S5); `ROAD_MAP_AREA` is removed, no second copy (US-27 technical notes, D308).
+  - The header gains a "Road map" link beside the projects (US-27 S1); slice 12 header checks are extended.
+  - While the road map is being built, "Plan the route" is disabled with a line (US-30 S3), as D298 does for an empty trip; slice 12b scenarios that plan assume no rebuild is running.
+  - US-23 S2 ("upload a GPX file, click on the map, or type coordinates") -> four ways: the same three and "Search for a place" (US-29 S1).
+  - US-23 S1 ("no summary card, itinerary, 'Export GPX' or 'Details' is shown") stays; Build the trip gains the "Roads loaded for" and "Map data" lines (US-28 S1), so any check that lists every element of Build the trip is extended.
+  - US-25 S2 (map-data date only inside "Details") -> the date is also in view on Build the trip; "Details" keeps it (D285).
+  - US-10a S1 (provider line "Valhalla (map data <date>)") stays unchanged.
+  - Kept unchanged: US-23 S3 to S7, US-24, US-26, US-22.
+
+The table uses this project's 9-item DoR, as the slice 12b table did (the nWave template's 8 items plus the outcome-KPI item).
+
+| DoR item | US-27 | US-31 | US-30 | US-28 | US-29 |
+|----------|-------|-------|-------|-------|-------|
+| 1 Problem in domain words | PASS | PASS | PASS | PASS | PASS |
+| 2 Persona with traits | PASS (Marco, owner, laptop) | PASS (Marco) | PASS (Marco, laptop and phone) | PASS (Marco, laptop and phone) | PASS (Marco, laptop and phone) |
+| 3 3+ real examples | PASS (4) | PASS (6) | PASS (5) | PASS (4) | PASS (4) |
+| 4 GWT, 3-7 scenarios | PASS (5) | PASS (5) | PASS (7) | PASS (7) | PASS (7) |
+| 5 AC from UAT | PASS | PASS | PASS | PASS | PASS |
+| 6 Right-sized | PASS (0.8 d) | PASS (0.6 d) | PASS (1.1 d) | PASS (0.8 d) | PASS (0.6 d) |
+| 7 Technical notes | PASS (D301, D305, D306, D308) | PASS (D303, D305, D314) | PASS (D303, D304, D313, D314) | PASS (D302) | PASS (D307, ADR-019) |
+| 8 Dependencies tracked | PASS (refresh, ADR-013 A3, D296, D297, US-31, US-30) | PASS (US-27, US-30, ADR-013 A5) | PASS (US-27, US-31, US-28, refresh script) | PASS (US-27, US-30, US-23, US-02a, US-02c, US-16, US-10a, US-25) | PASS (US-23, US-02c, US-28, D295, D298) |
+| 9 Outcome KPIs | PASS (cold-start e) | PASS (cold-start e) | PASS (result read from the phone; 0 rebuilds without a served map) | PASS (100% warned at add time) | PASS (add by name first try) |
+
+DoR: self-assessed PASS on all 9 items for US-27 to US-31; reviewed once by the consolidated review of 2026-11-26, whose findings this revision answers.
 
 ## Wave: DISCUSS / [WHY] jtbd-narrative
 
@@ -4772,6 +5278,242 @@ C4Container
   Rel(spa, tiles, "Loads terrain tiles from")
 ```
 
+## Wave: DESIGN / [REF] Slice 12c the planner knows its map (2026-11-26)
+
+Propose mode, application and platform scope, written by nw-solution-architect (Morgan) from the orchestrator's design, checked against the code. Inputs: slice-12c brief, US-27 to US-30 and the "Slice 12c DISCUSS" block, the owner's approved sketches (11 screens, D300), D295 to D298, ADR-013 (Amendments 3 and 4), ADR-004, ADR-011, `tiles-refresh.sh`, `lib.sh`, `deploy.sh`, `compose.yaml`, the Dockerfile, the settings and composition root, the HTTP adapters, `valhalla_routing_provider.py` and the web files the slice touches. Decisions D301-D311, revised in place and listed in D314 after the consolidated review and D313 (Upstream Issues table). ADR-013 Amendment 5, ADR-019 (place search) and ADR-020 (road-map regions chosen in the app) record the durable parts. Words on screen are those of the approved sketches; this section is the reference for behaviour.
+
+### Quality drivers and constraints
+
+Operational simplicity and safety of the one Pi (a rebuild stops the engine for about 40 minutes; one household), household privacy (only typed words leave the house, J-06), testability offline (HC tests run with the mock road map), and a first-time owner who must never edit a file. Team of one owner plus agents, so no new service: the modular monolith gains three modules (a pure domain, an application facade, three adapters) and the Pi gains one cron-driven script. Simplest-solution check: rejected (1) a tracked region list edited by the owner (D299 supersedes it), (2) giving the planner the docker socket to run the rebuild itself (root-equivalent on the host for a web app that takes uploads), (3) a long-lived helper container or systemd unit (needs root to install; a user crontab line does not), (4) bounding boxes for "outside the map" (Italy's box holds Corsica, most of Switzerland's neighbours and half of Tunisia's sea; US-28 needs outlines).
+
+### The served-map record and how the planner finds it (D301)
+
+The truth about the map is a record that travels with the tiles, never a setting.
+
+- **One owner of the record: the refresh (D313, D314).** After `prepare-build`, and after the downloads have succeeded, the refresh builds `road-map.json` itself from the regions file (one line per region: key, name, parent name, pbf address, poly address, bytes), escaping with `lib.sh` `json_text`, so the record lists what the refresh actually downloaded and built. The planner writes no record and the helper copies none. The `.poly` outlines are downloaded by `valhalla-fetch` into `road-map-meta/outlines/` of the volume, **not into `build/`** (`build/` is `/custom_files` of `valhalla-build`, compose.yaml:219-224). `valhalla-fetch` mounts only subpath `build` (compose.yaml:189-193), so it gets a **second read-write mount of `valhalla-data`, subpath `road-map-meta`, at `/meta`**; the refresh creates `road-map-meta/` in `prepare-build` (subpath must exist before the mount, as for `build`) and the record is written there by a short `docker run` of the pinned image, as the other refresh steps do. The promote step (tiles-refresh.sh:194-201, today the five `TILES_FILES` only) also moves `road-map-meta/road-map.json` and `road-map-meta/outlines/` into `tilesets/<NEW>/`, so record and tileset are one unit and `tiles-rollback.sh` (which uses no checksums) needs no change. `SHA256SUMS` also covers `road-map.json` and the outlines; `tiles-seed.sh` and `volume_stored_sums` callers compare only the five tileset names (DELIVER checks; a test pins it).
+- **Safe by construction inside the tileset directory.** The tileset directory is Valhalla's `/custom_files` at serve time, so the record and `outlines/` sit beside the tiles. The refresh's switch starts valhalla on that directory and **undoes the switch if `/status` fails or reports the old epoch** (tiles-refresh.sh:205-214), so a record that upset the engine could never become the served map.
+- **Content of `road-map.json` (schema 1).** `{"schema": 1, "regions": [{"key", "name", "parent_name", "pbf_url", "outline", "bytes"}]}`. No tileset name and no date: the tileset is the directory it sits in, and the map date is the mtime of `valhalla_tiles.tar` there (ADR-013 Amendment 3, D242: exactly Valhalla's `tileset_last_modified`; `mv` within the volume keeps it). Names and parent names come from the catalogue, through the request and the regions file.
+- **Region key rule (D315, replacing D314's path rule).** The key is the **Geofabrik index `id`** (`italy`, `rhone-alpes`, `us/utah`); pattern `^[a-z0-9-]+(/[a-z0-9-]+)?$`. The orchestrator checked the real index (554 features, 2026-11-26): ids are unique, every feature has `urls.pbf` and `urls.poly`, every `parent` resolves. The download and outline addresses are **the index's own `urls.pbf` and `urls.poly`**, which the planner writes into the request; the helper checks only that an address starts with `ROAD_MAP_DOWNLOAD_PREFIX` and has no `..` segment. Today's eight become ids: `italy`, `spain`, `switzerland`, `austria`, `rhone-alpes`, `provence-alpes-cote-d-azur`, `languedoc-roussillon`, `midi-pyrenees` (seed list `SEED_REGION_KEYS`). **The refresh's download addresses therefore change** from `tiles-refresh.sh:34` (`europe/italy-latest.osm.pbf`, which Geofabrik redirects) to the index addresses (`europe/italy/italy-latest.osm.pbf`); the gate's real rebuild verifies it. The drift test compares the seed ids with a trimmed copy of the index fixture (ids and addresses), not with `EXTRACTS`; `make tiles-refresh` by hand keeps `EXTRACTS` unchanged. **The parent comes from the index's `parent` field**; ancestors and descendants (`RegionChoice`, "Utah is already in the road map as part of ...") walk that chain. A feature whose chain does not resolve is not offered (the catalogue probe counts them).
+- **How the planner picks the served directory (D314).** The adapter side is data only: port `ServedMap` (driven, Probeable) answers a **typed** `ServedMapId` (`epoch: int` for Valhalla, `directory: str` for the mock) or `None`; port `TilesetStore` answers a **listing** of `ROAD_MAP_DIR` (`/valhalla-data/tilesets`): per directory its name, the mtime of `valhalla_tiles.tar` (or none), and the parsed record (strict, schema 1, or none) with the outlines. The matching is a pure function in `domain/roadmap` (`select_served(listing, served_id)`, mutation-tested): epoch equals a tar mtime, or the directory name equals the id. No match, no listing, a missing or schema-unknown record: **coverage unknown** (known = false), never an error. Earlier tilesets are listed the same way, so `make tiles-rollback` works unchanged (a directory without a record, like today's `20261126`, answers unknown).
+- **Epoch source.** The Valhalla provider caches its identity (`valhalla_routing_provider.py:109-119`; refreshed only by a probe, :130), so the reader must not use `provider_id`. `ValhallaRoutingProvider` gains `served_epoch()`: an uncached `/status` read, one attempt, probe timeout, no retry, no observer; failure -> `None`. While the engine is stopped for the build (about 40 minutes) the application service keeps the last matched directory in memory and, when the process restarted meanwhile, falls back to `serving=<tileset>` from `progress.txt` (D303), so the page does not turn "unknown" during a rebuild.
+- **Mock rule (offline, test-friendly).** With `ROUTING_PROVIDER=mock` the setting `ROAD_MAP_SERVED_TILESET` names the directory (empty means unknown); the mock `ServedMap` answers it and **the same `select_served` resolves it** against the listing. The directory needs only `road-map.json` and `outlines/`, no tar; its map date is the record file's mtime. With `valhalla` the setting is refused at start (as `MOCK_PLAN` is). Tests build a small fixture volume under `tmp_path` and set `ROAD_MAP_DIR`.
+- **Mount.** The planner mounts the **whole** volume `valhalla-data` read-only at `/valhalla-data` (`ROAD_MAP_DIR=/valhalla-data/tilesets`), **not** subpath `tilesets` as first designed: a missing subpath makes Docker refuse to start the container, and D234 (compose.yaml:9-13) promises the planner starts on a host with no seeded tileset (first install, CI job 7, a deploy while the engine is missing). A missing `tilesets` directory is then simply "unknown". A new named volume `overland_road-map` is mounted read-write at `/road-map-changes` (`ROAD_MAP_CHANGES_DIR`); the Dockerfile creates `/road-map-changes` owned by 10001:10001 before `USER`, so the first mount copies that ownership into the empty volume (read-only root filesystem and `cap_drop: ALL` stay). **`planner-perf` lists both mounts too** (compose.yaml:114-116 replaces the `volumes` list; lists do not merge), `valhalla-data` read-only and `overland_road-map` read-only (the perf planner never queues a change), with the same `ROAD_MAP_*` settings. **Compose additions, named (D315):** a top-level volume `road-map` with `name: overland_road-map`; in `planner`, a volume `road-map` at `/road-map-changes` (rw) and `valhalla-data` at `/valhalla-data` (`read_only: true`, no subpath); the same two lines (both read-only) in `planner-perf`'s own `volumes` list; in `valhalla-fetch`, the second mount of `valhalla-data` subpath `road-map-meta` at `/meta`; environment keys `ROAD_MAP_DIR`, `ROAD_MAP_CHANGES_DIR`, `ROAD_MAP_MAX_GB`, `PLACE_SEARCH`, `PLACE_SEARCH_URL`, `GEOFABRIK_INDEX_URL` passed as `${VAR:-}` in the shared planner environment. **D173 is amended on purpose:** "writes only `/data` and `/tmp`" becomes "writes only `/data`, `/tmp` and `/road-map-changes`"; the contract tests that pin it (`tests/deploy/test_compose_contract.py:160-161`, `tests/deploy/test_container_hardening.py:69`) change in the step that adds the mount.
+- **Today's tileset `20261126` has no record.** The page shows "Map coverage unknown" and no outside tags until the first rebuild from the app (decided by the orchestrator). Consequence for the owner's cold-start check: see open question Q1. "Refresh map data" with no record uses the **seed list** (the eight regions of D296/D297) held once in the planner as `SEED_REGION_KEYS` (the keys above), resolved against the catalogue for names, parents and addresses (Q1 is settled by D313: the gate runs one real "Refresh map data" on a UTC date after 2026-11-26 before the cold-start check; no record is forged for `20261126`); `make tiles-refresh` by hand (no REGIONS_FILE) keeps its own `EXTRACTS` list and writes no record; a test compares the two lists so they cannot drift.
+
+### Domain: outlines, containment and land groups (D302)
+
+Pure Python in `domain/roadmap` (inside `only_mutate`, so the 80 % kill gate applies).
+
+- `Outline`: rings of (lon, lat) with holes, as read from a Geofabrik `.poly` file by an adapter (the format is the adapter's knowledge; the domain never sees text). `contains(coordinate)`: even-odd ray casting over all rings, so a hole is outside and boundary points are inside (tests pin both). About 6,000 points for the eight regions, so a trip of 60 items costs microseconds.
+- `RoadMapCoverage` (built from the served regions' outlines): `contains(point)` (inside any region); `land_groups()`: two regions are linked when their outlines overlap or touch (a vertex of one inside or on the other, or two edges crossing); the groups are the connected components. The orchestrator checked it on the real polygons of the eight regions plus Portugal and Andorra: the overlap graph equals the true land borders, and without the two Occitanie regions Spain is its own group. Group names for the page are the member regions' names.
+- Trip rules (application, `CoverageService`): a **trail is outside when its entry or its exit is outside** (the planner drives to and from those two points; the middle is irrelevant); a place when its point is. The trip's land groups are the groups containing at least one included, non-outside item; more than one group raises the "not linked by land" warning. Items are kept; nothing refuses planning.
+- Known limits, accepted and stated: an outline says nothing about ferries or roads, so islands inside a country's outline (Sicily, Sardinia, Canary Islands inside Spain's) count as the same group although Valhalla reaches them by ferry or not at all; a polygon crossing the antimeridian is not supported (no region within the 8 GB limit needs it).
+- Pending changes use the same domain: `RegionChoice` (pure) holds the chosen keys, rejects an ancestor or descendant of a chosen region ("Utah is already in the road map as part of 'United States of America'"), sums bytes against the limit, derives the estimate and the land groups of the **chosen** regions (outlines fetched and cached by the planner, D306).
+
+### Estimate and limits (D305)
+
+- **Size limit** `ROAD_MAP_MAX_GB` default 8 (sum of the `.osm.pbf` sizes to download); above it the change is refused with the figures. Today's eight regions are 6.4 GB.
+- **Estimate.** Calibrated on D297 (6.4 GB; steps 2,280 s and 914 s) and on the two figures of the approved sketches: **pause = round(6 x GB) minutes; total = round(8.2 x GB + 2.5) minutes** (6.4 GB -> 38 and 55; 6.6 GB -> 40 and 57). The orchestrator's 10 + 8 x GB gives 61 minutes for 6.4 GB, which contradicts the 55 the owner was told and the 57 on screen 7. The screen says "about" and "estimate"; the running screen shows the remaining minutes from the building step's own start.
+- **One rebuild a UTC day.** The refresh names the tileset by the UTC date of its start and refuses a name that is served, kept for rollback or present in the volume (tiles-refresh.sh:116-125). So the planner refuses a start whose UTC date equals the name of any directory in `tilesets/` (served, previous or a leftover), answering `same_day` with `next_rebuild_from` = the next UTC midnight (shown in the browser's time). A leftover matters: a failed switch keeps `tilesets/<NEW>` for inspection (`undo_switch`, :67-71), so a same-day retry after that failure is refused with the honest "next from tomorrow", and the leftover is pruned by tomorrow's success. A failure before the promotion leaves no directory, so "free some space and press Rebuild road map again" works the same day (screen 9). The date tested is the start time's UTC date, not the date of the request, so a 02:00 start planned in the evening is checked against its own day.
+- **One pending change.** Exactly one of: request pending, running, or none. A new request is refused while one is pending or running (`change_pending`, `rebuild_running`).
+- **Start time.** Now (the helper takes it within a minute), or an instant at least 2 minutes and at most 14 days ahead, sent as UTC; the page shows it in the browser's local time and adds "(Pi time)" only when the browser's zone offset differs from the one the planner reports (`/api/road-map` carries `server_utc_offset_minutes`).
+- **Disk guard scales.** `MIN_FREE_KB` is a fixed 25 GB (tiles-refresh.sh:36), measured at 6.4 GB; at 8 GB the downloads, the merged file and the tiles are 25 % bigger. The refresh reads the total download bytes from REGIONS_FILE and needs `max(25 GB, 3.9 x download)` (6.4 GB -> 25 GB, 8 GB -> 31 GB). Screen 9's "the Pi has 18 GB of free disk and needs 25 GB" comes from that refusal.
+- **Known risk: memory at 8 GB (D314).** The 9 GB build cap (`VALHALLA_BUILD_MEM`) and the merge's 7 GiB were measured at 6.4 GB. The owner-approved 8 GB limit stays. The protection is the refresh's own memory preflight and its safe failure (the old map is restored). The gate rebuild (the same eight regions, 6.4 GB) does **not** test the 8 GB case; this is recorded, not hidden. A build killed for memory (exit 137 of `valhalla-build`) gets its own failure code `build_oom`, worded by the planner: "The Pi ran out of memory building the map. The previous road map is back (map data <date>); nothing is lost. Your change is kept: remove a region and press Rebuild road map again."
+
+### Change queue and the helper (D303, D304)
+
+**Files in the volume `overland_road-map`** (one writer per file, no JSON written by bash, nothing is ever evaluated):
+
+| File | Writer | Meaning |
+|---|---|---|
+| `request.txt` | planner (tmp file in the same directory, then rename) | A pending change: `schema=1`, `requested_at=` and `start_at=` as **UTC epoch seconds** (absent `start_at` = now; no date parsing in bash), one `region=<key><TAB><name><TAB><parent_name><TAB><pbf_url><TAB><poly_url><TAB><bytes>` line per region, `added=`/`removed=` keys for the report. There is **no `record.json`**: the refresh builds the record (D313) |
+| `cancelled.txt` | planner, by renaming `request.txt` | Cancelled before the helper took it |
+| `running.txt` | helper, by renaming `request.txt` | Taken; from now the planner cannot cancel |
+| `progress.txt` | helper (and the refresh's progress hook, through the same pinned `docker run`) | `step=checking|downloading|building|switching`, `step_at=` (epoch), `serving=<old tileset>`, `new=<new tileset>` |
+| `result.txt` | helper | `state=done|failed`, `finished_at=`, `code=`, `free_gb=`/`need_gb=`/`have_gb=` numbers, `tileset=`; no free text |
+| `helper-seen` | helper | Touched at the **start of every run, before the flock check** (so a helper busy with a rebuild still beats). One threshold, **5 minutes** (D315): older than that, the planner answers `rebuilds_not_set_up` |
+
+State read by the planner: `request.txt` -> planned; `running.txt` -> running (+ `progress.txt`); `result.txt` -> done or failed; `cancelled.txt` -> cancelled; none -> none. **Cancel race:** both the planner (cancel) and the helper (take) rename `request.txt`; the rename is atomic and whoever succeeds wins; the planner's `DELETE` answers 409 when its rename finds no file. A new `POST` is refused while any of `request.txt`/`running.txt` exists; it first moves `result.txt` to `previous-result.txt` and removes `cancelled.txt`. A failed result keeps the request lines (the helper copies `running.txt` to `result.txt` with the result keys), which is how "Your change is kept; press Rebuild road map again" (screen 9) is drawn.
+
+**The helper, `deploy/scripts/road-map-runner.sh`, run every minute by a line of the deploy user's crontab** (cron is active on the Pi, the user has no crontab today and is in the docker group; no sudo, nothing outside the user's own files):
+
+- **Installed** by a new `deploy/scripts/road-map-helper.sh install|uninstall|status`, called by `deploy.sh` after the publish and the routing start (best-effort like `start_routing`: a failure is one warning line and a `releases.log` note, never a failed deploy, D234). Safe crontab edit (D314): only the exact answer "no crontab for <user>" counts as an empty crontab; **any other `crontab -l` failure exits without writing anything**. The old crontab is saved to a file in the install dir; the new text (every line byte for byte except our marked line, `# overland-road-map-runner`, replaced or appended) goes to a temp file, is installed with `crontab <file>`, read back with `crontab -l` and compared with the temp file; a difference puts the saved crontab back and fails with a warning. The line is `* * * * * cd '<install dir>' && bash scripts/road-map-runner.sh >>road-map-runner.log 2>&1 # overland-road-map-runner` with the path quoted for the shell. `uninstall` removes only the marked line (same save, write, read-back); the Makefile's `uninstall` and `purge` call the helper's uninstall **first**. The install dir is `$PWD` on the Pi, so no host, user name or address is written in the repository. (Q4 is settled by D313: `crontab` present, cron active, no crontab yet.)
+- **Every run:** `PATH` is set explicitly (cron's is minimal); `flock -n` on its own `.road-map-runner.lock` (a rebuild holds it for about an hour; later minutes exit at once). The helper **never mounts `valhalla-data` while it touches the changes volume**. Every container call is a short `timeout 60 docker run --rm` of the pinned `SNAPSHOT_IMAGE` with `--network none`, `--user 10001:10001` (the planner's uid, which owns the volume; a **non-root container**, started by the deploy user, who is in the `docker` group, which is itself root-equivalent on the host: the container flags limit what the helper's own code can do, not what the user could), `--cap-drop ALL`, `--read-only`, `--security-opt no-new-privileges`, `--pids-limit` and a memory cap, mounting only `overland_road-map`. Inside it: any entry that is not a regular file (`test -L` or not `test -f`) is refused and never read, reads are capped (`head -c`: request 64 KB, status files 4 KB), and every status file is written to a temporary name and renamed inside the volume. The container's standard output carries the capped bytes to the host script, which parses them into variables and never `eval`s or sources them. Because the helper writes as 10001, the planner can read and rename everything it wrote. The same wrapper writes `helper-seen` (about one container run a minute; measured at the gate, Q3). The refresh's **progress hook uses the same wrapper** (same `--user 10001:10001`, `--network none`, flags and timeout).
+- **A request is validated strictly before anything runs**, in bash, no `eval`, no `source`, no `jq`, line by line against fixed patterns: `schema=1`; the key (the index id) `^[a-z0-9-]+(/[a-z0-9-]+)?$`; names and parent names printable UTF-8 without control characters or tabs, at most 120 bytes; the two addresses (the index's own `urls.pbf` and `urls.poly`, D315) must start with the **download prefix** and contain **no `..` segment**, and nothing else is checked about them; bytes digits; at most 40 regions; `start_at` and `requested_at` digits only. **One origin rule (D315):** the planner derives its allowed origin from `GEOFABRIK_INDEX_URL` (D313 O3, so tests run offline); the helper reads an optional `ROAD_MAP_DOWNLOAD_PREFIX` from the Pi's `.env` (default `https://download.geofabrik.de/`) and refuses any address outside it. **Using a mirror needs both settings** (`GEOFABRIK_INDEX_URL` and `ROAD_MAP_DOWNLOAD_PREFIX`); with only one set, the planner or the helper refuses the request. Anything invalid: `result.txt` with `state=failed code=bad_request`, nothing started.
+- **When `start_at` has come** (epoch compared with `date +%s`; absent = now): `request.txt` -> `running.txt` (atomic; losing the race to a cancel means nothing to do), the regions file is written into the install dir (mode 600; one line per region: key, name, parent name, pbf address, poly address, bytes), and `bash scripts/tiles-refresh.sh` runs with `REGIONS_FILE=<that file>` and `ROAD_MAP_PROGRESS=on`.
+- **The refresh keeps every safety it has** (old tileset restored on any failure, one tileset per UTC date, disk and memory checks, prune to new + previous, the exit trap). New in it: `REGIONS_FILE` replaces `EXTRACTS` (files saved as `src/<n>.osm.pbf` by position, because `curl -O` names a file by the last path segment, tiles-refresh.sh:159-166; the addresses are the index's own, D315); `valhalla-fetch` also downloads each `.poly` into `/meta/outlines/` (a 404 refuses naming the region, before anything is stopped); `prepare-build` also **empties `road-map-meta/`** (`rm -rf`, then `mkdir`, so no leftover of a failed run survives); the refresh writes `road-map.json` and **names the outline files in it**; the promote step moves the meta into the tileset; SHA256SUMS covers **exactly the files the record names** plus `road-map.json` (D313-D315); the planner's reader reads only the outlines named in `road-map.json`, never a directory listing of `outlines/`. A function `progress STEP|failed CODE [k=v...]` in `lib.sh`, a no-op unless `ROAD_MAP_PROGRESS=on`, writes `progress.txt` or the failure facts through the same pinned, time-limited `docker run` (a failed progress write is a warning, never a failure of the refresh). Events: `checking`, `downloading`, `building` (just before `compose stop valhalla`), `switching` (just before the promote). Failure codes: `locked`, `date`, `disk`, `memory`, `routing_status`, `download`, `region_missing`, `merge`, `build`, `build_oom`, `overrides`, `promote`, `switch`, `interrupted`. **A lock refusal exits 75 and writes no `tiles.log` `failed` line** (the refresh did nothing; today `refuse` logs and exits 1, :53-57), so the runner can tell "a deploy is running" from a failure.
+- **The runner reads the exit code and `progress.txt`:** 0 -> `result.txt state=done`; 75 -> `running.txt` goes back to `request.txt` and the next minute retries (at most 30 minutes, then `failed code=locked`); other -> `state=failed` with the code and numbers the refresh wrote. **The words are the planner's** (`road_map/messages`): code + numbers -> the plain sentence of screen 9; bash carries codes and numbers only, never the refresh's free texts.
+- **Recovery after a power loss (D314).** A `running.txt` with nobody holding `.road-map-runner.lock` is an interrupted run. The runner first takes `.deploy.lock` with `flock -n`; if held (a deploy or a manual refresh), it does nothing and tries next minute. Holding it, the runner runs `planner_compose up -d --wait valhalla` (with a timeout), then **compares `routing.env`'s `VALHALLA_TILESET` with the tileset the run started** (`new=` of `progress.txt`): equal and the engine healthy -> the switch had completed, `result.txt state=done`; different -> `failed code=interrupted` (the old map is serving, since pointers only change at the switch). It does not run the refresh's restore logic for a half-written switch it cannot see; the leftover `.routing.env.orig` case is listed as a DELIVER check.
+- `road-map-runner.log` records **state changes only** (taken, step, done, failed, recovered), never the idle every-minute run, and the script truncates it to its last 200 lines when it passes 64 KB.
+- The household projects and the planner container are never touched (as the refresh today).
+
+### Driving ports (HTTP; D308)
+
+| Call | Meaning |
+|---|---|
+| `GET /api/road-map` | `served`: `{known, map_date, regions: [{key, name, parent_name, bytes}], total_bytes}`; `change`: `{state: none|planned|running|done|failed|cancelled, step, steps_done, start_at, added, removed, regions_total, total_bytes, estimate: {total_minutes, pause_minutes, ends_at, planning_back_at}, result: {code, numbers, message, finished_at}}`; `planning_paused` (true while the engine is stopped: from the building step to the end of the switch) with `planning_back_at`; `limits`: `{max_bytes, next_rebuild_from, changes_available, helper_seen_at}` (`helper_seen_at` the heartbeat time or null; not seen for 5 minutes means "Rebuilds aren't set up on the Pi yet"); `server_utc_offset_minutes`. `served.map_date` is the engine's date even when the regions are unknown (D315). The page reads the served map, never the pending choice. |
+| `GET /api/road-map/catalogue?q=` | Name search (at least 2 characters, at most 8 results) over the cached Geofabrik index: `{key, name, parent_name, bytes}`; sizes by one HEAD per result, cached; regions already chosen or covered by an ancestor are marked. Only the typed words leave the house (to Geofabrik, D306). |
+| `POST /api/road-map/change` | `{region_keys: [...], start_at: ISO-UTC | null}`; validates every key against the catalogue, ancestor/descendant duplicates, size, same-day, no pending or running change; answers the summary (regions added/removed, bytes, estimate, land groups with names, the not-linked note) with 201, or `{code, message}` with 409/422: `unknown_region`, `overlaps_region`, `too_big` (total and limit), `same_day` (`next_rebuild_from`), `change_pending`, `rebuild_running`, `bad_start`, `changes_unavailable` (503), `rebuilds_not_set_up` (503, the helper's heartbeat is older than 5 minutes; D315). The request carries each region's `urls.pbf` and `urls.poly` from the index, taken by the planner from the catalogue, never from the browser. A summary without writing is `POST /api/road-map/change/preview` (same body, nothing written) so the screen shows size, time and land note while the owner is still choosing. |
+| `DELETE /api/road-map/change` | Cancels a planned change by renaming; 409 once the helper took it. |
+| `GET /api/projects/{id}/coverage` | `{known, regions: names, map_date, outside_item_ids, groups: [{regions, item_ids}]}`; the trip's included items against the served map. Unknown -> `known: false`, empty lists. |
+| `GET /api/places/search?q=` | Up to 5 `{name, region, country, lat, lon}`; 404-free: an empty list means "No place found". 503 `place_search_unavailable` (down, over 10 s, busy, or switched off). `GET /api/config/map` gains `place_search: true|false` so the Add menu shows three or four entries. |
+| `GET /api/config/map` | **Drops `road_map_area`** (a second copy of the truth; D295's setting `ROAD_MAP_AREA` goes away; a leftover line in a Pi's `.env` is ignored, as unknown keys are). The unreachable sentence reads the regions from `/api/road-map`. |
+
+Error envelope, auth middleware and the 5xx handling are the existing ones; every new route is under the household password like the rest.
+
+### Driven ports and adapters (D306, D307, D310)
+
+| Port (application/ports) | Adapter | Notes |
+|---|---|---|
+| `ServedMap` | `ValhallaRoutingProvider.served_epoch()` (EXTEND), `MockRoutingProvider` via `ROAD_MAP_SERVED_TILESET` | Returns a typed `ServedMapId` (epoch or directory name) or `None`; uncached, never raises; matching is the domain's `select_served`, not the adapter's (D301, D314) |
+| `TilesetStore` | `adapters/roadmap/tileset_dir_reader.py` | Returns the listing of `ROAD_MAP_DIR`: per directory its name, the `valhalla_tiles.tar` mtime and the parsed record (pydantic, schema 1, strict) with `.poly` files read into `Outline`; no matching logic; cached by directory name and tar mtime |
+| `RegionCatalogue` | `adapters/roadmap/geofabrik_catalogue.py` (httpx) | The index at `GEOFABRIK_INDEX_URL` (default `https://download.geofabrik.de/index-v1-nogeom.json`; the allowed download origin derives from it, D313 O3) cached on disk in the planner data dir for 7 days (stale copy used when a refetch fails); `.poly` files cached on disk by key; HEAD sizes cached 7 days; User-Agent as in D307; **key** = the index `id`, addresses = the index's `urls.pbf` and `urls.poly` (D315), **parent from the index's `parent` field**; features without a pbf or poly address, or whose parent chain does not resolve, are not offered. **What leaves the house, exactly:** the index (a plain GET, no query), a HEAD of the `.osm.pbf` of each region shown in results, the `.poly` of a chosen region; no trip data, no coordinates. Timeouts 10 s, one request at a time |
+| `RoadMapChanges` | `adapters/roadmap/change_queue.py` | The files above; atomic write, rename, read-back |
+| `PlaceSearch` | `adapters/geocoding/nominatim_place_search.py` (EXTEND the empty `geocoding` package that ADR-001/brief section 6 reserved for the Phase 2 `Geocoder`; the brief's `Geocoder` row is renamed `PlaceSearch`) | See ADR-019 and D307 |
+
+Each port extends `Probeable`; probes are in D310.
+
+### Place search (D307)
+
+A server-side proxy, because a browser cannot set the User-Agent and the policy asks for caching, a rate limit and a switch that works without a software update. **Switch (D314):** a dedicated setting `PLACE_SEARCH=on|off` (default `on`; empty counts as the default, like every other setting, settings.py:16, :183; anything else refuses the start naming the key; **both `PLACE_SEARCH` and `PLACE_SEARCH_URL` go into the empty-is-default validator lists** of settings.py:156-183, with a test for each, because compose passes `${VAR:-}`). In the Pi's `.env` the search is switched off with the line `PLACE_SEARCH=off`; compose passes `${PLACE_SEARCH:-}`. Off: the menu shows 3 entries and the route answers 503. `PLACE_SEARCH_URL` default `https://nominatim.openstreetmap.org/search`, **empty means the default** (the convention), so the switch is never the URL. **There is no working fallback until a second parser exists** (D315): pointing the URL at Photon would fail on its answer shape and show "isn't answering". **No `PLACE_SEARCH_CONTACT`** (D313 Q7: no email is sent). User-Agent `overland-planner/<version> (household trip planner; +https://github.com/MrMilgauss/overland-planner)`; `format=jsonv2`, `addressdetails=1`, `limit=5`. **One request a second across the process** (the planner runs one worker, so one lock and the monotonic time of the last call; a second request waits for the rest of the second, at most 3 s, then answers "busy"); an **in-memory** cache of recent answers (200 entries, 24 h; never on disk, never listed anywhere: it exists because the policy requires clients to cache, which overrides the DISCUSS line "caching OUT", whose intent was "no search history"); timeout 10 s; 429, 5xx, timeouts and unreadable bodies are "isn't answering". **After a 429 or a 503 the adapter stops calling the service for 60 seconds** (monotonic clock) and answers "isn't answering" meanwhile, so a block is never hammered. **Privacy wording (D314, an orchestrator wording change of D300's screen 2):** the service necessarily sees the home internet address, as the map tiles do, so the fine print reads "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors." No search as you type (the form sends on "Search" or Enter only). Policy read 2026-11-26 at the OSMF operations page: at most 1 request a second, an identifying User-Agent or Referer, attribution, ODbL, no autocomplete, no systematic queries, cache results, the operators may switch a client off, do not submit personal data, and a section on LLM-suggested use that asks to point prominently to the policy. The owner named the service and its policy in the slice prompt; the policy is linked from ADR-019, from `.env.example` beside the setting, and the page's fine print carries the credit. A key-free fallback, Photon (`photon.komoot.io`), is **not** wired: its answers have another shape (the adapter parses Nominatim's `jsonv2`; Photon needs a second parser, built only if the owner asks).
+
+### Web (Svelte 5; D309)
+
+All menus and forms stay in the page flow (D295, D298), tokens only, both themes, 44 px targets, one column at 390 px.
+
+- **App.svelte**: route `#/road-map`, header link "Road map" beside "Projects".
+- **RoadMapPage.svelte** (CREATE) with `RegionSearch.svelte`, `ChangeSummary.svelte`, `RebuildProgress.svelte` and a pure `roadMapView.ts` (date and size words, step ticks, the plain-words mapping of failure `code`s; vitest): screens 6 to 11. Polls `GET /api/road-map` every 10 s while a change is planned or running, otherwise once on open. A search is sent only on "Search" or Enter (screen 7 fine print: Geofabrik and split countries).
+- **CoverageBox.svelte** (CREATE, in TripList's heading area): "Roads loaded for: ..." and "Map data: ..."; "Map coverage unknown" when unknown. **TripList.svelte** (EXTEND): the "Outside road map" tag from `outside_item_ids`. **WorkspacePage.svelte** (EXTEND) loads `/coverage` after every change to the trip and raises the one-time alert for items that **became** outside (a file import of several trails raises one alert per outside item, each dismissible), shows the not-linked-by-land warning and the planned-rebuild line. **PlanPanel.svelte** (EXTEND): the D295 sentence takes the regions from `/api/road-map` (joined with commas and "and"); during `planning_paused` "Plan the route" is disabled with the one line "The road map is being rebuilt; planning is back at about <time>." (the D298 pattern); the planner's own refusal words (D211) stay for a race.
+- **AddMenu.svelte** (EXTEND): a fourth entry "Search for a place" when `place_search` is true, opening `PlaceSearchForm.svelte` (CREATE): label, input, "Search", "Close", up to 5 results with "Add" each (the existing add-place call with that name and point; the form stays open), the "Outside road map" tag from the coverage check of the point, the fine print ("Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors."), the two error messages. Nothing is sent while typing. The Road map screen's catalogue search says what it fetches: the region list, the size of the regions shown and the outline of a chosen one, from Geofabrik; no trip data.
+- **api.ts** (EXTEND): the new calls and types; `MapConfig` drops `road_map_area`, gains `place_search`.
+
+### Probes and enforcement: Earned Trust (D310)
+
+Every new driven adapter has a probe; the composition root keeps "wire, probe, use" and registers them in wiring order. None is fatal (the planner's core job does not need them); each degrades its own feature with a stable reason shown by `/api/health` and the screen.
+
+| Adapter | Probe (and what lie it survives) | Degraded reason |
+|---|---|---|
+| `RoadMapChanges` | Write-fsync-rename-read-delete of a probe file in `ROAD_MAP_CHANGES_DIR`. Catches a volume mounted read-only, root-owned (the Dockerfile's ownership copy missing: the first-mount lie), or a missing mount; the Road map screen then reads "Changing the road map isn't available right now" and offers no change | `road_map_changes_unavailable` |
+| `TilesetStore` | Lists `ROAD_MAP_DIR`; reads and parses every record present; catches a mount that is missing (a `tilesets` directory absent), a record of an unknown schema or truncated JSON (-> unknown, not a crash), a `.poly` that does not parse | `road_map_unreadable` (a missing mount is "unknown", not degraded) |
+| `ServedMap` (Valhalla) | Already covered by the provider's own probe; the new uncached read is tested with the scripted transport: connect refused, 5xx, non-integer epoch, version change between two reads (the cached identity must not leak into it) | - |
+| `RegionCatalogue` | Reads the cached index, or fetches it once at start (one attempt, 10 s); checks 100 or more features, every key unique, every pbf address under the download origin derived from `GEOFABRIK_INDEX_URL`, every parent id resolves (features that do not are counted and not offered); a corrupt cache is discarded | `region_catalogue_unavailable` |
+| `PlaceSearch` | **No outbound call at start** (a query at every start is a systematic query against the policy). It checks the configured address parses and runs a round trip through its rate limiter, cache and 60 s back-off with the fake clock; `PLACE_SEARCH=off` is `ok` with "switched off" | `place_search_misconfigured` |
+| The helper itself (shell) | **Self-application of the probe rule:** `road-map-helper.sh status` and the Road map screen's `helper_seen` prove that the cron line runs and the changes volume is reachable; the offline tests exercise the substrate lies of the volume: a symlink, a directory or a FIFO named `request.txt`, an oversized request, a half-written temp file, a request renamed by a cancel between listing and taking | `rebuilds_not_set_up` (screen text) |
+
+Three layers, as ADR-011 and the brief section 7 say: mypy strict (every port extends `Probeable`; typed registry), gold tests with a fault catalogue per adapter (above), and import-linter for structure. Import-linter contracts to add in `pyproject.toml`: `adapters.roadmap` joins the **adapter-independence** and **ortools-solver-only** lists; a new `facade-roadmap` contract (other modules reach `application.roadmap` only through its facade) and `domain-roadmap` (the domain module imports nothing from `application` or other domain modules except `domain.catalog.coordinate`); `application-forbidden` already keeps `httpx` out of the application. The shell side is enforced by `make lint-ci` (shellcheck, already on `deploy/scripts/*.sh`) and by the offline deploy tests with their shims.
+
+### Testability
+
+| Story | Checks |
+|---|---|
+| US-27 | pytest unit on `domain/roadmap` (`RegionChoice`: ancestors and descendants both ways, size sum, estimate formula at 6.4 and 6.6 GB, `same_day` from a directory listing, start-time window); Hypothesis on `Outline.contains` (a hole is outside, a vertex on an edge is inside) and on `land_groups` (symmetric, transitive closure); integration through FastAPI `TestClient` with fixture volumes for every route and error code; contract tests of `GeofabrikCatalogue` against a **recorded copy of the real index** (554 features checked 2026-11-26) with respx, plus a live check in a manual `make contract-live`-style target. Playwright: the Road map screen at laptop and 390 px (no sideways scroll, targets >= 44 px), search -> add -> summary -> schedule -> cancel on a fixture volume |
+| US-30 | Offline deploy tests (tests/deploy, shims for `docker`, `crontab`, `flock`): the helper takes a request, rejects every malformed line, a symlink or non-regular file, an address outside `ROAD_MAP_DOWNLOAD_PREFIX` and a `..` segment, loses a cancel race, retries on exit 75 (no `tiles.log` failed line), reports each failure code with numbers (including `build_oom`), recovers a stale `running.txt` under `.deploy.lock` (routing.env equal to the new tileset -> done, otherwise failed `interrupted`; lock held -> nothing), times out a hung `docker run`; `deploy.sh` installs the cron line idempotently, keeps foreign lines, refuses to write when `crontab -l` fails for any reason but "no crontab", reads back and restores on a difference; `uninstall` removes only ours; `tiles-refresh.sh` with `REGIONS_FILE`, a missing `.poly` (404), `progress` events in order, record and outlines promoted with the tiles, the disk guard at 8 GB. The Pi gate runs **one real rebuild** (D299) |
+| US-28 | pytest: `CoverageService` (entry outside, exit outside, middle outside is fine, place outside, unknown map, two groups); vitest: tags, alert once per newly outside item, the sentence with "and", the paused hint; Playwright: Marco/Giulia flows with a fixture volume and the mock road map |
+| US-29 | pytest: the adapter with respx (jsonv2 parsing, `limit=5`, User-Agent, no email parameter ever, 429/5xx/timeout, empty list), a fake clock for the one-per-second wait, the 3 s "busy" and the 60 s silence after a 429 or 503, the cache hit sends nothing; the route when `PLACE_SEARCH=off`; `PLACE_SEARCH=` empty is on; vitest and Playwright for the form (Enter, Close, 5 results, errors, 390 px). A **live** check of the real service is manual and tiny (one query), never in CI |
+
+External integrations: **Geofabrik** (index, `.poly`, HEAD, and the downloads of the rebuild) and **Nominatim**. Contract tests recommended for both -- consumer-driven contracts (recorded copies of their real answers, replayed with respx; Pact adds nothing for public read-only endpoints we do not own) -- to detect a breaking change before the owner meets it. Handoff note for platform-architect: a user crontab line and a small volume are new on the Pi; the planner now makes outbound HTTPS calls (it is on the `edge` bridge, which has egress, but until now it called nothing outside).
+
+### Component decomposition
+
+| Component | Path | Change |
+|---|---|---|
+| Coverage and region rules | `src/overland_planner/domain/roadmap/` (`outline.py`, `coverage.py`, `region_choice.py`, `estimate.py`) | CREATE NEW (pure) |
+| Road-map use cases | `src/overland_planner/application/roadmap/` (`facade.py`, `service.py`, `coverage_service.py`, `messages.py`) | CREATE NEW |
+| Ports | `application/ports/` (`served_map.py`, `tileset_store.py`, `region_catalogue.py`, `road_map_changes.py`, `place_search.py`) | CREATE NEW |
+| Road-map adapters | `adapters/roadmap/` (`tileset_dir_reader.py`, `geofabrik_catalogue.py`, `poly_parser.py`, `change_queue.py`) | CREATE NEW |
+| Place search | `adapters/geocoding/nominatim_place_search.py` | EXTEND (placeholder package) |
+| Valhalla provider, mock provider | `adapters/routing/valhalla_routing_provider.py`, `mock_routing_provider.py` | EXTEND (`served_epoch()`; mock served name) |
+| HTTP | `adapters/http/road_map_routes.py` (CREATE), `place_routes.py` (CREATE), `schemas.py`, `platform_routes.py` (EXTEND) | mixed |
+| Composition root, settings | `bootstrap/app_factory.py`, `bootstrap/settings.py` | EXTEND (`ROAD_MAP_DIR`, `ROAD_MAP_CHANGES_DIR`, `ROAD_MAP_MAX_GB`, `ROAD_MAP_SERVED_TILESET`, `PLACE_SEARCH` (on|off), `PLACE_SEARCH_URL`, `GEOFABRIK_INDEX_URL`; `ROAD_MAP_AREA` removed; the Pi-side `ROAD_MAP_DOWNLOAD_PREFIX` is read by the helper from `.env`, not by the planner) |
+| Image, compose, env | `Dockerfile`, `deploy/compose.yaml` (planner and `planner-perf` mounts, `valhalla-fetch` second mount), `.env.example` | EXTEND |
+| Helper | `deploy/scripts/road-map-runner.sh`, `deploy/scripts/road-map-helper.sh` | CREATE NEW |
+| Refresh and Pi library | `deploy/scripts/tiles-refresh.sh`, `deploy/scripts/lib.sh`, `deploy/scripts/deploy.sh`, `Makefile` | EXTEND |
+| Web | `App.svelte`, `RoadMapPage.svelte`, `RegionSearch.svelte`, `ChangeSummary.svelte`, `RebuildProgress.svelte`, `roadMapView.ts`, `CoverageBox.svelte`, `PlaceSearchForm.svelte` (CREATE); `TripList.svelte`, `AddMenu.svelte`, `PlanPanel.svelte`, `WorkspacePage.svelte`, `api.ts`, `runMap.ts` (EXTEND) | mixed |
+| Lint rules | `pyproject.toml` import-linter contracts | EXTEND |
+
+### Reuse analysis
+
+| Existing | Verdict | Justification |
+|---|---|---|
+| `tiles-refresh.sh` | EXTEND | Every safety stays; it gains REGIONS_FILE, progress, the record and a lock exit code. A second build script would duplicate the dangerous part |
+| `lib.sh` helpers (`env_value`, `append_tiles_log`, short pinned `docker run`) | EXTEND | Same pattern for the queue volume |
+| `deploy.sh` step 9 pattern `start_routing` | EXTEND | The helper install is best-effort in the same way |
+| `ValhallaRoutingProvider` | EXTEND | Owns the only `/status` client; a new uncached method, no second client |
+| `adapters/geocoding` (empty package) | EXTEND | The slot reserved for Nominatim since the brief |
+| `LocalFileStore`, `SqliteDatabase` | REUSE NOT | The record and the queue are not trip data and live on other volumes; no table needed (no migration) |
+| `HealthService`, `ProbeRegistry` | REUSE | New components register like the others |
+| `PlanPanel` unreachable sentence, `AddMenu`, `TripList` | EXTEND | Same places, same patterns |
+| `PlaceSearchForm.svelte` vs `PoiClickForm.svelte` | CREATE NEW (own form, calls the existing add-place call) | `PoiClickForm` is a name-and-coordinates form with one submit; the search form has a query field, a result list with an "Add" per row, an open-after-add state, fine print and two error states. Forcing both into one component would add flags to a working form (D298); the add-place call and the tags are reused |
+| `RegionSearch.svelte`, `ChangeSummary.svelte`, `RebuildProgress.svelte` | CREATE NEW | Three parts of one new screen, each with its own states (results; summary with limits and land note; four steps with result); nothing on the page lists regions, sizes or build steps. Split so each is testable alone, like `RouteCard` and `RunDetails` of 12b |
+| `RoadMapPage.svelte`, `CoverageBox.svelte`, `roadMapView.ts` | CREATE NEW | A new screen and a new element; no existing page shows map coverage (`DiagnosticsPage` is read-only engine health) |
+| `adapters/http/place_routes.py` | CREATE NEW | Own route module, as every driving adapter has one (`catalog_routes`, `planning_routes`, ...): it depends on a different port and a different failure set; folding it into `road_map_routes.py` would join two unrelated services' errors |
+| `deploy/scripts/road-map-runner.sh`, `deploy/scripts/road-map-helper.sh` | CREATE NEW, two scripts | The runner runs every minute from cron and must stay small and fast; the helper installs and removes the cron line (idempotent crontab editing, `status`) and runs rarely from `deploy.sh` and the Makefile. One file would run the install code every minute and make the runner's test surface larger. Both reuse `lib.sh` |
+| A job runner inside the planner (threads, subprocess) | CREATE NEW rejected | It would need the docker socket; see simplest-solution check |
+| `domain/roadmap`, `application/roadmap`, `adapters/roadmap` | CREATE NEW | No existing alternative: nothing in the code knows regions, outlines or the served map |
+
+### Slice-12 and 12b checks changed on purpose (D309)
+
+DISTILL edits these in the step that changes the behaviour; the rest keep running unchanged.
+
+- `tests/integration/http/test_map_config.py` (:42 the `road_map_area` field; :56-61 the default-and-settable test) -> the field is gone; `tests/contract/http/openapi.json` (:552 docstring, :570-585 `road_map_area`) regenerated with the new routes.
+- `web/src/lib/PlanPanel.test.ts` (:1117-1156, the D295 sentence with `AREA` from the map config) -> regions from `/api/road-map`; `web/src/lib/runMap.ts:23` and `runMap.test.ts:44` (MapConfig fixture); `PlanPanel.svelte:98, :154-160, :169, :317-319`.
+- `.env.example:65-66` (ROAD_MAP_AREA text) replaced by the new keys (`PLACE_SEARCH`, `PLACE_SEARCH_URL` with the Nominatim policy link, `GEOFABRIK_INDEX_URL`, `ROAD_MAP_MAX_GB`, `ROAD_MAP_DOWNLOAD_PREFIX`).
+- `tests/deploy/test_compose_contract.py:160-161` and `tests/deploy/test_container_hardening.py:69` (the planner writes only `/data` and `/tmp`): D173 is amended on purpose, the planner also writes `/road-map-changes` (and reads `/valhalla-data` read-only); the `planner-perf` mounts are asserted too.
+- `tests/deploy/test_tiles_refresh_script.py:151-172` (the eight URLs are now the default of a run **without** REGIONS_FILE; new tests cover REGIONS_FILE); `tests/deploy/test_makefile_targets.py` (PI_GUARDED, uninstall); deploy-script tests gain the `crontab` shim.
+- Slice 12 header checks (links: Projects, Diagnostics -> plus Road map); AddMenu checks (three entries -> four when `place_search`, three when off); US-23 S1 element lists on Build the trip (the coverage box and the rebuild line are new elements); slice 12b scenarios that press "Plan the route" assume no rebuild is running (US-30 S3).
+- Not changed: run messages, golden order, D208, D211 (planner words verbatim; region names only below them), D284 status words, D285 Details.
+
+### Open questions for DISTILL and the owner
+
+- **Q1 (cold-start check). Settled by D313:** hypothesis steps (b) and (c) cannot pass on today's tileset (no record), so the gate runs one real "Refresh map data" from the app, on a UTC date after 2026-11-26 (the served tileset is `20261126`), before the owner's cold-start check; no record is forged.
+- **Q2.** Disk guard `max(25 GB, 3.9 x download)` is derived from one measurement; confirm at the gate with `df` before and after the real rebuild.
+- **Q3.** One `docker run` a minute for `helper-seen` and the listing (about 1,400 a day, each well under a second on the Pi): measure its load at the gate; the alternative is `request.txt` mirrored to a host bind directory (needs a world-writable directory or root), which is worse.
+- **Q4.** Settled by D313: `crontab` present, cron active, no crontab yet, user in the docker group, `flock` and `python3` present.
+- **Q5.** The Geofabrik index id uniqueness and the exact fields (`urls.poly` present for every wanted feature, parents resolving) are taken from the orchestrator's check of 2026-11-26; DELIVER's first step records the index as a fixture and asserts them.
+- **Q6.** Photon is not wired; confirm the owner wants no second parser now.
+- **Q7.** Settled by D313: no contact email is sent; `PLACE_SEARCH_CONTACT` is not added.
+- **Q8.** The 8 GB limit against the 9 GB build cap and the 7 GiB merge guard is untested (D314 known risk); the gate's same-eight-regions rebuild does not cover it. DELIVER may add a dry memory estimate to the preflight only if the owner asks.
+
+### Upstream changes
+
+- DISCUSS US-29's "caching OUT" is overridden for the **place-search answers in memory only** (D307): the policy requires caching; it is not a search history and is never stored.
+- DISCUSS "a free, keyless search ... server call probable" is confirmed: server call, one place.
+- DISCUSS US-27 "the planner stores the list of loaded regions": the planner does not store it; the record travels with the tileset (D301). Only the pending change is stored (the queue volume).
+- The planner container makes outbound HTTPS calls for the first time (Geofabrik, Nominatim); no new network, and no coordinates leave except the typed words and the HEAD/GET of public files.
+- ADR-013 Amendment 5, ADR-019, ADR-020 added. ADR-013's "valhalla-fetch is the only service with egress" now means "the only service that downloads **extracts**": the planner also downloads the catalogue index and the outlines (small public files) for the Road map screen (D314).
+- D300's approved fine print of screen 2 changes by one phrase (D314): "from your home connection" is added, because the service necessarily sees the home internet address, as the map tiles do. The owner's approval of the screens otherwise stands.
+
+### C4 container delta
+
+```mermaid
+C4Container
+  title Container delta - slice 12c (the planner knows its map)
+  Person(owner, "Owner / Marco / Giulia", "Browser: laptop, 390 px phone")
+  Container_Boundary(pi, "Raspberry Pi 5 - compose project overland") {
+    Container(spa, "Planner SPA", "Svelte 5", "Road map screen, coverage box and tags, place search form")
+    Container(planner, "planner", "FastAPI, Python", "Road-map, coverage and place-search routes; domain RoadMapCoverage")
+    ContainerDb(queue, "overland_road-map", "Named volume", "request, running, progress and result files")
+    ContainerDb(tiles, "overland_valhalla-data", "Named volume", "tilesets/<date>/ with tiles, road-map.json and outlines")
+    Container(valhalla, "valhalla", "Docker service", "Routes; stopped during the build")
+    Container(helper, "road-map-runner", "bash, user crontab, every minute", "Validates a request, runs the refresh at its time, writes progress and result")
+    Container(refresh, "tiles-refresh + valhalla-fetch/build", "bash, compose run", "Downloads regions and outlines, builds, switches, rolls back on failure")
+  }
+  System_Ext(geofabrik, "Geofabrik", "Region catalogue, outlines, extracts")
+  System_Ext(nominatim, "OpenStreetMap Nominatim", "Public place search (policy: 1 request a second)")
+  Rel(owner, spa, "Chooses regions and searches places in")
+  Rel(spa, planner, "Reads the map, asks for rebuilds and place searches through", "HTTP/JSON")
+  Rel(planner, queue, "Writes requests to and reads progress from")
+  Rel(planner, tiles, "Reads the served record and outlines from (read-only)")
+  Rel(planner, valhalla, "Reads the served map date from", "HTTP /status")
+  Rel(planner, geofabrik, "Reads the catalogue, sizes and outlines from", "HTTPS")
+  Rel(planner, nominatim, "Sends the typed words to", "HTTPS, 1 request a second, cached")
+  Rel(helper, queue, "Takes requests from and writes progress to")
+  Rel(helper, refresh, "Starts at the chosen time")
+  Rel(refresh, geofabrik, "Downloads extracts and outlines from", "HTTPS")
+  Rel(refresh, tiles, "Builds and promotes a new tileset in")
+  Rel(refresh, valhalla, "Stops for the build and starts on the new tileset")
+```
+
 ## Wave: SPIKE
 
 ### [REF] Outcome (2026-11-02)
@@ -5775,6 +6517,206 @@ Test placement: `tests/acceptance/overland_route_planner_mvp/` (`slice-12b-trip-
 
 DoD (slice 12b): (1) the 2 `@driving_port` scenarios and the 33 Playwright tests GREEN on their projects, `@pending` gone, `--run-pending=slice-12b` in PENDING_FLAGS, no `test.fixme` left in `trip-workflow.spec.ts`; (2) the vitest and pytest inner checks of the DESIGN testability table GREEN; (3) every D290 row above done in the step that causes it, no other slice-12 check changed; (4) mutation >= 80 % on the modified Python files (`settings.py`, `schemas.py`, `app_factory.py`); (5) real tiles looked at on screenshots by the orchestrator, and the owner's cold-start check (learning hypothesis a-c, under 3 minutes, page no longer "chaotic").
 
+## Wave: DISTILL / [REF] Slice 12c scenarios (2026-11-26)
+
+Executable SSOT: `tests/acceptance/overland_route_planner_mvp/slice-12c-the-planner-knows-its-map.feature` (`@slice-12c @pending`, every scenario traced by `@US-27` to `@US-31`). **Revised after the consolidated review and the revised DISCUSS/DESIGN (D313, D314).** Inputs read: US-27 to US-31 and "Slice 12c DISCUSS", the revised DESIGN section "Slice 12c the planner knows its map", D299-D314, ADR-013 Amendment 5, ADR-019, ADR-020, the slice 12b DISTILL section and files, the `--run-pending` mechanism (`tests/conftest.py`, `PENDING_FLAGS` in `.github/workflows/ci.yml`), the D277 refresh tests and their seams (`tests/deploy/conftest.py`, shims), `tiles-seed.sh` and `lib.sh:259-268`, and `docs/architecture/atdd-infrastructure-policy.md` (inherited; rows appended). No 12c DEVOPS section (a user crontab line and a small volume, both exercised through the existing offline seams; the Pi gate runs one real rebuild, D299, D313 Q1).
+
+**Reconciliation (DISCUSS vs DESIGN): passed, 0 blocking contradictions.** The six observations of the first pass (O1 Germany, O2 estimate figures, O3 address prefix, O4 record ordering, O5 refusal during the build, O6 flat and nested addresses) are settled by D313 and D314 and the scenarios follow them: Portugal replaces Germany; the allowed prefix derives from `GEOFABRIK_INDEX_URL`; the refresh builds the record from the regions file and the planner writes none; no new refusal code during the build; D307 over DISCUSS "caching OUT" is accepted. Two later observations (O7 the key rule on the real index, O8 no code for "helper not set up") are settled by D315 and the scenarios follow it: the region key is the Geofabrik index `id` (`italy`, `rhone-alpes`, `us/utah`), the addresses are the index's own `urls.pbf` and `urls.poly`, the helper accepts a key matching `^[a-z0-9-]+(/[a-z0-9-]+)?$` and an address under `ROAD_MAP_DOWNLOAD_PREFIX` without `..`; with no helper heartbeat for 5 minutes the planner refuses a change with `rebuilds_not_set_up` (HTTP 503) ("The helper counts as set up while it looked less than five minutes ago", 4 and 6 minutes). PINs are accepted by D315; one reading is kept: `served.map_date` holds the tiles' date when the coverage is unknown (US-27 S2) and is null only when no date can be read.
+
+**PINs** (DESIGN names the facts, DISTILL fixed the spelling; DELIVER may change one with its code in the same commit and says so): catalogue answer = list of `{key, name, parent_name, bytes, in_map}`; summary answer carries `added`, `removed`, `total_bytes`, `estimate{total_minutes, pause_minutes}`, `land_groups[{regions}]`, `not_linked_note`; `served.map_date` is present when the coverage is unknown (US-27 S2); `planning_back_at` is an ISO UTC string; refusal codes are D308's; the pending change's `start_at` is UTC epoch seconds, its region keys are index ids, and its region lines have six tab-separated fields (key, name, parent name, .osm.pbf address, .poly address, bytes); the regions file given to the refresh has the same six fields per line; the progress hook is a helper-container run labelled `progress` whose next argument is the step (`checking`, `downloading`, `building`, `switching`); `progress.txt` carries `new=<tileset>`; the queue volume is `overland_road-map`; failure codes are D303/D314's (including `build_oom`).
+
+Summary: **123 scenarios (171 cases; 14 outlines, 62 rows)**. Traceability (a scenario with two story tags counts for its first): US-27 35, US-28 15, US-29 22, US-30 24, US-31 27. Tool: Playwright `@ui` 33 (33 `test.fixme`, 66 skipped on the two CI projects), pytest-bdd 90 scenarios (138 cases): `@driving_port` 61, `@real-io @adapter-integration` 33, `@script @offline` 29 (the tags overlap). Error/edge (`@error`, `@edge`, `@infrastructure-failure`): 96 of 123 = 78 %. No walking skeleton (brownfield, DISCUSS); no Tier B (layers 3+, example-only, Mandate 9: the journeys are not state machines over a rich input space); no `@kpi` (the KPIs are the owner's cold-start check and the Pi acceptance check with a forced failure).
+
+**What the review round changed** (D312 revised): (1) business language: no file, folder, key, exit-code or crontab words in titles or steps (the details are in the step bodies; the words "map", "list of regions", "timed job", "border" stand for them); (2) Mandate 8: every step that changes the Pi's timed jobs or the changes folder compares `schedule.helper_lines`, `schedule.other_lines`, `queue.files`, `pi.served_map`, `pi.refresh_calls` with `assert_state_delta`, and the API steps compare the road-map view as before; (3) one When per scenario (outlines and multi-When scenarios split, chained through Givens, none with a Given after a Then); (4) Thens read the served map, the answers and the Pi's served map; file detail only in the `@real-io` steps; (5) `unlink(missing_ok=True)`, `rmtree(ignore_errors=True)`, no unpacking of recorded requests, so a missing feature stays an AssertionError; (6) the refusal table is keyed on the D308 code and an unknown reason fails with an AssertionError; (7) a `@real-io` Then that each chosen region's border is fetched once; (8) the new D313/D314 behaviour: record built by the refresh from the regions file, `PLACE_SEARCH` switch, 60 s silence after 429, start time as epoch seconds, crontab rules (only "no crontab" is empty, backup, quoted path, uninstall only ours, purge calls the helper's uninstall first), lock refusal exits 75 and writes no failed line, helper refuses a link in place of the request and runs without root, network or the map volume, `..` and off-prefix addresses refused, checked-files list covers the record and the borders and the seed script still recognises the same five files, power-loss recovery compares `routing.env`. Shared constants (`FakePi`, `TILES_FILES`, `REFRESH_DATE`, `shim_env`) stay in `tests/deploy/conftest.py` and are imported; a move would touch every deploy test file.
+
+Scenario titles are the DISCUSS titles without the S-number where DISCUSS has one. DISCUSS to feature: every revised scenario of US-27 S1-S5, US-28 S1-S7, US-29 S1-S7, US-30 S1-S7 and US-31 S1-S5 is present as `@ui` (a scenario of the stories with two Whens is split in two: US-27 S5, US-31 S2); the same behaviour is also checked at the planner (`@driving_port`), with the real adapters (`@real-io`) and on the scripts (`@script`).
+
+| Scenario | Stories | Tags | Checked by |
+|---|---|---|---|
+| The Road map screen shows what is loaded | US-27 | @ui | road-map.spec.ts (`test.fixme`) |
+| Before the first rebuild from the app the screen says the regions are unknown | US-27 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A region is added by searching the free list of regions by name | US-27 | @ui | road-map.spec.ts (`test.fixme`) |
+| A region is removed as a pending change | US-27 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| Size and time are shown before applying | US-27 | @ui | road-map.spec.ts (`test.fixme`) |
+| Too big is refused with the size | US-27 | @ui @error | road-map.spec.ts (`test.fixme`) |
+| The planner names the regions and the date of the served map | US-27 | @driving_port | test_slice_12c.py, road_map_steps.py |
+| Before the first rebuild from the app the planner gives the map date and no regions | US-27 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| A region is found in the catalogue by name, with its parent and what the map already covers (2 rows) | US-27 | @driving_port | test_slice_12c.py, road_map_steps.py |
+| Two regions with the same name are told apart by their parent | US-27 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| A search for a region needs at least two letters | US-27 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| A change is summarised before it is written, and each chosen region's border is fetched once | US-27 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| Planning a change leaves the served map as it is | US-27 US-31 | @driving_port | test_slice_12c.py, road_map_steps.py |
+| A change that cannot be applied is refused with the reason and nothing is written (3 rows) | US-27 | @driving_port @error | test_slice_12c.py, road_map_steps.py |
+| A region far from the others is information, not a refusal | US-27 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Changing the road map is not offered when the changes cannot be stored | US-27 | @driving_port @error @infrastructure-failure | test_slice_12c.py, road_map_steps.py |
+| A change is refused when the changes cannot be stored | US-27 | @driving_port @error @infrastructure-failure | test_slice_12c.py, road_map_steps.py |
+| The catalogue is fetched with the planner's name and only region details are asked for | US-27 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| The catalogue is kept, so a restarted planner does not ask for it again | US-27 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| The catalogue is fetched again after a week | US-27 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| The kept catalogue is used when the region service does not answer | US-27 | @driving_port @real-io @adapter-integration @error @infrastructure-failure | test_slice_12c.py, road_map_steps.py |
+| The size of a region is asked once and remembered | US-27 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| The served map is the one whose map data carries the date the routing engine reports | US-27 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| After a rollback the older map is the one served | US-27 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| A map whose regions cannot be read is unknown, never an error (4 rows) | US-27 | @driving_port @real-io @adapter-integration @error @edge | test_slice_12c.py, road_map_steps.py |
+| A damaged region border is reported as a reason, and the map stays unknown | US-27 | @driving_port @real-io @adapter-integration @infrastructure-failure @error | test_slice_12c.py, road_map_steps.py |
+| While the routing engine is stopped for the build the last known map is still named | US-27 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| A pending change is kept for the helper, and no list of regions is written by the planner | US-27 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| A cancelled change can no longer be taken by the helper | US-27 US-31 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| Build the trip shows the regions and the map date | US-28 | @ui | road-map.spec.ts (`test.fixme`) |
+| A trail outside the map is warned at add time and on its row, and kept | US-28 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A place outside the map is warned whichever way it was added | US-28 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A place inside the map shows no warning | US-28 | @ui | road-map.spec.ts (`test.fixme`) |
+| Planning is not blocked by an outside item and says why it fails | US-28 | @ui @error | road-map.spec.ts (`test.fixme`) |
+| Without knowledge of the loaded map the page does not invent warnings | US-28 | @ui @error @edge | road-map.spec.ts (`test.fixme`) |
+| Stops in areas not linked by land are warned on Build the trip | US-28 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A place is inside or outside the map by the borders of the regions, not by boxes (6 rows) | US-28 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| A trail is outside when its entry or its exit is outside, the middle does not matter (3 rows) | US-28 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Without the regions of the map the planner says the coverage is unknown and warns nothing | US-28 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| A pending change does not alter what the trip is judged against | US-28 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Stops in areas not linked by land are grouped, and the groups are named | US-28 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Italy, southern France and Spain are linked by land | US-28 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Without southern France Spain is on its own | US-28 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| The map settings no longer name a road-map area and say whether place search is offered | US-28 US-29 | @driving_port | test_slice_12c.py, road_map_steps.py |
+| A place is found by name and joins the trip | US-29 | @ui | road-map.spec.ts (`test.fixme`) |
+| Nothing is sent until Marco presses Search, and the screen says what leaves the house | US-29 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| No result gives a clear message | US-29 | @ui @error | road-map.spec.ts (`test.fixme`) |
+| An unreachable or busy search service leaves the trip unchanged | US-29 | @ui @error @infrastructure-failure | road-map.spec.ts (`test.fixme`) |
+| A result outside the road map is added with the warning | US-29 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| Pressing Search twice quickly sends one search | US-29 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| On a phone the search form fits and opens in the page flow | US-29 | @ui @phone @edge | road-map.spec.ts (`test.fixme`) |
+| A place name is answered with up to five places, each with its region | US-29 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| No contact detail is ever sent to the search service | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| Nothing is sent to the search service unless a search is asked for | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| Only the typed words reach the search service | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| Two different searches in a row are a second apart | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| The same search again is answered from memory and sends nothing | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| Pressing Search twice at once sends one search | US-29 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| A name that matches nothing is an empty answer, not an error | US-29 | @driving_port @real-io @adapter-integration @error | test_slice_12c.py, road_map_steps.py |
+| A search service that is busy, down or garbled leaves the trip unchanged (4 rows) | US-29 | @driving_port @real-io @adapter-integration @error @infrastructure-failure | test_slice_12c.py, road_map_steps.py |
+| After a busy answer the search service is left alone for a minute | US-29 | @driving_port @real-io @adapter-integration @error @infrastructure-failure | test_slice_12c.py, road_map_steps.py |
+| A name shorter than two letters is refused before anything is sent | US-29 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| Switching place search off removes it from the Add menu | US-29 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| A search is answered as not available when place search is switched off | US-29 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| Leaving the search address empty means the usual address, not off | US-29 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| A result outside the road map joins the trip as a kept, warned place | US-29 US-28 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| Progress shows the step the rebuild is in | US-30 | @ui | road-map.spec.ts (`test.fixme`) |
+| During the download the old map keeps planning | US-30 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| During the build planning is disabled and the page says until when | US-30 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A successful rebuild shows the new regions and date everywhere | US-30 | @ui | road-map.spec.ts (`test.fixme`) |
+| A failed rebuild brings the old map back and says why | US-30 | @ui @error | road-map.spec.ts (`test.fixme`) |
+| A planned rebuild starts at its time and the result is there next morning | US-30 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A rebuild interrupted by a power cut ends with the old map served | US-30 | @ui @error @edge | road-map.spec.ts (`test.fixme`) |
+| The planner shows the step the helper has reached (4 rows) | US-30 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| Planning is paused from the build until the switch ends, and the planner says when it is back (3 rows) | US-30 | @driving_port @real-io @adapter-integration @edge | test_slice_12c.py, road_map_steps.py |
+| A rebuild that stopped for lack of space says so, with the numbers, and the served map is untouched | US-30 | @driving_port @real-io @adapter-integration @error | test_slice_12c.py, road_map_steps.py |
+| Every way a rebuild can fail is told in plain words, not as a code (14 rows) | US-30 | @driving_port @real-io @adapter-integration @error | test_slice_12c.py, road_map_steps.py |
+| A rebuild that ended well shows the new regions and date once the new map is served | US-30 | @driving_port @real-io @adapter-integration | test_slice_12c.py, road_map_steps.py |
+| Marco picks now or a start time | US-31 | @ui | road-map.spec.ts (`test.fixme`) |
+| A planned rebuild can be cancelled until it starts | US-31 | @ui @edge | road-map.spec.ts (`test.fixme`) |
+| A rebuild cannot be cancelled once it has started | US-31 | @ui @edge @error | road-map.spec.ts (`test.fixme`) |
+| Refresh map data is the same workflow and only one change is pending | US-31 | @ui @edge @error | road-map.spec.ts (`test.fixme`) |
+| One rebuild a day, counted by the kept map, with the next time shown | US-31 | @ui @edge @error | road-map.spec.ts (`test.fixme`) |
+| Without the helper the screen says rebuilds are not set up | US-31 | @ui @error | road-map.spec.ts (`test.fixme`) |
+| Refresh map data asks for the same regions and shows the same cost | US-31 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| Only one change is pending at a time | US-31 | @driving_port @error | test_slice_12c.py, road_map_steps.py |
+| A planned change cannot be cancelled once the helper has taken it | US-31 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| A rebuild is refused on a day that already has a map, with the next day and time it may run | US-31 | @driving_port @error | test_slice_12c.py, road_map_steps.py |
+| A new map left behind by a failed switch uses the day up | US-31 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| A rebuild that failed before the switch leaves no map, so the day is not used up | US-31 | @driving_port @edge | test_slice_12c.py, road_map_steps.py |
+| A start time must be between two minutes and fourteen days ahead (4 rows) | US-31 | @driving_port @error @edge | test_slice_12c.py, road_map_steps.py |
+| Without the helper the planner says rebuilds are not set up and refuses the change | US-31 | @driving_port @real-io @adapter-integration @error | test_slice_12c.py, road_map_steps.py |
+| A waiting change that the helper has not looked at for minutes says rebuilds are not set up | US-31 | @driving_port @real-io @adapter-integration @error @edge | test_slice_12c.py, road_map_steps.py |
+| The helper is installed once, as one timed job of the deploy user | US-31 | @script @offline | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The install folder may have spaces in its name | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| Installing again replaces the helper's own timed job and keeps the other jobs as they are | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The helper is added beside the other timed jobs, which are kept exactly | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| Uninstalling removes only the helper's timed job | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A Pi whose timed jobs cannot be read is left alone | US-31 | @script @offline @error @infrastructure-failure | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The helper says whether it is installed (2 rows) | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A Pi that cannot take the helper does not fail the deploy | US-31 | @script @offline @error @infrastructure-failure | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| Removing the app from the Pi removes the helper's timed job first | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A request is taken at its time and the refresh runs on the regions it names | US-30 US-31 | @script @offline | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A request is not started before its time | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A request that is not exactly what the planner writes is refused and nothing runs (8 rows) | US-30 | @script @offline @error | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The helper's containers run as an ordinary user, without network and without the map volume | US-30 | @script @offline @error @security | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A request cancelled just before the helper looks is not started | US-31 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A refresh refused because a deploy is running is tried again the next minute | US-30 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| Two helpers at the same minute: the second leaves at once | US-30 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A rebuild the Pi lost before the switch is recorded as interrupted and the old map serves | US-30 | @script @offline @error @infrastructure-failure | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A rebuild the Pi lost after the switch is recorded as done | US-30 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A rebuild the Pi lost is not touched while a deploy is running | US-30 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The refresh refuses for lack of disk with the numbers, and the helper keeps them | US-30 | @script @offline @error | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A refresh from a list of regions downloads those regions, each to its own numbered file | US-27 | @script @offline | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A region whose border file cannot be fetched stops the refresh before anything is stopped | US-27 | @script @offline @error | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The refresh reports its steps in order | US-30 | @script @offline | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The refresh says nothing about its steps when not asked | US-30 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The refresh builds the list of the map's regions itself, and it travels with the new tiles | US-27 | @script @offline | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The checked-files list covers the regions list and the borders too | US-27 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| Seeding a map again still recognises the same five files after the list grew | US-27 | @script @offline @edge | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| The disk the refresh needs grows with the download (3 rows) | US-27 | @script @offline @error | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+| A refresh refused because a deploy is running says so, and writes no failure | US-30 | @script @offline @edge @error | test_slice_12c.py, road_map_script_steps.py (real scripts, tests/deploy seams) |
+
+**Reconciliation with user and design decisions (D276 lesson):**
+
+| Decision | Scenario(s) | Holds |
+|---|---|---|
+| D295 (user): the unreachable sentence says what the planner's road map covers | Changed on purpose (list below) | The sentence's regions come from `GET /api/road-map` |
+| D296, D297 (user): eight regions; Italy and Spain linked by road; Andorra outside | "Italy, southern France and Spain are linked by land", "Without southern France Spain is on its own", Andorra la Vella = outside | Yes (real outlines) |
+| D298 (user): Add menu in the page flow | US-29 S7 (`@ui @phone`); "Switching place search off removes it from the Add menu" | Yes |
+| D208 F2, D211, D284, D285 | Not changed; US-28 S5 keeps the planner's words and adds the region names below them | Yes |
+| D299: nothing is applied before the owner chooses; the old map always comes back | "Planning a change leaves the served map as it is", the failure scenarios, "A rebuild the Pi lost before the switch ... the old map serves" | Yes |
+| D301/D314: the served map is found by its map date; unknown is never an error; the refresh owns the record | Reader scenarios, "A map whose regions cannot be read is unknown", "The refresh builds the list of the map's regions itself" | Yes |
+| D302: borders not boxes; a trail is outside by its entry or exit | Outline "A place is inside or outside the map by the borders" (6 rows), trail rule (3 rows) | Yes |
+| D303/D304/D314: one writer per file, atomic rename, strict validation, no root, no network, link refused, lock exit 75, power-loss recovery | The 29 `@script` scenarios | Yes |
+| D305: size limit, estimate formula, one rebuild a UTC day counted by the kept map, start window, disk guard scales | Refusal outline, summary figures, same-day (served map, leftover of a failed switch, failure before the switch), start-time outline, disk outline | Yes |
+| D306/D307/D314: catalogue once a week with the planner's name, sizes by HEAD, borders of chosen regions only; place search: User-Agent, one a second, memory cache, no contact, 60 s silence, `PLACE_SEARCH` switch | The catalogue and place-search `@real-io` scenarios | Yes; D307 over DISCUSS "caching OUT" accepted |
+| D308/D309/D310: routes, screens, probes with stable reasons | Route scenarios; health reasons named in three scenarios | Yes |
+
+**Adapter coverage (Mandate 6; every driven adapter has at least one `@real-io @adapter-integration` scenario):**
+
+| Adapter | @real-io scenario | Covered by |
+|---|---|---|
+| `GeofabrikCatalogue` (index, kept copy, HEAD sizes, borders) | YES | "The catalogue is fetched with the planner's name ...", "The catalogue is kept ...", "fetched again after a week", "The kept catalogue is used when the region service does not answer", "The size of a region is asked once", "A change is summarised ... each chosen region's border is fetched once" (recorded requests) |
+| `.poly` parser | YES | Real Geofabrik polygons in the place and trail outlines, the groups scenarios, "A damaged region border is reported as a reason" |
+| `TilesetStore` / `ServedMap` (`served_epoch()`, `select_served`) | YES | The three reader scenarios, "A map whose regions cannot be read is unknown" (4 faults), "While the routing engine is stopped for the build ...", "A rebuild that ended well shows the new regions and date" (real map folders, tar date, scripted `/status`) |
+| `RoadMapChanges` (queue files) | YES | "A pending change is kept for the helper, and no list of regions is written by the planner", "A cancelled change can no longer be taken", the progress, pause, failure and "not set up" scenarios, "changes cannot be stored" |
+| `NominatimPlaceSearch` | YES | Twelve `@real-io` scenarios (query shape, no contact, nothing unasked, only typed words, one a second, memory, two at once, empty answer, four faults, 60 s silence, outside result) |
+| Helper scripts, refresh changes, deploy and Makefile hooks | YES | The 29 `@script @offline` scenarios on the real scripts |
+| Zero adapters missing | | |
+
+**Driving adapter coverage:** `GET /api/road-map`, `GET /api/road-map/catalogue`, `POST /api/road-map/change/preview`, `POST /api/road-map/change`, `DELETE /api/road-map/change`, `GET /api/projects/{id}/coverage`, `GET /api/places/search`, `GET /api/config/map` each have `@driving_port` scenarios at the real app; the three screens have the 33 `@ui` scenarios; `road-map-helper.sh install`, `uninstall`, `status`, the runner (the cron job), `tiles-refresh.sh` with `REGIONS_FILE`/`ROAD_MAP_PROGRESS`, `deploy.sh`'s best-effort install and `make purge` calling the helper's uninstall run as the Pi runs them. Zero uncovered entry points. No new server process, so no `@wiring_e2e` (a start refusal of `ROAD_MAP_SERVED_TILESET` with `valhalla` and of a bad `PLACE_SEARCH` value are DELIVER's settings checks).
+
+**Slice-12 / 12b / D295 / D298 checks changed on purpose (D309, revised DESIGN list).** DISTILL does not edit them now: the DELIVER step that changes the behaviour edits the line and its test in the same commit (the 12c test-side edits add behaviour and break no test: `tests/deploy` and the 12b bindings pass).
+
+| Check | Today | New wording / change |
+|---|---|---|
+| `tests/integration/http/test_map_config.py:42`, `:56-61` | `road_map_area` field; "the road map area is the default and can be set" | the field and the test go; `place_search` is checked; 12c "The map settings no longer name a road-map area ..." pins both |
+| `tests/contract/http/openapi.json:552`, `:570-585` | `road_map_area` | regenerated with the seven new routes |
+| `web/src/lib/PlanPanel.test.ts:1117-1156`, `PlanPanel.svelte:98`, `:154-160`, `:169`, `:317-319` | D295 sentence from the map config's `road_map_area` | regions from `GET /api/road-map`, joined with commas and "and"; "Plan the route" disabled with D309's line while paused |
+| `web/src/lib/runMap.ts:23`, `runMap.test.ts:44` | `MapConfig.road_map_area` | dropped; `place_search` added |
+| `.env.example:65-66` | `ROAD_MAP_AREA` | `PLACE_SEARCH`, `PLACE_SEARCH_URL` (Nominatim policy link), `GEOFABRIK_INDEX_URL`, `ROAD_MAP_MAX_GB`, `ROAD_MAP_DOWNLOAD_PREFIX` |
+| `tests/deploy/test_compose_contract.py:160-161`, `tests/deploy/test_container_hardening.py:69` | the planner writes only `/data` and `/tmp` (D173) | also `/road-map-changes`, `/valhalla-data` read-only; `planner-perf` mounts asserted too |
+| `tests/deploy/test_tiles_refresh_script.py:151-172` | the eight extracts | the same test is the default of a run without `REGIONS_FILE` (kept); `REGIONS_FILE` runs are the 12c scenarios. No existing refresh test asserts the lock exit (75 is new) |
+| `tests/deploy/test_makefile_targets.py` (`PI_TARGETS` `:36`, `ROUTING_TARGETS` `:401`, purge `:167-192`, `:421`) | `uninstall`/`purge` Pi calls and volumes | both call the helper's uninstall first (the `crontab` shim); purged volumes gain `overland_road-map` |
+| `tests/deploy/test_deploy_script.py` (`test_deploy_stays_inside_the_overland_scope`, unexpected-call guards) | no `crontab` call | `deploy.sh` installs the helper after publish and routing start; a failing install is one warning |
+| `tests/deploy/test_tiles_seed_script.py` and `lib.sh:259-268` (`volume_stored_sums`, `sums_diff`) | compares the stored list with the five source sums | must compare only the five names; pinned by "Seeding a map again still recognises the same five files" |
+| Slice 12 header checks `ui-foundation.spec.ts:236`, `:332` | links Projects, Diagnostics | plus "Road map" beside Projects |
+| `web/src/lib/AddMenu.test.ts:30`, `trip-workflow.spec.ts:185`, 12b feature `:45-48` (US-23 S2) | three ways to add | four when `place_search` is true ("... or search for a place"), three when `PLACE_SEARCH=off` |
+| US-23 S1 element lists on Build the trip (12b feature `:40`, `trip-workflow.spec.ts` first test) | no coverage box | the coverage box and the rebuild line are new elements |
+| 12b scenarios that press "Plan the route" | assume planning works | assume no rebuild is running (the CI planner has none); no edit expected |
+| Not changed | run messages, golden order, D208, D211, D284, D285 | |
+
+Waivers: W4 extended to 12c for the two foreign services and the helper's progress states in the browser. Test-side fakes honour the real ports: two local recording HTTP servers, a scripted `/status`, the `crontab` shim, a `write` option of the docker shim (a download's files appearing in the volume).
+
+**Scaffolds:** none. The step bindings import no production module (as 12b): they drive the real app through its HTTP API and the real scripts through `bash`, so until DELIVER the Thens fail on what the planner answers (404 where a road map is expected) or leaves on the Pi (no timed job, no result). Test code created: `steps/road_map_fakes.py`, `steps/road_map_steps.py`, `steps/road_map_script_steps.py`, `fixtures/road-map/` (ten real Geofabrik `.poly` files, a hand-made `utah.poly`, the trimmed real index, README with source and ODbL), `tests/deploy/shims/crontab`. Small edits to shared test code: `steps/planner.py` (`PlannerSession.call`), the acceptance `conftest.py` (registers the two step modules), `tests/deploy/conftest.py` (copies the two scripts into the fake Pi when they exist), `tests/deploy/shims/_shim.py` (`crontab`, `write`). Production modules DELIVER creates: DESIGN "Component decomposition".
+
+**Test placement:** `tests/acceptance/overland_route_planner_mvp/` (feature, `test_slice_12c.py`, `steps/road_map_*.py`, fixtures) and `tests/e2e/road-map.spec.ts`, as 12b. The feature is `@slice-12c @pending`: `uv run pytest` skips all 138 cases; `--run-pending=slice-12c` runs them RED. The spec has 33 `test.fixme`. PENDING_FLAGS unchanged (as 12b at DISTILL): the last DELIVER step adds `--run-pending=slice-12c`, removes `@pending` and turns every `test.fixme` into `test`.
+
+**Pre-requisites:** DESIGN's seven routes, the settings (`ROAD_MAP_DIR`, `ROAD_MAP_CHANGES_DIR`, `ROAD_MAP_SERVED_TILESET` (mock only), `PLACE_SEARCH`, `PLACE_SEARCH_URL`, `GEOFABRIK_INDEX_URL`) and the two scripts; CI job 2 (pytest) and job 7 (Playwright with a fixture volume, a changes folder and the two local servers); no network in CI; disk: fixtures 220 KB.
+
+DoD (slice 12c): (1) the 90 pytest scenarios (138 cases) and the 33 Playwright tests GREEN on their projects, `@pending` gone, `--run-pending=slice-12c` in PENDING_FLAGS, no `test.fixme` left in `road-map.spec.ts`; (2) the inner checks of the DESIGN testability table GREEN (`domain/roadmap` unit, Hypothesis on `Outline.contains` and `land_groups` at layers 1-2 only, respx contract tests of both adapters against recorded real answers, `select_served`, vitest `roadMapView.ts` and the components, the 60 s back-off with a fake clock); (3) every changed-check row done in the step that causes it; (4) mutation >= 80 % on the modified Python files; (5) `lint-ci` (shellcheck on the two scripts), the import-linter contracts of D310, `tests/deploy` GREEN; (6) the Pi gate runs one real "Refresh map data" on a UTC date after 2026-11-26 and one forced failure (D313 Q1), then the owner's cold-start check.
+
+
 ## Wave: DISTILL / [REF] Handoff to DELIVER
 
 - Default run `uv run pytest -q tests`: the walking skeleton fails RED, everything else is skipped. Enable 00b and 01a scenarios one at a time (remove `@pending`), or see them all RED with `--run-pending=slice-00b --run-pending=slice-01a`. Evidence: `distill/red-classification.md`.
@@ -5896,6 +6838,25 @@ DoD (slice 12b): (1) the 2 `@driving_port` scenarios and the 33 Playwright tests
 | D296 | 2026-11-25 | Owner: "While we wait for us to build the next slice, I'd say you add Spain under the hood. You can do it right now."; D295; ADR-013 Amendment 3 (tiles refresh) | The owner's real trips (the Spanish GPX tracks) cannot be planned on a road map without Spain. The region-list slice (owner-chosen, visible regions) is the next slice, started in a new session; until then the list stays in `deploy/scripts/tiles-refresh.sh`. | **Owner decision:** `europe/spain-latest` added to EXTRACTS (six extracts); `ROAD_MAP_AREA` default becomes "Italy, Spain, Switzerland, Austria and the French Alps"; deployed, then `make tiles-refresh` run on the Pi now (owner go and start time given; the script restores the old tileset on any failure). The next slice is the road-map regions slice, before slice 04. **As built (2026-11-25):** CI green on `c41ff06` (all jobs, e2e included; the full local e2e run could not finish, the Mac's disk was full); `make deploy` of `c41ff06` exit 0 (image `sha256:8430fba2…`); household projects (9) identical byte for byte before and after the deploy and the refresh; `make tiles-refresh` exit 0: tileset `20261125` served (build 819 s), rollback `20261118`; `make contract-live` 55 passed, 11 skipped; `make acceptance-pi` 2 passed, 1 failed only on its precondition (PERF_REPORT not set: the 60-item timing scenario needs a `make perf-pi MODE=e2e` report, not run). A route from Milan to the Cerdanya trail now answers, but by ferry (Genoa to Barcelona): the extracts leave out Occitanie (south-west France), so no road links Italy and Spain. |
 | D297 | 2026-11-25 | D296 (Milan to Cerdanya answered by ferry); owner: "yes" to adding Occitanie | The extracts left a gap in south-west France between Provence and Spain, so a road trip from Italy to Spain was routed by sea. | **Owner decision:** `europe/france/languedoc-roussillon-latest` and `europe/france/midi-pyrenees-latest` added to EXTRACTS (eight extracts); `ROAD_MAP_AREA` default "Italy, Spain, Switzerland, Austria and southern France"; deployed, then `make tiles-refresh` after 00:00 UTC (the script names the tileset by the UTC date and refuses a date already served, `20261125`). Andorra stays outside the map. **As built (2026-11-26):** CI green on `1c8acc5`; `make deploy` exit 0 (image `sha256:02d79bbc…`); `make tiles-refresh` exit 0 at 01:34 UTC: tileset `20261126` served, rollback `20261125` (build steps 2280 s and 914 s); `make contract-live` 55 passed, 11 skipped; Milan to the Cerdanya trail now by road (`has_ferry` false, 910 km); household projects (9) identical byte for byte before and after the deploy and the refresh. |
 | D298 | 2026-11-26 | Owner report (three screenshots): the Add menu, step 3, Plan the route on an empty trip; D295 (row menu fix); D211 | (1) The Add menu had the row menu's bug: absolutely placed in the scrolling panel, "Type coordinates" was cut off and the menu covered "Plan for". (2) On Build the trip with a route ready, "3 Your route" showed as a framed button, unlike the other steps. (3) "Plan the route" was offered on an empty trip. The owner also asked for a search for a place by name (a fourth way to add). | **Orchestrator decision:** fixed test first under the gate-bug authority: the Add menu opens in the page flow under the heading bar; the step 3 button has no box (pointer, underline on hover, outline for keyboard focus); "Plan the route" is disabled with one line saying why ("Add a trail or place first." / "Set a Start: open ⋯ on a place and choose Set as start."). The slice 12b refusal scenario now removes the Start elsewhere after the page read the trip, so the planner's own refusal (D211) is still shown word for word. **Owner decision:** place search by name joins the road-map regions slice (no separate slice). **As built (2026-11-26):** commit `70d7326`, CI green (all jobs); `make deploy` exit 0 (image `sha256:f39ddfb1…`); household projects (11) identical byte for byte before and after. Locally only targeted chromium tests ran (the Mac's disk was nearly full); CI ran the full suite. |
+| D299 | 2026-11-26 | Owner decision on the v1 sketches (slice 12c) | The owner said: "I believed that part of this slice was to give me the possibility from the UI to select which maps to load. What if in 3 months I'm going to Utah? Shall I come back over here and ask you to build a new set of maps? Or worse, will you give me a nerdy script to run? That does not fly: we need a workflow in the UI that allows me to load or unload maps." | **Owner decision:** "All in 12c" (about 4 days) and "Yes, install it" for a small helper on the Pi installed by the deploy (a scheduled job under the same user that runs the planner today, no admin rights, removable; the gate tests it with one rebuild). Supersedes the slice prompt's "edit the list, then make tiles-refresh" and the tracked region list. |
+| D300 | 2026-11-26 | Owner decision on the sketches (11 screens) | The sketches had to be approved before DESIGN. | **Owner decision:** v1 screens 1-5 approved as shown; v2 screens 6-11 approved as shown. **Orchestrator correction recorded:** the orchestrator first told the owner the old map keeps working until the new one is ready; in fact Valhalla is stopped during the build (about 40 of about 55 minutes), and the v2 screens say so. |
+| D301 | 2026-11-26 | Slice 12c DESIGN; US-27, US-28; ADR-013 A3 (D242: `tileset_last_modified` is the mtime of `valhalla_tiles.tar`); `compose.yaml:9-13`, `:135-140`; `valhalla_routing_provider.py:109-119` | The page must read what is served, with no second copy, and survive hosts without a seeded tileset. | **Architect decision:** the **refresh alone** writes `road-map.json` (regions only, no name or date; built from the regions file after the downloads, D313) into a meta directory of the volume, `valhalla-fetch` (second rw mount, subpath `road-map-meta`) downloads the `outlines/*.poly` there, and the promotion moves both into the tileset with the tiles (SHA256SUMS covers them). The planner mounts the **whole** volume `valhalla-data` read-only (not subpath `tilesets`: a missing subpath would stop the planner from starting, against D234; `planner-perf` lists the mounts too) and the domain function `select_served` matches a listing given by `TilesetStore` (names, tar mtimes, records) against a typed `ServedMapId` (an **uncached** `/status` epoch from `ValhallaRoutingProvider.served_epoch()`; the cached `provider_id` is stale until a probe; the mock names a directory through the same function). No post-switch epoch file is written (the mtime is the epoch). No match -> "Map coverage unknown" (today's `20261126` until the first rebuild; seed list `SEED_REGION_KEYS` for "Refresh map data" when no record exists). Mock rule: `ROAD_MAP_SERVED_TILESET` names the directory; refused with `valhalla`. Last match kept in memory (and `serving=` of the progress record) while the engine is stopped. |
+| D302 | 2026-11-26 | Slice 12c DESIGN; US-28 S7; orchestrator's check on the real polygons | "Outside the map" and "not linked by land" must be exact enough for a Spanish track near the French border. | **Architect decision:** pure domain `Outline` (rings with holes, even-odd) and `RoadMapCoverage` (`contains`, land groups = connected components of regions whose outlines overlap or touch); `.poly` parsing is an adapter. A trail is outside when its entry or exit is outside; a place when its point is; items are kept and planning is never refused; more than one land group in a trip raises a warning only. Limits stated: ferries and islands inside an outline, antimeridian. Mutation-tested (`only_mutate` covers the domain). |
+| D303 | 2026-11-26 | Slice 12c DESIGN; US-27 S5-S7, US-30; D299 | The app must ask a helper without a socket, a shared writer or a parser of free text. | **Architect decision:** a small named volume `overland_road-map` (read-write in the planner, owned by 10001 via the Dockerfile) holds one-writer files: `request.txt` (planner, atomic rename in), `cancelled.txt` (planner, by renaming the request), `running.txt` (helper, by renaming the request: whoever renames first wins the cancel race), `progress.txt`, `result.txt`, `helper-seen` (helper, written by temp file then rename). No `record.json` (D313). Line format (`key=value`, tab-separated region lines of key, name, parent name, addresses, bytes; times as UTC epoch seconds), no JSON written or parsed by bash, no `jq` on the host. The helper reads the volume through a non-root (`--user 10001:10001`), `--network none` container, refuses any non-regular file, caps every read, and never mounts `valhalla-data` in the same container (D314). One pending change or one running rebuild; a failed result keeps the request lines (the change is kept). |
+| D304 | 2026-11-26 | Slice 12c DESIGN; D299; `tiles-refresh.sh:107-108`, `:53-57`, `:159-166`, `:194-201` | The rebuild runs unattended on the Pi, at a time the owner chose. | **Architect decision:** `deploy/scripts/road-map-runner.sh`, one line of the deploy user's crontab (every minute; marker `# overland-road-map-runner`), installed idempotently and best-effort by `road-map-helper.sh install` from `deploy.sh` (never fails a deploy; `uninstall` removes only our line; `make uninstall` and `purge` call it). The runner uses its own flock (the refresh takes `.deploy.lock` itself, so the runner must not hold it; a lock refusal now exits 75 and is retried for up to 30 minutes), validates the request strictly in bash with fixed patterns (addresses under `ROAD_MAP_DOWNLOAD_PREFIX`, default the Geofabrik origin, rebuilt from each key, no `..`; at most 40 regions; epoch times), never evaluates content, reads and moves files through a short, time-limited, pinned, non-root `docker run` (`--network none`), and recovers a stale `running.txt` under `.deploy.lock` (done when `routing.env` equals the started tileset, else failed `interrupted`, valhalla started; lock held -> retry next minute). The crontab edit is safe (only "no crontab" is empty; save, temp file, read-back, compare). The refresh gains `REGIONS_FILE`, files named `src/<index>.osm.pbf` (two regions can share a last path segment), `.poly` download (a 404 refuses naming the region before anything stops), the record, a `progress` hook (`checking`, `downloading`, `building`, `switching`; failure `code` + numbers, incl. `build_oom`), exit 75 without a `tiles.log` failed line for a lock refusal, and keeps every safety. The planner words the failures from codes, not from the refresh's texts. |
+| D305 | 2026-11-26 | Slice 12c DESIGN; D297 calibration (6.4 GB, 2,280 s and 914 s); sketch figures 55 and 57 minutes; `tiles-refresh.sh:36`, `:67-71`, `:116-125` | Limits and estimate must match what the owner saw and what the script enforces. | **Architect decision:** size limit `ROAD_MAP_MAX_GB` default 8; estimate pause = round(6 x GB), total = round(8.2 x GB + 2.5) minutes (the orchestrator's 10 + 8 x GB gives 61 for 6.4 GB, against the 55 and 57 on the approved screens); one rebuild a UTC day derived from the names in `tilesets/` against the UTC date of the chosen start (a leftover `tilesets/<NEW>` after a failed switch blocks the same day, honestly); start from now to 14 days ahead; the refresh's disk guard becomes `max(25 GB, 3.9 x download)`. |
+| D306 | 2026-11-26 | Slice 12c DESIGN; US-27; Geofabrik index checked 2026-11-26 (554 features) | The catalogue must be free, keyless, cached, and its keys unambiguous. | **Architect decision:** `GeofabrikCatalogue` (httpx, identifying User-Agent, timeouts 10 s): index cached on disk in the planner data dir for 7 days, `.poly` cached by key, HEAD sizes cached; the region key is the index `id` and the addresses the index's own `urls.pbf`/`urls.poly` (D315, replacing the path rule), the parent comes from the index's `parent` field and containment walks that chain (never the path); features without pbf or poly, or with an unresolved parent, are not offered; what leaves the house is exactly the index, the HEAD of shown regions and the outline of chosen ones, no trip data; the download origin derives from `GEOFABRIK_INDEX_URL` (D313 O3). ADR-020. |
+| D307 | 2026-11-26 | Slice 12c DESIGN; US-29; slice prompt (owner named the service); Nominatim usage policy read 2026-11-26 at the OSMF operations page | The search service's terms must fit a household planner. | **Architect decision:** server-side proxy `NominatimPlaceSearch` (browser cannot set the User-Agent; policy asks for caching and a switch without an update): `PLACE_SEARCH=on|off` (default on; `.env` says `PLACE_SEARCH=off`; empty is the default, as every setting) and `PLACE_SEARCH_URL` (empty = the default address), **no contact email** (D313 Q7), identifying User-Agent, `jsonv2`, limit 5, one request a second across the process (wait up to 3 s, then "busy"), 60 s of silence after a 429 or 503, in-memory cache (never on disk; overrides the DISCUSS "caching OUT" line), timeout 10 s, no autocomplete, no outbound call at start-up; fine print reworded to say "from your home connection" (orchestrator wording change of D300's screen 2, D314). The policy, including its section on LLM-suggested use (point prominently to the policy), is linked from ADR-019 and `.env.example`; the owner named the service and its policy. Photon by setting only, not wired. ADR-019. |
+| D308 | 2026-11-26 | Slice 12c DESIGN; D295 | The page needs the served map, the change and the coverage without a second copy of the truth. | **Architect decision:** `GET /api/road-map`, `GET /api/road-map/catalogue`, `POST /api/road-map/change` (and `/preview`), `DELETE /api/road-map/change`, `GET /api/projects/{id}/coverage`, `GET /api/places/search`; `/api/config/map` **drops `road_map_area`** and gains `place_search`; the setting `ROAD_MAP_AREA` is removed (a leftover `.env` line is ignored). Checks changed: see the DESIGN section list (D309). |
+| D309 | 2026-11-26 | Slice 12c DESIGN; D295, D298, D208, D211, D284, D285 | The screens of D300 must fit the slice-12b workflow without breaking its decisions. | **Architect decision:** Road map screen at `#/road-map` (header link), coverage box and "Outside road map" tags on Build the trip, one-time alert for items that became outside, not-linked-by-land warning, planned-rebuild line on every project, "Plan the route" disabled with one reason line while `planning_paused` (the planner's refusal words stay for a race, D211), place search as a fourth Add entry when `place_search` is on; menus and forms in the page flow, 44 px, tokens, both themes, 390 px. The slice 12 and 12b checks that change on purpose are listed in the DESIGN section. |
+| D310 | 2026-11-26 | Slice 12c DESIGN; ADR-011; Earned Trust | Every new adapter must prove it can honour its contract where it runs. | **Architect decision:** probes, never fatal, each degrading its own feature: queue (write-rename-read-delete: catches a read-only or root-owned volume), reader (parses every record; a missing mount is "unknown"), catalogue (cached or one fetch; 100 or more features, unique keys, prefix check), place search (no outbound call; configuration and rate-limiter round trip). Import-linter contracts added (`adapters.roadmap` in the independence and ortools lists, `facade-roadmap`, `domain-roadmap`); shell by shellcheck and the offline deploy tests. |
+| D311 | 2026-11-26 | Slice 12c DESIGN; process | The orchestrator's design was checked against the code. | **Architect decision, findings recorded:** (1) subpath mount of `tilesets` breaks D234 -> whole volume read-only; (2) the post-switch epoch file is redundant -> tar mtime; (3) estimate formula contradicts the sketches -> D305; (4) ids `^[a-z0-9-]+$` cannot hold Geofabrik paths and `curl -O` collides on equal last segments -> path keys and indexed file names; (5) record and outlines must not sit in `build/` -> meta directory; (6) the helper cannot hold `.deploy.lock` and the refresh's lock refusal had no distinct exit code -> own lock and exit 75; (7) the provider's identity is cached -> `served_epoch()`; (8) fixed 25 GB disk guard vs the 8 GB limit; (9) a failed switch keeps today's tileset directory -> same-day retry refused honestly; (10) the owner's cold-start steps (b) and (c) cannot pass before the first rebuild -> open question Q1; (11) parsing the refresh's refusal texts is brittle -> codes and numbers; (12) no `jq` on the host -> line-format request. |
+| D312 | 2026-11-26 (revised after the consolidated review and D313, D314) | Slice 12c DISTILL; US-27 to US-31; DESIGN D299-D314; D208, D211, D295-D298, D276 lesson | The slice needs executable scenarios, the browser checks pending, test seams for two foreign services and two shell scripts, and the slice-12/12b/D295/D298 checks it replaces named before DELIVER. | **Acceptance designer decision (DISTILL), revised after the review:** `slice-12c-the-planner-knows-its-map.feature` (`@slice-12c @pending`, `@US-27` to `@US-31` on every scenario): 123 scenarios, 171 cases (US-27 35, US-28 15, US-29 22, US-30 24, US-31 27 by first story tag); 33 `@ui` (33 `test.fixme` in `tests/e2e/road-map.spec.ts`), 90 bound in `test_slice_12c.py` (138 cases: 61 `@driving_port` on the real app, 33 `@real-io @adapter-integration` against two recording local servers, real Geofabrik polygons, real map and change folders, 29 `@script @offline` on the real scripts under the D277 seams), all RED with `--run-pending=slice-12c` (138 AssertionError, 0 errors, none passing); 96 of 123 error or edge (78 %). Review blockers fixed: business language only in the Gherkin, Mandate 8 state deltas over `schedule.*`, `queue.files`, `pi.*`, one When per scenario, Thens on observable outcomes, missing-feature failures stay AssertionError. D313/D314 reflected (record built by the refresh, `PLACE_SEARCH`, 60 s silence, epoch start time, crontab rules, lock exit 75 without a failed line, no-root helper, link refused, borders and record in the checked-files list with a seed pin, power-loss comparison). Reconciliation: 0 blocking; O7 and O8 settled by D315 (keys are index ids, addresses from the index, `rebuilds_not_set_up` 503 on a 5-minute-old heartbeat; scenarios and fixtures follow). No scaffold (the steps import no production module, as 12b). Changed-check list: 14 rows, none edited now. PENDING_FLAGS unchanged. To confirm: nothing open (PINs accepted by D315). |
+| D313 | 2026-11-26 | Slice 12c DISTILL observations O1, O3, O4, O5 (D312); DESIGN open questions Q1, Q4, Q7 (D311) | DISTILL flagged six observations without choosing; DESIGN left questions for the orchestrator. | **Orchestrator decision:** O1: Portugal replaces Germany in the examples (Germany alone is 4.7 GB and with today's 6.4 GB exceeds the 8 GB limit); the owner's approved screens use Utah, unchanged. O3: the allowed download prefix is derived from `GEOFABRIK_INDEX_URL`'s origin, so tests run offline. O4: the refresh builds the served-map record itself, after prepare-build, from the regions file (one line per region: key, name, parent name, pbf URL, poly URL, bytes), written with `lib.sh` `json_text`; the planner writes no `record.json` and the helper copies no record. This removes the ordering defect and keeps one writer per file. DELIVER adjusts the affected scenario wording (meaning unchanged: the record and outlines travel with the new tiles). O5: no new refusal code. While `planning_paused` is true the page disables "Plan the route" with D309's line. A plan sent anyway (another tab, the API) meets the engine's existing unreachable failure, worded as today. Q1: the gate runs one real "Refresh map data" from the app, on a UTC date after 2026-11-26, before the owner's cold-start check. Until then the page says "Map coverage unknown" (the record does not exist yet, and no record is forged for `20261126`). Q4: checked read-only on the Pi on 2026-11-26: `crontab` present, cron active, the user has no crontab yet, the user is in the `docker` group, `flock` and `python3` present, 224 GB free, 12 GB memory available. Q7: no contact email is sent to Nominatim; the User-Agent names the application and its public repository. `PLACE_SEARCH_CONTACT` is not added. |
+| D314 | 2026-11-26 | Consolidated review of the slice 12c DESIGN (architecture reviewer: rejected, 1 blocker 4 high; platform reviewer: conditionally approved, 2 high); D313 | The DESIGN had defects the review found against the code and the Pi. | **Architect decision (DESIGN revision after the consolidated review), changes to D301-D311, the DESIGN section, ADR-013 Amendment 5, ADR-019, ADR-020:** (1) *Blocker, symlinks:* the helper never mounts `valhalla-data` while it touches the changes volume; it refuses any non-regular file, reads with size caps, runs a pinned, time-limited `docker run` as `--user 10001:10001` (not root) with `--network none`, `--cap-drop ALL`, `--read-only`, and writes status files by temp file then rename (D303, D304). (2) `valhalla-fetch` gets a second rw mount of `valhalla-data` subpath `road-map-meta` (compose.yaml:189-193 mounts only `build`); outlines never in `build/` (D301). (3) Place search off is a separate `PLACE_SEARCH=on|off` (default on; `.env` line `PLACE_SEARCH=off`); `PLACE_SEARCH_URL` empty means the default address, per the settings convention (settings.py:16, :183) (D307). (4) Region key = extract path with `-latest.osm.pbf` stripped, applied to today's eight (tiles-refresh.sh:34); parent from the index's `parent` field, containment walks that chain, never the path; unresolved parents not offered (D301, D306). (5) One owner of the record, the refresh (D313): the record lists what was downloaded and built; no `record.json`, no helper copy; request lines carry key, name, parent name, addresses, bytes (D301, D303; ADR-013 A5). (6) ADR-013 A5 wording: `valhalla-fetch` is the only service that downloads extracts; the planner also downloads the catalogue index and outlines (small public files). (7) Recovery after a power loss: `flock -n` on `.deploy.lock` before any action (held -> next minute), `up -d --wait valhalla`, then `routing.env` equal to the started tileset -> done, otherwise failed `interrupted` (D304). (8) The `ServedMap` port returns a typed `ServedMapId` or `None`; `TilesetStore` returns a listing; matching is the domain function `select_served`; the mock names a directory through the same function (D301). (9) Reuse rows added for every CREATE NEW (PlaceSearchForm justified against PoiClickForm, RegionSearch, ChangeSummary, RebuildProgress, RoadMapPage, CoverageBox, place_routes.py, the two scripts). (10) One download-prefix setting: the planner derives its origin from `GEOFABRIK_INDEX_URL`; the helper reads optional `ROAD_MAP_DOWNLOAD_PREFIX` from the Pi's `.env` (default the Geofabrik origin), rebuilds each address from its key and refuses any `..` (D304). (11) `planner-perf` lists the new mounts (compose.yaml:114-116; lists do not merge) (D301). (12) **Orchestrator wording change of D300's screen 2:** the fine print reads "Only the words you type are sent, from your home connection, to OpenStreetMap's public place search (Nominatim). Your trip and files stay at home. Don't type personal details. Search © OpenStreetMap contributors." because the service necessarily sees the home internet address, as the map tiles do; the catalogue's exact fetches are stated (index, HEAD of shown regions, outlines of chosen ones; no trip data). (13) After a 429 or a 503 the place search is silent toward the service for 60 s and answers "isn't answering" (D307). (14) Crontab install: only "no crontab for <user>" is empty, any other `crontab -l` failure writes nothing; old crontab saved in the install dir, temp file, install, read back and compared; path quoted; uninstall removes only the marker line; the Makefile's `uninstall` and `purge` call the helper's uninstall first (D304). (15) Known risk, 8 GB against the 9 GB build cap measured at 6.4 GB: the 8 GB limit stays; the refresh's memory preflight and safe failure protect; the gate rebuild (same eight regions) does not test it; new failure code `build_oom` worded "The Pi ran out of memory building the map ... the previous road map is back" (D305). (16) Mediums and lows: a lock refusal exits 75 and writes no `tiles.log` failed line; every `docker run` of the helper and the progress hook has a timeout; start time travels as UTC epoch seconds (no `date -d`); `test_compose_contract.py:160-161` and `test_container_hardening.py:69` join the changed-checks list and the writable `/road-map-changes` is an explicit amendment of D173; SHA256SUMS also covers `road-map.json` and the outlines; `road-map-runner.log` records state changes only and is capped; the record inside the tileset directory (Valhalla's `/custom_files` at serve time) is safe by construction because the refresh starts valhalla on it and undoes the switch if `/status` fails (tiles-refresh.sh:205-214). Also from D313: `PLACE_SEARCH_CONTACT` removed everywhere; Q1, Q4, Q7 settled. |
+| D316 | 2026-11-27 | Cycle-2 review; D315 | D315 replaced D314's key and address rules and added `rebuilds_not_set_up`; the DESIGN section and ADRs still carried the old rules. | **Architect decision (DESIGN cycle-2 fixes):** (1) key = Geofabrik index `id` (`^[a-z0-9-]+(/[a-z0-9-]+)?$`), addresses = the index's own `urls.pbf` and `urls.poly` written into the request by the planner; the helper checks only `ROAD_MAP_DOWNLOAD_PREFIX` and no `..` segment; the seed list is today's eight ids; the refresh's download addresses change from `tiles-refresh.sh:34` (`europe/italy-latest...`, redirected by Geofabrik) to the index addresses (`europe/italy/italy-latest...`), verified by the gate's real rebuild; the drift test compares seed ids with the trimmed index fixture. (2) The helper writes its heartbeat before the flock check; one threshold of 5 minutes; `rebuilds_not_set_up` (503 on POST) and `limits.helper_seen_at` in the route table. (3) `prepare-build` empties `road-map-meta/` (`rm -rf`, `mkdir`); the reader reads only the outlines named in `road-map.json`; SHA256SUMS covers exactly the record's files. (4) `PLACE_SEARCH` and `PLACE_SEARCH_URL` empty = default, both in the settings validator lists with tests; ADR-019: no working Photon fallback until a second parser exists. (5) One origin rule: a mirror needs both `GEOFABRIK_INDEX_URL` and `ROAD_MAP_DOWNLOAD_PREFIX`. (6) Compose additions named (top-level volume `overland_road-map`; planner and `planner-perf` mount lists; `valhalla-fetch` second mount). (7) "Non-root container" wording with the host `docker` group fact; the progress hook uses the same `--user` wrapper. ADR-013 A5, ADR-019, ADR-020 updated. |
+| D315 | 2026-11-26 | DISTILL observations O7, O8 and the PINs (D312 revised); D314 (4), (10); the real Geofabrik index (`index-v1-nogeom.json`, 554 features, read 2026-11-26) | D314's key rule applied to the real index gives `europe/italy/italy` (the index's pbf address is `.../europe/italy/italy-latest.osm.pbf`), while the seed list and the examples say `europe/italy`; "helper not set up" has no code. | **Orchestrator decision, replacing D314 (4) and the address part of (10):** the region key is the Geofabrik index `id`. The orchestrator checked the real index: the ids are unique (for example `italy`, `rhone-alpes`, `georgia`, `us/georgia`, `us/utah`), every feature has `urls.poly` and `urls.pbf`, and every `parent` resolves. Today's eight keys are `italy`, `spain`, `switzerland`, `austria`, `rhone-alpes`, `provence-alpes-cote-d-azur`, `languedoc-roussillon`, `midi-pyrenees`. The download and outline addresses are the index's own `urls.pbf` and `urls.poly`; the planner writes them into the request. The helper accepts a key only if it matches `^[a-z0-9-]+(/[a-z0-9-]+)?$`, and an address only if it starts with `ROAD_MAP_DOWNLOAD_PREFIX` (default `https://download.geofabrik.de/`) and has no `..` segment. Containment walks the `parent` field. Tests and fixtures move to these keys. O8: the code is `rebuilds_not_set_up` (HTTP 503) when the helper has not written its heartbeat in the changes volume for 5 minutes; "Rebuilds aren't set up on the Pi yet" on the Road map screen. PINs accepted as listed in the DISTILL section (`in_map`, `land_groups`, `not_linked_note`, `map_date` always present: the served map's date from the engine even when the regions are unknown, null only when no date can be read, `planning_back_at` as an ISO 8601 string). |
+| D317 | 2026-11-27 | Consolidated review of slice 12c (four reviewers on Haiku: product owner, solution architect, platform architect, acceptance designer), two cycles; D312-D316 | Cycle 1: DISCUSS needs revision (4 blockers), DESIGN rejected (1 blocker), platform conditionally approved (2 high), DISTILL rejected (2 blockers). Cycle 2 still reported findings in three of them. | **Orchestrator decision:** the waves go to DELIVER after the cycle-2 fixes, which the orchestrator verified itself instead of starting a third review cycle (the skill allows two). Every claim was checked against the code, the Pi or the real Geofabrik index before it was acted on. Fixed after cycle 2: DESIGN carries D315 throughout (D316); DISCUSS Givens state "after a rebuild from the app", the US-30 example is retimed to D305 (58 minutes), "more than 8 GB" and the catalogue fetch line are ACs, the helper heartbeat threshold is 5 minutes (orchestrator edits); the .feature drops the implementation words, has one When per scenario, uses assert_state_delta after every mutating When at layer 3, and the two read-only scenarios no longer skip as root. **Rejected:** the cycle-2 "critical" that the place-search fine print must list the User-Agent and the internet address; "from your home connection" (D314 (12)) says it in the owner's words. **Left for DELIVER:** a few Thens still name a count in their wording ("saw one request"); "southern France" residue in settings.py and .env.example goes when D308 removes ROAD_MAP_AREA. **DISTILL counts after the fixes (supersede D312):** 126 scenarios, 174 cases (US-27 35, US-28 16, US-29 22, US-30 24, US-31 29); 36 `@ui` (36 `test.fixme`); 90 pytest scenarios, 138 cases (61 `@driving_port`, 33 `@real-io`, 29 `@script`); 98 of 126 error or edge (78 %). Verified by the orchestrator: with `--run-pending=slice-12c` 138 failed, every failure an AssertionError, 0 errors; without the flag 138 skipped; `tests/deploy` 323 passed, 4 skipped; slice 12b bindings green. |
 
 ## Wave: DELIVER / [REF] Demo Evidence
 

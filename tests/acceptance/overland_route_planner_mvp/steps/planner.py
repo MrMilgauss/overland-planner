@@ -41,6 +41,10 @@ class PlannerSession:
             kwargs.setdefault("auth", self._auth)
         return self._client.request(method, url, **kwargs)
 
+    def call(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Any route of the HTTP API (slice 12c steps read routes the earlier slices have no named call for)."""
+        return self._request(method, url, **kwargs)
+
     # --- platform -------------------------------------------------------------------------------------
     def home_page(self) -> httpx.Response:
         return self._request("GET", "/")
