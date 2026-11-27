@@ -60,6 +60,12 @@ def _changes_unavailable() -> JSONResponse:
     return envelope(503, "changes_unavailable", "Changing the road map is not available right now")
 
 
+def _catalogue_unavailable() -> JSONResponse:
+    return envelope(
+        503, "region_catalogue_unavailable", "The list of regions cannot be reached right now - try again later"
+    )
+
+
 def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRouter:
     router = APIRouter()
 
@@ -89,11 +95,7 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
         except SearchTooShortError as short:
             raise HTTPException(status_code=422, detail=str(short)) from None
         except CatalogueUnavailableError:
-            return envelope(
-                503,
-                "region_catalogue_unavailable",
-                "The list of regions cannot be reached right now - try again later",
-            )
+            return _catalogue_unavailable()
 
     @router.post("/api/road-map/change/preview", response_model=ChangeSummaryBody, responses=PREVIEW_ERROR_RESPONSES)
     def preview(request: ChangePreviewRequest) -> ChangeSummaryBody | JSONResponse:
@@ -102,11 +104,7 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
         except Refusal as refused:
             return envelope(422, refused.code, refused.message)
         except CatalogueUnavailableError:
-            return envelope(
-                503,
-                "region_catalogue_unavailable",
-                "The list of regions cannot be reached right now - try again later",
-            )
+            return _catalogue_unavailable()
 
     @router.post(
         "/api/road-map/change", status_code=201, response_model=ChangeSummaryBody, responses=CHANGE_ERROR_RESPONSES
@@ -120,11 +118,7 @@ def road_map_routes(service: RoadMapService, coverage: CoverageService) -> APIRo
         except Refusal as refused:
             return _refused(refused)
         except CatalogueUnavailableError:
-            return envelope(
-                503,
-                "region_catalogue_unavailable",
-                "The list of regions cannot be reached right now - try again later",
-            )
+            return _catalogue_unavailable()
 
     @router.delete("/api/road-map/change", status_code=204, responses=CANCEL_ERROR_RESPONSES)
     def cancel_change() -> Response:
