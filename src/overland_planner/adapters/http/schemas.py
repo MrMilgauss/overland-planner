@@ -16,7 +16,13 @@ from overland_planner.application.planning.facade import (
 )
 from overland_planner.application.platform.facade import DiagnosticsReport
 from overland_planner.application.ports.plan_run_repository import PlanRunDetail
-from overland_planner.application.roadmap.facade import CatalogueHit, ChangeSummary, ServedMapView, TripCoverage
+from overland_planner.application.roadmap.facade import (
+    CatalogueHit,
+    ChangeSummary,
+    PlannedChange,
+    ServedMapView,
+    TripCoverage,
+)
 from overland_planner.domain.catalog.coordinate import Coordinate
 from overland_planner.domain.catalog.item import CatalogItem, ItemType, TrackItem
 from overland_planner.domain.catalog.poi import AnchorRole
@@ -160,12 +166,34 @@ class ChangeSummaryBody(BaseModel):
 
 
 class RoadMapChangeBody(BaseModel):
+    """The change the helper waits for or works on; `start_at` and the regions are those of a planned change."""
+
     state: Literal["none", "planned", "running", "done", "failed", "cancelled"]
+    start_at: datetime | None = None
+    added: list[RegionRefBody] = []
+    removed: list[RegionRefBody] = []
+
+    @classmethod
+    def of(cls, planned: PlannedChange | None) -> RoadMapChangeBody:
+        if planned is None:
+            return cls(state="none")
+        return cls(
+            state="planned",
+            start_at=planned.start_at,
+            added=[RegionRefBody(**vars(r)) for r in planned.added],
+            removed=[RegionRefBody(**vars(r)) for r in planned.removed],
+        )
+
+
+class RoadMapLimitsBody(BaseModel):
+    changes_available: bool
+    max_gb: float
 
 
 class RoadMapBody(BaseModel):
     served: ServedMapBody
     change: RoadMapChangeBody
+    limits: RoadMapLimitsBody
 
 
 class ProjectCreate(BaseModel):
@@ -554,6 +582,17 @@ class DiagnosticsResource(BaseModel):
 CATALOGUE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorEnvelope, "description": "validation_error (fewer than two letters)"},
     503: {"model": ErrorEnvelope, "description": "region_catalogue_unavailable"},
+}
+CHANGE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    422: {
+        "model": ErrorEnvelope,
+        "description": "validation_error, unknown_region, overlaps_region or too_big",
+    },
+    503: {"model": ErrorEnvelope, "description": "changes_unavailable or region_catalogue_unavailable"},
+}
+CANCEL_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {"model": ErrorEnvelope, "description": "change_not_pending (nothing waits for the helper)"},
+    503: {"model": ErrorEnvelope, "description": "changes_unavailable"},
 }
 PREVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorEnvelope, "description": "validation_error, unknown_region or overlaps_region"},

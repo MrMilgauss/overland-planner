@@ -43,17 +43,22 @@ class RegionChoice:
     def add(self, key: str) -> RegionChoice:
         if key not in self.catalogue:
             raise Refusal("unknown_region", f"{key} is not a known region", key=key)
-        for other in self.chosen - {key}:
-            if other in self._ancestors(key):
-                raise Refusal(
-                    "overlaps_region",
-                    f"{self._name(key)} is already in the road map as part of {self._name(other)}",
-                )
-            if key in self._ancestors(other):
-                raise Refusal(
-                    "overlaps_region",
-                    f"{self._name(key)} contains {self._name(other)}, which is already in the road map",
-                )
+        others = self.chosen - {key}
+        above = sorted(others & set(self._ancestors(key)), key=self._name)
+        if above:
+            raise Refusal(
+                "overlaps_region",
+                f"{self._name(key)} is already in the road map as part of {self._name(above[0])}",
+            )
+        below = sorted((other for other in others if key in self._ancestors(other)), key=self._name)
+        if below:
+            names = [self._name(other) for other in below]
+            listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+            verb = "is" if len(names) == 1 else "are"
+            raise Refusal(
+                "overlaps_region",
+                f"{self._name(key)} contains {listed}, which {verb} already in the road map",
+            )
         return RegionChoice(self.catalogue, self.served_keys, self.chosen | {key})
 
     def remove(self, key: str) -> RegionChoice:

@@ -1,10 +1,12 @@
 """Road-map module facade (brief §11 contract 6): the only `application.roadmap` import other modules may use."""
 
 from overland_planner.application.ports.region_catalogue import CatalogueUnavailableError
+from overland_planner.application.ports.road_map_changes import ChangesUnavailableError
 from overland_planner.application.roadmap.coverage_service import CoverageService, TripCoverage, TripGroup
 from overland_planner.application.roadmap.service import (
     CatalogueHit,
     ChangeSummary,
+    PlannedChange,
     RegionRef,
     RoadMapService,
     SearchTooShortError,
@@ -17,7 +19,9 @@ __all__ = [
     "CatalogueHit",
     "CatalogueUnavailableError",
     "ChangeSummary",
+    "ChangesUnavailableError",
     "CoverageService",
+    "PlannedChange",
     "Refusal",
     "RegionRef",
     "RoadMapService",

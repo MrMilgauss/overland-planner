@@ -37,7 +37,6 @@ from tests.acceptance.overland_route_planner_mvp.steps.planner import InProcessP
 from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import (
     EIGHT,
     GB,
-    SIZES_GB,
     RecordingServer,
     build_volume,
     catalogue_features,
@@ -532,34 +531,18 @@ def change_body(world: PlannerWorld, added: str | None, removed: str | None, whe
 def plan_change(world: PlannerWorld, added: str, removed: str | None, when_text: str | None) -> None:
     rm = planner(world)
     rm.view_before = rm_view(world)
-    call(world, "POST", "/api/road-map/change", json=change_body(world, added, removed, when_text))
-    rm.view_after = rm_view(world)
-
-
-def write_pending_request(world: PlannerWorld, added: str, removed: str | None, when_text: str | None) -> None:
-    """The test seam of a planned change: the request file of D303/D315 placed in the changes folder, as the planner
-    writes it (tmp file, then rename), so a Given never depends on the change route."""
-    rm = planner(world)
-    keys = change_body(world, added, removed, when_text)["region_keys"]
-    start_at = start_at_of(world, when_text)
-    lines = ["schema=1", f"requested_at={int(world.clock.now().timestamp())}"]
-    if start_at is not None:
-        lines.append(f"start_at={int(datetime.fromisoformat(start_at).timestamp())}")
-    for key in keys:
-        props = feature_by_key(key)["properties"]
-        parent = next((f for f in catalogue_features() if key_of(f) == props["parent"]), None)
-        fields = [key, props["name"], parent["properties"]["name"] if parent else ""]
-        fields += [props["urls"]["pbf"], props["urls"]["poly"], str(int(SIZES_GB[key] * GB))]
-        lines.append("region=" + "\t".join(fields))
-    lines += [f"added={added}", f"removed={removed or ''}"]
-    changes = rm.root / "changes"
-    (changes / "request.tmp").write_text("\n".join(lines) + "\n")
-    (changes / "request.tmp").rename(changes / "request.txt")
+    answer = call(world, "POST", "/api/road-map/change", json=change_body(world, added, removed, when_text))
+    rm.view_after = rm_view(world)  # reads the road map again: the answer to the POST stays the one the Thens judge
+    rm.response = answer
 
 
 @given(parsers.re(CHANGE))
 def given_the_owner_has_planned(world: PlannerWorld, added: str, removed: str | None, when: str | None) -> None:
-    write_pending_request(world, added, removed, when)
+    plan_change(world, added, removed, when)
+    answer = state(world).response
+    assert answer is not None and answer.status_code == 201, (
+        f"precondition: the change was not kept: {answer and answer.text[:200]}"
+    )
 
 
 @when(parsers.re(CHANGE))
@@ -936,6 +919,12 @@ def then_the_health_names(world: PlannerWorld, what: str, how: str) -> None:
     }[what]
     text = world.marco().health_detail().text
     assert reason in text, f"the health detail does not name {reason}: {text[:300]}"
+
+
+@then("the planner reports that changing the road map is unavailable")
+def then_the_planner_reports_unavailable_changes(world: PlannerWorld) -> None:
+    """Binding missing from DISTILL for this wording: the same reason the health detail names (D310)."""
+    then_the_health_names(world, "road map changes", "unavailable")
 
 
 @then("the planner reports that it cannot read the regions of the map")

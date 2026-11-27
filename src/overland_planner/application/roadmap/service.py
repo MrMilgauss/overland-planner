@@ -8,20 +8,28 @@ memory, and a restarted planner falls back to the tileset the rebuild's progress
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from overland_planner.application.ports.clock import Clock
 from overland_planner.application.ports.region_catalogue import (
     CatalogueEntry,
     CatalogueUnavailableError,
     RegionCatalogue,
 )
+from overland_planner.application.ports.road_map_changes import (
+    ChangeRequest,
+    ChangesUnavailableError,
+    RequestedRegion,
+    RoadMapChanges,
+)
 from overland_planner.application.ports.served_map import ServedMap
 from overland_planner.application.ports.tileset_store import TilesetListing, TilesetStore
 from overland_planner.domain.roadmap.coverage import RoadMapCoverage
 from overland_planner.domain.roadmap.outline import Outline
-from overland_planner.domain.roadmap.region_choice import CatalogRegion, RegionChoice
+from overland_planner.domain.roadmap.region_choice import CatalogRegion, Refusal, RegionChoice
 from overland_planner.domain.roadmap.served_map import ServedId, select_served
 
 
@@ -44,6 +52,7 @@ class ServedMapView:
     outlines: Mapping[str, Outline] = field(default_factory=dict, compare=False)
 
 
+DEFAULT_MAX_GB = 8.0
 MIN_SEARCH_LETTERS = 2
 MAX_SEARCH_RESULTS = 8
 
@@ -81,6 +90,16 @@ class ChangeSummary:
     pause_minutes: int
     land_groups: tuple[tuple[str, ...], ...]  # region names, one tuple per group linked by land
     not_linked_note: str | None
+
+
+@dataclass(frozen=True)
+class PlannedChange:
+    """The change waiting for the helper, against the map served now."""
+
+    requested_at: datetime
+    start_at: datetime | None
+    added: tuple[RegionRef, ...]
+    removed: tuple[RegionRef, ...]
 
 
 def _date(epoch: int | None) -> datetime | None:
@@ -124,13 +143,61 @@ def _group_label(group: tuple[str, ...], regions: Mapping[str, CatalogRegion]) -
     return regions[shared].name if shared else " and ".join(regions[key].name for key in group)
 
 
+@dataclass(frozen=True)
+class _Chosen:
+    """A choice of regions with what was learned to make it: the list's entries and the map served now."""
+
+    catalogue: RegionCatalogue
+    choice: RegionChoice
+    regions: Mapping[str, CatalogRegion]
+    by_key: Mapping[str, CatalogueEntry]
+    served: ServedMapView
+
+
+_KEY = re.compile(r"[a-z0-9-]+(/[a-z0-9-]+)?")
+_MAX_NAME_BYTES = 120
+
+
+def _readable_text(text: str) -> bool:
+    """The helper's rule for a name: printable, no tab or control character, 1 to 120 bytes."""
+    return text.isprintable() and 0 < len(text.encode("utf-8")) <= _MAX_NAME_BYTES
+
+
+def _plain_address(address: str) -> bool:
+    return address.isprintable() and ".." not in address.split("/") and bool(address)
+
+
+def _requested(chosen: _Chosen, key: str) -> RequestedRegion:
+    """The region as the helper reads it, or a refusal when the list does not hold it or the helper would refuse it."""
+    entry = chosen.by_key.get(key)
+    parent = None if entry is None or entry.parent not in chosen.by_key else chosen.by_key[str(entry.parent)].name
+    if (
+        entry is None
+        or _KEY.fullmatch(key) is None
+        or not _readable_text(entry.name)
+        or (parent is not None and not _readable_text(parent))
+        or not (_plain_address(entry.pbf_url) and _plain_address(entry.poly_url))
+    ):
+        raise Refusal("unknown_region", f"{key} cannot be added to the road map", key=key)
+    return RequestedRegion(key, entry.name, parent, entry.pbf_url, entry.poly_url, chosen.regions[key].bytes)
+
+
 class RoadMapService:
     def __init__(
-        self, served_map: ServedMap | None, store: TilesetStore, catalogue: RegionCatalogue | None = None
+        self,
+        served_map: ServedMap | None,
+        store: TilesetStore,
+        catalogue: RegionCatalogue | None = None,
+        changes: RoadMapChanges | None = None,
+        clock: Clock | None = None,
+        max_gb: float = DEFAULT_MAX_GB,
     ) -> None:
         self._served_map = served_map
         self._store = store
         self._catalogue = catalogue
+        self._changes = changes
+        self._clock = clock
+        self._max_gb = max_gb
         self._last_matched: ServedMapView | None = None
 
     def served(self) -> ServedMapView:
@@ -174,6 +241,53 @@ class RoadMapService:
         """The summary of making the map hold exactly these regions; writes nothing. Only the border of a region not
         served is fetched, and only the size of a region not served is asked. Raises `Refusal` for a region unknown
         or overlapping another, `CatalogueUnavailableError` when the list, a size or a border cannot be had."""
+        return self._summary(self._choose(region_keys))
+
+    def plan_change(self, region_keys: Sequence[str], start_at: datetime | None = None) -> ChangeSummary:
+        """Keep the change ready for the helper and answer with its summary; the served map is left as it is. Raises
+        `ChangesUnavailableError` when changes cannot be kept, `Refusal` for a region unknown, overlapping another,
+        one the helper would refuse to read, or a download above the limit (nothing is fetched for the last), and
+        `CatalogueUnavailableError` as `preview_change` does. Nothing is written unless every check passed."""
+        changes, clock = self._open_changes()
+        chosen = self._choose(region_keys)
+        chosen.choice.check_size(self._max_gb)
+        request = self._request(chosen, start_at, clock.now())
+        summary = self._summary(chosen)
+        changes.queue(request, [ref.name for ref in summary.added], [ref.name for ref in summary.removed])
+        return summary
+
+    def cancel_change(self) -> bool:
+        """Make the waiting change one the helper can no longer take; False when none is left to cancel."""
+        return self._changes is not None and self._changes.cancel()
+
+    def planned_change(self) -> PlannedChange | None:
+        """The change waiting for the helper, told against the map served now."""
+        request = None if self._changes is None else self._changes.pending()
+        if request is None:
+            return None
+        served = {region.key: region.name for region in self.served().regions}
+        kept = {region.key for region in request.regions}
+        return PlannedChange(
+            requested_at=request.requested_at,
+            start_at=request.start_at,
+            added=tuple(RegionRef(region.key, region.name) for region in request.regions if region.key not in served),
+            removed=tuple(RegionRef(key, name) for key, name in sorted(served.items()) if key not in kept),
+        )
+
+    @property
+    def max_gb(self) -> float:
+        """The most a change may download, in GB."""
+        return self._max_gb
+
+    def changes_available(self) -> bool:
+        return self._changes is not None and self._changes.available()
+
+    def _open_changes(self) -> tuple[RoadMapChanges, Clock]:
+        if self._changes is None or self._clock is None or not self._changes.available():
+            raise ChangesUnavailableError("the place where changes are kept cannot be written")
+        return self._changes, self._clock
+
+    def _choose(self, region_keys: Sequence[str]) -> _Chosen:
         if self._catalogue is None:
             raise CatalogueUnavailableError("no list of regions is set up")
         by_key = {entry.key: entry for entry in self._catalogue.entries()}
@@ -190,10 +304,15 @@ class RoadMapService:
             for key, entry in by_key.items()
         } | {key: CatalogRegion(key, r.name, None, r.bytes) for key, r in held.items() if key not in by_key}
         choice = RegionChoice(regions, frozenset(held), frozenset())
-        for key in sorted(wanted):
+        for key in sorted(wanted, key=lambda key: (key not in held, key)):  # what is served first: the new one overlaps
             choice = choice.add(key)
+        return _Chosen(self._catalogue, choice, regions, by_key, served)
+
+    @staticmethod
+    def _summary(chosen: _Chosen) -> ChangeSummary:
+        choice, regions, served = chosen.choice, chosen.regions, chosen.served
         outlines = {
-            key: served.outlines[key] if key in served.outlines else self._catalogue.outline_of(by_key[key])
+            key: served.outlines[key] if key in served.outlines else chosen.catalogue.outline_of(chosen.by_key[key])
             for key in choice.chosen
         }
         names = {key: region.name for key, region in regions.items()}
@@ -212,6 +331,11 @@ class RoadMapService:
             land_groups=groups,
             not_linked_note=_not_linked_note(choice, outlines, regions),
         )
+
+    @staticmethod
+    def _request(chosen: _Chosen, start_at: datetime | None, now: datetime) -> ChangeRequest:
+        written = tuple(_requested(chosen, key) for key in sorted(chosen.choice.chosen))
+        return ChangeRequest(requested_at=now, start_at=start_at, regions=written)
 
     @staticmethod
     def _size(catalogue: RegionCatalogue, entry: CatalogueEntry) -> int:

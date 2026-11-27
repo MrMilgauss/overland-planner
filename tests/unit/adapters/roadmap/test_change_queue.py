@@ -1,0 +1,173 @@
+"""ChangeQueueDir against real folders (D303, D310, D315): what the helper finds, all or nothing, one winner of the
+race for `request.txt`, and a probe that says why the folder cannot keep changes. Real I/O under tmp_path only."""
+
+from __future__ import annotations
+
+import os
+import threading
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from overland_planner.adapters.roadmap.change_queue import ChangeQueueDir
+from overland_planner.application.ports.probe import ProbeResult
+from overland_planner.application.ports.road_map_changes import (
+    ChangeRequest,
+    ChangesUnavailableError,
+    RequestedRegion,
+)
+
+NOW = datetime(2026, 11, 28, 21, 0, tzinfo=UTC)
+START = datetime(2026, 11, 29, 2, 0, tzinfo=UTC)
+ITALY = RequestedRegion("italy", "Italy", "Europe", "https://dl.test/italy.pbf", "https://dl.test/italy.poly", 2)
+UTAH = RequestedRegion(
+    "us/utah", "Utah", "United States of America", "https://dl.test/u.pbf", "https://dl.test/u.poly", 7
+)
+EUROPE = RequestedRegion("europe", "Europe", None, "https://dl.test/europe.pbf", "https://dl.test/europe.poly", 9)
+UNAVAILABLE = ProbeResult(outcome="degraded-healthy", reason="road_map_changes_unavailable")
+
+
+def request(*regions: RequestedRegion, start_at: datetime | None = START) -> ChangeRequest:
+    return ChangeRequest(requested_at=NOW, start_at=start_at, regions=regions)
+
+
+def names(folder: Path) -> list[str]:
+    return sorted(path.name for path in folder.iterdir())
+
+
+def test_a_request_is_kept_as_the_lines_the_helper_reads_and_nothing_else_is_left(tmp_path: Path) -> None:
+    ChangeQueueDir(tmp_path).queue(request(ITALY, UTAH, EUROPE), added=["Utah", "Europe"], removed=["Spain"])
+    assert names(tmp_path) == ["request.txt"]
+    assert (tmp_path / "request.txt").read_text(encoding="utf-8").splitlines() == [
+        "schema=1",
+        f"requested_at={int(NOW.timestamp())}",
+        f"start_at={int(START.timestamp())}",
+        f"region=italy\tItaly\tEurope\t{ITALY.pbf_url}\t{ITALY.poly_url}\t2",
+        f"region=us/utah\tUtah\tUnited States of America\t{UTAH.pbf_url}\t{UTAH.poly_url}\t7",
+        f"region=europe\tEurope\t\t{EUROPE.pbf_url}\t{EUROPE.poly_url}\t9",
+        "added=Utah, Europe",
+        "removed=Spain",
+    ]
+
+
+def test_a_request_without_a_start_has_no_start_line_and_reads_back_as_written(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    sent = request(ITALY, EUROPE, start_at=None)
+    queue.queue(sent, added=[], removed=[])
+    assert "start_at" not in (tmp_path / "request.txt").read_text()
+    assert queue.pending() == sent
+    queue.queue(request(ITALY, UTAH), added=["Utah"], removed=[])
+    assert queue.pending() == request(ITALY, UTAH)
+
+
+def test_nothing_is_pending_without_a_request_or_with_one_that_is_not_a_request(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    assert queue.pending() is None
+    (tmp_path / "request.txt").write_text("schema=2\nrequested_at=zzz\n")
+    assert queue.pending() is None
+
+
+def test_a_reader_never_sees_a_half_written_request(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    long_address = "https://dl.test/" + "x" * 3000
+    many = request(*[RequestedRegion(f"r{i}", f"Region {i}", "Europe", long_address, "p", i) for i in range(40)])
+    seen: set[str] = set()
+    done = threading.Event()
+
+    def reader() -> None:
+        while not done.is_set():
+            try:
+                seen.add((tmp_path / "request.txt").read_text())
+            except FileNotFoundError:
+                continue
+
+    watcher = threading.Thread(target=reader)
+    watcher.start()
+    try:
+        for _ in range(60):
+            queue.queue(many, added=["Region 1"], removed=[])
+            queue.cancel()
+    finally:
+        done.set()
+        watcher.join()
+    assert len(seen) == 1
+    assert next(iter(seen)).endswith("removed=\n")
+
+
+def test_a_cancelled_request_can_no_longer_be_taken_and_a_second_cancel_finds_nothing(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    assert queue.cancel() is False
+    queue.queue(request(ITALY), added=[], removed=[])
+    kept = (tmp_path / "request.txt").read_text()
+    assert queue.cancel() is True
+    assert names(tmp_path) == ["cancelled.txt"]
+    assert (tmp_path / "cancelled.txt").read_text() == kept
+    assert queue.pending() is None
+    assert queue.cancel() is False
+
+
+def test_a_request_the_helper_has_taken_cannot_be_cancelled(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    queue.queue(request(ITALY), added=[], removed=[])
+    (tmp_path / "request.txt").rename(tmp_path / "running.txt")  # the helper's take
+    assert queue.cancel() is False
+    assert names(tmp_path) == ["running.txt"]
+
+
+def test_of_two_cancels_at_once_one_wins(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    for _ in range(40):
+        queue.queue(request(ITALY), added=[], removed=[])
+        outcomes: list[bool] = []
+        gate = threading.Barrier(2)
+
+        def race(outcomes: list[bool] = outcomes, gate: threading.Barrier = gate) -> None:
+            gate.wait()
+            outcomes.append(queue.cancel())
+
+        threads = [threading.Thread(target=race) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert sorted(outcomes) == [False, True]
+
+
+@pytest.fixture
+def folders(tmp_path: Path) -> Iterator[dict[str, Path]]:
+    plain_file = tmp_path / "a-file"
+    plain_file.write_text("not a folder\n")
+    read_only = tmp_path / "read-only"
+    read_only.mkdir()
+    read_only.chmod(0o500)
+    yield {
+        "a missing mount": tmp_path / "no-such-mount" / "changes",
+        "a plain file in its place": plain_file,
+        "a read-only folder": read_only,
+        "a folder of root": Path("/"),
+    }
+    read_only.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+@pytest.mark.parametrize(
+    "fault", ["a missing mount", "a plain file in its place", "a read-only folder", "a folder of root"]
+)
+def test_a_folder_that_cannot_be_written_keeps_nothing_and_says_why(folders: dict[str, Path], fault: str) -> None:
+    folder = folders[fault]
+    queue = ChangeQueueDir(folder)
+    before = names(folder) if folder.is_dir() else None
+    assert queue.available() is False
+    assert queue.probe() == UNAVAILABLE
+    with pytest.raises(ChangesUnavailableError):
+        queue.queue(request(ITALY), added=[], removed=[])
+    assert (names(folder) if folder.is_dir() else None) == before
+
+
+def test_a_folder_that_can_be_written_is_available_and_the_probe_leaves_nothing(tmp_path: Path) -> None:
+    queue = ChangeQueueDir(tmp_path)
+    assert queue.available() is True
+    assert queue.probe() == ProbeResult(outcome="ok")
+    assert names(tmp_path) == []

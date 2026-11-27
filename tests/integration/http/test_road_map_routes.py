@@ -63,7 +63,8 @@ def test_the_served_map_is_named_with_its_regions_and_its_date(data_dir: Path, t
             "regions": [{"key": "italy", "name": "Italy", "parent_name": None, "bytes": 5}],
             "total_bytes": 5,
         },
-        "change": {"state": "none"},
+        "change": {"state": "none", "start_at": None, "added": [], "removed": []},
+        "limits": {"changes_available": False, "max_gb": 8.0},
     }
 
 
@@ -123,3 +124,69 @@ def test_a_summary_without_the_list_of_regions_is_unavailable(data_dir: Path, tm
     with preview_planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json") as client:
         answer = client.post("/api/road-map/change/preview", json={"region_keys": ["italy"]})
     assert (answer.status_code, answer.json()["code"]) == (503, "region_catalogue_unavailable")
+
+
+def _planner(data_dir: Path, tmp_path: Path, index_url: str, more: dict[str, str]) -> TestClient:
+    if not (tmp_path / "changes").exists():
+        (tmp_path / "changes").mkdir()
+    settings = (
+        environ(data_dir, volume(tmp_path))
+        | {"ROAD_MAP_CHANGES_DIR": str(tmp_path / "changes"), "GEOFABRIK_INDEX_URL": index_url}
+        | more
+    )
+    return TestClient(create_app(settings, external=ExternalPorts(catalogue_min_features=10)))
+
+
+def test_a_change_is_queued_shown_as_planned_and_cancelled(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        before = client.get("/api/road-map").json()
+        queued = client.post(
+            "/api/road-map/change",
+            json={"region_keys": ["italy", "portugal"], "start_at": "2999-01-01T02:00:00Z"},
+        )
+        planned = client.get("/api/road-map").json()
+        cancelled = client.delete("/api/road-map/change")
+        after = client.get("/api/road-map").json()
+        again = client.delete("/api/road-map/change")
+    server.stop()
+    assert queued.status_code == 201
+    assert [r["key"] for r in queued.json()["added"]] == ["portugal"]
+    assert before["limits"] == {"changes_available": True, "max_gb": 8.0}
+    assert planned["served"] == before["served"]
+    assert planned["change"]["state"] == "planned"
+    assert planned["change"]["start_at"] == "2999-01-01T02:00:00Z"
+    assert [r["name"] for r in planned["change"]["added"]] == ["Portugal"]
+    assert cancelled.status_code == 204
+    assert after["change"]["state"] == "none"
+    assert (again.status_code, again.json()["code"]) == (409, "change_not_pending")
+    assert sorted(p.name for p in (tmp_path / "changes").iterdir()) == ["cancelled.txt"]
+
+
+def test_a_refused_change_answers_its_code_and_writes_nothing(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {"ROAD_MAP_MAX_GB": "0.0001"}) as client:
+        unknown = client.post("/api/road-map/change", json={"region_keys": ["atlantis"]})
+        big = client.post("/api/road-map/change", json={"region_keys": ["portugal"]})
+    server.stop()
+    assert (unknown.status_code, unknown.json()["code"]) == (422, "unknown_region")
+    assert (big.status_code, big.json()["code"]) == (422, "too_big")
+    assert "0.4 GB" in big.json()["message"] and "limit is 0.0001 GB" in big.json()["message"]
+    assert list((tmp_path / "changes").iterdir()) == []
+
+
+def test_changes_that_cannot_be_kept_are_unavailable_everywhere(data_dir: Path, tmp_path: Path) -> None:
+    server = region_service()
+    changes = tmp_path / "changes"
+    changes.write_text("not a folder\n")
+    with _planner(data_dir, tmp_path, f"{server.url}/index-v1-nogeom.json", {}) as client:
+        view = client.get("/api/road-map").json()
+        health = client.get("/api/health").json()
+        refused = client.post("/api/road-map/change", json={"region_keys": ["italy", "portugal"]})
+    server.stop()
+    assert view["limits"]["changes_available"] is False
+    assert health["components"]["road_map_changes"] == {
+        "outcome": "degraded-healthy",
+        "reason": "road_map_changes_unavailable",
+    }
+    assert (refused.status_code, refused.json()["code"]) == (503, "changes_unavailable")

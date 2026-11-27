@@ -27,6 +27,7 @@ parameter refuses the start without naming the word, since it may itself be the 
 The served road map (slice 12c, D301, D314): ROAD_MAP_DIR is the tileset folder of the volume the planner mounts read-
 only, ROAD_MAP_CHANGES_DIR the folder of the rebuild's notes (`progress.txt`); empty or absent means unknown. With the
 offline road map, ROAD_MAP_SERVED_TILESET names the tileset folder it serves; with `valhalla` a value refuses the start.
+ROAD_MAP_MAX_GB is the most a road-map change may download, in GB above 0 (empty means 8).
 GEOFABRIK_INDEX_URL (an http or https address with a host; empty means the public Geofabrik index) is the free list of
 regions the owner searches; its origin is the only one region downloads may come from (D306, D313).
 """
@@ -126,6 +127,8 @@ class Settings(BaseSettings):
     road_map_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_DIR")] = None
     road_map_changes_dir: Annotated[Path | None, Field(validation_alias="ROAD_MAP_CHANGES_DIR")] = None
     road_map_served_tileset: Annotated[str | None, Field(validation_alias="ROAD_MAP_SERVED_TILESET")] = None
+    # The most map data, in GB, a change may download (D305); above it the planner refuses the change.
+    road_map_max_gb: Annotated[float, Field(validation_alias="ROAD_MAP_MAX_GB", gt=0, allow_inf_nan=False)] = 8.0
 
     @field_validator("map_tile_url")
     @classmethod
@@ -203,6 +206,7 @@ class Settings(BaseSettings):
         "place_search",
         "place_search_url",
         "geofabrik_index_url",
+        "road_map_max_gb",
         mode="before",
     )
     @classmethod

@@ -1641,19 +1641,52 @@
           "change": {
             "$ref": "#/components/schemas/RoadMapChangeBody"
           },
+          "limits": {
+            "$ref": "#/components/schemas/RoadMapLimitsBody"
+          },
           "served": {
             "$ref": "#/components/schemas/ServedMapBody"
           }
         },
         "required": [
           "served",
-          "change"
+          "change",
+          "limits"
         ],
         "title": "RoadMapBody",
         "type": "object"
       },
       "RoadMapChangeBody": {
+        "description": "The change the helper waits for or works on; `start_at` and the regions are those of a planned change.",
         "properties": {
+          "added": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RegionRefBody"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "removed": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RegionRefBody"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
           "state": {
             "enum": [
               "none",
@@ -1671,6 +1704,24 @@
           "state"
         ],
         "title": "RoadMapChangeBody",
+        "type": "object"
+      },
+      "RoadMapLimitsBody": {
+        "properties": {
+          "changes_available": {
+            "title": "Changes Available",
+            "type": "boolean"
+          },
+          "max_gb": {
+            "title": "Max Gb",
+            "type": "number"
+          }
+        },
+        "required": [
+          "changes_available",
+          "max_gb"
+        ],
+        "title": "RoadMapLimitsBody",
         "type": "object"
       },
       "RunGeometryResource": {
@@ -2998,6 +3049,83 @@
           }
         },
         "summary": "Catalogue"
+      }
+    },
+    "/api/road-map/change": {
+      "delete": {
+        "operationId": "cancel_change_api_road_map_change_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "change_not_pending (nothing waits for the helper)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "changes_unavailable"
+          }
+        },
+        "summary": "Cancel Change"
+      },
+      "post": {
+        "operationId": "plan_change_api_road_map_change_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSummaryBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "validation_error, unknown_region, overlaps_region or too_big"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "changes_unavailable or region_catalogue_unavailable"
+          }
+        },
+        "summary": "Plan Change"
       }
     },
     "/api/road-map/change/preview": {

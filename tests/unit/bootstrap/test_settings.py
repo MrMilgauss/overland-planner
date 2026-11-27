@@ -623,3 +623,21 @@ def test_a_region_list_address_that_is_not_http_with_a_host_is_refused_naming_th
     with pytest.raises(InvalidSettingsError) as refused:
         Settings.from_environ({"GEOFABRIK_INDEX_URL": value})
     assert refused.value.setting_names == frozenset({"GEOFABRIK_INDEX_URL"})
+
+
+# --------------------------------------------------------------- the most a road-map change may download (slice 12c)
+@pytest.mark.parametrize("environ", [{}, {"ROAD_MAP_MAX_GB": ""}])
+def test_an_empty_or_absent_download_limit_is_eight_gigabytes(environ: dict[str, str]) -> None:
+    assert Settings.from_environ(environ).road_map_max_gb == 8
+
+
+@pytest.mark.parametrize(("value", "limit"), [("12", 12.0), ("0.5", 0.5), ("8.25", 8.25)])
+def test_the_download_limit_is_taken_as_given(value: str, limit: float) -> None:
+    assert Settings.from_environ({"ROAD_MAP_MAX_GB": value}).road_map_max_gb == limit
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "lots", "nan", "inf"])
+def test_a_download_limit_that_is_not_a_positive_number_is_refused_naming_the_key(value: str) -> None:
+    with pytest.raises(InvalidSettingsError) as refused:
+        Settings.from_environ({"ROAD_MAP_MAX_GB": value})
+    assert refused.value.setting_names == frozenset({"ROAD_MAP_MAX_GB"})

@@ -56,6 +56,7 @@ from overland_planner.adapters.persistence.migrator import AlembicMigrator, Data
 from overland_planner.adapters.persistence.plan_job_log_repository import SqlAlchemyPlanJobLog
 from overland_planner.adapters.persistence.plan_refusal_repository import SqlAlchemyPlanRefusalLog
 from overland_planner.adapters.persistence.planning_unit_of_work import SqlAlchemyPlanningUnitOfWork
+from overland_planner.adapters.roadmap.change_queue import ChangeQueueDir
 from overland_planner.adapters.roadmap.geofabrik_catalogue import DEFAULT_MIN_FEATURES, GeofabrikCatalogue
 from overland_planner.adapters.roadmap.tileset_dir_reader import TilesetDirReader
 from overland_planner.adapters.routing.mock_routing_provider import (
@@ -142,6 +143,7 @@ class _Wiring:
             settings.road_map_dir, progress_file=None if changes_dir is None else changes_dir / "progress.txt"
         )
         self._catalogue = _region_catalogue(settings, clock, ports.catalogue_min_features)
+        self._change_queue = None if changes_dir is None else ChangeQueueDir(changes_dir)
         self._tour_solver = ports.tour_solver or OrToolsTourSolver()
         self._upload_limits = UploadLimits(
             file_mb=settings.max_upload_file_mb,
@@ -181,6 +183,8 @@ class _Wiring:
         registry.register("tileset_store", self._tileset_store)  # degraded, never fatal: the map is then unknown
         if self._catalogue is not None:
             registry.register("region_catalogue", self._catalogue)  # degraded, never fatal: no region search then
+        if self._change_queue is not None:
+            registry.register("road_map_changes", self._change_queue)  # degraded, never fatal: no change is offered
         registry.register("tour_solver", self._tour_solver)
         return registry
 
@@ -241,7 +245,14 @@ class _Wiring:
     def road_map_router(self) -> APIRouter:
         provider = self._routing_provider
         served_map = provider if isinstance(provider, ServedMap) else None
-        road_map = RoadMapService(served_map, self._tileset_store, self._catalogue)
+        road_map = RoadMapService(
+            served_map,
+            self._tileset_store,
+            self._catalogue,
+            self._change_queue,
+            self._clock,
+            max_gb=self._settings.road_map_max_gb,
+        )
         projects = ProjectService(self._catalog_unit_of_work, self._clock)
         return road_map_routes(road_map, CoverageService(projects.items, road_map.served))
 
