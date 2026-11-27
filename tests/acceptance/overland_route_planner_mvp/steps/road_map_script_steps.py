@@ -565,6 +565,7 @@ def then_the_request_was_taken(world: PlannerWorld) -> None:
         },
     )
     assert "state=done" in result_text(pi), result_text(pi)
+    assert f"tileset={NEW_MAP}" in result_text(pi).splitlines(), result_text(pi)
 
 
 @then("nothing was started and the request is still waiting")
@@ -683,6 +684,7 @@ def then_the_rebuild_ended_well(world: PlannerWorld) -> None:
     settled(world, queue=files_after("result.txt", absent=("running.txt",)))
     text = result_text(pi_of(world))
     assert "state=done" in text, f"result: {text!r}; {world.scratch['run'].stderr[-300:]}"
+    assert f"tileset={NEW_MAP}" in text.splitlines(), f"the result does not name the map it made: {text!r}"
 
 
 @then("the Pi serves the map of 1 November again")

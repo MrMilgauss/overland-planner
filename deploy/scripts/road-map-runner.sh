@@ -233,6 +233,22 @@ failure_note() {
   [ -z "$code" ] || { FAIL_CODE=$code FAIL_FACTS=$facts; }
 }
 
+# progress_new: new= of progress.txt when it is a tileset name the planner reads (its _TILESET pattern), else empty.
+progress_new() {
+  local line new=
+  while IFS= read -r line; do
+    case $line in new=*) [ -n "$new" ] || new=${line#*=} ;; esac
+  done <<<"$(note progress.txt)"
+  [[ $new =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] && printf '%s' "$new"
+  return 0
+}
+
+# finish_done [TILESET]: state=done with the map that was made (the planner shows "ended well" only when it serves it).
+finish_done() {
+  finish "state=done${1:+
+tileset=$1}"
+}
+
 # finish STATE_LINES: result.txt (finished_at, the state lines, the request lines of BODY) and running.txt removed.
 finish() {
   changes_run "$FINISH_SH" finish-request "$(printf 'finished_at=%s\n%s%s' "$(now)" "$1" "${BODY:+
@@ -288,6 +304,7 @@ busy_pi() {
 # engine_healthy: /status answers, asked up to 12 times (ROAD_MAP_POLL seconds apart, default 5).
 engine_healthy() {
   local i
+  # shellcheck disable=SC2034 # a counter only
   for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     COMPOSE_TIMEOUT=30 valhalla_status >/dev/null 2>&1 && return 0
     sleep "${ROAD_MAP_POLL:-5}"
@@ -297,7 +314,7 @@ engine_healthy() {
 
 # recover: running.txt is there and nobody holds this script's lock: the refresh that wrote it is gone.
 recover() {
-  local new serving line
+  local new serving
   exec 9>>.deploy.lock
   flock -n 9 || exit 0 # a deploy, rollback or tiles run holds it: nothing is touched, the next minute tries again
   read_request running || exit 0
@@ -308,18 +325,14 @@ recover() {
   esac
   if [ -e .routing.env.orig ]; then say "road-map-runner: .routing.env.orig is left by a switch cut in half; not touched"; fi
   COMPOSE_TIMEOUT=120 planner_compose up -d valhalla >&2 || say "road-map-runner: valhalla did not start in time"
-  new=
-  while IFS= read -r line; do
-    case $line in new=*) [ -n "$new" ] || new=${line#*=} ;; esac
-  done <<<"$(note progress.txt)"
-  [[ $new =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || new=
+  new=$(progress_new)
   serving=$(env_value routing.env VALHALLA_TILESET)
   if [ -n "$new" ] && [ "$new" = "$serving" ]; then
     engine_healthy || {
       say "road-map-runner: the new map is named but the engine does not answer; the next minute tries again"
       exit 0
     }
-    finish state=done
+    finish_done "$new"
     log_state "recovered done"
   else
     finish_failed interrupted
@@ -381,8 +394,9 @@ ROAD_MAP_PROGRESS=on bash scripts/tiles-refresh.sh >.road-map-refresh.out 2>&1
 status=$?
 case $status in
   0)
-    finish state=done
-    log_state "done" ;;
+    new=$(progress_new)
+    finish_done "$new"
+    if [ -n "$new" ]; then log_state "done"; else log_state "done without a tileset name"; fi ;;
   75) busy_pi ;;
   *)
     failure_note

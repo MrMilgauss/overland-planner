@@ -105,12 +105,13 @@ def test_a_due_request_is_taken_and_the_refresh_is_called_once_with_its_regions(
 def test_a_rebuild_that_ended_well_leaves_a_result_with_the_request_copied(pi: FakePi) -> None:
     stub_refresh(pi)
     put_request(pi, request_text())
+    (folder(pi) / "progress.txt").write_text("step=switching\nstep_at=1800000000\nserving=20261101\nnew=20270201\n")
 
     run_runner(pi, STUB_EXIT="0")
 
     result = (folder(pi) / "result.txt").read_text().splitlines()
     assert re.fullmatch(r"finished_at=\d{10}", result[0]) and result[1] == "state=done"
-    assert result[2:] == request_text().splitlines()
+    assert result[2:] == ["tileset=20270201", *request_text().splitlines()]
     assert not (folder(pi) / "running.txt").exists()
 
 
@@ -387,7 +388,8 @@ def test_a_rebuild_nobody_holds_is_decided_by_the_map_routing_env_names(
 
     minute(pi, 1)
 
-    assert result_lines(pi)[1:] == [*expected, *request_text().splitlines()]
+    named = ["tileset=20270201"] if expected == ["state=done"] else []
+    assert result_lines(pi)[1:] == [*expected, *named, *request_text().splitlines()]
     assert sorted(p.name for p in folder(pi).iterdir()) == ["helper-seen", "progress.txt", "result.txt"]
     assert (pi.dir / "routing.env").read_text() == f"VALHALLA_TILESET={serving}\n", "recovery never moves a pointer"
     up = [argv for argv in compose_calls(pi) if "up" in argv and "valhalla" in argv]
@@ -437,6 +439,7 @@ def test_the_log_gains_a_line_per_state_change_never_for_an_idle_minute_and_is_c
     minute(pi, 1, STUB_EXIT="75")
     minute(pi, 2, STUB_EXIT="1", STUB_FAILURE="code=build\n")
     put_request(pi, request_text())
+    (folder(pi) / "progress.txt").write_text(f"step=switching\nstep_at={T0}\nserving=1\nnew=20270201\n")
     minute(pi, 3)
     assert [line.split(" ", 1)[1] for line in log_lines(pi)] == [
         "taken", "busy", "taken", "failed code=build", "taken", "done",
