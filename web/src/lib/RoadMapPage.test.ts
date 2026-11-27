@@ -50,6 +50,7 @@ interface World {
   cancelled?: Answer;
   back?: string | null;
   readFails?: boolean;
+  previewFails?: boolean;
 }
 const RUNNING_AT = (step: string | null, stepsDone: number, back: string | null) => ({
   state: 'running',
@@ -109,6 +110,7 @@ function plan(
         if (answer.status === 201) world.change = PLANNED;
         return new Response(JSON.stringify(answer.body), { status: answer.status });
       }
+      if (world.previewFails) return new Response('{}', { status: 503 });
       return new Response(JSON.stringify(preview.body), { status: preview.status });
     }),
   );
@@ -335,6 +337,22 @@ describe('Road map page', () => {
     await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Italy' }));
 
     expect(screen.getByRole('button', { name: 'Rebuild road map' })).toBeDisabled();
+  });
+
+  it('does not offer the rebuild for a choice whose preview failed, even after an earlier preview succeeded', async () => {
+    const world: World = {};
+    plan(SERVED, undefined, world);
+    render(RoadMapPage);
+    await fireEvent.click(within(await loaded()).getByRole('button', { name: 'Remove Austria' }));
+    expect(await screen.findByRole('button', { name: 'Rebuild road map' })).toBeEnabled();
+
+    world.previewFails = true;
+    await fireEvent.input(screen.getByLabelText('Region name'), { target: { value: 'Utah' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add Utah' }));
+
+    expect(await screen.findByRole('alert')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Rebuild road map' })).not.toBeInTheDocument();
   });
 
   it('refreshes the map data as the same workflow: same regions asked, same summary, no region list sent', async () => {

@@ -142,7 +142,11 @@
         undo();
       } else summary = preview;
     } catch (error) {
-      if (mine === asked) refusal = failureText(error);
+      if (mine === asked) {
+        refusal = failureText(error);
+        summary = undefined; // the size and time of this choice were never shown: no rebuild until a preview succeeds
+        startAt = null;
+      }
     }
   }
 
