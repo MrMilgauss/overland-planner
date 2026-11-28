@@ -34,7 +34,7 @@ def test_a_place_beyond_the_served_border_is_listed_outside(data_dir: Path, tmp_
     assert answer.status_code == 200
     assert answer.json() == {
         "known": True,
-        "map_date": "2026-11-28T12:00:00Z",
+        "map_date": "2026-01-15T12:00:00Z",
         "regions": ["Italy"],
         "outside_item_ids": [outside],
         "groups": [{"regions": ["Italy"], "item_ids": [inside]}],

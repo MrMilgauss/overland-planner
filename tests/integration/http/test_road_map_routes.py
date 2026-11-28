@@ -20,7 +20,7 @@ from tests.acceptance.overland_route_planner_mvp.steps.road_map_fakes import reg
 from tests.common.workspace import workspace_data_dir
 
 SQUARE = "square\n1\n 0.0 0.0\n 0.0 1.0\n 1.0 1.0\n 1.0 0.0\nEND\nEND\n"
-BUILT = 1_795_867_200  # 2026-11-28 12:00 UTC
+BUILT = 1_768_478_400  # 2026-01-15 12:00 UTC: a past day, so no test meets "a rebuild already ran today"
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def data_dir() -> Iterator[Path]:
 
 def volume(root: Path, border: str = SQUARE) -> Path:
     base = root / "tilesets"
-    folder = base / "20261128"
+    folder = base / "20260115"
     (folder / "outlines").mkdir(parents=True)
     record = {
         "schema": 1,
@@ -45,7 +45,7 @@ def volume(root: Path, border: str = SQUARE) -> Path:
     return base
 
 
-def environ(data_dir: Path, base: Path | None, served: str = "20261128") -> dict[str, str]:
+def environ(data_dir: Path, base: Path | None, served: str = "20260115") -> dict[str, str]:
     return {
         "DATA_DIR": str(data_dir),
         "ROAD_MAP_DIR": "" if base is None else str(base),
@@ -62,7 +62,7 @@ def test_the_served_map_is_named_with_its_regions_and_its_date(data_dir: Path, t
     assert body == {
         "served": {
             "known": True,
-            "map_date": "2026-11-28T12:00:00Z",
+            "map_date": "2026-01-15T12:00:00Z",
             "regions": [{"key": "italy", "name": "Italy", "parent_name": None, "bytes": 5}],
             "total_bytes": 5,
         },
@@ -106,7 +106,7 @@ def test_a_damaged_border_degrades_the_component_and_the_map_stays_unknown(data_
 
 def test_a_served_tileset_with_the_valhalla_provider_refuses_the_start_naming_the_key(data_dir: Path) -> None:
     with pytest.raises(StartupRefusedError) as refused:
-        create_app({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": "20261128"})
+        create_app({"DATA_DIR": str(data_dir), "ROUTING_PROVIDER": "valhalla", "ROAD_MAP_SERVED_TILESET": "20260115"})
     assert "ROAD_MAP_SERVED_TILESET" in refused.value.reason
 
 
